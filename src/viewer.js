@@ -1223,8 +1223,24 @@ export class Dsv3Layer extends HTMLElement {
     z = opNode('norm2', 'RMSNorm', C2, z);
     z = wireOut(['norm2'], SX2, z);
     z = mmBox(['router'], C2, z);
+    const gateX = C2 + 296;                    // gate-weights bypass rail, right of the expert boxes
+    let gateTop = 0;
     if (DET) z = micro('sigmoid · top-k select · normalize', C2, z);
-    z = wireOut(['router'], SX2, z);
+    if (!DET) {
+      z = wireOut(['router'], SX2, z);
+    } else {
+      // the gate weights fork off the router state and bypass the experts
+      // entirely — they rejoin at the × gate multiply after SwiGLU
+      // short name: the sigmoid · top-k micro above already itemizes the state
+      tensorChip(['router'], SX2 + 14, z + 4, { name: 'router state' });
+      const rGap = Math.max(38, chipSpace(['router']) + 20);
+      wire(SX2, z, z + rGap);
+      gateTop = z + rGap - 10;
+      P.push(`<circle cx="${SX2}" cy="${gateTop}" r="2.5" fill="#898781"/>` +
+        `<path class="wire" d="M ${SX2} ${gateTop} L ${gateX} ${gateTop}"/>` +
+        `<text class="tensor tidle" x="${SX2 + 34}" y="${gateTop - 4}">gate weights · 8</text>`);
+      z += rGap;
+    }
     if (DET) { z = micro('permute — group tokens by expert', C2, z); wire(SX2, z, z + 14); z += 14; }
     z = opNode('dispatch', 'a2a dispatch → EP group', C2, z, 'comm');
     z = wireOut(['dispatch'], SX2, z);
@@ -1233,7 +1249,11 @@ export class Dsv3Layer extends HTMLElement {
     z = wireOut(['gate_up'], SX2, z);
     z = opNode('swiglu', 'SwiGLU', C2, z);
     z = wireOut(['swiglu'], SX2, z);
-    if (DET) { z = micro('× gate (router weights)', C2, z); wire(SX2, z, z + 14); z += 14; }
+    if (DET) {
+      P.push(`<path class="wire" d="M ${gateX} ${gateTop} L ${gateX} ${z + 9} L ${C2 + W + 1} ${z + 9}" marker-end="url(#arr)"/>`);
+      z = micro('× gate (router weights)', C2, z);
+      wire(SX2, z, z + 14); z += 14;
+    }
     z = mmBox(['ffn_down'], C2, z);
     grp(C2, g2, z + 5, 'experts: top-8 of 256 routed + 1 shared');
     z = wireOut(['ffn_down'], SX2, z + 5);
