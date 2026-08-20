@@ -104,7 +104,14 @@ const bwdNeedsInputs = (n) => BWD_NEEDS_INPUTS[n.opKind];
 // Given markings ({id: false} = recompute), compute what is stashed and what
 // replays. Returns per-token byte totals by bucket, the saved/replayed node
 // sets, and the replay flop/comm overhead.
-export function analyze(nodes, marks) {
+//
+// transposedStash models Hopper tile-scaled fp8 (1×128 per-row scales): an fp8
+// stash consumed by a wgrad GEMM is kept in BOTH quantization orientations,
+// because per-row scales don't transpose exactly. Blackwell MXFP8's power-of-2
+// (UE8M0) block scales requantize the transpose exactly, so one copy suffices —
+// leave it off there. Elementwise consumers (swiglu backward reading gate/up)
+// need no transpose, so those stashes are exempt either way.
+export function analyze(nodes, marks, transposedStash = false) {
   const byId = Object.fromEntries(nodes.map(n => [n.id, n]));
   const saved = (n) => n.always || (marks[n.id] !== false);
   const neededSaved = new Set(), replayed = new Set();
@@ -129,10 +136,17 @@ export function analyze(nodes, marks) {
   if (!neededBy.has('x0')) neededBy.set('x0', new Set(['replay anchor']));
   const buckets = { mla: 0, moe: 0, residual: 0 };
   let savedBytes = 0;
+  const dual = new Set();                            // stashes kept in both fp8 orientations
   for (const id of neededSaved) {
     const n = byId[id];
-    buckets[n.bucket] += n.outBytes;
-    savedBytes += n.outBytes;
+    let bytes = n.outBytes;
+    if (transposedStash && n.outBytes / n.elems < 2
+      && [...(neededBy.get(id) ?? [])].some(c => c !== id && ['matmul', 'attn'].includes(byId[c]?.opKind))) {
+      dual.add(id);
+      bytes *= 2;
+    }
+    buckets[n.bucket] += bytes;
+    savedBytes += bytes;
   }
   for (const n of nodes) {         // aux artifacts (rstd, lse): a replay regenerates them
     if (n.aux && !replayed.has(n.id)) { buckets[n.bucket] += n.aux.bytes; savedBytes += n.aux.bytes; }
@@ -143,6 +157,6 @@ export function analyze(nodes, marks) {
   return {
     buckets, savedBytes, replayFlopsTok, fwdFlopsTok,
     replayFrac: fwdFlopsTok ? replayFlopsTok / fwdFlopsTok : 0,
-    neededSaved, replayed, replayComm, neededBy, byId,
+    neededSaved, replayed, replayComm, neededBy, byId, dual,
   };
 }

@@ -695,6 +695,7 @@ export class Dsv3Layer extends HTMLElement {
     this.view = st?.view ?? 'combined';
     this.dispLayers = st?.dispLayers ?? +(this.getAttribute('xlayers') ?? 61);
     this.dispInflight = st?.dispInflight ?? +(this.getAttribute('xinflight') ?? 1);
+    this.transposed = st?.transposed ?? this.hasAttribute('transposed');
     this.render();
     queueMicrotask(() => this.changed(false)); // push initial recipe + marks to linked widgets
   }
@@ -706,17 +707,22 @@ export class Dsv3Layer extends HTMLElement {
     const detail = { matmuls: { ...this.matmuls }, saved: savedMap };
     this.dispatchEvent(new CustomEvent('recipe', { detail }));
     // recompute:'none' + explicit marks = exactly this.marks (preset merged already)
-    patchTargets(this.getAttribute('for'), { recipe: null, matmuls: detail.matmuls, recompute: 'none', saved: detail.saved });
+    patchTargets(this.getAttribute('for'), {
+      recipe: null, matmuls: detail.matmuls, recompute: 'none', saved: detail.saved,
+      transposedStash: this.transposed,
+    });
     if (write) writeUrlState(this.urlKey, {
       recipe: this.getAttribute('recipe'), matmuls: this.matmuls, marks: this.marks,
       view: this.view, dispLayers: this.dispLayers, dispInflight: this.dispInflight,
+      transposed: this.transposed,
     });
   }
-  applyPreset(recipe, recompute) {
+  applyPreset(recipe, recompute, transposed = false) {
     this.setAttribute('recipe', recipe);
     this.setAttribute('recompute', recompute);
     this.matmuls = resolveMatmuls({ recipe });
     this.marks = { ...RECOMPUTE_PRESETS[recompute] };
+    this.transposed = transposed;
     clearUrlState(this.urlKey);
     this.render(); this.changed(false);
   }
@@ -795,11 +801,21 @@ export class Dsv3Layer extends HTMLElement {
       this.view = 'combined';
       this.dispLayers = +(this.getAttribute('xlayers') ?? 61);
       this.dispInflight = +(this.getAttribute('xinflight') ?? 1);
+      this.transposed = this.hasAttribute('transposed');
       clearUrlState(this.urlKey);
       this.render(); this.changed(false);
     };
-    head.append(reset);
-    const ana = analyze(blockGraph('moe', DSV3, this.matmuls, 4096), this.marks);
+    const tl = document.createElement('label');
+    tl.style.cssText = 'display:inline-flex;align-items:center;gap:4px;margin-left:8px;color:#52514e;';
+    tl.title = 'Hopper tile-scaled fp8 (1×128 per-row scales): stashes feeding wgrad GEMMs are kept in ' +
+      'BOTH quantization orientations — per-row scales don’t transpose. MXFP8’s power-of-2 block ' +
+      'scales requantize the transpose exactly; leave off for Blackwell.';
+    const tcb = document.createElement('input');
+    tcb.type = 'checkbox'; tcb.checked = this.transposed;
+    tcb.onchange = () => { this.transposed = tcb.checked; this.render(); this.changed(); };
+    tl.append(tcb, 'fp8ᵀ dual stash');
+    head.append(tl, reset);
+    const ana = analyze(blockGraph('moe', DSV3, this.matmuls, 4096), this.marks, this.transposed);
     root.append(head, this.buildSvg(ana));
     const note = el('div', 'lv-note');
     const M2 = this.view === 'combined' ? this.dispLayers * this.dispInflight * 4096 : 1;
@@ -819,7 +835,10 @@ export class Dsv3Layer extends HTMLElement {
       'the lm head uses the same scale — per-token vocab work, ' +
       'independent of depth. Norms/SwiGLU ' +
       'get a muted fig-leaf block (bandwidth-bound, compute precision unspecified). ' +
-      'The tally at right totals fwd + bwd (2× fwd — dgrad + wgrad; sdpa likewise) + replay — marking ops ↻ grows its replay row.';
+      'The tally at right totals fwd + bwd (2× fwd — dgrad + wgrad; sdpa likewise) + replay — marking ops ↻ grows its replay row. ' +
+      'The fp8ᵀ toggle models Hopper tile-scaled fp8: any fp8 stash a wgrad GEMM reads is kept in both ' +
+      'quantization orientations (ᵀ×2 tags) because per-row scales don’t transpose; MXFP8’s ' +
+      'power-of-two block scales requantize exactly, so Blackwell keeps one.';
     const foot = el('div', 'lv-foot2');
     foot.append(note, this._tallySvg);
     root.append(foot);
@@ -929,12 +948,13 @@ export class Dsv3Layer extends HTMLElement {
     };
     const tensorChip = (ids, x, y) => {
       const id = ids[0], st = state(id), n = ana.byId[id];
-      const bytes = ids.reduce((t, i) => t + ana.byId[i].outBytes, 0);
+      const bytes = ids.reduce((t, i) => t + ana.byId[i].outBytes * (ana.dual.has(i) ? 2 : 1), 0);
+      const dualTag = ids.some(i => ana.dual.has(i)) ? ' ᵀ×2' : '';
 
       let h = 12;
       if (st === 'save' || st === 'pin') {
         P.push(`<text class="tensor tsave" x="${x}" y="${y + 8}">${needDir(ids)} ${esc(n.tensor)} · ${fmtMem(bytes)} ` +
-          `<tspan fill="${DT_STYLE[dtOf(n)]}">${dtOf(n)}</tspan>${st === 'pin' ? ' 🔒' : ''}</text>`);
+          `<tspan fill="${DT_STYLE[dtOf(n)]}">${dtOf(n)}${dualTag}</tspan>${st === 'pin' ? ' 🔒' : ''}</text>`);
         const g = blockGrid(bytes, x, y + 12);
         P.push(g.svg);
         h = 12 + g.rows * 6 + 2;
@@ -950,7 +970,9 @@ export class Dsv3Layer extends HTMLElement {
     // reserve chip space for the WORST case (saved, bf16) so toggling
     // save/recompute or precision never reflows the layout
     const chipSpace = (ids) => {
-      const worst = ids.reduce((t, i) => t + ana.byId[i].elems * 2, 0);
+      // worst case per element: bf16 (2 B), or dual fp8 orientations (2 × 1.03 B)
+      const perElem = this.transposed ? 2 * (1 + 1 / 32) : 2;
+      const worst = ids.reduce((t, i) => t + ana.byId[i].elems * perElem, 0);
       const rows = Math.ceil(Math.max(1, Math.round(worst / 1024 / 4)) / 16);
       return 12 + rows * 6 + 2;
     };
@@ -1390,7 +1412,7 @@ export class Dsv3Controls extends HTMLElement {
     if (!b) return;
     for (const [k, v] of Object.entries(b.values)) if (this.inputs[k]) this.inputs[k].value = String(v);
     const layer = this.getAttribute('layer') && document.getElementById(this.getAttribute('layer'));
-    if (layer?.applyPreset) layer.applyPreset(b.recipe, b.recompute);
+    if (layer?.applyPreset) layer.applyPreset(b.recipe, b.recompute, b.transposed ?? false);
     this.apply(true);
   }
   apply(write = false) {

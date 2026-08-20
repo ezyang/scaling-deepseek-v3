@@ -65,18 +65,18 @@ export function resolveMatmuls(cfg) {
 // Derived from the block op-graph (src/blockgraph.js): memory = the outputs of
 // save-marked ops that backward actually needs; `recompute` names a marking
 // preset (none / dsv3 / selective / full) and `saved` holds per-op overrides.
-export function actBreakdownPerToken(kind, a, recompute, mm, saved, seqLen = 4096) {
+export function actBreakdownPerToken(kind, a, recompute, mm, saved, seqLen = 4096, transposedStash = false) {
   if (kind === 'embed') return { residual: 2 * a.hidden };
   if (kind === 'head') return { logits: 6 * a.vocab }; // bf16 logits + fp32 softmax
   const marks = resolveMarks({ recompute, saved });
-  return analyze(blockGraph(kind, a, mm, seqLen), marks).buckets;
+  return analyze(blockGraph(kind, a, mm, seqLen), marks, transposedStash).buckets;
 }
 
 // Full graph analysis for one layer kind (memory + replay overhead), for the
 // schematic and the trace sim's recompute charge.
 export function layerAnalysis(kind, cfg) {
   const a = archOf(cfg);
-  return analyze(blockGraph(kind, a, resolveMatmuls(cfg), cfg.seqLen), resolveMarks(cfg));
+  return analyze(blockGraph(kind, a, resolveMatmuls(cfg), cfg.seqLen), resolveMarks(cfg), cfg.transposedStash ?? false);
 }
 
 // Total params of the (possibly overridden) architecture.
@@ -134,7 +134,7 @@ export function memoryUsage(cfg) {
     const inFlight = cfg.inflight ?? Math.min(cfg.pp - s, cfg.microbatches);
     const act = { mla: 0, moe: 0, residual: 0, logits: 0 };
     for (const kind of layers) {
-      const b = actBreakdownPerToken(kind, a, recompute, mm, cfg.saved, cfg.seqLen);
+      const b = actBreakdownPerToken(kind, a, recompute, mm, cfg.saved, cfg.seqLen, cfg.transposedStash);
       // the head's logits live for ~1 microbatch (bwd is immediate on the last stage)
       const n = kind === 'head' ? 1 : inFlight;
       for (const k of Object.keys(b)) act[k] += b[k] * tokens * n;

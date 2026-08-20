@@ -94,6 +94,18 @@ const routerNode = blockGraph('moe', DSV3, mmFp8, 4096).find(n => n.id === 'rout
 check('router stash is the full retention set (~2.1 KiB/tok)',
   routerNode.outBytes === 4 * (2 * DSV3.routedExperts + 4 * DSV3.topk),
   `${(routerNode.outBytes / 1024).toFixed(2)} KiB/tok`);
+const arT = analyze(blockGraph('moe', DSV3, mmFp8, 4096), RECOMPUTE_PRESETS['attn-replay'], true);
+check('fp8ᵀ dual stash: wgrad-read fp8 only (dispatch, norm2; not gate_up/x0/router)',
+  arT.dual.has('dispatch') && arT.dual.has('norm2') && !arT.dual.has('gate_up') && !arT.dual.has('x0') && !arT.dual.has('router'),
+  [...arT.dual].sort().join(','));
+check('fp8ᵀ adds exactly the dual payloads',
+  Math.abs((arT.savedBytes - ar.savedBytes) - (ar.byId.dispatch.outBytes + ar.byId.norm2.outBytes)) < 1,
+  `+${((arT.savedBytes - ar.savedBytes) / 1024).toFixed(1)} KB/tok`);
+const noT = mem({ hardware: 'h100', gpus: 2048, pp: 8, ep: 64, zero: 1, recompute: 'attn-replay', recipe: 'dsv3-fp8' });
+const withT = mem({ hardware: 'h100', gpus: 2048, pp: 8, ep: 64, zero: 1, recompute: 'attn-replay', recipe: 'dsv3-fp8', transposedStash: true });
+check('transposedStash grows the H100 watermark by GiBs',
+  withT.worst.total > noT.worst.total + 3,
+  `${noT.worst.total.toFixed(1)} -> ${withT.worst.total.toFixed(1)} GiB`);
 const vs = mem({ pp: 4, ep: 16, zero: 1, recompute: 'selective' }).perStage;
 check('vocab weights split: pp0/last only, grads follow',
   vs[0].vocab > 0 && vs[1].vocab === 0 && vs.at(-1).vocab > 0 && vs[0].vocabGrads > 0 && vs[1].vocabGrads === 0,
