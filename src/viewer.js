@@ -675,6 +675,7 @@ dsv3-layer { display: block; margin: 14px 0 26px; }
   background: #fff; border: 1px solid #c3c2b7; }
 .lv text.tensor { font: 10px system-ui; }
 .lv .tsave { fill: #7a5200; font-weight: 600; }
+.lv .tdim { fill: #898781; font-weight: 400; }
 .lv .tredo { fill: #52514e; font-style: italic; }
 .lv .tidle { fill: #a8a69e; }
 .lv-note { color: #898781; font-size: 11px; padding-top: 6px; max-width: 640px; }
@@ -852,6 +853,7 @@ export class Dsv3Layer extends HTMLElement {
           '\u21bb recomputed, \u00b7 not needed, \ud83d\udd12 always saved; ' +
           'right arrows are aux backward artifacts (rstd, lse), \u2190 saved unless their op replays.'
         : '\u2193 \u2191 \u21c5 read by the op below / above / both, \u00b7 not needed (violet boxes = communication); ' +
+          'grey sizes are per-token element counts \u2014 bytes need a dtype, which comes later; ' +
           'right arrows are aux backward artifacts (rstd, lse).',
       this._ctl.marks ? 'Marking an op \u21bb forces the outputs it reads to stay saved.' : '',
       this._ctl.quant
@@ -993,9 +995,11 @@ export class Dsv3Layer extends HTMLElement {
       if (!this._ctl.quant) {
         // structure only: name + backward-need direction, no bytes/dtype/grid
         const name = esc(n.tensor.replace(' (checkpoint anchor)', ''));  // recompute vocabulary
+        // unitless per-token size (element counts, like the op dims — dtype unspecified here)
+        const sz = ids.map(i => ana.byId[i].tdims).join(' + ');
         P.push(st === 'idle'
           ? `<text class="tensor tidle" x="${x}" y="${y + 8}">· ${name} — not needed</text>`
-          : `<text class="tensor tsave" x="${x}" y="${y + 8}">${needDir(ids)} ${name}</text>`);
+          : `<text class="tensor tsave" x="${x}" y="${y + 8}">${needDir(ids)} ${name} <tspan class="tdim">· ${sz}</tspan></text>`);
         return h;
       }
       if (st === 'save' || st === 'pin') {
