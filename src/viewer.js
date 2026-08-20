@@ -1247,13 +1247,13 @@ export class Dsv3Layer extends HTMLElement {
     const g2 = z + 3; z += 21;
     z = mmBox(['ffn_gate_up'], C2, z, ['gate_up']);
     z = wireOut(['gate_up'], SX2, z);
-    z = opNode('swiglu', 'SwiGLU', C2, z);
+    // gate-at-swiglu, not gate-at-combine: by linearity the router weights can
+    // multiply the swiglu output before the down-proj (one fused kernel,
+    // AMAIA's swiglu_and_scale) — this is what makes the expert outputs a pure
+    // intermediate instead of a stash for the combine's backward
+    if (DET) P.push(`<path class="wire" d="M ${gateX} ${gateTop} L ${gateX} ${z + 13} L ${C2 + W + 1} ${z + 13}" marker-end="url(#arr)"/>`);
+    z = opNode('swiglu', DET ? 'SwiGLU · × gate (one fused kernel)' : 'SwiGLU', C2, z);
     z = wireOut(['swiglu'], SX2, z);
-    if (DET) {
-      P.push(`<path class="wire" d="M ${gateX} ${gateTop} L ${gateX} ${z + 9} L ${C2 + W + 1} ${z + 9}" marker-end="url(#arr)"/>`);
-      z = micro('× gate (router weights)', C2, z);
-      wire(SX2, z, z + 14); z += 14;
-    }
     z = mmBox(['ffn_down'], C2, z);
     grp(C2, g2, z + 5, 'experts: top-8 of 256 routed + 1 shared');
     z = wireOut(['ffn_down'], SX2, z + 5);
