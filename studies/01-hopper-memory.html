@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Study 01 — a DSv3-family MoE on 2048 Hopper GPUs: memory</title>
+  <link rel="stylesheet" href="./study.css">
+</head>
+
+<body>
+  <main>
+    <h1>Study 01 — a DSv3-family MoE on 2048 Hopper GPUs: memory</h1>
+    <p class="sub">Part of a series of worked configurations. See also study
+      <a href="./02-nvidia-mlperf-gb300.html">02: the NVIDIA MLPerf 6.0 256×GB300 configuration</a>,
+      and the <a href="../index.html">landing page</a> for the sandbox with every widget.</p>
+
+    <p><b>Configuration.</b> A <b>288-routed-expert DSv3-family variant</b> (62 MoE layers — modeled
+      all-sparse, a simplification; the real family stacks 3 dense blocks first, see the structure widget
+      below — vocab 128000, no MTP) trained on <b>2048 H100-class GPUs</b>: FSDP-replicas 4 × PP 8 × EP 64
+      (our decomposition: <code>gpus=2048, pp=8, ep=64 → dp=256, dp/ep=4</code>), seq 4096, mbs 1,
+      64 microbatches. Precision: FP8 GEMMs with 1×128 tile scales (weights kept ×2 for the transposed
+      copy, +4/128 fp32 scale bytes), fp32 gradient accumulators, a 3-state AMSGrad optimizer sharded over
+      all 2048 GPUs. Recompute: the <b>attn-replay</b> policy — replay <em>all</em> of attention (norm,
+      down/up projections, SDPA core, out-proj, and the residual add) from the block input during backward,
+      save the post-norm output plus the fp8 expert inputs and gate/up, recompute swiglu-out. Pipeline
+      in-flight: DualPipe's two-chunk layout holds 17 microbatches × 4 layers per chunk ≡ 8.5
+      microbatches/rank.</p>
+
+    <h2>Our per-rank inventory</h2>
+    <div id="inventory"></div>
+    <p><b>Why this fits on 80 GB.</b> Three modeling points carry the number. <b>(1) Gating placement:</b>
+      the router's gate weights are applied to the swiglu output <em>before</em> the linear down-proj —
+      mathematically identical to gating the expert outputs, and it makes the expert outputs a pure
+      intermediate rather than a ~30 GiB stash for the combine's backward. <b>(2) The attn-replay
+      policy:</b> because all of attention replays from the block input, the mid-layer residual (x1), the
+      MLA latents, the softmax lse, and the SDPA output are never stashed — the attention side of the block
+      saves exactly one tensor, the post-norm output that the MoE half consumes. The cost is ~+40% of
+      forward FLOPs replayed in backward: the Hopper-era activation-checkpointing pressure in one number.
+      <b>(3) The in-flight law:</b> DualPipe's two-chunk schedule halves the naive (2·PP+1) in-flight count
+      per layer, so the activation column is 8.5×, not 17×.</p>
+
+    <h2>Layer structure</h2>
+    <p class="note"><b>Structure disclosure:</b> everything above models <b>all 62 layers as MoE</b>. The
+      real model family stacks 3 dense-FFN blocks (inter 18432) before the sparse ones to stabilize early
+      routing. The pinned row below stays on the simplification; the toggle patches the exploration row
+      with the structure you pick (dense first layers trade expert stashes for a fatter FFN on rank 0).</p>
+    <dsv3-stack id="stack1" for="mem-widget" choices="0,3" dense="0"></dsv3-stack>
+
+    <h2>Widgets at this configuration</h2>
+    <p class="note">The block schematic is set to this study's recipe (DSv3 FP8, attn-replay recompute
+      marks) and drives the memory bars; the parallelism controls below it feed the exploration row, so you
+      can vary pp (or anything else) and see whether the scheme still fits. The first row stays pinned to
+      the study configuration (including its DualPipe in-flight = 8.5) and shows the mid rank; the
+      exploration row uses our 1F1B in-flight law instead — a pinned in-flight would be wrong away from
+      pp = 8 — and reports the <em>worst</em> rank, usually pp0, whose bar grows a separate
+      "weights (embed/head)" segment for the 917M-param embedding.</p>
+    <dsv3-layer id="study1-layer" for="mem-widget" recipe="dsv3-fp8" recompute="attn-replay"
+      xlayers="8" xinflight="8.5"></dsv3-layer>
+    <dsv3-controls id="study-ctl" for="mem-widget" layer="study1-layer"
+      bundles="dsv3-h100,nvidia-mlperf-gb300"
+      fields="hardware,pp,ep,dp,zero,seqLen,globalBatch"
+      values='{"hardware":"h100","pp":8,"ep":64,"dp":256,"zero":1,"seqLen":4096,"globalBatch":16384}'></dsv3-controls>
+    <dsv3-memory id="mem-widget"></dsv3-memory>
+  </main>
+  <script type="module">
+    import '../src/viewer.js';
+    import { CFG_OVERRIDES, VARIANT_ARCH, inventory } from './01-hopper-memory.js';
+    // per-rank inventory table (our model's numbers)
+    const { mid, first, last, capacityGB } = inventory();
+    const fmt = (v) => v.toFixed(1);
+    const rows = [['mid rank (pp1)', mid], ['first rank (pp0, +embedding)', first], ['last rank (pp7, +head)', last]];
+    document.getElementById('inventory').innerHTML =
+      '<table class="xcheck"><tr><th>rank</th><th>weights</th><th>embed/head</th><th>grads</th>' +
+      '<th>optimizer</th><th>act·mla</th><th>act·moe</th><th>act·residual</th><th>buffers</th><th>total (GiB)</th></tr>' +
+      rows.map(([name, r]) =>
+        `<tr><td>${name}</td><td>${fmt(r.weights)}</td><td>${fmt(r.vocab)}</td><td>${fmt(r.grads)}</td>` +
+        `<td>${fmt(r.optimizer)}</td><td>${fmt(r.actMla)}</td><td>${fmt(r.actMoe)}</td><td>${fmt(r.actResidual)}</td>` +
+        `<td>${fmt(r.buffers)}</td><td><b>${fmt(r.total)} / ${capacityGB}</b></td></tr>`).join('') +
+      '</table>';
+    // arch comes from the structure widget (so its dense-layers toggle can act on the explore row)
+    const { inflight, hardware, gpus, pp, ep, zero, mbs, seqLen, microbatches, recompute, recipe, arch, ...conventions } = CFG_OVERRIDES;
+    document.getElementById('stack1').setAttribute('arch', JSON.stringify(VARIANT_ARCH));
+    document.getElementById('mem-widget').setAttribute('configs', JSON.stringify([
+      { label: 'study config (pinned)', note: 'PP8 · EP64 · 2048 GPUs · H100 80 GB · DualPipe in-flight 8.5 — mid rank (pp1); precision/marks from the schematic', dispStage: 1, ...CFG_OVERRIDES },
+      { label: 'explore (knobs above)', note: 'study accounting conventions + 1F1B in-flight; parallelism from the controls', ...conventions },
+    ]));
+  </script>
+</body>
+
+</html>

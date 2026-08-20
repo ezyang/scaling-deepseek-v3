@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>What should a DeepSeek-V3 training profile look like?</title>
+  <style>
+    :root { color-scheme: light; }
+    body {
+      font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+      color: #0b0b0b; background: #f9f9f7; margin: 0;
+    }
+    main { max-width: 980px; margin: 0 auto; padding: 32px 20px 120px; }
+    h1 { font-size: 28px; line-height: 1.25; margin: 8px 0 4px; }
+    h2 { font-size: 20px; margin: 44px 0 8px; }
+    p, li { max-width: 720px; color: #1c1c1a; }
+    .sub { color: #52514e; margin-top: 0; }
+    code { font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; background: #f3f2ee; border-radius: 4px; padding: 1px 5px; }
+    dsv3-trace, dsv3-layer, dsv3-controls, dsv3-memory, dsv3-stack { display: block; margin: 14px 0; }
+    .note { font-size: 13.5px; color: #52514e; max-width: 720px; }
+    .posts li { margin: 8px 0; }
+    .posts .tag { font-size: 12px; color: #52514e; background: #f0efe9; border-radius: 4px; padding: 1px 6px; margin-left: 6px; }
+  </style>
+</head>
+
+<body>
+  <main>
+    <h1>What should a DeepSeek-V3 training profile look like?</h1>
+    <p class="sub">A simulator you can read: a memory model and a Perfetto-style trace estimator for
+      DSv3-family MoE training, built up one refinement at a time. This page collects the posts and hosts
+      the sandbox; each post works one real configuration end to end.</p>
+
+    <h2>Posts</h2>
+    <ul class="posts">
+      <li><a href="./studies/01-hopper-memory.html">Study 01 — a DSv3-family MoE on 2048 H100s:
+        memory</a> (PP8 · EP64, FP8 tile scaling, attn-replay recompute, DualPipe in-flight) — does it even
+        fit on 80 GB, and what the aggressive recompute policy buys and costs.</li>
+      <li><a href="./studies/02-nvidia-mlperf-gb300.html">Study 02 — NVIDIA's MLPerf 6.0 256×GB300
+        submission</a> (PP2 · EP32, MXFP8 incl. FP8 attention, fp8 parameter gather, <em>no</em> activation
+        checkpointing) — per-stash precision accounting; 140/288 GB watermark; timing anchors for the
+        upcoming timing posts.</li>
+      <li><a href="./drafts/full-article.html">The full article</a><span class="tag">draft</span> — the
+        cumulative essay: roofline → kernel costs → pipeline bubbles → EP all-to-all → FSDP → overhead →
+        jitter, each refinement ruling out configurations.</li>
+    </ul>
+
+    <h2 id="sandbox">Sandbox</h2>
+    <p>Every widget, linked to one configuration. The structure widget sets the layer stack; the
+      transformer-block schematic sets each matmul's precision and each op's save 💾 / recompute ↻ mark; the
+      controls set hardware, parallelism, and schedule, and every simulated effect toggles independently.
+      All of it drives the memory watermark and the simulated profile at once. State persists in the URL,
+      so a configuration is shareable.</p>
+    <dsv3-stack id="stack-sand" for="mem-sand trace-sand" choices="0,3" dense="3"></dsv3-stack>
+    <dsv3-layer id="layer-sand" for="mem-sand trace-sand" recipe="nv-mxfp8"></dsv3-layer>
+    <dsv3-controls id="ctl-sand" for="mem-sand trace-sand" layer="layer-sand" toggles
+      bundles="nvidia-mlperf-gb300,dsv3-h100"
+      fields="hardware,dtype,pp,ep,dp,zero,granularity,seqLen,globalBatch,dpRanksToSim,seed"
+      values='{"pp":1,"ep":64,"dp":256,"globalBatch":6144}'></dsv3-controls>
+    <dsv3-memory id="mem-sand" configs='[{"label":"your config","note":"watermark at the worst stage","recipe":"nv-mxfp8"}]'></dsv3-memory>
+    <dsv3-trace id="trace-sand" level="1" height="380" title="your config — simulated profile"></dsv3-trace>
+    <p class="note">Things to try: start from a non-PP config and walk it toward PP16; push seqLen or the
+      global batch until a bar goes red; H800 with only <i>expert a2a</i> on; <code>granularity: op</code>
+      zoomed into a single MoE layer; <code>dpRanksToSim: 4</code> with jitter on; flip the structure widget
+      between all-MoE and 3-dense-first and watch rank 0.</p>
+  </main>
+  <script type="module">
+    import './src/viewer.js';
+    import { DSV3 } from './src/model.js';
+    document.getElementById('stack-sand').setAttribute('arch', JSON.stringify(DSV3));
+  </script>
+</body>
+
+</html>

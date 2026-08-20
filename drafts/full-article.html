@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>What should a DeepSeek-V3 training profile look like?</title>
+  <style>
+    :root { color-scheme: light; }
+    body {
+      font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+      color: #0b0b0b; background: #f9f9f7; margin: 0;
+    }
+    main { max-width: 980px; margin: 0 auto; padding: 32px 20px 120px; }
+    h1 { font-size: 28px; line-height: 1.25; margin: 8px 0 4px; }
+    h2 { font-size: 20px; margin: 44px 0 8px; }
+    h3 { font-size: 16.5px; margin: 30px 0 6px; }
+    p, li { max-width: 720px; color: #1c1c1a; }
+    .sub { color: #52514e; margin-top: 0; }
+    code, pre { font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; background: #f3f2ee; border-radius: 4px; }
+    code { padding: 1px 5px; }
+    pre { padding: 10px 14px; overflow-x: auto; border: 1px solid #e1e0d9; }
+    dsv3-trace, dsv3-layer, dsv3-controls, dsv3-memory { display: block; margin: 14px 0; }
+    .duo { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .duo dsv3-trace { margin: 0; }
+    @media (max-width: 900px) { .duo { grid-template-columns: 1fr; } }
+    figcaption, .note { font-size: 13.5px; color: #52514e; max-width: 720px; }
+    table { border-collapse: collapse; font-size: 14px; }
+    th, td { text-align: left; padding: 4px 14px 4px 0; border-bottom: 1px solid #e1e0d9; font-variant-numeric: tabular-nums; }
+    th { color: #52514e; font-weight: 600; }
+    kbd { font: 12px ui-monospace, monospace; background: #f3f2ee; border: 1px solid #c3c2b7; border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; }
+  </style>
+</head>
+
+<body>
+  <main>
+    <h1>What should a DeepSeek-V3 training profile look like?</h1>
+
+    <p>When doing performance optimization, it is important to have a good picture of what your
+    system performance is <em>supposed</em> to be.  Does it matter if you managed to 10x the speed
+    of your program?  Not if it was already running 100x slower than it was supposed to be.
+    In LLM training, the first method by which we gain this picture is a roofline analysis, which
+    abstracts away implementation details of the training framework and computes what the speed
+    would be if everything was (typically unachievably) optimal.
+    </p>
+
+    <p>A roofline can be a starting point for a more refined model of how performant your training
+    system is supposed to be.
+    </p>
+
+    <p>When you open a Perfetto trace of a big training job, you are looking at the sum of a dozen effects —
+      kernel efficiency, pipeline bubbles, exposed communication, launch overhead, stragglers — collapsed into one
+      picture. This essay inverts that: we <em>simulate</em> the profile of a DeepSeek-V3 pretraining step from
+      first principles, adding one correction term at a time, ordered by impact on the headline number. Each
+      refinement doubles as an elimination round: as the model learns about a new cost, whole regions of the
+      parallelism configuration space get ruled out, until only the defensible configs survive. We work on a
+      cluster of <b>256 GB300 NVL72</b> GPUs (288 GB HBM, 72-GPU NVLink domains), sequence length 4096 — 256
+      because that is the scale we have the most real traces to check against. Cluster size is a knob
+      (<code>gpus</code>, with dp = gpus/pp) in every widget and the sandbox.</p>
+    <p class="note">Workshop state: the memory step below is the first section in this style; the timing
+      refinements (bubbles, all-to-all, DP comm, …) will follow one by one. The simulator itself already models
+      them — see the sandbox at the end of the memory section, where every effect toggles independently. Traces render in a small
+      Perfetto-style viewer with Perfetto navigation (<kbd>W</kbd>/<kbd>S</kbd> zoom, <kbd>A</kbd>/<kbd>D</kbd>
+      pan, drag, <kbd>F</kbd> focus, <kbd>M</kbd> mark, <kbd>0</kbd> fit) and export to the real
+      <code>ui.perfetto.dev</code>. All hardware numbers are editable assumptions in <code>src/model.js</code>.</p>
+
+    <h2>Step 0 — does it even fit?</h2>
+    <p>Before any timing question, a configuration must pass a boolean gate: does one training step fit in
+      HBM? Fitting is a statement about the <b>high watermark</b>, not about everything you ever allocate —
+      and forward-pass temporaries are deliberately ignored here; kernel workspace is not set in stone. The
+      watermark decomposes per GPU into <b>weights</b> (BF16 working copy + a resident low-precision copy
+      where the recipe uses one), <b>gradients</b> (BF16), <b>optimizer state</b> (FP32 master + BF16 Adam
+      moments ≈ 8 B/param, DeepSeek-style), <b>activations</b> stashed for backward — split into <b>MLA</b>
+      stashes, <b>MoE</b> stashes, the <b>residual</b> stream, and <b>logits</b> — and <b>working buffers</b>
+      (a2a send/recv, FSDP’s gathered layer, an unsharded gradient bucket). Because pipeline parallelism
+      changes the activation law so drastically, we run the analysis twice: first without PP, then with it.</p>
+
+    <p>Precision choices thread through everything, so we fix them first. Whatever backward will read is
+      stashed at the precision of the matmul that reads it, so the recipe is a per-matmul decision. For the
+      essay we default to the Blackwell-native <b>MXFP8 recipe from NVIDIA’s NeMo/Megatron-Bridge
+      DSv3 runs</b> — every GEMM in MXFP8 (32-element blocks, UE8M0 scales); attention core, router and head in
+      high precision. NVIDIA’s published result with this recipe is our calibration anchor: 256 × GB300,
+      TP1 · PP2(×8 virtual) · EP32, mbs 1, batch 4096 sequences → <b>6,338 tok/s/GPU (10.3 s/step)</b> — the
+      number the simulated profile must eventually explain. The original DeepSeek-V3 FP8 recipe is a preset
+      too — its tile-wise fp32 scales (4 B per 128 elements) cost exactly the same 1/32 byte-per-element
+      overhead as MX block scales, so one constant models both. The transformer-block schematic in the
+      <a href="#sandbox">sandbox</a> at the end of this section is the model’s single source of truth for
+      precision — its per-matmul choices drive the memory widgets <em>and</em> the simulated profile (and,
+      later, the rooflines).</p>
+
+    <p>And parallelism is an <em>input</em> to the memory calculation — pipeline parallelism in particular is
+      allowed to make things fit — so we put the knobs on the table before any bars. The controls below set the
+      shared baseline (hardware, cluster size, microbatch, sequence length) for <b>every</b> memory bar in this
+      section. You specify the <em>parallelism</em> — pp × dp, with EP a sub-grouping of dp — and the
+      <em>global batch</em>; everything else is derived in the open: gpus = pp × dp, one 4096-token sequence
+      per microbatch (mbs = 1), microbatches per step m = GBS ÷ dp, and — assuming a 1F1B schedule — stage
+      <i>s</i> holds min(pp − s, m) microbatches of stashes in flight. The variants directly below inherit
+      <em>everything</em> — including pp — pinning only the one thing that defines them, so sweep the pp knob
+      to see which schemes fit at which pipeline depth. (The Analysis A/B rows further down pin their own
+      parallelism; that's their point.)</p>
+    <dsv3-controls id="mem-ctl" for="mem-top memA memB"
+      fields="hardware,pp,ep,dp,zero,recompute,seqLen,globalBatch"></dsv3-controls>
+    <dsv3-memory id="mem-top" configs='[
+      {"label":"your config","note":"exactly the knobs above","recipe":"nv-mxfp8"},
+      {"label":"… without EP","note":"ep pinned to 1; everything else from the knobs","ep":1,"recipe":"nv-mxfp8"},
+      {"label":"… ZeRO-1 instead of FSDP","note":"zero pinned to 1","zero":1,"recipe":"nv-mxfp8"},
+      {"label":"… without recompute","note":"recompute pinned to none","recompute":"none","recipe":"nv-mxfp8"},
+      {"label":"… at seq 32k","note":"seqLen pinned to 32768","seqLen":32768,"recipe":"nv-mxfp8"}
+    ]'></dsv3-memory>
+
+    <h3>Analysis A — no pipeline</h3>
+    <p>With pp = 1 the activation law is trivial: exactly one microbatch of full-model stashes is live at a
+      time (backward frees layer by layer as it goes). The question is parameter state: 671B params × ~12
+      bytes of state must land on 256 GPUs somehow. Candidates, worst-stage watermark against each row’s
+      own capacity line:</p>
+    <dsv3-memory id="memA" configs='[
+      {"label":"Replicate everything (DDP)","note":"ZeRO-0 · BF16 · no recompute","pp":1,"ep":1,"zero":0,"recipe":"bf16","recompute":"none"},
+      {"label":"ZeRO-1, no EP","note":"shard optimizer only","pp":1,"ep":1,"zero":1,"recipe":"nv-mxfp8"},
+      {"label":"ZeRO-1 + EP64","note":"EP shards the 653B of experts — no FSDP machinery","pp":1,"ep":64,"zero":1,"recipe":"nv-mxfp8"},
+      {"label":"FSDP, no EP","note":"must gather 11.5B-param layers to run them","pp":1,"ep":1,"zero":3,"recipe":"nv-mxfp8"},
+      {"label":"FSDP + EP64","note":"selective recompute","pp":1,"ep":64,"zero":3,"recipe":"nv-mxfp8"},
+      {"label":"FSDP + EP64, no recompute","note":"stash everything — only 1 microbatch is live","pp":1,"ep":64,"zero":3,"recipe":"nv-mxfp8","recompute":"none"},
+      {"label":"FSDP + EP64 — on H800","note":"same config, 80 GB part","hardware":"h800","pp":1,"ep":64,"zero":3,"recipe":"nv-mxfp8"},
+      {"label":"FSDP + EP64, seq 32k","note":"long context, selective recompute","pp":1,"ep":64,"zero":3,"recipe":"nv-mxfp8","seqLen":32768}
+    ]'></dsv3-memory>
+    <ul>
+      <li><b>Replication is dead on arrival</b> (7.5 TB, 27× over) and <b>ZeRO-1 alone barely helps</b>
+        (3.1 TB): replicated weights + gradients are the wall. Something must shard the weights.</li>
+      <li><b>EP is weight sharding.</b> ZeRO-1 + EP64 fits (~186 GB) with no FSDP machinery at all — sharding
+        the experts 64 ways removes 97% of the parameter problem. FSDP without EP also fits (~134 GB) but
+        pays a 65 GB working set gathering whole MoE layers; FSDP + EP64 is comfortable (~75 GB).</li>
+      <li><b>Recompute is optional on GB300 without PP</b>: stash-everything is ~107 GB, since only one
+        microbatch is ever live; mbs = 4 with selective recompute is ~171 GB. Context length is the non-PP
+        wall: seq 32k lands at ~298 GB — just over the line.</li>
+      <li><b>The hardware rows are closer than they used to be.</b> The 75 GB config fits an 80 GB H800 too —
+        barely, and only with selective recompute (stash-everything is 107 GB, dead on Hopper). At 256 GPUs,
+        parameter state alone is ~32 GB with FSDP+EP (~21 GB of it optimizer), so an H800 lives within ~5 GB
+        of its life; <b>on GB300 the same config leaves 200+ GB of headroom</b> — room for bigger
+        microbatches, longer context, or skipping recompute entirely. That headroom is the finding, and it is
+        why the timing sections, not memory, will pick the GB300 config.</li>
+    </ul>
+
+    <h3>Analysis B — with pipeline</h3>
+    <p>PP changes both sides of the ledger. It divides parameter state by <i>pp</i>. But under 1F1B, stage
+      <i>s</i> must hold <i>min(pp−s, m)</i> microbatches of forward stashes, so the early stages hold up to
+      <i>pp</i>× more activations — while owning <i>pp</i>× fewer layers. The product is nearly invariant:
+      <i>layers/pp × pp ≈ layers</i>. <b>PP redistributes activations; it only truly shrinks parameters.</b></p>
+    <dsv3-memory id="memB" configs='[
+      {"label":"PP16 · EP16 · ZeRO-1","note":"selective recompute","pp":16,"ep":16,"zero":1,"recipe":"nv-mxfp8"},
+      {"label":"PP16 · EP16 · ZeRO-1","note":"no recomputation","pp":16,"ep":16,"zero":1,"recipe":"nv-mxfp8","recompute":"none"},
+      {"label":"PP16 · EP16 · ZeRO-1, mbs=4","note":"no recompute — 15 microbatches in flight × mbs 4","pp":16,"ep":16,"zero":1,"recipe":"nv-mxfp8","recompute":"none","mbs":4},
+      {"label":"PP16 · EP16 — on H800","note":"selective recompute, 80 GB part","hardware":"h800","pp":16,"ep":16,"zero":1,"recipe":"nv-mxfp8"}
+    ]'></dsv3-memory>
+    <ul>
+      <li>On GB300 at mbs = 1 the watermark is a wash with the best non-PP config (~74 GB either way): the
+        parameter savings and the in-flight activation multiplier cancel almost exactly.</li>
+      <li>No-recompute still fits (~106 GB); mbs = 4 without recompute does not (~289 GB) — with PP the
+        activation side reacts 15× faster to every microbatch/sequence-length decision.</li>
+      <li>On 256 H800s, PP16 + selective recompute fits at ~74/80 GB — the same near-the-edge story as
+        non-PP, with no extra margin bought by the pipeline: PP’s parameter savings went to the in-flight
+        activations. Skipping recompute (106 GB) is GB300-only either way.</li>
+    </ul>
+    <p><b>Survivors so far, on 256 × GB300:</b> memory eliminates replication and bare ZeRO-1 — and almost
+      nothing else. Non-PP (FSDP or ZeRO-1, with EP) and every reasonable PP · EP with selective recompute
+      all fit with 200+ GB of headroom; even an H800 squeaks by at ~74/80 GB once recompute is on. Memory is
+      not the discriminator at this scale; what it buys GB300 is <em>slack</em> — bigger microbatches, longer
+      context, no recompute — and the timing sections will decide what that slack is worth.</p>
+
+    <h3 id="sandbox">Sandbox — one config: block, memory, profile</h3>
+    <p>Everything here is linked. The transformer-block schematic sets each matmul’s precision and each op’s
+      save 💾 / recompute ↻ mark; the controls set hardware, parallelism and schedule; every simulated effect
+      toggles independently. All of it drives both outputs at once: the memory watermark and the simulated
+      profile for the same configuration. Start from the non-PP survivor and walk it toward PP16, push
+      seqLen/mbs until the bar goes red, try <code>globalBatch: 30720</code> (m = 120 at dp 256, the real run's depth), H800 with only <i>expert a2a</i>
+      on, <code>granularity: op</code> zoomed into a single MoE layer, or <code>dpRanksToSim: 4</code> with
+      jitter on.</p>
+    <dsv3-layer for="mem-sand trace-sand" recipe="nv-mxfp8"></dsv3-layer>
+    <dsv3-controls for="mem-sand trace-sand" toggles
+      fields="hardware,dtype,pp,ep,dp,zero,granularity,seqLen,globalBatch,dpRanksToSim,seed"
+      values='{"pp":1,"ep":64,"dp":256,"globalBatch":6144}'></dsv3-controls>
+    <dsv3-memory id="mem-sand" configs='[{"label":"your config","note":"watermark at the worst stage","recipe":"nv-mxfp8"}]'></dsv3-memory>
+    <dsv3-trace id="trace-sand" level="1" height="380" title="your config — simulated profile"></dsv3-trace>
+    <p class="note">Every trace widget carries the memory verdict in its caption; anything red cannot exist.
+      Recompute marks now charge <em>time</em> too: each op marked ↻ replays its forward during backward
+      (the "recompute (fwd replay)" slices in the trace; under full checkpointing the a2a replays as well).
+      Precision currently drives memory (and soon rooflines); the trace’s kernel timings still use the
+      coarse dtype knob.</p>
+
+    <h2>Checking the estimate against reality</h2>
+    <p>A simulator you can't falsify is a toy. Every widget's <em>⤓ trace.json</em> button and
+      <code>scripts/export.mjs</code> emit standard Chrome trace JSON, and <code>scripts/compare.mjs</code>
+      summarizes any PyTorch-profiler/Kineto trace into the same per-category, per-GPU busy-time budget
+      (GEMM / attention / all-to-all / FSDP collectives / p2p / vector) and prints sim-vs-real ratios:</p>
+    <pre>node scripts/compare.mjs real_rank0_trace.json \
+    --config '{"hardware":"h800","dtype":"mxfp8","microbatches":120}'</pre>
+    <p>Step boundaries come from <code>ProfilerStep#</code> annotations when present. Ratios near 1.0 mean the
+      model explains that category; a big miss tells you which refinement to improve — or which assumption
+      (GEMM efficiency, NIC bandwidth, overlap) your cluster violates.</p>
+
+    <h2>What this doesn't model (yet)</h2>
+    <ul>
+      <li>DualPipe / a2a–compute overlap — the fix for the exposed all-to-all, and the most interesting
+        upcoming refinement.</li>
+      <li>Output-form RMSNorm backward (running off the norm's output + rstd — the trick that gets the
+        residual stash down to one copy per layer), MTP module, optimizer EMA copies.</li>
+      <li>Critical-path stitching across all ranks (we show representative ranks; with stragglers the
+        interesting view is "the ranks that must speed up for the step to speed up").</li>
+      <li>Interleaved/virtual pipeline stages, network congestion.</li>
+    </ul>
+
+    <h2>Studies (workbench)</h2>
+    <p>Before a refinement lands in the essay, we reproduce each major worked configuration we know about and
+      cross-check the model against it, both directions. Not wired into the essay text — these are where the
+      numbers get earned:</p>
+    <ul>
+      <li><a href="../studies/01-hopper-memory.html">Study 01 — a DSv3-family MoE on 2048 Hopper GPUs</a> (PP8 · EP64, FP8 tile scaling, attn-replay recompute) — the memory story and the DualPipe in-flight ÷2.</li>
+      <li><a href="../studies/02-nvidia-mlperf-gb300.html">Study 02 — NVIDIA's MLPerf 6.0 256×GB300
+        submission</a> (PP2 · EP32, MXFP8 incl. FP8 attention, fp8 parameter gather, <em>no</em> activation
+        checkpointing) — per-stash precision accounting asserted; 140/288 GB watermark; timing anchors for
+        the upcoming timing sections.</li>
+    </ul>
+  </main>
+  <script type="module" src="../src/essay.js"></script>
+</body>
+
+</html>

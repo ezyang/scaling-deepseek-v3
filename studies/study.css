@@ -1,0 +1,13 @@
+:root { color-scheme: light; }
+    body { font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; color: #0b0b0b; background: #f9f9f7; margin: 0; }
+    main { max-width: 980px; margin: 0 auto; padding: 32px 20px 120px; }
+    h1 { font-size: 24px; line-height: 1.25; margin: 8px 0 4px; }
+    h2 { font-size: 18px; margin: 36px 0 8px; }
+    p, li { max-width: 760px; color: #1c1c1a; }
+    .sub, .note { color: #52514e; font-size: 13.5px; }
+    code { font: 13px ui-monospace, Menlo, monospace; background: #f3f2ee; border-radius: 4px; padding: 1px 5px; }
+    table.xcheck { border-collapse: collapse; font-size: 13.5px; margin: 12px 0; width: 100%; }
+    .xcheck th, .xcheck td { text-align: left; padding: 5px 12px 5px 0; border-bottom: 1px solid #e1e0d9; font-variant-numeric: tabular-nums; vertical-align: top; }
+    .xcheck th { color: #52514e; font-weight: 600; }
+    .xcheck .note { font-size: 12px; }
+    dsv3-memory { display: block; margin: 14px 0; }
