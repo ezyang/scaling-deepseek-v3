@@ -4,8 +4,9 @@
 // match the visible ordinal (post N of M).
 export const SERIES = [
   { href: '01-deepseek-diagram.html', title: 'The DSv3 block diagram: what it shows and why' },
-  { href: '02-hopper-memory.html', title: 'A DSv3-family MoE on 2048 H100s: memory' },
-  { href: '03-nvidia-mlperf-gb300.html', title: 'NVIDIA’s MLPerf 6.0 submitted configuration (256 × GB300)' },
+  // published incrementally — uncomment as posts go live (keep in step with index.html's list)
+  // { href: '02-hopper-memory.html', title: 'A DSv3-family MoE on 2048 H100s: memory' },
+  // { href: '03-nvidia-mlperf-gb300.html', title: 'NVIDIA’s MLPerf 6.0 submitted configuration (256 × GB300)' },
 ];
 
 const i = SERIES.findIndex(p => location.pathname.endsWith('/' + p.href));
