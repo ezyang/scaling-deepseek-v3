@@ -80,6 +80,25 @@ const actsBf16 = Object.values(actBreakdownPerToken('moe', DSV3, 'selective', re
 check('fp8 recipe shrinks stashes vs bf16', acts[1] < actsBf16,
   `${(acts[1] / 1024).toFixed(0)} < ${(actsBf16 / 1024).toFixed(0)} KB/tok`);
 
+// ---- block-graph invariants (attn-replay policy, router state, vocab split) -----
+const { blockGraph, analyze, RECOMPUTE_PRESETS } = await import('../src/blockgraph.js');
+const mmFp8 = resolveMatmuls({ recipe: 'dsv3-fp8' });
+const ar = analyze(blockGraph('moe', DSV3, mmFp8, 4096), RECOMPUTE_PRESETS['attn-replay']);
+check('attn-replay stashes only {x0, norm2, dispatch, gate_up, router}',
+  [...ar.neededSaved].sort().join(',') === 'dispatch,gate_up,norm2,router,x0',
+  [...ar.neededSaved].sort().join(','));
+check('attn-replay replays the whole MLA path (incl. residual add)',
+  ['norm1', 'qkv_down', 'q_up', 'kv_up', 'attn', 'o_proj', 'x1'].every(id => ar.replayed.has(id)),
+  `replay +${(ar.replayFrac * 100).toFixed(0)}% of fwd FLOPs`);
+const routerNode = blockGraph('moe', DSV3, mmFp8, 4096).find(n => n.id === 'router');
+check('router stash is the full retention set (~2.1 KiB/tok)',
+  routerNode.outBytes === 4 * (2 * DSV3.routedExperts + 4 * DSV3.topk),
+  `${(routerNode.outBytes / 1024).toFixed(2)} KiB/tok`);
+const vs = mem({ pp: 4, ep: 16, zero: 1, recompute: 'selective' }).perStage;
+check('vocab weights split: pp0/last only, grads follow',
+  vs[0].vocab > 0 && vs[1].vocab === 0 && vs.at(-1).vocab > 0 && vs[0].vocabGrads > 0 && vs[1].vocabGrads === 0,
+  `pp0 ${vs[0].vocab.toFixed(1)} + g${vs[0].vocabGrads.toFixed(1)} GiB, mid 0`);
+
 // ---- individual refinement toggles & ZeRO variants ------------------------------
 const z1 = simulate({ level: 4, zero: 1 });
 const names = new Set();

@@ -2,12 +2,15 @@
 // hover tooltips, click select, M marks, F focuses. Embeddable many times per
 // page via the <dsv3-trace> custom element or the TraceViewer class.
 
-import { fmtUs, fmtNum } from './model.js';
+import { fmtUs, fmtNum, DSV3 } from './model.js';
 import { simulate, LEVELS, defaultConfig } from './sim.js';
 import { memoryUsage, resolveMatmuls, MATMULS, RECIPES } from './memory.js';
 import { blockGraph, analyze, RECOMPUTE_PRESETS } from './blockgraph.js';
-import { DSV3 } from './model.js';
 import { downloadTrace, openInPerfetto } from './trace.js';
+
+// shared light-card tooltip style (trace, memory bars, schematic)
+const TIP_CARD = 'position: absolute; pointer-events: none; background: #fff; color: #1c1c1a; padding: 6px 9px;' +
+  ' border: 1px solid #c3c2b7; border-radius: 5px; display: none; box-shadow: 0 2px 10px rgba(11,11,11,0.12);';
 
 // Validated categorical palette (dataviz skill, light surface #fcfcfb).
 export const CATS = {
@@ -39,9 +42,7 @@ const CSS = `
 .tv-legend i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
 .tv-wrap { position: relative; }
 .tv canvas { display: block; outline: none; }
-.tv-tip { position: absolute; pointer-events: none; background: #fff; color: #1c1c1a; padding: 6px 9px;
-  border: 1px solid #c3c2b7; border-radius: 5px; font-size: 11px; max-width: 340px; z-index: 5;
-  display: none; line-height: 1.45; box-shadow: 0 2px 10px rgba(11,11,11,0.12); }
+.tv-tip { ${TIP_CARD} font-size: 11px; max-width: 340px; z-index: 5; line-height: 1.45; }
 .tv-tip b { color: #0b0b0b; }
 .tv-foot { padding: 3px 8px; border-top: 1px solid #e1e0d9; color: #52514e; font-size: 11px;
   min-height: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -473,9 +474,7 @@ const MEM_CSS = `
 .mv { font: 12px system-ui, -apple-system, "Segoe UI", sans-serif; color: #0b0b0b;
   border: 1px solid #e1e0d9; border-radius: 6px; background: #fcfcfb; padding: 8px 10px;
   position: relative; }
-.mv-tip { position: absolute; pointer-events: none; background: #fff; color: #1c1c1a; padding: 6px 9px;
-  border: 1px solid #c3c2b7; border-radius: 5px; font-size: 11px; max-width: 320px; z-index: 5;
-  display: none; line-height: 1.45; white-space: nowrap; box-shadow: 0 2px 10px rgba(11,11,11,0.12); }
+.mv-tip { ${TIP_CARD} font-size: 11px; max-width: 320px; z-index: 5; line-height: 1.45; white-space: nowrap; }
 .mv-tip b { color: #0b0b0b; }
 .mv-legend { display: flex; gap: 12px; flex-wrap: wrap; color: #52514e; font-size: 11px; padding-bottom: 8px; }
 .mv-legend span { display: inline-flex; align-items: center; gap: 4px; }
@@ -647,9 +646,7 @@ const LAYER_CSS = `
 dsv3-layer { display: block; margin: 14px 0 26px; }
 .lv { font: 12px system-ui, -apple-system, "Segoe UI", sans-serif; color: #0b0b0b;
   border: 1px solid #e1e0d9; border-radius: 6px; background: #fcfcfb; padding: 10px 12px; position: relative; }
-.lv-tip { position: absolute; pointer-events: none; background: #fff; color: #1c1c1a; padding: 6px 9px;
-  border: 1px solid #c3c2b7; border-radius: 5px; font-size: 11.5px; max-width: 360px; z-index: 7;
-  display: none; line-height: 1.5; white-space: pre-line; box-shadow: 0 2px 10px rgba(11,11,11,0.12); }
+.lv-tip { ${TIP_CARD} font-size: 11.5px; max-width: 360px; z-index: 7; line-height: 1.5; white-space: pre-line; }
 .lv-tip.pinned { border-color: #eda100; box-shadow: 0 2px 10px rgba(237,161,0,0.3); }
 .lv-head { display: flex; align-items: center; gap: 8px; padding-bottom: 6px; color: #52514e; flex-wrap: wrap; }
 .lv-head select { font: 12px system-ui; padding: 2px 6px; border: 1px solid #c3c2b7; border-radius: 4px; background: #fff; }
@@ -738,8 +735,16 @@ export class Dsv3Layer extends HTMLElement {
     for (const name of Object.keys(RECIPES)) {
       const o = document.createElement('option'); o.value = o.textContent = name; preset.append(o);
     }
-    preset.value = this.getAttribute('recipe') ?? 'nv-mxfp8';
+    // recognize the current matmul dtypes as a recipe (dtype buttons may have
+    // moved us off the attribute's preset), else show "custom"
+    const mmKey = (m) => MATMULS.map(x => m[x.id]).join(',');
+    const curRecipe = Object.keys(RECIPES).find(k => mmKey(resolveMatmuls({ recipe: k })) === mmKey(this.matmuls));
+    preset.value = curRecipe ?? 'bf16';
+    if (!curRecipe) {
+      const o = document.createElement('option'); o.value = o.textContent = 'custom'; o.selected = true; preset.append(o);
+    }
     preset.onchange = () => {
+      if (preset.value === 'custom') return;
       this.setAttribute('recipe', preset.value);
       this.matmuls = resolveMatmuls({ recipe: preset.value });
       this.render(); this.changed();
