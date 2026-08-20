@@ -4,16 +4,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Study 01 — a DSv3-family MoE on 2048 Hopper GPUs: memory</title>
+  <title>A DSv3-family MoE on 2048 H100s: memory</title>
   <link rel="stylesheet" href="./study.css">
 </head>
 
 <body>
   <main>
-    <h1>Study 01 — a DSv3-family MoE on 2048 Hopper GPUs: memory</h1>
-    <p class="sub">Part of a series of worked configurations. See also study
-      <a href="./02-nvidia-mlperf-gb300.html">02: the NVIDIA MLPerf 6.0 256×GB300 configuration</a>,
-      and the <a href="../index.html">landing page</a> for the sandbox with every widget.</p>
+    <h1>A DSv3-family MoE on 2048 H100s: memory</h1>
+    <p class="sub">Does it even fit on 80 GB — and what the aggressive recompute policy buys and costs.</p>
 
     <p><b>Configuration.</b> A <b>288-routed-expert DSv3-family variant</b> (62 MoE layers — modeled
       all-sparse, a simplification; the real family stacks 3 dense blocks first, see the structure widget
@@ -65,6 +63,7 @@
   </main>
   <script type="module">
     import '../src/viewer.js';
+    import './series.js';
     import { CFG_OVERRIDES, VARIANT_ARCH, inventory } from './01-hopper-memory.js';
     // per-rank inventory table (our model's numbers)
     const { mid, first, last, capacityGB } = inventory();

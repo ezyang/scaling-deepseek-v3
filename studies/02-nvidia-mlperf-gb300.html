@@ -4,17 +4,15 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Study 02 — NVIDIA MLPerf 6.0, 256×GB300</title>
+  <title>NVIDIA’s MLPerf 6.0 submitted configuration (256 × GB300)</title>
   <link rel="stylesheet" href="./study.css">
 </head>
 
 <body>
   <main>
-    <h1>Study 02 — NVIDIA MLPerf 6.0 submitted configuration (256 × GB300)</h1>
-    <p class="sub">Part of a series of worked configurations. Study
-      <a href="./01-hopper-memory.html">01</a> covered a DSv3-family MoE on 2048 Hopper GPUs; this one covers
-      NVIDIA's submitted 256-GPU GB300 configuration, which matches the published NeMo/Megatron-Bridge 26.06
-      recipe we use as our calibration anchor.</p>
+    <h1>NVIDIA’s MLPerf 6.0 submitted configuration (256 × GB300)</h1>
+    <p class="sub">NVIDIA's submitted 256-GPU GB300 configuration, which matches the published
+      NeMo/Megatron-Bridge 26.06 recipe we use as our calibration anchor.</p>
 
     <p><b>Configuration:</b> 256 × GB300, TP1 · PP2 (×8 virtual stages) · EP32 · CP1, mbs 1, seq 4096,
       GBS 4096 sequences → dp 128, m = 32 microbatches/step. Published result:
@@ -54,6 +52,7 @@
   </main>
   <script type="module">
     import '../src/viewer.js';
+    import './series.js';
     import { crossCheck } from '../src/study.js';
     import { computeStudy, CFG_OVERRIDES } from './02-nvidia-mlperf-gb300.js';
     const { counts, precision, memory, timing } = computeStudy();

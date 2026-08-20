@@ -4,17 +4,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Study 00 — the DSv3 block diagram: what it shows and why</title>
+  <title>The DSv3 block diagram: what it shows and why</title>
   <link rel="stylesheet" href="./study.css">
 </head>
 
 <body>
   <main>
-    <h1>Study 00 — the DSv3 block diagram: what it shows and why</h1>
-    <p class="sub">The one widget every other page leans on, on its own, with the reasoning behind it. See
-      also study <a href="./01-hopper-memory.html">01: a DSv3-family MoE on 2048 Hopper GPUs</a>, study
-      <a href="./02-nvidia-mlperf-gb300.html">02: the NVIDIA MLPerf 6.0 256×GB300 configuration</a>, and the
-      <a href="../index.html">landing page</a> for the sandbox with every widget linked together.</p>
+    <h1>The DSv3 block diagram: what it shows and why</h1>
+    <p class="sub">The one widget every other page leans on, on its own, with the reasoning behind it.</p>
 
     <p>This diagram is not an illustration of a DeepSeek-V3 transformer block. It is the <b>input surface</b>
       for the memory and roofline models: the precision of every GEMM and the save-vs-recompute mark on every
@@ -169,6 +166,7 @@
   </main>
   <script type="module">
     import '../src/viewer.js';
+    import './series.js';
   </script>
 </body>
 

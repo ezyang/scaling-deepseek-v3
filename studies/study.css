@@ -11,3 +11,17 @@
     .xcheck th { color: #52514e; font-weight: 600; }
     .xcheck .note { font-size: 12px; }
     dsv3-memory { display: block; margin: 14px 0; }
+
+/* series navigation (injected by series.js) */
+.series-strip { font-size: 13px; color: #52514e; margin: 0 0 6px; }
+.series-strip a { color: inherit; }
+.series-nav { display: flex; gap: 12px; margin-top: 48px; border-top: 1px solid #e1e0d9; padding-top: 16px; }
+.series-nav .card { flex: 1; border: 1px solid #e1e0d9; border-radius: 8px; padding: 10px 14px;
+  text-decoration: none; color: #1c1c1a; background: #fff; display: flex; flex-direction: column;
+  gap: 2px; min-width: 0; }
+.series-nav a.card:hover { border-color: #c3c2b7; box-shadow: 0 1px 6px rgba(11,11,11,0.06); }
+.series-nav .card small { color: #898781; font-size: 12px; }
+.series-nav .card b { font-size: 14px; line-height: 1.35; font-weight: 600; }
+.series-nav .next { text-align: right; align-items: flex-end; }
+.series-nav .empty { border: none; background: none; }
+.series-nav .up { flex: 0 0 auto; justify-content: center; text-align: center; }
