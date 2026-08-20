@@ -1169,11 +1169,12 @@ export class Dsv3Layer extends HTMLElement {
       };
       halfBox('q_up', C1); halfBox('kv_up', C1 + 150); y += 60;
       if (DET) {
-        // RoPE rotations the terse view fuses away; the k_pe bypass wire shows
-        // the 64 rope dims skipping the up-projection entirely
-        micro('RoPE (q_pe, 128×64)', C1, y, 140);
-        micro('RoPE (k_pe, 64)', C1 + 150, y, 132);
-        P.push(`<path class="wire" d="M ${bypX} ${bypTop} L ${bypX} ${y + 9} L ${C1 + 285} ${y + 9}" marker-end="url(#arr)"/>`);
+        // ONE fused RoPE kernel rotates q_pe and k_pe together (fp32), and the
+        // adjacent concats materialize Q and K; the bypass wire shows the 64
+        // rope dims skipping the up-projection entirely. Placed before the
+        // chips: what backward stashes is the rotated, concatenated q/k/v.
+        micro('RoPE (q_pe, k_pe — one fp32 kernel) · concat Q, K', C1, y, W);
+        P.push(`<path class="wire" d="M ${bypX} ${bypTop} L ${bypX} ${y + 9} L ${C1 + W + 1} ${y + 9}" marker-end="url(#arr)"/>`);
         y += 18;
       }
       tensorChip(['q_up'], SX1 + 14, y + 4);
