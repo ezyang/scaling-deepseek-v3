@@ -870,10 +870,12 @@ export class Dsv3Layer extends HTMLElement {
           'right arrows are aux backward artifacts (rstd, lse).',
       this._ctl.marks ? 'Marking an op \u21bb forces the outputs it reads to stay saved.' : '',
       this.detail ? 'Small italic boxes are kernels the terse view folds away \u2014 cheap vector/permute ops with no marks of their own (negligible FLOPs and bytes).' : '',
-      (this._ctl.quant
-        ? `Shared expert${this.hasAttribute('block-only') ? '' : ' + dense MLPs'} follow${this.hasAttribute('block-only') ? 's' : ''} the ffn choices`
-        : `The shared expert${this.hasAttribute('block-only') ? ' shares' : ' and dense MLPs share'} the ffn boxes`)
-        + (this.detail ? '.' : `; RoPE is fused into the q/kv paths${this._ctl.quant ? ' and always recomputed' : ''} (negligible).`),
+      this.detail
+        ? (this._ctl.quant ? 'The shared expert follows the grouped ffn boxes\u2019 mark and dtype; its FLOPs are counted in their strips.' : '')
+        : (this._ctl.quant
+          ? `Shared expert${this.hasAttribute('block-only') ? '' : ' + dense MLPs'} follow${this.hasAttribute('block-only') ? 's' : ''} the ffn choices`
+          : `The shared expert${this.hasAttribute('block-only') ? ' shares' : ' and dense MLPs share'} the ffn boxes`)
+          + `; RoPE is fused into the q/kv paths${this._ctl.quant ? ' and always recomputed' : ''} (negligible).`,
       !this._ctl.quant ? '' :
       'The block strip inside each op is its FLOP cost as time at peak, scaled so the block\u2019s largest op fills one row (' +
       'mxfp8 counted half \u2014 2\u00d7 peak; fp32 counted double \u2014 half peak; dtype colors here and on the saved-tensor tags: blue mxfp8, dark bf16, plum fp32); ' +
@@ -906,7 +908,7 @@ export class Dsv3Layer extends HTMLElement {
     // Aux backward artifacts (rstd, lse) exit each box to the RIGHT — always saved.
     const W = 290, C1 = 60, C2 = 512;
     const SX1 = C1 + 22, SX2 = C2 + 22, RAIL1 = C1 - 26;
-    const WIDTH = C2 + W + 180; // right margin fits the aux labels (rstd/lse) in combined view
+    const WIDTH = C2 + W + (this.detail ? 200 : 180); // right margin fits aux labels (+ shared column in detail)
     const dt = (id) => this.matmuls[id];
     const marks = this._ctl.quant ? this.marks : {};   // static: save everything
     const state = (id) => {
@@ -1045,8 +1047,8 @@ export class Dsv3Layer extends HTMLElement {
       const rows = Math.ceil(Math.max(1, Math.round(worst / 1024 / 4)) / 16);
       return 12 + rows * 6 + 2;
     };
-    const wireOut = (ids, sx, y) => {
-      tensorChip(ids, sx + 14, y + 4);
+    const wireOut = (ids, sx, y, ov) => {
+      tensorChip(ids, sx + 14, y + 4, ov);
       const gap = Math.max(22, chipSpace(ids) + 10);
       wire(sx, y, y + gap);
       return y + gap;
@@ -1187,7 +1189,7 @@ export class Dsv3Layer extends HTMLElement {
         // adjacent concats materialize Q and K; the bypass wire shows the 64
         // rope dims skipping the up-projection entirely. Placed before the
         // chips: what backward stashes is the rotated, concatenated q/k/v.
-        micro('RoPE (q_pe, k_pe — one fp32 kernel) · concat Q, K', C1, y, W);
+        micro('RoPE (q_pe, k_pe) · materialize Q, K, V contiguous', C1, y, W);
         P.push(`<path class="wire" d="M ${bypX} ${bypTop} L ${bypX} ${y + 9} L ${C1 + W + 1} ${y + 9}" marker-end="url(#arr)"/>`);
         y += 18;
       }
@@ -1219,13 +1221,49 @@ export class Dsv3Layer extends HTMLElement {
     const midX = (C1 + W + C2) / 2 + 40;
 
     // ---- column 2: MoE ----
+    const nExp = DSV3.topk + DSV3.sharedExperts;   // grouped boxes carry topk/nExp, shared 1/nExp
     let z = 16;
     z = opNode('norm2', 'RMSNorm', C2, z);
-    z = wireOut(['norm2'], SX2, z);
+    let shBot = 0;
+    const SHX = C2 + 320, shMid = SHX + 132;       // shared-expert mini column; spine on its right edge, clear of chip text
+    if (!DET) {
+      z = wireOut(['norm2'], SX2, z);
+    } else {
+      // the shared expert runs on EVERY token as its own plain GEMMs (not part
+      // of the grouped expert GEMMs) — fork norm2-out into a parallel path
+      tensorChip(['norm2'], SX2 + 14, z + 4);
+      const nGap = Math.max(38, chipSpace(['norm2']) + 20);
+      wire(SX2, z, z + nGap);
+      const shTop = z + nGap - 10;
+      let sy = shTop + 18;
+      P.push(`<circle cx="${SX2}" cy="${shTop}" r="2.5" fill="#898781"/>` +
+        `<path class="wire" d="M ${SX2} ${shTop} L ${shMid} ${shTop} L ${shMid} ${sy}" marker-end="url(#arr)"/>` +
+        `<text class="grplabel" x="${SHX}" y="${shTop - 4}">shared expert (every token)</text>`);
+      const shBox = (name, dims, tip) => {
+        P.push(`<g data-tip="${escAttr(tip)}">` +
+          `<rect class="box" x="${SHX}" y="${sy}" width="140" height="34" rx="4"/>` +
+          `<text class="name" x="${SHX + 6}" y="${sy + 14}">${name}</text>` +
+          `<text class="dims" x="${SHX + 6}" y="${sy + 27}">${dims}</text></g>`);
+        sy += 34;
+      };
+      const shWire = (h2) => { wire(shMid, sy, sy + h2); sy += h2; };
+      shBox('shared fc1', '7168 → 2×2048',
+        'one plain GEMM per token — follows the ffn gate/up mark and dtype (its FLOPs are counted in the grouped strip)');
+      tensorChip(['gate_up'], SHX + 6, sy + 3, { name: 'gate, up (sh)', tdims: '2×2048', frac: 1 / nExp });
+      shWire(26);
+      sy = micro('SwiGLU (ungated)', SHX, sy, 140);
+      tensorChip(['swiglu'], SHX + 6, sy + 3, { name: 'swiglu out (sh)', tdims: '2048', frac: 1 / nExp });
+      shWire(26);
+      shBox('shared fc2', '2048 → 7168',
+        'one plain GEMM per token — follows the ffn down mark and dtype; its output joins the final residual add');
+      tensorChip(['ffn_down'], SHX + 6, sy + 3, { name: 'shared out', tdims: '7168', frac: 1 / nExp });
+      shBot = sy;
+      z += nGap;
+    }
     z = mmBox(['router'], C2, z);
     const gateX = C2 + 296;                    // gate-weights bypass rail, right of the expert boxes
     let gateTop = 0;
-    if (DET) z = micro('sigmoid · top-k select · normalize', C2, z);
+    if (DET) z = micro('sigmoid · group-limited top-k · scale', C2, z);
     if (!DET) {
       z = wireOut(['router'], SX2, z);
     } else {
@@ -1241,27 +1279,27 @@ export class Dsv3Layer extends HTMLElement {
         `<text class="tensor tidle" x="${SX2 + 34}" y="${gateTop - 4}">gate weights · 8</text>`);
       z += rGap;
     }
-    if (DET) { z = micro('permute — group tokens by expert', C2, z); wire(SX2, z, z + 14); z += 14; }
-    z = opNode('dispatch', 'a2a dispatch → EP group', C2, z, 'comm');
+    z = opNode('dispatch', DET ? 'a2a dispatch (permute + comm) → EP group' : 'a2a dispatch → EP group', C2, z, 'comm');
     z = wireOut(['dispatch'], SX2, z);
     const g2 = z + 3; z += 21;
-    z = mmBox(['ffn_gate_up'], C2, z, ['gate_up']);
-    z = wireOut(['gate_up'], SX2, z);
+    z = mmBox(['ffn_gate_up'], C2, z, ['gate_up'], DET ? 'ffn gate/up (grouped ×8)' : undefined);
+    z = wireOut(['gate_up'], SX2, z, DET ? { name: 'gate, up (routed)', tdims: `${DSV3.topk}×2×2048`, frac: DSV3.topk / nExp } : undefined);
     // gate-at-swiglu, not gate-at-combine: by linearity the router weights can
     // multiply the swiglu output before the down-proj (one fused kernel,
     // AMAIA's swiglu_and_scale) — this is what makes the expert outputs a pure
     // intermediate instead of a stash for the combine's backward
     if (DET) P.push(`<path class="wire" d="M ${gateX} ${gateTop} L ${gateX} ${z + 13} L ${C2 + W + 1} ${z + 13}" marker-end="url(#arr)"/>`);
     z = opNode('swiglu', DET ? 'SwiGLU · × gate (one fused kernel)' : 'SwiGLU', C2, z);
-    z = wireOut(['swiglu'], SX2, z);
-    z = mmBox(['ffn_down'], C2, z);
-    grp(C2, g2, z + 5, 'experts: top-8 of 256 routed + 1 shared');
+    z = wireOut(['swiglu'], SX2, z, DET ? { name: 'swiglu out (routed)', tdims: `${DSV3.topk}×2048`, frac: DSV3.topk / nExp } : undefined);
+    z = mmBox(['ffn_down'], C2, z, undefined, DET ? 'ffn down (grouped ×8)' : undefined);
+    grp(C2, g2, z + 5, DET ? 'routed experts: top-8 of 256 — grouped GEMMs' : 'experts: top-8 of 256 routed + 1 shared');
     z = wireOut(['ffn_down'], SX2, z + 5);
-    z = opNode('combine', DET ? 'a2a combine' : 'a2a combine (weighted by router)', C2, z, 'comm');
-    if (DET) z = micro('unpermute · sum top-8 copies', C2, z);
+    z = opNode('combine', DET ? 'a2a combine (comm + unpermute · sum)' : 'a2a combine (weighted by router)', C2, z, 'comm');
     z = wireOut(['combine'], SX2, z);
     z += 13;
     plus(SX2, z);
+    // shared-expert output joins the final add (add_shared_and_residual)
+    if (DET && shBot) P.push(`<path class="wire" d="M ${shMid} ${shBot} L ${shMid} ${z} L ${SX2 + 11} ${z}" marker-end="url(#arr)"/>`);
     // block output: a short down arrow out of the second residual add (= the next block's x0)
     P.push(`<line class="wire" x1="${SX2}" y1="${z + 9}" x2="${SX2}" y2="${z + 26}" marker-end="url(#arr)"/>` +
       `<text class="tensor tidle" x="${SX2 + 8}" y="${z + 24}">x2</text>`);
