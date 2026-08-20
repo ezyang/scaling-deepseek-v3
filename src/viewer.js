@@ -1296,7 +1296,9 @@ export class Dsv3Layer extends HTMLElement {
     z = wireOut(['ffn_down'], SX2, z + 5);
     z = opNode('combine', DET ? 'a2a combine (comm + unpermute · sum)' : 'a2a combine (weighted by router)', C2, z, 'comm');
     z = wireOut(['combine'], SX2, z);
-    z += 13;
+    // keep the x2 add below column 1's residual box + x1 chip, so the
+    // x1 → x2 rail turns right in clear space instead of crossing them
+    z = Math.max(z + 13, col1End - 4);
     plus(SX2, z);
     // shared-expert output joins the final add (add_shared_and_residual)
     if (DET && shBot) P.push(`<path class="wire" d="M ${shMid} ${shBot} L ${shMid} ${z} L ${SX2 + 11} ${z}" marker-end="url(#arr)"/>`);
