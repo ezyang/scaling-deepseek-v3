@@ -735,8 +735,13 @@ export class Dsv3Layer extends HTMLElement {
     this.innerHTML = '';
     const style = document.createElement('style'); style.textContent = LAYER_CSS;
     const root = el('div', 'lv');
+    // progressive disclosure: controls="static|marks|dtype|full" gates which
+    // controls are rendered (the diagram and its derived annotations always draw)
+    const cmode = this.getAttribute('controls') ?? 'full';
+    this._ctl = { marks: cmode === 'full' || cmode === 'marks', dtype: cmode === 'full' || cmode === 'dtype' };
     const head = el('div', 'lv-head');
-    head.append('DSv3 block · precision: ');
+    head.append('DSv3 block');
+    if (this._ctl.dtype) head.append(' · precision: ');
     const preset = document.createElement('select');
     for (const name of Object.keys(RECIPES)) {
       const o = document.createElement('option'); o.value = o.textContent = name; preset.append(o);
@@ -755,7 +760,8 @@ export class Dsv3Layer extends HTMLElement {
       this.matmuls = resolveMatmuls({ recipe: preset.value });
       this.render(); this.changed();
     };
-    head.append(preset, ' · recompute: ');
+    if (this._ctl.dtype) head.append(preset);
+    if (this._ctl.marks) head.append(' · recompute: ');
     const rsel = document.createElement('select');
     for (const name of Object.keys(RECOMPUTE_PRESETS)) {
       const o = document.createElement('option'); o.value = o.textContent = name; rsel.append(o);
@@ -772,7 +778,7 @@ export class Dsv3Layer extends HTMLElement {
       this.marks = { ...RECOMPUTE_PRESETS[rsel.value] };
       this.render(); this.changed();
     };
-    head.append(rsel);
+    if (this._ctl.marks) head.append(rsel);
     head.append(' · view: ');
     const vsel = document.createElement('select');
     for (const [v, t] of [['combined', 'combined'], ['layer', 'per layer']]) {
@@ -814,33 +820,46 @@ export class Dsv3Layer extends HTMLElement {
     tcb.type = 'checkbox'; tcb.checked = this.transposed;
     tcb.onchange = () => { this.transposed = tcb.checked; this.render(); this.changed(); };
     tl.append(tcb, 'fp8ᵀ dual stash');
-    head.append(tl, reset);
+    if (this._ctl.dtype) head.append(tl);
+    head.append(reset);
     const ana = analyze(blockGraph('moe', DSV3, this.matmuls, 4096), this.marks, this.transposed);
-    root.append(head, this.buildSvg(ana));
+    if (cmode !== 'static') root.append(head);
+    root.append(this.buildSvg(ana));
     const note = el('div', 'lv-note');
     const M2 = this.view === 'combined' ? this.dispLayers * this.dispInflight * 4096 : 1;
-    note.textContent = (this.view === 'combined'
-      ? `stashed for backward: ${(ana.savedBytes * M2 / 2 ** 30).toFixed(1)} GB total = ${(ana.savedBytes / 1024).toFixed(0)} KB/token·layer × ${this.dispLayers} layers × ${this.dispInflight} in-flight × 4096 tokens (set layers/in-flight to your PP stage to tally with the memory bars) · `
-      : `stashed for backward: ${(ana.savedBytes / 1024).toFixed(0)} KB/token·layer · `) +
+    const parts = [
+      (this.view === 'combined'
+        ? `stashed for backward: ${(ana.savedBytes * M2 / 2 ** 30).toFixed(1)} GB total = ${(ana.savedBytes / 1024).toFixed(0)} KB/token\u00b7layer \u00d7 ${this.dispLayers} layers \u00d7 ${this.dispInflight} in-flight \u00d7 4096 tokens (set layers/in-flight to your PP stage to tally with the memory bars) \u00b7 `
+        : `stashed for backward: ${(ana.savedBytes / 1024).toFixed(0)} KB/token\u00b7layer \u00b7 `) +
       `backward replays +${(ana.replayFrac * 100).toFixed(0)}% of fwd FLOPs` +
-      (ana.replayComm.length ? ` + a2a ${ana.replayComm.join('+')}` : '') +
-      '. The 💾/↻ button on each op chooses save-output vs recompute-in-backward; the wire below shows the ' +
-      'derived result — ↓ ↑ ⇅ saved for backward, read by the op below / above / both (▪ = 4 KB/token; violet boxes = communication), ' +
-      '↻ recomputed, · not needed, 🔒 always saved; ' +
-      'right arrows are aux backward artifacts (rstd, lse), ← saved unless their op replays. ' +
-      'Marking an op ↻ forces the outputs it reads to stay saved. Shared expert + dense MLPs follow the ffn choices; ' +
-      'RoPE is fused into the q/kv paths and always recomputed (negligible). ' +
+      (ana.replayComm.length ? ` + a2a ${ana.replayComm.join('+')}` : '') + '.',
+      this._ctl.marks
+        ? 'The \ud83d\udcbe/\u21bb button on each op chooses save-output vs recompute-in-backward; the wire below shows the derived result \u2014'
+        : 'Each wire label is an output, tagged with the recompute policy\u2019s derived result \u2014',
+      '\u2193 \u2191 \u21c5 saved for backward, read by the op below / above / both (\u25aa = 4 KB/token; violet boxes = communication), ' +
+      '\u21bb recomputed, \u00b7 not needed, \ud83d\udd12 always saved; ' +
+      'right arrows are aux backward artifacts (rstd, lse), \u2190 saved unless their op replays.',
+      this._ctl.marks ? 'Marking an op \u21bb forces the outputs it reads to stay saved.' : '',
+      'Shared expert + dense MLPs follow the ffn choices; RoPE is fused into the q/kv paths and always recomputed (negligible).',
       'The block strip inside each op is its FLOP cost as time at peak, scaled so the block\u2019s largest op fills one row (' +
-      'mxfp8 counted half — 2× peak; fp32 counted double — half peak; dtype colors here and on the saved-tensor tags: blue mxfp8, dark bf16, plum fp32); ' +
-      'the lm head uses the same scale — per-token vocab work, ' +
-      'independent of depth. Norms/SwiGLU ' +
-      'get a muted fig-leaf block (bandwidth-bound, compute precision unspecified). ' +
-      'The tally at right totals fwd + bwd (2× fwd — dgrad + wgrad; sdpa likewise) + replay — marking ops ↻ grows its replay row. ' +
-      'The fp8ᵀ toggle models Hopper tile-scaled fp8: any fp8 stash a wgrad GEMM reads is kept in both ' +
-      'quantization orientations (ᵀ×2 tags) because per-row scales don’t transpose; MXFP8’s ' +
-      'power-of-two block scales requantize exactly, so Blackwell keeps one.';
+      'mxfp8 counted half \u2014 2\u00d7 peak; fp32 counted double \u2014 half peak; dtype colors here and on the saved-tensor tags: blue mxfp8, dark bf16, plum fp32); ' +
+      'the lm head uses the same scale \u2014 per-token vocab work, independent of depth. Norms/SwiGLU ' +
+      'get a muted fig-leaf block (bandwidth-bound, compute precision unspecified).',
+      this._ctl.dtype ? 'One click on a dtype button cycles bf16 \u2192 mxfp8 \u2192 fp32.' : '',
+      cmode !== 'static'
+        ? 'The tally at right totals fwd + bwd (2\u00d7 fwd \u2014 dgrad + wgrad; sdpa likewise) + replay'
+          + (this._ctl.marks ? ' \u2014 marking ops \u21bb grows its replay row.' : '.')
+        : '',
+      this._ctl.dtype
+        ? 'The fp8\u1d40 toggle models Hopper tile-scaled fp8: any fp8 stash a wgrad GEMM reads is kept in both ' +
+          'quantization orientations (\u1d40\u00d72 tags) because per-row scales don\u2019t transpose; MXFP8\u2019s ' +
+          'power-of-two block scales requantize exactly, so Blackwell keeps one.'
+        : '',
+    ];
+    note.textContent = parts.filter(Boolean).join(' ');
     const foot = el('div', 'lv-foot2');
-    foot.append(note, this._tallySvg);
+    foot.append(note);
+    if (cmode !== 'static') foot.append(this._tallySvg);
     root.append(foot);
     this.attachTip(root);
     this.append(style, root);
@@ -861,12 +880,13 @@ export class Dsv3Layer extends HTMLElement {
       if (this.marks[id] === false) return 'redo';
       return ana.neededSaved.has(id) ? 'save' : 'idle';
     };
-    // one-click precision toggle (bf16 <-> mxfp8)
-    const dtBtn = (id, x, y) =>
+    // one-click precision toggle (bf16 -> mxfp8 -> fp32), hidden below the dtype tier
+    const dtBtn = (id, x, y) => !this._ctl.dtype ? '' :
       `<foreignObject x="${x}" y="${y}" width="52" height="20">` +
       `<button xmlns="http://www.w3.org/1999/xhtml" class="st dtb" data-dt="${id}" style="color:${DT_STYLE[dt(id)]}" ` +
       `title="cycle precision: bf16 / mxfp8 / fp32">${dt(id)}</button></foreignObject>`;
     const modeBtn = (ids, x, y) => {
+      if (!this._ctl.marks) return '';       // hidden below the marks tier
       const st = state(ids[0]);
       if (st === 'pin') return '';
       const redo = this.marks[ids[0]] === false;
