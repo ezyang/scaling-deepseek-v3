@@ -114,11 +114,11 @@ export function memoryUsage(cfg) {
     const shDense = (zero >= 3 ? (p.dense - vocabP) / cfg.dp : p.dense - vocabP);
     const shVocab = zero >= 3 ? vocabP / cfg.dp : vocabP;
     const shExpert = zero >= 3 ? p.expert / dpe : p.expert;
-    const denseB = cfg.weightBytes ?? (2 + attnCopy);
-    const weights = cfg.weightBytes != null
-      ? (shDense + shExpert) * cfg.weightBytes              // explicit bytes/param override
-      : shDense * (2 + attnCopy) + shExpert * (2 + ffnCopy);
-    const vocab = shVocab * denseB;
+    // bytes/param: explicit override, else bf16 working weights + resident low-precision copy
+    const denseBytes = cfg.weightBytes ?? (2 + attnCopy);
+    const expertBytes = cfg.weightBytes ?? (2 + ffnCopy);
+    const weights = shDense * denseBytes + shExpert * expertBytes;
+    const vocab = shVocab * denseBytes;
     const grads = (shDense + shExpert) * gradB;             // accumulators live at the watermark
     const vocabGrads = shVocab * gradB;
     const denseNoV = p.dense - vocabP;
