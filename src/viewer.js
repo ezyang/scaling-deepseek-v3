@@ -703,7 +703,8 @@ export class Dsv3Layer extends HTMLElement {
     // explicit map over every markable op (true = save), so it overrides any
     // recompute preset an authored row config pins
     const allIds = [...new Set([...Object.keys(RECOMPUTE_PRESETS.full), 'x1'])];
-    const savedMap = Object.fromEntries(allIds.map(id => [id, this.marks[id] !== false]));
+    const marksEff = (this.getAttribute('controls') ?? 'full') === 'static' ? {} : this.marks;
+    const savedMap = Object.fromEntries(allIds.map(id => [id, marksEff[id] !== false]));
     const detail = { matmuls: { ...this.matmuls }, saved: savedMap };
     this.dispatchEvent(new CustomEvent('recipe', { detail }));
     // recompute:'none' + explicit marks = exactly this.marks (preset merged already)
@@ -738,7 +739,13 @@ export class Dsv3Layer extends HTMLElement {
     // progressive disclosure: controls="static|marks|dtype|full" gates which
     // controls are rendered (the diagram and its derived annotations always draw)
     const cmode = this.getAttribute('controls') ?? 'full';
-    this._ctl = { marks: cmode === 'full' || cmode === 'marks', dtype: cmode === 'full' || cmode === 'dtype' };
+    // static = pure structure: save-everything semantics, no quantities
+    // (FLOP strips, bytes, grids, dtype tags), no tooltips, minimal caption
+    this._ctl = {
+      marks: cmode === 'full' || cmode === 'marks',
+      dtype: cmode === 'full' || cmode === 'dtype',
+      quant: cmode !== 'static',
+    };
     const head = el('div', 'lv-head');
     head.append('DSv3 block');
     if (this._ctl.dtype) head.append(' · precision: ');
@@ -822,12 +829,14 @@ export class Dsv3Layer extends HTMLElement {
     tl.append(tcb, 'fp8ᵀ dual stash');
     if (this._ctl.dtype) head.append(tl);
     head.append(reset);
-    const ana = analyze(blockGraph('moe', DSV3, this.matmuls, 4096), this.marks, this.transposed);
+    const ana = analyze(blockGraph('moe', DSV3, this.matmuls, 4096),
+      this._ctl.quant ? this.marks : {}, this.transposed);
     if (cmode !== 'static') root.append(head);
     root.append(this.buildSvg(ana));
     const note = el('div', 'lv-note');
     const M2 = this.view === 'combined' ? this.dispLayers * this.dispInflight * 4096 : 1;
     const parts = [
+      !this._ctl.quant ? '' :
       (this.view === 'combined'
         ? `stashed for backward: ${(ana.savedBytes * M2 / 2 ** 30).toFixed(1)} GB total = ${(ana.savedBytes / 1024).toFixed(0)} KB/token\u00b7layer \u00d7 ${this.dispLayers} layers \u00d7 ${this.dispInflight} in-flight \u00d7 4096 tokens (set layers/in-flight to your PP stage to tally with the memory bars) \u00b7 `
         : `stashed for backward: ${(ana.savedBytes / 1024).toFixed(0)} KB/token\u00b7layer \u00b7 `) +
@@ -835,18 +844,26 @@ export class Dsv3Layer extends HTMLElement {
       (ana.replayComm.length ? ` + a2a ${ana.replayComm.join('+')}` : '') + '.',
       this._ctl.marks
         ? 'The \ud83d\udcbe/\u21bb button on each op chooses save-output vs recompute-in-backward; the wire below shows the derived result \u2014'
-        : 'Each wire label is an output, tagged with the recompute policy\u2019s derived result \u2014',
-      '\u2193 \u2191 \u21c5 saved for backward, read by the op below / above / both (\u25aa = 4 KB/token; violet boxes = communication), ' +
-      '\u21bb recomputed, \u00b7 not needed, \ud83d\udd12 always saved; ' +
-      'right arrows are aux backward artifacts (rstd, lse), \u2190 saved unless their op replays.',
+        : this._ctl.quant
+          ? 'Each wire label is an output, tagged with the recompute policy\u2019s derived result \u2014'
+          : 'Each wire label is an output, tagged with whether backward reads it \u2014',
+      this._ctl.quant
+        ? '\u2193 \u2191 \u21c5 saved for backward, read by the op below / above / both (\u25aa = 4 KB/token; violet boxes = communication), ' +
+          '\u21bb recomputed, \u00b7 not needed, \ud83d\udd12 always saved; ' +
+          'right arrows are aux backward artifacts (rstd, lse), \u2190 saved unless their op replays.'
+        : '\u2193 \u2191 \u21c5 read by the op below / above / both, \u00b7 not needed (violet boxes = communication); ' +
+          'right arrows are aux backward artifacts (rstd, lse).',
       this._ctl.marks ? 'Marking an op \u21bb forces the outputs it reads to stay saved.' : '',
-      'Shared expert + dense MLPs follow the ffn choices; RoPE is fused into the q/kv paths and always recomputed (negligible).',
+      this._ctl.quant
+        ? 'Shared expert + dense MLPs follow the ffn choices; RoPE is fused into the q/kv paths and always recomputed (negligible).'
+        : 'The shared expert and dense MLPs share the ffn boxes; RoPE is fused into the q/kv paths (negligible).',
+      !this._ctl.quant ? '' :
       'The block strip inside each op is its FLOP cost as time at peak, scaled so the block\u2019s largest op fills one row (' +
       'mxfp8 counted half \u2014 2\u00d7 peak; fp32 counted double \u2014 half peak; dtype colors here and on the saved-tensor tags: blue mxfp8, dark bf16, plum fp32); ' +
       'the lm head uses the same scale \u2014 per-token vocab work, independent of depth. Norms/SwiGLU ' +
       'get a muted fig-leaf block (bandwidth-bound, compute precision unspecified).',
       this._ctl.dtype ? 'One click on a dtype button cycles bf16 \u2192 mxfp8 \u2192 fp32.' : '',
-      cmode !== 'static'
+      this._ctl.quant
         ? 'The tally at right totals fwd + bwd (2\u00d7 fwd \u2014 dgrad + wgrad; sdpa likewise) + replay'
           + (this._ctl.marks ? ' \u2014 marking ops \u21bb grows its replay row.' : '.')
         : '',
@@ -861,7 +878,7 @@ export class Dsv3Layer extends HTMLElement {
     foot.append(note);
     if (cmode !== 'static') foot.append(this._tallySvg);
     root.append(foot);
-    this.attachTip(root);
+    if (this._ctl.quant) this.attachTip(root);   // no tooltips on the structure-only tier
     this.append(style, root);
   }
   buildSvg(ana) {
@@ -874,10 +891,11 @@ export class Dsv3Layer extends HTMLElement {
     const SX1 = C1 + 22, SX2 = C2 + 22, RAIL1 = C1 - 26;
     const WIDTH = C2 + W + 180; // right margin fits the aux labels (rstd/lse) in combined view
     const dt = (id) => this.matmuls[id];
+    const marks = this._ctl.quant ? this.marks : {};   // static: save everything
     const state = (id) => {
       const n = ana.byId[id];
       if (n.always) return 'pin';
-      if (this.marks[id] === false) return 'redo';
+      if (marks[id] === false) return 'redo';
       return ana.neededSaved.has(id) ? 'save' : 'idle';
     };
     // one-click precision toggle (bf16 -> mxfp8 -> fp32), hidden below the dtype tier
@@ -949,7 +967,7 @@ export class Dsv3Layer extends HTMLElement {
     const FLOP_UNIT = Math.max(...['qkv_down', 'q_up', 'kv_up', 'attn', 'o_proj', 'router', 'gate_up', 'swiglu', 'ffn_down']
       .map(id => flopEq(ana.byId[id].flopsTok, opDt(id)))) / FLOP_ROW;
     const flopBlocks = (x, y, flopsTok, dt2) => {
-      if (!flopsTok) return 0;
+      if (!flopsTok || !this._ctl.quant) return 0;
       const n = Math.max(1, Math.round(flopEq(flopsTok, dt2) / FLOP_UNIT));
       const color = DT_STYLE[dt2] ?? '#c3c2b7';
       let s = '';
@@ -972,6 +990,14 @@ export class Dsv3Layer extends HTMLElement {
       const dualTag = ids.some(i => ana.dual.has(i)) ? ' ᵀ×2' : '';
 
       let h = 12;
+      if (!this._ctl.quant) {
+        // structure only: name + backward-need direction, no bytes/dtype/grid
+        const name = esc(n.tensor.replace(' (checkpoint anchor)', ''));  // recompute vocabulary
+        P.push(st === 'idle'
+          ? `<text class="tensor tidle" x="${x}" y="${y + 8}">· ${name} — not needed</text>`
+          : `<text class="tensor tsave" x="${x}" y="${y + 8}">${needDir(ids)} ${name}</text>`);
+        return h;
+      }
       if (st === 'save' || st === 'pin') {
         P.push(`<text class="tensor tsave" x="${x}" y="${y + 8}">${needDir(ids)} ${esc(n.tensor)} · ${fmtMem(bytes)} ` +
           `<tspan fill="${DT_STYLE[dtOf(n)]}">${dtOf(n)}${dualTag}</tspan>${st === 'pin' ? ' 🔒' : ''}</text>`);
@@ -990,6 +1016,7 @@ export class Dsv3Layer extends HTMLElement {
     // reserve chip space for the WORST case (saved, bf16) so toggling
     // save/recompute or precision never reflows the layout
     const chipSpace = (ids) => {
+      if (!this._ctl.quant) return 18;                 // one text line, no grid
       // worst case per element: bf16 (2 B), or dual fp8 orientations (2 × 1.03 B)
       const perElem = this.transposed ? 2 * (1 + 1 / 32) : 2;
       const worst = ids.reduce((t, i) => t + ana.byId[i].elems * perElem, 0);
@@ -1011,8 +1038,10 @@ export class Dsv3Layer extends HTMLElement {
       P.push(`<line class="wire" x1="${x + W}" y1="${yMid}" x2="${x + W + 10}" y2="${yMid}" marker-end="url(#arr)"/>` +
         (replayed
           ? `<text class="tensor tredo" x="${x + W + 14}" y="${yMid + 3}">↻ ${esc(n.aux.name)}</text>`
-          : `<text class="tensor tsave" x="${x + W + 14}" y="${yMid + 3}">← ${esc(n.aux.name)} · ${fmtMem(n.aux.bytes)} ` +
-            `<tspan fill="${DT_STYLE.fp32}">fp32</tspan></text>`));
+          : !this._ctl.quant
+            ? `<text class="tensor tsave" x="${x + W + 14}" y="${yMid + 3}">← ${esc(n.aux.name)}</text>`
+            : `<text class="tensor tsave" x="${x + W + 14}" y="${yMid + 3}">← ${esc(n.aux.name)} · ${fmtMem(n.aux.bytes)} ` +
+              `<tspan fill="${DT_STYLE.fp32}">fp32</tspan></text>`));
     };
     const plus = (cx, y) => P.push(`<circle cx="${cx}" cy="${y}" r="9" class="box"/>` +
       `<text class="plus" x="${cx}" y="${y + 4}" text-anchor="middle">+</text>`);
@@ -1138,7 +1167,8 @@ export class Dsv3Layer extends HTMLElement {
       `<text class="oplabel" x="${C1 + 12}" y="${h + 21}">final RMSNorm</text>`);
     P.push(`<line class="wire" x1="${C1 + 150}" y1="${h + 17}" x2="${C1 + 180}" y2="${h + 17}" marker-end="url(#arr)"/>`);
     const lmFlops = 2 * DSV3.hidden * DSV3.vocab / (this.view === 'combined' ? this.dispLayers : 1);
-    const lmRows = Math.ceil(Math.max(1, Math.round(flopEq(lmFlops, dt('lm_head')) / FLOP_UNIT)) / FLOP_ROW);
+    const lmRows = this._ctl.quant
+      ? Math.ceil(Math.max(1, Math.round(flopEq(lmFlops, dt('lm_head')) / FLOP_UNIT)) / FLOP_ROW) : 0;
     const lmH = 38 + lmRows * 6;
     P.push(`<g data-tip="${escAttr(`${fmtNum(lmFlops)} FLOP/token = ${FLOP_EXPR.lm_head}\n${lm.dimsNote}`)}">` +
       `<rect class="box" x="${C1 + 184}" y="${h}" width="240" height="${lmH}" rx="4"/>` +
