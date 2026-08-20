@@ -14,7 +14,7 @@ const main = document.querySelector('main');
 if (i >= 0 && main) {
   const strip = document.createElement('nav');
   strip.className = 'series-strip';
-  strip.innerHTML = `<a href="../index.html">DeepSeek-V3 from first principles</a>`
+  strip.innerHTML = `<a href="../index.html">DeepSeek-V3: from roofline to reality</a>`
     + (SERIES.length > 1 ? ` · post ${i + 1} of ${SERIES.length}` : '');
   const h1 = main.querySelector('h1');
   (h1 ?? main.firstElementChild).insertAdjacentElement('beforebegin', strip);
