@@ -1001,32 +1001,35 @@ export class Dsv3Layer extends HTMLElement {
       const down = [...by].some(b => !ids.includes(b));
       return up && down ? '⇅' : up ? '↑' : '↓';
     };
-    const tensorChip = (ids, x, y) => {
+    // ov (optional): display-split override for a chip that shows part of one
+    // graph node — { name, tdims, frac } (bytes and grid scale by frac)
+    const tensorChip = (ids, x, y, ov) => {
       const id = ids[0], st = state(id), n = ana.byId[id];
-      const bytes = ids.reduce((t, i) => t + ana.byId[i].outBytes * (ana.dual.has(i) ? 2 : 1), 0);
+      const bytes = ids.reduce((t, i) => t + ana.byId[i].outBytes * (ana.dual.has(i) ? 2 : 1), 0) * (ov?.frac ?? 1);
       const dualTag = ids.some(i => ana.dual.has(i)) ? ' ᵀ×2' : '';
+      const name0 = ov?.name ?? n.tensor;
 
       let h = 12;
       if (!this._ctl.quant) {
         // structure only: name + backward-need direction, no bytes/dtype/grid
-        const name = esc(n.tensor.replace(' (checkpoint anchor)', ''));  // recompute vocabulary
+        const name = esc(name0.replace(' (checkpoint anchor)', ''));  // recompute vocabulary
         // unitless per-token size (element counts, like the op dims — dtype unspecified here)
-        const sz = ids.map(i => ana.byId[i].tdims).join(' + ');
+        const sz = ov?.tdims ?? ids.map(i => ana.byId[i].tdims).join(' + ');
         P.push(st === 'idle'
           ? `<text class="tensor tidle" x="${x}" y="${y + 8}">· ${name} — not needed</text>`
           : `<text class="tensor tsave" x="${x}" y="${y + 8}">${needDir(ids)} ${name} <tspan class="tdim">· ${sz}</tspan></text>`);
         return h;
       }
       if (st === 'save' || st === 'pin') {
-        P.push(`<text class="tensor tsave" x="${x}" y="${y + 8}">${needDir(ids)} ${esc(n.tensor)} · ${fmtMem(bytes)} ` +
+        P.push(`<text class="tensor tsave" x="${x}" y="${y + 8}">${needDir(ids)} ${esc(name0)} · ${fmtMem(bytes)} ` +
           `<tspan fill="${DT_STYLE[dtOf(n)]}">${dtOf(n)}${dualTag}</tspan>${st === 'pin' ? ' 🔒' : ''}</text>`);
         const g = blockGrid(bytes, x, y + 12);
         P.push(g.svg);
         h = 12 + g.rows * 6 + 2;
       } else if (st === 'redo') {
-        P.push(`<text class="tensor tredo" x="${x}" y="${y + 8}">↻ ${esc(n.tensor)} — recomputed</text>`);
+        P.push(`<text class="tensor tredo" x="${x}" y="${y + 8}">↻ ${esc(name0)} — recomputed</text>`);
       } else {
-        P.push(`<text class="tensor tidle" x="${x}" y="${y + 8}">· ${esc(n.tensor)} — not needed</text>`);
+        P.push(`<text class="tensor tidle" x="${x}" y="${y + 8}">· ${esc(name0)} — not needed</text>`);
       }
       return h;
     };
@@ -1131,7 +1134,17 @@ export class Dsv3Layer extends HTMLElement {
       }
       // annotate the latents first, then fork BELOW the annotation so the
       // horizontal branch doesn't cut through the chip and its block grid
-      tensorChip(['qkv_down'], SX1 + 14, y + 4);
+      const latTot = DSV3.qRank + DSV3.kvRank + DSV3.qkRope;
+      if (!DET) {
+        tensorChip(['qkv_down'], SX1 + 14, y + 4);
+      } else {
+        // display-split of the one latents stash: q latent rides the left
+        // spine, kv latent (+ the k_pe that will bypass the up-proj) the right
+        tensorChip(['qkv_down'], SX1 + 14, y + 4,
+          { name: 'q latent', tdims: String(DSV3.qRank), frac: DSV3.qRank / latTot });
+        tensorChip(['qkv_down'], RX + 14, y + 4,
+          { name: 'kv latent + k_pe', tdims: `${DSV3.kvRank} + ${DSV3.qkRope}`, frac: (DSV3.kvRank + DSV3.qkRope) / latTot });
+      }
       const latGap = Math.max(34, chipSpace(['qkv_down']) + 20);
       const forkY = y + latGap - 11;
       wire(SX1, y, y + latGap);
@@ -1139,11 +1152,12 @@ export class Dsv3Layer extends HTMLElement {
       let bypTop = 0;
       if (DET) {
         P.push(`<path class="wire" d="M ${RX} ${y} L ${RX} ${y + latGap}" marker-end="url(#arr)"/>`);
-        // k_pe (64) forks off BEFORE the latent norm: only the 512 gets normed/up-projected
-        bypTop = y + 10;
+        // k_pe (64) forks off BELOW the chip, BEFORE the latent norm: only the
+        // 512 gets normed/up-projected
+        bypTop = y + latGap - 10;
         P.push(`<circle cx="${RX}" cy="${bypTop}" r="2.5" fill="#898781"/>` +
           `<path class="wire" d="M ${RX} ${bypTop} L ${bypX} ${bypTop}"/>` +
-          `<text class="tensor tidle" x="${RX + 34}" y="${bypTop - 3}">k_pe · 64</text>`);
+          `<text class="tensor tidle" x="${RX + 34}" y="${bypTop - 4}">k_pe · 64</text>`);
       }
       y += latGap;
       if (!DET) {

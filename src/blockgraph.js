@@ -74,7 +74,7 @@ export function blockGraph(kind, a, mm, seqLen) {
     N('q_up', 'q up-proj', 'matmul', ['qkv_down'], 'q', a.heads * qk, B('attn'), 2 * a.qRank * a.heads * qk,
       { bucket: 'mla', tdims: `${a.heads}\u00d7${qk}` }),
     N('kv_up', 'kv up-proj', 'matmul', ['qkv_down'], 'k,v', a.heads * (qk + a.vHead), B('attn'),
-      2 * a.kvRank * a.heads * (a.qkNope + a.vHead), { bucket: 'mla', tdims: `${a.heads}\u00d7(${a.qkNope}+${a.vHead})` }),
+      2 * a.kvRank * a.heads * (a.qkNope + a.vHead), { bucket: 'mla', tdims: `${a.heads}\u00d7(${qk}+${a.vHead})` }),
     N('attn', 'flash attention', 'attn', ['q_up', 'kv_up'], 'attn out', a.heads * a.vHead, B('o_proj'),
       2 * a.heads * (qk + a.vHead) * seqLen / 2, { bucket: 'mla', aux: { name: 'lse', bytes: 4 * a.heads }, needsOwnOutput: true, tdims: `${a.heads}\u00d7${a.vHead}` }),
     N('o_proj', 'attn out-proj', 'matmul', ['attn'], 'attn proj out', h, 2, 2 * a.heads * a.vHead * h, { bucket: 'mla' }),
