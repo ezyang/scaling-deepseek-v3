@@ -676,6 +676,8 @@ dsv3-layer { display: block; margin: 14px 0 26px; }
 .lv text.tensor { font: 10px system-ui; }
 .lv .tsave { fill: #7a5200; font-weight: 600; }
 .lv .tdim { fill: #898781; font-weight: 400; }
+.lv .micro { fill: #f7f6f1; stroke: #d8d6cb; }
+.lv .microlabel { font: italic 10px system-ui; fill: #52514e; }
 .lv .tredo { fill: #52514e; font-style: italic; }
 .lv .tidle { fill: #a8a69e; }
 .lv-note { color: #898781; font-size: 11px; padding-top: 6px; max-width: 640px; }
@@ -697,6 +699,7 @@ export class Dsv3Layer extends HTMLElement {
     this.dispLayers = st?.dispLayers ?? +(this.getAttribute('xlayers') ?? 61);
     this.dispInflight = st?.dispInflight ?? +(this.getAttribute('xinflight') ?? 1);
     this.transposed = st?.transposed ?? this.hasAttribute('transposed');
+    this.detail = st?.detail ?? this.hasAttribute('detail');
     this.render();
     queueMicrotask(() => this.changed(false)); // push initial recipe + marks to linked widgets
   }
@@ -716,7 +719,7 @@ export class Dsv3Layer extends HTMLElement {
     if (write) writeUrlState(this.urlKey, {
       recipe: this.getAttribute('recipe'), matmuls: this.matmuls, marks: this.marks,
       view: this.view, dispLayers: this.dispLayers, dispInflight: this.dispInflight,
-      transposed: this.transposed,
+      transposed: this.transposed, detail: this.detail,
     });
   }
   applyPreset(recipe, recompute, transposed = false) {
@@ -816,6 +819,7 @@ export class Dsv3Layer extends HTMLElement {
       this.dispLayers = +(this.getAttribute('xlayers') ?? 61);
       this.dispInflight = +(this.getAttribute('xinflight') ?? 1);
       this.transposed = this.hasAttribute('transposed');
+      this.detail = this.hasAttribute('detail');
       clearUrlState(this.urlKey);
       this.render(); this.changed(false);
     };
@@ -829,7 +833,16 @@ export class Dsv3Layer extends HTMLElement {
     tcb.onchange = () => { this.transposed = tcb.checked; this.render(); this.changed(); };
     tl.append(tcb, 'fp8ᵀ dual stash');
     if (this._ctl.dtype) head.append(tl);
-    head.append(reset);
+    const dl = document.createElement('label');
+    dl.style.cssText = 'display:inline-flex;align-items:center;gap:4px;margin-left:8px;color:#52514e;';
+    dl.title = 'Also draw the kernels the terse view folds away: the two down-proj GEMMs (wq_a, wkv_a), ' +
+      'the latent RMSNorms, RoPE, the router’s sigmoid/top-k/normalize, the a2a permutes, and the gating ' +
+      'multiply. Display only — they are cheap, carry no marks, and don’t change the model.';
+    const dcb = document.createElement('input');
+    dcb.type = 'checkbox'; dcb.checked = this.detail;
+    dcb.onchange = () => { this.detail = dcb.checked; this.render(); this.changed(true); };
+    dl.append(dcb, 'elided kernels');
+    head.append(dl, reset);
     const ana = analyze(blockGraph('moe', DSV3, this.matmuls, 4096),
       this._ctl.quant ? this.marks : {}, this.transposed);
     if (cmode !== 'static') root.append(head);
@@ -856,9 +869,11 @@ export class Dsv3Layer extends HTMLElement {
           'grey sizes are per-token element counts \u2014 bytes need a dtype, which comes later; ' +
           'right arrows are aux backward artifacts (rstd, lse).',
       this._ctl.marks ? 'Marking an op \u21bb forces the outputs it reads to stay saved.' : '',
-      this._ctl.quant
-        ? `Shared expert${this.hasAttribute('block-only') ? '' : ' + dense MLPs'} follow${this.hasAttribute('block-only') ? 's' : ''} the ffn choices; RoPE is fused into the q/kv paths and always recomputed (negligible).`
-        : `The shared expert${this.hasAttribute('block-only') ? ' shares' : ' and dense MLPs share'} the ffn boxes; RoPE is fused into the q/kv paths (negligible).`,
+      this.detail ? 'Small italic boxes are kernels the terse view folds away \u2014 cheap vector/permute ops with no marks of their own (negligible FLOPs and bytes).' : '',
+      (this._ctl.quant
+        ? `Shared expert${this.hasAttribute('block-only') ? '' : ' + dense MLPs'} follow${this.hasAttribute('block-only') ? 's' : ''} the ffn choices`
+        : `The shared expert${this.hasAttribute('block-only') ? ' shares' : ' and dense MLPs share'} the ffn boxes`)
+        + (this.detail ? '.' : `; RoPE is fused into the q/kv paths${this._ctl.quant ? ' and always recomputed' : ''} (negligible).`),
       !this._ctl.quant ? '' :
       'The block strip inside each op is its FLOP cost as time at peak, scaled so the block\u2019s largest op fills one row (' +
       'mxfp8 counted half \u2014 2\u00d7 peak; fp32 counted double \u2014 half peak; dtype colors here and on the saved-tensor tags: blue mxfp8, dark bf16, plum fp32); ' +
@@ -1047,6 +1062,13 @@ export class Dsv3Layer extends HTMLElement {
             : `<text class="tensor tsave" x="${x + W + 14}" y="${yMid + 3}">← ${esc(n.aux.name)} · ${fmtMem(n.aux.bytes)} ` +
               `<tspan fill="${DT_STYLE.fp32}">fp32</tspan></text>`));
     };
+    // display-only elided kernel (detail view): cheap, no marks, not in the graph
+    const DET = this.detail;
+    const micro = (label, x, y, w = W) => {
+      P.push(`<rect class="micro" x="${x}" y="${y}" width="${w}" height="18" rx="9"/>` +
+        `<text class="microlabel" x="${x + 9}" y="${y + 13}">${label}</text>`);
+      return y + 18;
+    };
     const plus = (cx, y) => P.push(`<circle cx="${cx}" cy="${y}" r="9" class="box"/>` +
       `<text class="plus" x="${cx}" y="${y + 4}" text-anchor="middle">+</text>`);
     const grp = (x, y0, y1, label) => P.push(
@@ -1084,17 +1106,49 @@ export class Dsv3Layer extends HTMLElement {
     y = opNode('norm1', 'RMSNorm', C1, y);
     let g1;
     y = wireOut(['norm1'], SX1, y); g1 = y + 3; y += 21;
-    y = mmBox(['qkv_down'], C1, y);
-    // annotate the latents first, then fork BELOW the annotation so the
-    // horizontal branch doesn't cut through the chip and its block grid
     {
+      const RX = C1 + 150 + 22;
+      if (!DET) {
+        y = mmBox(['qkv_down'], C1, y);
+      } else {
+        // the merged down-proj is really two GEMMs (wq_a | wkv_a): fork norm1-out first
+        P.push(`<circle cx="${SX1}" cy="${y - 10}" r="2.5" fill="#898781"/>` +
+          `<path class="wire" d="M ${SX1} ${y - 10} L ${RX} ${y - 10} L ${RX} ${y}" marker-end="url(#arr)"/>`);
+        const qFrac = DSV3.qRank / (DSV3.qRank + DSV3.kvRank + DSV3.qkRope);
+        const dhalf = (x, name, dims, tip, frac, withBtns) => {
+          P.push(`<g data-tip="${escAttr(tip)}">` +
+            `<rect class="box" x="${x}" y="${y}" width="140" height="60" rx="4"/>` +
+            `<text class="name" x="${x + 6}" y="${y + 13}">${name}</text>` +
+            `<text class="dims" x="${x + 6}" y="${y + 25}">${dims}</text></g>` +
+            (withBtns ? modeBtn(['qkv_down'], x + 140 - 86, y + 29) + dtBtn('qkv_down', x + 140 - 58, y + 29) : ''));
+          flopBlocks(x + 6, y + 52, ana.byId.qkv_down.flopsTok * frac, dt('qkv_down'));
+        };
+        dhalf(C1, 'q down-proj', '7168 → 1536',
+          '2 · 7168 · 1536 FLOP/token — wq_a, one of the two GEMMs the terse view merges', qFrac, true);
+        dhalf(C1 + 150, 'kv down-proj', '7168 → 512 + 64',
+          '2 · 7168 · (512 + 64) FLOP/token — wkv_a; shares q down-proj’s mark and dtype (one graph node)', 1 - qFrac, false);
+        y += 60;
+      }
+      // annotate the latents first, then fork BELOW the annotation so the
+      // horizontal branch doesn't cut through the chip and its block grid
       tensorChip(['qkv_down'], SX1 + 14, y + 4);
       const latGap = Math.max(34, chipSpace(['qkv_down']) + 20);
-      const RX = C1 + 150 + 22, forkY = y + latGap - 11;
+      const forkY = y + latGap - 11;
       wire(SX1, y, y + latGap);
+      if (DET) P.push(`<path class="wire" d="M ${RX} ${y} L ${RX} ${y + latGap}" marker-end="url(#arr)"/>`);
       y += latGap;
-      P.push(`<circle cx="${SX1}" cy="${forkY}" r="2.5" fill="#898781"/>` +
-        `<path class="wire" d="M ${SX1} ${forkY} L ${RX} ${forkY} L ${RX} ${y}" marker-end="url(#arr)"/>`);
+      if (!DET) {
+        P.push(`<circle cx="${SX1}" cy="${forkY}" r="2.5" fill="#898781"/>` +
+          `<path class="wire" d="M ${SX1} ${forkY} L ${RX} ${forkY} L ${RX} ${y}" marker-end="url(#arr)"/>`);
+      } else {
+        // MLA-internal RMSNorms on the latents (q_a_layernorm; kv_a_layernorm norms the 512 only)
+        micro('RMSNorm (q latent)', C1, y, 140);
+        micro('RMSNorm (kv latent, 512 only)', C1 + 150, y, 140);
+        y += 18;
+        wire(SX1, y, y + 14);
+        P.push(`<path class="wire" d="M ${RX} ${y} L ${RX} ${y + 14}" marker-end="url(#arr)"/>`);
+        y += 14;
+      }
       const halfBox = (id, x) => {
         const m = MATMULS.find(mm2 => mm2.id === id);
         P.push(`<g${boxTip(id, m.dimsNote)}>` +
@@ -1105,6 +1159,13 @@ export class Dsv3Layer extends HTMLElement {
         flopBlocks(x + 6, y + 52, ana.byId[id]?.flopsTok, dt(id));
       };
       halfBox('q_up', C1); halfBox('kv_up', C1 + 150); y += 60;
+      if (DET) {
+        // RoPE rotations the terse view fuses away; k_pe (64) comes off the kv
+        // latent and bypasses the up-projection entirely
+        micro('RoPE (q_pe, 128×64)', C1, y, 140);
+        micro('RoPE (k_pe, 64 — bypasses up-proj)', C1 + 150, y, 140);
+        y += 18;
+      }
       tensorChip(['q_up'], SX1 + 14, y + 4);
       tensorChip(['kv_up'], RX + 14, y + 4);
       const gap = Math.max(24, Math.max(chipSpace(['q_up']), chipSpace(['kv_up'])) + 12);
@@ -1137,7 +1198,9 @@ export class Dsv3Layer extends HTMLElement {
     z = opNode('norm2', 'RMSNorm', C2, z);
     z = wireOut(['norm2'], SX2, z);
     z = mmBox(['router'], C2, z);
+    if (DET) z = micro('sigmoid · top-k select · normalize', C2, z);
     z = wireOut(['router'], SX2, z);
+    if (DET) { z = micro('permute — group tokens by expert', C2, z); wire(SX2, z, z + 14); z += 14; }
     z = opNode('dispatch', 'a2a dispatch → EP group', C2, z, 'comm');
     z = wireOut(['dispatch'], SX2, z);
     const g2 = z + 3; z += 21;
@@ -1145,10 +1208,12 @@ export class Dsv3Layer extends HTMLElement {
     z = wireOut(['gate_up'], SX2, z);
     z = opNode('swiglu', 'SwiGLU', C2, z);
     z = wireOut(['swiglu'], SX2, z);
+    if (DET) { z = micro('× gate (router weights)', C2, z); wire(SX2, z, z + 14); z += 14; }
     z = mmBox(['ffn_down'], C2, z);
     grp(C2, g2, z + 5, 'experts: top-8 of 256 routed + 1 shared');
     z = wireOut(['ffn_down'], SX2, z + 5);
-    z = opNode('combine', 'a2a combine (weighted by router)', C2, z, 'comm');
+    z = opNode('combine', DET ? 'a2a combine' : 'a2a combine (weighted by router)', C2, z, 'comm');
+    if (DET) z = micro('unpermute · sum top-8 copies', C2, z);
     z = wireOut(['combine'], SX2, z);
     z += 13;
     plus(SX2, z);
