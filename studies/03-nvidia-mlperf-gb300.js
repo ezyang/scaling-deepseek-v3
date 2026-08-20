@@ -7,7 +7,7 @@
 // fp32, fp8 parameter gather (fp8-only working weights), fp32 master + bf16
 // grads/moments. NO activation checkpointing — the point of this study.
 // Runs in the browser (study page) and in Node:
-//   node studies/02-nvidia-mlperf-gb300.js
+//   node studies/03-nvidia-mlperf-gb300.js
 
 import { defaultConfig, simulate } from '../src/sim.js';
 import { memoryUsage, layerAnalysis, resolveMatmuls } from '../src/memory.js';
@@ -70,7 +70,7 @@ export function computeStudy() {
 }
 
 // Node runner
-if (typeof process !== 'undefined' && process.argv?.[1]?.includes('02-nvidia-mlperf')) {
+if (typeof process !== 'undefined' && process.argv?.[1]?.includes('03-nvidia-mlperf')) {
   const { counts, precision, memory, timing, mem } = computeStudy();
   let fails = 0;
   for (const [title, rows] of [['counts', counts], ['precision (B/elem)', precision], ['memory', memory], ['timing anchors', timing]]) {

@@ -54,7 +54,7 @@
     import '../src/viewer.js';
     import './series.js';
     import { crossCheck } from '../src/study.js';
-    import { computeStudy, CFG_OVERRIDES } from './02-nvidia-mlperf-gb300.js';
+    import { computeStudy, CFG_OVERRIDES } from './03-nvidia-mlperf-gb300.js';
     const { counts, precision, memory, timing } = computeStudy();
     crossCheck(document.getElementById('counts'), 'quantity', counts);
     crossCheck(document.getElementById('precision'), 'stash', precision);

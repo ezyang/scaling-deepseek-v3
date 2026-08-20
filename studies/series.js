@@ -1,11 +1,11 @@
 // The post series: one manifest, shared prev/next navigation. Each post page
 // includes this module; it injects a series strip under the <h1> and
-// prev/next cards at the end of <main>. Ordering = manifest order; filenames
-// keep their NN- slugs but the visible numbering is ordinal.
+// prev/next cards at the end of <main>. Ordering = manifest order; file slugs
+// match the visible ordinal (post N of M).
 export const SERIES = [
-  { href: '00-deepseek-diagram.html', title: 'The DSv3 block diagram: what it shows and why' },
-  { href: '01-hopper-memory.html', title: 'A DSv3-family MoE on 2048 H100s: memory' },
-  { href: '02-nvidia-mlperf-gb300.html', title: 'NVIDIA’s MLPerf 6.0 submitted configuration (256 × GB300)' },
+  { href: '01-deepseek-diagram.html', title: 'The DSv3 block diagram: what it shows and why' },
+  { href: '02-hopper-memory.html', title: 'A DSv3-family MoE on 2048 H100s: memory' },
+  { href: '03-nvidia-mlperf-gb300.html', title: 'NVIDIA’s MLPerf 6.0 submitted configuration (256 × GB300)' },
 ];
 
 const i = SERIES.findIndex(p => location.pathname.endsWith('/' + p.href));

@@ -1,6 +1,6 @@
 // Study 01 — a DSv3-family MoE on 2048 Hopper GPUs: the memory story.
 // Post-facing: our model's own inventory (no external reference tables here).
-// Runs in the browser (study page) and in Node: node studies/01-hopper-memory.js
+// Runs in the browser (study page) and in Node: node studies/02-hopper-memory.js
 
 import { defaultConfig } from '../src/sim.js';
 import { memoryUsage } from '../src/memory.js';
@@ -48,7 +48,7 @@ export function inventory() {
 }
 
 // Node runner: print the inventory
-if (typeof process !== 'undefined' && process.argv?.[1]?.includes('01-hopper-memory')) {
+if (typeof process !== 'undefined' && process.argv?.[1]?.includes('02-hopper-memory')) {
   const { mid, first, last, capacityGB } = inventory();
   for (const [name, r] of [['mid rank (pp1)', mid], ['first rank (pp0)', first], ['last rank (pp7)', last]]) {
     console.log(`${name}: total ${r.total.toFixed(1)} / ${capacityGB} GiB ` +
