@@ -1135,7 +1135,16 @@ export class Dsv3Layer extends HTMLElement {
       const latGap = Math.max(34, chipSpace(['qkv_down']) + 20);
       const forkY = y + latGap - 11;
       wire(SX1, y, y + latGap);
-      if (DET) P.push(`<path class="wire" d="M ${RX} ${y} L ${RX} ${y + latGap}" marker-end="url(#arr)"/>`);
+      const bypX = C1 + 296;                     // k_pe bypass rail, right of the kv boxes
+      let bypTop = 0;
+      if (DET) {
+        P.push(`<path class="wire" d="M ${RX} ${y} L ${RX} ${y + latGap}" marker-end="url(#arr)"/>`);
+        // k_pe (64) forks off BEFORE the latent norm: only the 512 gets normed/up-projected
+        bypTop = y + 10;
+        P.push(`<circle cx="${RX}" cy="${bypTop}" r="2.5" fill="#898781"/>` +
+          `<path class="wire" d="M ${RX} ${bypTop} L ${bypX} ${bypTop}"/>` +
+          `<text class="tensor tidle" x="${RX + 34}" y="${bypTop - 3}">k_pe · 64</text>`);
+      }
       y += latGap;
       if (!DET) {
         P.push(`<circle cx="${SX1}" cy="${forkY}" r="2.5" fill="#898781"/>` +
@@ -1160,10 +1169,11 @@ export class Dsv3Layer extends HTMLElement {
       };
       halfBox('q_up', C1); halfBox('kv_up', C1 + 150); y += 60;
       if (DET) {
-        // RoPE rotations the terse view fuses away; k_pe (64) comes off the kv
-        // latent and bypasses the up-projection entirely
+        // RoPE rotations the terse view fuses away; the k_pe bypass wire shows
+        // the 64 rope dims skipping the up-projection entirely
         micro('RoPE (q_pe, 128×64)', C1, y, 140);
-        micro('RoPE (k_pe, 64 — bypasses up-proj)', C1 + 150, y, 140);
+        micro('RoPE (k_pe, 64)', C1 + 150, y, 132);
+        P.push(`<path class="wire" d="M ${bypX} ${bypTop} L ${bypX} ${y + 9} L ${C1 + 285} ${y + 9}" marker-end="url(#arr)"/>`);
         y += 18;
       }
       tensorChip(['q_up'], SX1 + 14, y + 4);
