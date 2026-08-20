@@ -855,8 +855,8 @@ export class Dsv3Layer extends HTMLElement {
           'right arrows are aux backward artifacts (rstd, lse).',
       this._ctl.marks ? 'Marking an op \u21bb forces the outputs it reads to stay saved.' : '',
       this._ctl.quant
-        ? 'Shared expert + dense MLPs follow the ffn choices; RoPE is fused into the q/kv paths and always recomputed (negligible).'
-        : 'The shared expert and dense MLPs share the ffn boxes; RoPE is fused into the q/kv paths (negligible).',
+        ? `Shared expert${this.hasAttribute('block-only') ? '' : ' + dense MLPs'} follow${this.hasAttribute('block-only') ? 's' : ''} the ffn choices; RoPE is fused into the q/kv paths and always recomputed (negligible).`
+        : `The shared expert${this.hasAttribute('block-only') ? ' shares' : ' and dense MLPs share'} the ffn boxes; RoPE is fused into the q/kv paths (negligible).`,
       !this._ctl.quant ? '' :
       'The block strip inside each op is its FLOP cost as time at peak, scaled so the block\u2019s largest op fills one row (' +
       'mxfp8 counted half \u2014 2\u00d7 peak; fp32 counted double \u2014 half peak; dtype colors here and on the saved-tensor tags: blue mxfp8, dark bf16, plum fp32); ' +
@@ -1157,27 +1157,31 @@ export class Dsv3Layer extends HTMLElement {
       `<path class="wire" d="M ${midX} ${z} L ${midX} 6 L ${SX2} 6 L ${SX2} 16" marker-end="url(#arr)"/>`);
     const col2End = z + 32;
 
-    // ---- head row ----
+    // ---- head row (unless block-only: show the transformer block alone,
+    // making no claims about the surrounding stack) ----
     let h = Math.max(col1End, col2End) + 10;
-    P.push(`<line class="wire" x1="${C1 - 20}" y1="${h}" x2="${C2 + W + 20}" y2="${h}" stroke-dasharray="3 3"/>`);
-    P.push(`<text class="grplabel" x="${C1 - 20}" y="${h - 5}">× 61 blocks, then:</text>`);
-    h += 10;
-    const lm = MATMULS.find(m => m.id === 'lm_head');
-    P.push(`<rect class="op" x="${C1}" y="${h + 6}" width="150" height="22" rx="11"/>` +
-      `<text class="oplabel" x="${C1 + 12}" y="${h + 21}">final RMSNorm</text>`);
-    P.push(`<line class="wire" x1="${C1 + 150}" y1="${h + 17}" x2="${C1 + 180}" y2="${h + 17}" marker-end="url(#arr)"/>`);
-    const lmFlops = 2 * DSV3.hidden * DSV3.vocab / (this.view === 'combined' ? this.dispLayers : 1);
-    const lmRows = this._ctl.quant
-      ? Math.ceil(Math.max(1, Math.round(flopEq(lmFlops, dt('lm_head')) / FLOP_UNIT)) / FLOP_ROW) : 0;
-    const lmH = 38 + lmRows * 6;
-    P.push(`<g data-tip="${escAttr(`${fmtNum(lmFlops)} FLOP/token = ${FLOP_EXPR.lm_head}\n${lm.dimsNote}`)}">` +
-      `<rect class="box" x="${C1 + 184}" y="${h}" width="240" height="${lmH}" rx="4"/>` +
-      `<text class="name" x="${C1 + 192}" y="${h + 14}">${lm.label}</text>` +
-      `<text class="dims" x="${C1 + 192}" y="${h + 28}">${lm.dims}</text></g>` + dtBtn('lm_head', C1 + 184 + 240 - 58, h + 7));
-    flopBlocks(C1 + 192, h + 33, lmFlops, dt('lm_head'));
-    P.push(`<line class="wire" x1="${C1 + 424}" y1="${h + 17}" x2="${C1 + 454}" y2="${h + 17}" marker-end="url(#arr)"/>`);
-    P.push(`<rect class="op" x="${C1 + 458}" y="${h + 6}" width="140" height="22" rx="11"/>` +
-      `<text class="oplabel" x="${C1 + 470}" y="${h + 21}">softmax / loss</text>`);
+    let lmH = -20;
+    if (!this.hasAttribute('block-only')) {
+      P.push(`<line class="wire" x1="${C1 - 20}" y1="${h}" x2="${C2 + W + 20}" y2="${h}" stroke-dasharray="3 3"/>`);
+      P.push(`<text class="grplabel" x="${C1 - 20}" y="${h - 5}">× 61 blocks, then:</text>`);
+      h += 10;
+      const lm = MATMULS.find(m => m.id === 'lm_head');
+      P.push(`<rect class="op" x="${C1}" y="${h + 6}" width="150" height="22" rx="11"/>` +
+        `<text class="oplabel" x="${C1 + 12}" y="${h + 21}">final RMSNorm</text>`);
+      P.push(`<line class="wire" x1="${C1 + 150}" y1="${h + 17}" x2="${C1 + 180}" y2="${h + 17}" marker-end="url(#arr)"/>`);
+      const lmFlops = 2 * DSV3.hidden * DSV3.vocab / (this.view === 'combined' ? this.dispLayers : 1);
+      const lmRows = this._ctl.quant
+        ? Math.ceil(Math.max(1, Math.round(flopEq(lmFlops, dt('lm_head')) / FLOP_UNIT)) / FLOP_ROW) : 0;
+      lmH = 38 + lmRows * 6;
+      P.push(`<g data-tip="${escAttr(`${fmtNum(lmFlops)} FLOP/token = ${FLOP_EXPR.lm_head}\n${lm.dimsNote}`)}">` +
+        `<rect class="box" x="${C1 + 184}" y="${h}" width="240" height="${lmH}" rx="4"/>` +
+        `<text class="name" x="${C1 + 192}" y="${h + 14}">${lm.label}</text>` +
+        `<text class="dims" x="${C1 + 192}" y="${h + 28}">${lm.dims}</text></g>` + dtBtn('lm_head', C1 + 184 + 240 - 58, h + 7));
+      flopBlocks(C1 + 192, h + 33, lmFlops, dt('lm_head'));
+      P.push(`<line class="wire" x1="${C1 + 424}" y1="${h + 17}" x2="${C1 + 454}" y2="${h + 17}" marker-end="url(#arr)"/>`);
+      P.push(`<rect class="op" x="${C1 + 458}" y="${h + 6}" width="140" height="22" rx="11"/>` +
+        `<text class="oplabel" x="${C1 + 470}" y="${h + 21}">softmax / loss</text>`);
+    }
 
     // ---- per-layer FLOP tally: fwd + bwd + recompute replay, same block scale.
     // Rendered as its own small SVG, floated to the right of the caption.
