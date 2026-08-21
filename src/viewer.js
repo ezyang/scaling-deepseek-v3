@@ -1295,11 +1295,14 @@ export class Dsv3Layer extends HTMLElement {
     grp(C2, g2, z + 5, DET ? 'routed experts: top-8 of 256 — grouped GEMMs' : 'experts: top-8 of 256 routed + 1 shared');
     z = wireOut(['ffn_down'], SX2, z + 5);
     z = opNode('combine', DET ? 'a2a combine (comm + unpermute · sum)' : 'a2a combine (weighted by router)', C2, z, 'comm');
-    z = wireOut(['combine'], SX2, z);
-    // keep the x2 add below column 1's residual box + x1 chip, so the
-    // x1 → x2 rail turns right in clear space instead of crossing them
-    z = Math.max(z + 13, col1End - 4);
+    // combine's output wire runs all the way into the x2 add; the add itself
+    // is kept below column 1's residual box + x1 chip, so the x1 → x2 rail
+    // turns right in clear space instead of crossing them
+    tensorChip(['combine'], SX2 + 14, z + 4);
+    const zc = z;                                  // combine box bottom
+    z = Math.max(z + Math.max(22, chipSpace(['combine']) + 10) + 13, col1End - 4);
     plus(SX2, z);
+    wire(SX2, zc, z - 11);
     // shared-expert output joins the final add (add_shared_and_residual)
     if (DET && shBot) P.push(`<path class="wire" d="M ${shMid} ${shBot} L ${shMid} ${z} L ${SX2 + 11} ${z}" marker-end="url(#arr)"/>`);
     // block output: a short down arrow out of the second residual add (= the next block's x0)
