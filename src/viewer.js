@@ -1133,30 +1133,34 @@ export class Dsv3Layer extends HTMLElement {
         '2 · 7168 · (512 + 64) FLOP/token — wkv_a; shares q down-proj’s mark and dtype (one graph node)', 1 - qFrac, false);
       y += 60;
       // display-split of the one latents stash: q latent rides the left spine,
-      // kv latent (+ the k_pe that bypasses the up-proj) the right
+      // kv latent the right. In detail the kv down-proj box has TWO outputs:
+      // k_rope (64) leaves from its bottom-right corner immediately and rides an
+      // outer rail (far enough right to clear the chip texts) down to RoPE —
+      // only the 512 latent goes through the norm and up-projection.
       const latTot = DSV3.qRank + DSV3.kvRank + DSV3.qkRope;
-      tensorChip(['qkv_down'], SX1 + 14, y + 4,
-        { name: 'q latent', tdims: String(DSV3.qRank), frac: DSV3.qRank / latTot });
-      tensorChip(['qkv_down'], RX + 14, y + 4,
-        { name: 'kv latent + k_pe', tdims: `${DSV3.kvRank} + ${DSV3.qkRope}`, frac: (DSV3.kvRank + DSV3.qkRope) / latTot });
-      const latGap = Math.max(34, chipSpace(['qkv_down']) + 20);
-      wire(SX1, y, y + latGap);
-      P.push(`<path class="wire" d="M ${RX} ${y} L ${RX} ${y + latGap}" marker-end="url(#arr)"/>`);
-      const bypX = C1 + 296;                     // k_pe bypass rail, right of the kv boxes
+      const bypX = C1 + 380;                     // k_rope rail, clear of all chip text
       let bypTop = 0;
       if (DET) {
-        // k_pe (64) forks off BELOW the chip, BEFORE the latent norm: only the
-        // 512 gets normed/up-projected
-        bypTop = y + latGap - 10;
-        P.push(`<circle cx="${RX}" cy="${bypTop}" r="2.5" fill="#898781"/>` +
-          `<path class="wire" d="M ${RX} ${bypTop} L ${bypX} ${bypTop}"/>` +
-          `<text class="tensor tidle" x="${RX + 34}" y="${bypTop - 4}">k_pe · 64</text>`);
+        const kx = C1 + 280;
+        bypTop = y + 6;
+        P.push(`<path class="wire" d="M ${kx} ${y} L ${kx} ${bypTop} L ${bypX} ${bypTop}"/>`);
+        tensorChip(['qkv_down'], kx + 20, bypTop - 10,
+          { name: 'k_rope', tdims: String(DSV3.qkRope), frac: DSV3.qkRope / latTot });
       }
+      const chipY = DET ? y + 16 : y + 4;        // chips sit below the k_rope elbow
+      tensorChip(['qkv_down'], SX1 + 14, chipY,
+        { name: 'q latent', tdims: String(DSV3.qRank), frac: DSV3.qRank / latTot });
+      tensorChip(['qkv_down'], RX + 14, chipY, DET
+        ? { name: 'kv latent', tdims: String(DSV3.kvRank), frac: DSV3.kvRank / latTot }
+        : { name: 'kv latent + k_rope', tdims: `${DSV3.kvRank} + ${DSV3.qkRope}`, frac: (DSV3.kvRank + DSV3.qkRope) / latTot });
+      const latGap = Math.max(34, chipSpace(['qkv_down']) + 20) + (DET ? 12 : 0);
+      wire(SX1, y, y + latGap);
+      P.push(`<path class="wire" d="M ${RX} ${y} L ${RX} ${y + latGap}" marker-end="url(#arr)"/>`);
       y += latGap;
       if (DET) {
         // MLA-internal RMSNorms on the latents (q_a_layernorm; kv_a_layernorm norms the 512 only)
         micro('RMSNorm (q latent)', C1, y, 140);
-        micro('RMSNorm (kv latent, 512 only)', C1 + 150, y, 140);
+        micro('RMSNorm (kv latent)', C1 + 150, y, 140);
         y += 18;
         wire(SX1, y, y + 14);
         P.push(`<path class="wire" d="M ${RX} ${y} L ${RX} ${y + 14}" marker-end="url(#arr)"/>`);
@@ -1173,11 +1177,11 @@ export class Dsv3Layer extends HTMLElement {
       };
       halfBox('q_up', C1); halfBox('kv_up', C1 + 150); y += 60;
       if (DET) {
-        // ONE fused RoPE kernel rotates q_pe and k_pe together (fp32), and the
+        // ONE fused RoPE kernel rotates q_rope and k_rope together (fp32), and the
         // adjacent concats materialize Q and K; the bypass wire shows the 64
         // rope dims skipping the up-projection entirely. Placed before the
         // chips: what backward stashes is the rotated, concatenated q/k/v.
-        micro('RoPE (q_pe, k_pe) · materialize Q, K, V contiguous', C1, y, W);
+        micro('RoPE (q_rope, k_rope) · materialize Q, K, V contiguous', C1, y, W);
         P.push(`<path class="wire" d="M ${bypX} ${bypTop} L ${bypX} ${y + 9} L ${C1 + W + 1} ${y + 9}" marker-end="url(#arr)"/>`);
         y += 18;
       }
