@@ -933,7 +933,8 @@ export class Dsv3Layer extends HTMLElement {
     // parameter-count parentheticals on the dims lines; grouped experts
     // follow the dims toggle: factored '(29M \u00d7256)' vs total '(7.5B)'
     const fmtP = (n) => n >= 1e9 ? (n / 1e9).toFixed(1) + 'B'
-      : n >= 9.95e6 ? Math.round(n / 1e6) + 'M' : (n / 1e6).toFixed(1) + 'M';
+      : n >= 9.95e6 ? Math.round(n / 1e6) + 'M' : n >= 1e6 ? (n / 1e6).toFixed(1) + 'M'
+      : n >= 1e3 ? (n / 1e3).toFixed(1).replace(/\.0$/, '') + 'K' : String(n);
     const PCNT = {
       q_up: DSV3.qRank * DSV3.heads * (DSV3.qkNope + DSV3.qkRope),
       kv_up: DSV3.kvRank * DSV3.heads * (DSV3.qkNope + DSV3.vHead),
@@ -1132,11 +1133,11 @@ export class Dsv3Layer extends HTMLElement {
       flopBlocks(x + 8, y + 30, ana.byId[(markIds ?? ids)[0]]?.flopsTok, dt(ids[0]));
       return y + 38;
     };
-    const opNode = (id, label, x, y, cls = 'op') => {
+    const opNode = (id, label, x, y, cls = 'op', pc = '') => {
       const h2 = cls === 'comm' ? 22 : 27;
       P.push(`<g${boxTip(id)}>` +
         `<rect class="${cls}" x="${x}" y="${y}" width="${W}" height="${h2}" rx="6"/>` +
-        `<text class="oplabel" x="${x + 10}" y="${y + 15}">${label}</text></g>` +
+        `<text class="oplabel" x="${x + 10}" y="${y + 15}">${label}${pc ? `<tspan class="dims"> ${pc}</tspan>` : ''}</text></g>` +
         modeBtn([id], x + W - 30, y + 1));
       auxOut(id, x, y + Math.round(h2 / 2));
       if (cls !== 'comm') flopBlocks(x + 10, y + 19, ana.byId[id]?.flopsTok, 'vector');
@@ -1149,7 +1150,7 @@ export class Dsv3Layer extends HTMLElement {
     tensorChip(['x0'], SX1 + 170, y - 8);
     const tap1 = y + 6;
     wire(SX1, y + 3, y + 18); y += 18;
-    y = opNode('norm1', 'RMSNorm', C1, y);
+    y = opNode('norm1', 'RMSNorm', C1, y, 'op', `(${fmtP(DSV3.hidden)})`);
     let g1;
     y = wireOut(['norm1'], SX1, y); g1 = y + 3; y += 21;
     let bypX = 0;                                // k_rope rail x (set in the MLA fork block)
@@ -1201,8 +1202,8 @@ export class Dsv3Layer extends HTMLElement {
         const normTip = 'input-form backward: reads its INPUT (pre-norm) + rstd — never its output. ' +
           'The pre-norm latent is not stashed; it is exactly recoverable from the post-norm stash, ' +
           '\u03b3, and rstd (x = y / (\u03b3\u00b7rstd)), which is why one latent copy suffices.';
-        micro('RMSNorm (q latent)', C1, y, 140, normTip);
-        micro('RMSNorm (kv latent)', C1 + 150, y, 140, normTip);
+        micro(`RMSNorm (q latent) (${fmtP(DSV3.qRank)})`, C1, y, 140, normTip);
+        micro(`RMSNorm (kv latent) (${fmtP(DSV3.kvRank)})`, C1 + 150, y, 140, normTip);
         y += 18;
         // their rstd: exits the bottom, elbows right (\u2191 = read by the op
         // above, the norm's own backward); a replayed norm regenerates it
@@ -1285,7 +1286,7 @@ export class Dsv3Layer extends HTMLElement {
     // ---- column 2: MoE ----
     const nExp = DSV3.topk + DSV3.sharedExperts;   // grouped boxes carry topk/nExp, shared 1/nExp
     let z = 16;
-    z = opNode('norm2', 'RMSNorm', C2, z);
+    z = opNode('norm2', 'RMSNorm', C2, z, 'op', `(${fmtP(DSV3.hidden)})`);
     let shBot = 0, shTop = 0;
     const SHX = C2 + 320, shMid = SHX + 22;        // shared-expert mini column; spine down its LEFT, like every column
     const shBox = (name, dims, tip, yy, pc = '') => P.push(`<g data-tip="${escAttr(tip)}">` +
@@ -1413,7 +1414,7 @@ export class Dsv3Layer extends HTMLElement {
       h += 10;
       const lm = MATMULS.find(m => m.id === 'lm_head');
       P.push(`<rect class="op" x="${C1}" y="${h + 6}" width="150" height="22" rx="11"/>` +
-        `<text class="oplabel" x="${C1 + 12}" y="${h + 21}">final RMSNorm</text>`);
+        `<text class="oplabel" x="${C1 + 12}" y="${h + 21}">final RMSNorm<tspan class="dims"> (${fmtP(DSV3.hidden)})</tspan></text>`);
       P.push(`<line class="wire" x1="${C1 + 150}" y1="${h + 17}" x2="${C1 + 180}" y2="${h + 17}" marker-end="url(#arr)"/>`);
       const lmFlops = 2 * DSV3.hidden * DSV3.vocab / (this.view === 'combined' ? this.dispLayers : 1);
       const lmRows = this._ctl.quant
