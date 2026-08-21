@@ -930,6 +930,25 @@ export class Dsv3Layer extends HTMLElement {
         try { return String(Function('"use strict";return (' + t + ')')()); } catch { return part.trim(); }
       }).join(' \u2192 ');
     };
+    // parameter-count parentheticals on the dims lines; grouped experts
+    // follow the dims toggle: factored '(29M \u00d7256)' vs total '(7.5B)'
+    const fmtP = (n) => n >= 1e9 ? (n / 1e9).toFixed(1) + 'B'
+      : n >= 9.95e6 ? Math.round(n / 1e6) + 'M' : (n / 1e6).toFixed(1) + 'M';
+    const PCNT = {
+      q_up: DSV3.qRank * DSV3.heads * (DSV3.qkNope + DSV3.qkRope),
+      kv_up: DSV3.kvRank * DSV3.heads * (DSV3.qkNope + DSV3.vHead),
+      o_proj: DSV3.heads * DSV3.vHead * DSV3.hidden,
+      router: DSV3.hidden * DSV3.routedExperts,
+      ffn_gate_up: [DSV3.hidden * 2 * DSV3.moeInter, DSV3.routedExperts],
+      ffn_down: [DSV3.moeInter * DSV3.hidden, DSV3.routedExperts],
+      lm_head: DSV3.hidden * DSV3.vocab,
+    };
+    const pstr = (id) => {
+      const p = PCNT[id];
+      if (!p) return '';
+      if (Array.isArray(p)) return this.flatDims ? ` (${fmtP(p[0] * p[1])})` : ` (${fmtP(p[0])} \u00d7${p[1]})`;
+      return ` (${fmtP(p)})`;
+    };
     const dt = (id) => this.matmuls[id];
     const marks = this._ctl.quant ? this.marks : {};   // static: save everything
     const state = (id) => {
@@ -1106,7 +1125,7 @@ export class Dsv3Layer extends HTMLElement {
       P.push(`<g${boxTip((markIds ?? ids)[0], spec.dimsNote)}>` +
         `<rect class="box" x="${x}" y="${y}" width="${W}" height="38" rx="4"/>` +
         `<text class="name" x="${x + 8}" y="${y + 13}">${label ?? spec.label}</text>` +
-        `<text class="dims" x="${x + 8}" y="${y + 26}">${flatten(spec.dims)}</text></g>`);
+        `<text class="dims" x="${x + 8}" y="${y + 26}">${flatten(spec.dims)}${pstr(ids[0])}</text></g>`);
       P.push(modeBtn(markIds ?? ids, x + W - 86, y + 6));
       P.push(dtBtn(ids[0], x + W - 58, y + 6));
       auxOut((markIds ?? ids)[0], x, y + 19);
@@ -1142,18 +1161,19 @@ export class Dsv3Layer extends HTMLElement {
       P.push(`<circle cx="${SX1}" cy="${y - 10}" r="2.5" fill="#898781"/>` +
         `<path class="wire" d="M ${SX1} ${y - 10} L ${RX} ${y - 10} L ${RX} ${y}" marker-end="url(#arr)"/>`);
       const qFrac = DSV3.qRank / (DSV3.qRank + DSV3.kvRank + DSV3.qkRope);
-      const dhalf = (x, name, dims, tip, frac, withBtns) => {
+      const dhalf = (x, name, dims, tip, frac, withBtns, pc = '') => {
         P.push(`<g data-tip="${escAttr(tip)}">` +
           `<rect class="box" x="${x}" y="${y}" width="140" height="60" rx="4"/>` +
           `<text class="name" x="${x + 6}" y="${y + 13}">${name}</text>` +
-          `<text class="dims" x="${x + 6}" y="${y + 25}">${flatten(dims)}</text></g>` +
+          `<text class="dims" x="${x + 6}" y="${y + 25}">${flatten(dims)}${pc}</text></g>` +
           (withBtns ? modeBtn(['qkv_down'], x + 140 - 86, y + 29) + dtBtn('qkv_down', x + 140 - 58, y + 29) : ''));
         flopBlocks(x + 6, y + 52, ana.byId.qkv_down.flopsTok * frac, dt('qkv_down'));
       };
+      const pQ = ` (${fmtP(DSV3.hidden * DSV3.qRank)})`, pKV = ` (${fmtP(DSV3.hidden * (DSV3.kvRank + DSV3.qkRope))})`;
       dhalf(C1, 'q down-proj', '7168 → 1536',
-        '2 · 7168 · 1536 FLOP/token — wq_a; a separate GEMM from kv down-proj in production stacks', qFrac, true);
+        '2 · 7168 · 1536 FLOP/token — wq_a; a separate GEMM from kv down-proj in production stacks', qFrac, true, pQ);
       dhalf(C1 + 150, 'kv down-proj', '7168 → 512 + 64',
-        '2 · 7168 · (512 + 64) FLOP/token — wkv_a; shares q down-proj’s mark and dtype (one graph node)', 1 - qFrac, false);
+        '2 · 7168 · (512 + 64) FLOP/token — wkv_a; shares q down-proj’s mark and dtype (one graph node)', 1 - qFrac, false, pKV);
       y += 60;
       // display-split of the one latents stash. What backward keeps is the
       // POST-norm latent (the up-proj's input), so in detail the chips sit
@@ -1213,7 +1233,7 @@ export class Dsv3Layer extends HTMLElement {
         P.push(`<g${boxTip(id, m.dimsNote)}>` +
           `<rect class="box" x="${x}" y="${y}" width="140" height="60" rx="4"/>` +
           `<text class="name" x="${x + 6}" y="${y + 13}">${m.label}</text>` +
-          `<text class="dims" x="${x + 6}" y="${y + 25}">${flatten(m.dims)}</text></g>` +
+          `<text class="dims" x="${x + 6}" y="${y + 25}">${flatten(m.dims)}${pstr(id)}</text></g>` +
           modeBtn([id], x + 140 - 86, y + 29) + dtBtn(id, x + 140 - 58, y + 29));
         flopBlocks(x + 6, y + 52, ana.byId[id]?.flopsTok, dt(id));
       };
@@ -1268,10 +1288,10 @@ export class Dsv3Layer extends HTMLElement {
     z = opNode('norm2', 'RMSNorm', C2, z);
     let shBot = 0, shTop = 0;
     const SHX = C2 + 320, shMid = SHX + 22;        // shared-expert mini column; spine down its LEFT, like every column
-    const shBox = (name, dims, tip, yy) => P.push(`<g data-tip="${escAttr(tip)}">` +
+    const shBox = (name, dims, tip, yy, pc = '') => P.push(`<g data-tip="${escAttr(tip)}">` +
       `<rect class="box" x="${SHX}" y="${yy}" width="140" height="34" rx="4"/>` +
       `<text class="name" x="${SHX + 6}" y="${yy + 14}">${name}</text>` +
-      `<text class="dims" x="${SHX + 6}" y="${yy + 27}">${flatten(dims)}</text></g>`);
+      `<text class="dims" x="${SHX + 6}" y="${yy + 27}">${flatten(dims)}${pc}</text></g>`);
     if (!DET) {
       z = wireOut(['norm2'], SX2, z);
     } else {
@@ -1313,7 +1333,8 @@ export class Dsv3Layer extends HTMLElement {
       P.push(`<path class="wire" d="M ${shMid} ${shTop} L ${shMid} ${rowG - 18}" marker-end="url(#arr)"/>` +
         `<text class="grplabel" x="${SHX}" y="${rowG - 6}">shared expert (every token)</text>`);
       shBox('shared gate/up', '7168 → 2×2048',
-        'one plain GEMM per token — follows the ffn gate/up mark and dtype (its FLOPs are counted in the grouped strip)', rowG);
+        'one plain GEMM per token — follows the ffn gate/up mark and dtype (its FLOPs are counted in the grouped strip)', rowG,
+        ` (${fmtP(DSV3.hidden * 2 * DSV3.moeInter)})`);
       tensorChip(['gate_up'], shMid + 14, z + 4, { name: 'gate, up (sh)', tdims: '2×2048', frac: 1 / nExp });
     }
     z = wireOut(['gate_up'], SX2, z, DET ? { name: 'gate, up (routed)', tdims: `${DSV3.topk}×2×2048`, frac: DSV3.topk / nExp } : undefined);
@@ -1335,7 +1356,8 @@ export class Dsv3Layer extends HTMLElement {
     z = mmBox(['ffn_down'], C2, z, undefined, DET ? 'ffn down (grouped ×8)' : undefined);
     if (DET) {
       shBox('shared down', '2048 → 7168',
-        'one plain GEMM per token — follows the ffn down mark and dtype; its output joins the routed sum', rowD);
+        'one plain GEMM per token — follows the ffn down mark and dtype; its output joins the routed sum', rowD,
+        ` (${fmtP(DSV3.moeInter * DSV3.hidden)})`);
       tensorChip(['ffn_down'], shMid + 14, z + 4, { name: 'shared out', tdims: '7168', frac: 1 / nExp });
       shBot = rowD + 34;
     }
@@ -1400,7 +1422,7 @@ export class Dsv3Layer extends HTMLElement {
       P.push(`<g data-tip="${escAttr(`${fmtNum(lmFlops)} FLOP/token = ${FLOP_EXPR.lm_head}\n${lm.dimsNote}`)}">` +
         `<rect class="box" x="${C1 + 184}" y="${h}" width="240" height="${lmH}" rx="4"/>` +
         `<text class="name" x="${C1 + 192}" y="${h + 14}">${lm.label}</text>` +
-        `<text class="dims" x="${C1 + 192}" y="${h + 28}">${flatten(lm.dims)}</text></g>` + dtBtn('lm_head', C1 + 184 + 240 - 58, h + 7));
+        `<text class="dims" x="${C1 + 192}" y="${h + 28}">${flatten(lm.dims)}${pstr('lm_head')}</text></g>` + dtBtn('lm_head', C1 + 184 + 240 - 58, h + 7));
       flopBlocks(C1 + 192, h + 33, lmFlops, dt('lm_head'));
       P.push(`<line class="wire" x1="${C1 + 424}" y1="${h + 17}" x2="${C1 + 454}" y2="${h + 17}" marker-end="url(#arr)"/>`);
       P.push(`<rect class="op" x="${C1 + 458}" y="${h + 6}" width="140" height="22" rx="11"/>` +
