@@ -1295,7 +1295,7 @@ export class Dsv3Layer extends HTMLElement {
     const rowG = z;
     z = mmBox(['ffn_gate_up'], C2, z, ['gate_up'], DET ? 'ffn gate/up (grouped ×8)' : undefined);
     if (DET) {
-      P.push(`<path class="wire" d="M ${shMid} ${shTop} L ${shMid} ${rowG}" marker-end="url(#arr)"/>` +
+      P.push(`<path class="wire" d="M ${shMid} ${shTop} L ${shMid} ${rowG - 18}" marker-end="url(#arr)"/>` +
         `<text class="grplabel" x="${SHX}" y="${rowG - 6}">shared expert (every token)</text>`);
       shBox('shared gate/up', '7168 → 2×2048',
         'one plain GEMM per token — follows the ffn gate/up mark and dtype (its FLOPs are counted in the grouped strip)', rowG);
