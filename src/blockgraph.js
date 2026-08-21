@@ -68,9 +68,11 @@ export function blockGraph(kind, a, mm, seqLen) {
   const nodes = [
     N('x0', 'block input', 'boundary', [], 'x0 (checkpoint anchor)', h, 2, 0, { bucket: 'residual', always: true }),
     N('norm1', 'RMSNorm', 'vector', ['x0'], 'norm1 out', h, B('qkv_down'), 8 * h, { bucket: 'mla', aux: { name: 'rstd', bytes: 4 } }),
-    N('qkv_down', 'q/kv down-proj', 'matmul', ['norm1'], 'latents (KV cache)',
-      a.qRank + a.kvRank + a.qkRope, B('q_up'), 2 * (h * a.qRank + h * (a.kvRank + a.qkRope)),
-      { bucket: 'mla', tdims: `${a.qRank} + ${a.kvRank + a.qkRope}` }),
+    // stash excludes the k_rope dims: RoPE's backward is a transposed rotation
+    // (needs no input), and wkv_a's wgrad needs norm1-out, not its own output
+    N('qkv_down', 'q/kv down-proj', 'matmul', ['norm1'], 'latents',
+      a.qRank + a.kvRank, B('q_up'), 2 * (h * a.qRank + h * (a.kvRank + a.qkRope)),
+      { bucket: 'mla', tdims: `${a.qRank} + ${a.kvRank}` }),
     N('q_up', 'q up-proj', 'matmul', ['qkv_down'], 'q', a.heads * qk, B('attn'), 2 * a.qRank * a.heads * qk,
       { bucket: 'mla', tdims: `${a.heads}\u00d7${qk}` }),
     N('kv_up', 'kv up-proj', 'matmul', ['qkv_down'], 'k,v', a.heads * (qk + a.vHead), B('attn'),

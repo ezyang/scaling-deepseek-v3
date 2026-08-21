@@ -1133,40 +1133,36 @@ export class Dsv3Layer extends HTMLElement {
       dhalf(C1 + 150, 'kv down-proj', '7168 → 512 + 64',
         '2 · 7168 · (512 + 64) FLOP/token — wkv_a; shares q down-proj’s mark and dtype (one graph node)', 1 - qFrac, false);
       y += 60;
-      // display-split of the one latents stash: q latent rides the left spine,
-      // kv latent the right. In detail the kv down-proj box has TWO outputs:
-      // k_rope (64) leaves from its bottom-right corner immediately and rides an
-      // outer rail (far enough right to clear the chip texts) down to RoPE —
-      // only the 512 latent goes through the norm and up-projection.
-      const latTot = DSV3.qRank + DSV3.kvRank + DSV3.qkRope;
+      // display-split of the one latents stash. What backward keeps is the
+      // POST-norm latent (the up-proj's input), so in detail the chips sit
+      // below the RMSNorm row. The kv down-proj box has TWO outputs: k_rope
+      // (64) leaves from its bottom-right corner immediately and rides an
+      // outer rail (clear of chip text) down to the kv-side RoPE.
+      const latTot = DSV3.qRank + DSV3.kvRank;   // the k_rope dims are never stashed
       const bypX = C1 + 380;                     // k_rope rail, clear of all chip text
       let bypTop = 0;
       if (DET) {
         const kx = C1 + 280;
         bypTop = y + 6;
         P.push(`<path class="wire" d="M ${kx} ${y} L ${kx} ${bypTop} L ${bypX} ${bypTop}"/>`);
-        tensorChip(['qkv_down'], kx + 20, bypTop - 10,
-          { name: 'k_rope', tdims: String(DSV3.qkRope), frac: DSV3.qkRope / latTot });
-      }
-      const chipY = DET ? y + 14 : y + 4;        // chips sit below the k_rope elbow
-      tensorChip(['qkv_down'], SX1 + 14, chipY,
-        { name: 'q latent', tdims: String(DSV3.qRank), frac: DSV3.qRank / latTot });
-      tensorChip(['qkv_down'], RX + 14, chipY, DET
-        ? { name: 'kv latent', tdims: String(DSV3.kvRank), frac: DSV3.kvRank / latTot }
-        : { name: 'kv latent + k_rope', tdims: `${DSV3.kvRank} + ${DSV3.qkRope}`, frac: (DSV3.kvRank + DSV3.qkRope) / latTot });
-      const latGap = Math.max(26, chipSpace(['qkv_down']) + 8) + (DET ? 10 : 0);
-      wire(SX1, y, y + latGap);
-      P.push(`<path class="wire" d="M ${RX} ${y} L ${RX} ${y + latGap}" marker-end="url(#arr)"/>`);
-      y += latGap;
-      if (DET) {
-        // MLA-internal RMSNorms on the latents (q_a_layernorm; kv_a_layernorm norms the 512 only)
+        P.push(`<text class="tensor tidle" x="${kx + 20}" y="${bypTop - 2}">· k_rope · ${DSV3.qkRope} — not needed</text>`);
+        // short hop into the latent norms (nothing is stashed pre-norm)
+        wire(SX1, y, y + 16);
+        P.push(`<path class="wire" d="M ${RX} ${y} L ${RX} ${y + 16}" marker-end="url(#arr)"/>`);
+        y += 16;
+        // MLA-internal RMSNorms (q_a_layernorm; kv_a_layernorm norms the 512 only)
         micro('RMSNorm (q latent)', C1, y, 140);
         micro('RMSNorm (kv latent)', C1 + 150, y, 140);
         y += 18;
-        wire(SX1, y, y + 14);
-        P.push(`<path class="wire" d="M ${RX} ${y} L ${RX} ${y + 14}" marker-end="url(#arr)"/>`);
-        y += 14;
       }
+      tensorChip(['qkv_down'], SX1 + 14, y + 4,
+        { name: 'q latent', tdims: String(DSV3.qRank), frac: DSV3.qRank / latTot });
+      tensorChip(['qkv_down'], RX + 14, y + 4,
+        { name: 'kv latent', tdims: String(DSV3.kvRank), frac: DSV3.kvRank / latTot });
+      const latGap = Math.max(26, chipSpace(['qkv_down']) + 8);
+      wire(SX1, y, y + latGap);
+      P.push(`<path class="wire" d="M ${RX} ${y} L ${RX} ${y + latGap}" marker-end="url(#arr)"/>`);
+      y += latGap;
       const halfBox = (id, x) => {
         const m = MATMULS.find(mm2 => mm2.id === id);
         P.push(`<g${boxTip(id, m.dimsNote)}>` +
