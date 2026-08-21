@@ -1173,8 +1173,11 @@ export class Dsv3Layer extends HTMLElement {
         P.push(`<path class="wire" d="M ${RX} ${y} L ${RX} ${y + 30}" marker-end="url(#arr)"/>`);
         y += 30;
         // MLA-internal RMSNorms (q_a_layernorm; kv_a_layernorm norms the 512 only)
-        micro('RMSNorm (q latent)', C1, y, 140);
-        micro('RMSNorm (kv latent)', C1 + 150, y, 140);
+        const normTip = 'input-form backward: reads its INPUT (pre-norm) + rstd — never its output. ' +
+          'The pre-norm latent is not stashed; it is exactly recoverable from the post-norm stash, ' +
+          '\u03b3, and rstd (x = y / (\u03b3\u00b7rstd)), which is why one latent copy suffices.';
+        micro('RMSNorm (q latent)', C1, y, 140, normTip);
+        micro('RMSNorm (kv latent)', C1 + 150, y, 140, normTip);
         y += 18;
         // their rstd is kept for backward: exits the bottom, elbows right
         // (\u2191 = read by the op above, the norm's own backward)
