@@ -1167,7 +1167,7 @@ export class Dsv3Layer extends HTMLElement {
         const kx = C1 + 272;
         bypTop = y + 20;
         P.push(`<path class="wire" d="M ${kx} ${y} L ${kx} ${bypTop} L ${bypX} ${bypTop}"/>`);
-        P.push(`<text class="tensor tidle" x="${C1 + 156}" y="${y + 16}">· k_rope · ${DSV3.qkRope}</text>`);
+        P.push(`<text class="tensor tidle" x="${kx + 6}" y="${bypTop - 4}">· k_rope · ${DSV3.qkRope}</text>`);
         // into the latent norms (nothing is stashed pre-norm)
         wire(SX1, y, y + 30);
         P.push(`<path class="wire" d="M ${RX} ${y} L ${RX} ${y + 30}" marker-end="url(#arr)"/>`);
