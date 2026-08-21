@@ -1300,11 +1300,17 @@ export class Dsv3Layer extends HTMLElement {
     // turns right in clear space instead of crossing them
     tensorChip(['combine'], SX2 + 14, z + 4);
     const zc = z;                                  // combine box bottom
-    z = Math.max(z + Math.max(22, chipSpace(['combine']) + 10) + 13, col1End - 4);
+    // detail leaves headroom above the add for its label (above the shared rail)
+    z = Math.max(z + Math.max(22, chipSpace(['combine']) + 10) + (DET ? 48 : 13), col1End - 4);
     plus(SX2, z);
     wire(SX2, zc, z - 11);
     // shared-expert output joins the final add (add_shared_and_residual)
     if (DET && shBot) P.push(`<path class="wire" d="M ${shMid} ${shBot} L ${shMid} ${z} L ${SX2 + 11} ${z}" marker-end="url(#arr)"/>`);
+    // label the three-way add like its sibling — it is ONE fused kernel, not
+    // (routed + shared) followed by a residual add
+    P.push(`<g data-tip="one fused add kernel (Megatron: add_shared_and_residual) — routed output + shared output + residual x1; no intermediate ffn-out tensor ever materializes">` +
+      `<rect class="res" x="${SX2 + 26}" y="${z - (DET ? 35 : 11)}" width="${DET ? 214 : 126}" height="22" rx="4"/>` +
+      `<text class="oplabel" x="${SX2 + 34}" y="${z - (DET ? 20 : -4)}">${DET ? 'add — routed + shared + residual' : 'residual add'}</text></g>`);
     // block output: a short down arrow out of the second residual add (= the next block's x0)
     P.push(`<line class="wire" x1="${SX2}" y1="${z + 9}" x2="${SX2}" y2="${z + 26}" marker-end="url(#arr)"/>` +
       `<text class="tensor tidle" x="${SX2 + 8}" y="${z + 24}">x2</text>`);
@@ -1312,7 +1318,7 @@ export class Dsv3Layer extends HTMLElement {
     // branch off the bottom rail up to norm2 (single output from the x1 add)
     P.push(`<circle cx="${midX}" cy="${z}" r="2.5" fill="#898781"/>` +
       `<path class="wire" d="M ${midX} ${z} L ${midX} 6 L ${SX2} 6 L ${SX2} 16" marker-end="url(#arr)"/>`);
-    const col2End = z + 32;
+    const col2End = z + 42;   // room for the add label under the plus
 
     // ---- head row (unless block-only: show the transformer block alone,
     // making no claims about the surrounding stack) ----
