@@ -1145,7 +1145,7 @@ export class Dsv3Layer extends HTMLElement {
         const kx = C1 + 280;
         bypTop = y + 6;
         P.push(`<path class="wire" d="M ${kx} ${y} L ${kx} ${bypTop} L ${bypX} ${bypTop}"/>`);
-        P.push(`<text class="tensor tidle" x="${kx + 20}" y="${bypTop - 2}">· k_rope · ${DSV3.qkRope} — not needed</text>`);
+        P.push(`<text class="tensor tidle" x="${kx + 20}" y="${bypTop - 2}">· k_rope · ${DSV3.qkRope}</text>`);
         // short hop into the latent norms (nothing is stashed pre-norm)
         wire(SX1, y, y + 16);
         P.push(`<path class="wire" d="M ${RX} ${y} L ${RX} ${y + 16}" marker-end="url(#arr)"/>`);
@@ -1154,6 +1154,13 @@ export class Dsv3Layer extends HTMLElement {
         micro('RMSNorm (q latent)', C1, y, 140);
         micro('RMSNorm (kv latent)', C1 + 150, y, 140);
         y += 18;
+        // their rstd is kept for backward: exits the bottom, elbows right
+        // (\u2191 = read by the op above, the norm's own backward)
+        for (const bx of [C1, C1 + 150]) {
+          P.push(`<path class="wire" d="M ${bx + 112} ${y} L ${bx + 112} ${y + 7} L ${bx + 124} ${y + 7}" marker-end="url(#arr)"/>` +
+            `<text class="tensor tsave" x="${bx + 128}" y="${y + 10}">\u2191 rstd</text>`);
+        }
+        y += 14;
       }
       tensorChip(['qkv_down'], SX1 + 14, y + 4,
         { name: 'q latent', tdims: String(DSV3.qRank), frac: DSV3.qRank / latTot });
