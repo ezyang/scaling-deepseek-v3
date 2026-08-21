@@ -1039,7 +1039,7 @@ export class Dsv3Layer extends HTMLElement {
         // unitless per-token size (element counts, like the op dims — dtype unspecified here)
         const sz = flatten(ov?.tdims ?? ids.map(i => ana.byId[i].tdims).join(' + '));
         P.push(st === 'idle'
-          ? `<text class="tensor tidle" x="${x}" y="${y + 8}">· ${name} — not needed</text>`
+          ? `<text class="tensor tidle" x="${x}" y="${y + 8}">· ${name}</text>`
           : `<text class="tensor tsave" x="${x}" y="${y + 8}">${needDir(ids)} ${name} <tspan class="tdim">· ${sz}</tspan></text>`);
         return h;
       }
@@ -1052,7 +1052,7 @@ export class Dsv3Layer extends HTMLElement {
       } else if (st === 'redo') {
         P.push(`<text class="tensor tredo" x="${x}" y="${y + 8}">↻ ${esc(name0)} — recomputed</text>`);
       } else {
-        P.push(`<text class="tensor tidle" x="${x}" y="${y + 8}">· ${esc(name0)} — not needed</text>`);
+        P.push(`<text class="tensor tidle" x="${x}" y="${y + 8}">· ${esc(name0)}</text>`);
       }
       return h;
     };
