@@ -1069,9 +1069,10 @@ export class Dsv3Layer extends HTMLElement {
     };
     // display-only elided kernel (detail view): cheap, no marks, not in the graph
     const DET = this.detail;
-    const micro = (label, x, y, w = W) => {
-      P.push(`<rect class="micro" x="${x}" y="${y}" width="${w}" height="18" rx="9"/>` +
-        `<text class="microlabel" x="${x + 9}" y="${y + 13}">${label}</text>`);
+    const micro = (label, x, y, w = W, tip) => {
+      const body = `<rect class="micro" x="${x}" y="${y}" width="${w}" height="18" rx="9"/>` +
+        `<text class="microlabel" x="${x + 9}" y="${y + 13}">${label}</text>`;
+      P.push(tip ? `<g data-tip="${escAttr(tip)}">${body}</g>` : body);
       return y + 18;
     };
     const plus = (cx, y) => P.push(`<circle cx="${cx}" cy="${y}" r="9" class="box"/>` +
@@ -1153,7 +1154,7 @@ export class Dsv3Layer extends HTMLElement {
       tensorChip(['qkv_down'], RX + 14, chipY, DET
         ? { name: 'kv latent', tdims: String(DSV3.kvRank), frac: DSV3.kvRank / latTot }
         : { name: 'kv latent + k_rope', tdims: `${DSV3.kvRank} + ${DSV3.qkRope}`, frac: (DSV3.kvRank + DSV3.qkRope) / latTot });
-      const latGap = Math.max(34, chipSpace(['qkv_down']) + 20) + (DET ? 12 : 0);
+      const latGap = Math.max(30, chipSpace(['qkv_down']) + 14) + (DET ? 12 : 0);
       wire(SX1, y, y + latGap);
       P.push(`<path class="wire" d="M ${RX} ${y} L ${RX} ${y + latGap}" marker-end="url(#arr)"/>`);
       y += latGap;
@@ -1177,11 +1178,19 @@ export class Dsv3Layer extends HTMLElement {
       };
       halfBox('q_up', C1); halfBox('kv_up', C1 + 150); y += 60;
       if (DET) {
-        // ONE fused RoPE kernel rotates q_rope and k_rope together (fp32), and the
-        // adjacent concats materialize Q and K; the bypass wire shows the 64
-        // rope dims skipping the up-projection entirely. Placed before the
-        // chips: what backward stashes is the rotated, concatenated q/k/v.
-        micro('RoPE (q_rope, k_rope) · materialize Q, K, V contiguous', C1, y, W);
+        // the up-proj outputs get names before RoPE; then two separate RoPE
+        // kernels (Megatron: apply_mla_rope_for_q / _for_kv) — the kv one is
+        // rope plus a little extra (split, broadcast, assemble K and V) — feed
+        // q and k,v directly into attention. The k_rope rail lands here.
+        P.push(`<text class="tensor tidle" x="${SX1 + 14}" y="${y + 12}">q_heads · 128×192</text>` +
+          `<text class="tensor tidle" x="${RX + 14}" y="${y + 12}">kv_heads · 128×(128+128)</text>`);
+        wire(SX1, y, y + 16);
+        P.push(`<path class="wire" d="M ${RX} ${y} L ${RX} ${y + 16}" marker-end="url(#arr)"/>`);
+        y += 16;
+        micro('RoPE (q_rope)', C1, y, 140,
+          'fused_apply_mla_rope_for_q — rotate the 64 rope dims of every q head (fp32), make Q contiguous');
+        micro('RoPE (k_rope) + build K,V', C1 + 150, y, 140,
+          'fused_apply_mla_rope_for_kv — split kv_heads into k_nope and V, rotate k_rope, broadcast it across the 128 heads, concat K = [k_nope | k_rope], make K and V contiguous');
         P.push(`<path class="wire" d="M ${bypX} ${bypTop} L ${bypX} ${y + 9} L ${C1 + W + 1} ${y + 9}" marker-end="url(#arr)"/>`);
         y += 18;
       }
