@@ -1276,10 +1276,17 @@ export class Dsv3Layer extends HTMLElement {
       gateTop = z + rGap - 10;
       P.push(`<circle cx="${SX2}" cy="${gateTop}" r="2.5" fill="#898781"/>` +
         `<path class="wire" d="M ${SX2} ${gateTop} L ${gateX} ${gateTop}"/>` +
-        `<text class="tensor tidle" x="${SX2 + 34}" y="${gateTop - 4}">gate weights · 8</text>`);
+        `<text class="tensor tidle" x="${SX2 + 34}" y="${gateTop - 4}">top-k weights · 8</text>`);
       z += rGap;
     }
+    const dispTop = z;
     z = opNode('dispatch', DET ? 'a2a dispatch (permute + comm) → EP group' : 'a2a dispatch → EP group', C2, z, 'comm');
+    // the top-k weights are dispatched too: the rail enters the a2a alongside
+    // the tokens and re-emerges as the per-expert weights (Megatron: probs in,
+    // expert_probs out of hybridep_dispatch)
+    if (DET) P.push(
+      `<path class="wire" d="M ${gateX} ${gateTop} L ${gateX} ${dispTop + 7} L ${C2 + W + 1} ${dispTop + 7}" marker-end="url(#arr)"/>` +
+      `<path class="wire" d="M ${C2 + W} ${dispTop + 16} L ${gateX} ${dispTop + 16}"/>`);
     z = wireOut(['dispatch'], SX2, z);
     const g2 = z + 3; z += 21;
     z = mmBox(['ffn_gate_up'], C2, z, ['gate_up'], DET ? 'ffn gate/up (grouped ×8)' : undefined);
@@ -1288,8 +1295,8 @@ export class Dsv3Layer extends HTMLElement {
     // multiply the swiglu output before the down-proj (one fused kernel,
     // AMAIA's swiglu_and_scale) — this is what makes the expert outputs a pure
     // intermediate instead of a stash for the combine's backward
-    if (DET) P.push(`<path class="wire" d="M ${gateX} ${gateTop} L ${gateX} ${z + 13} L ${C2 + W + 1} ${z + 13}" marker-end="url(#arr)"/>`);
-    z = opNode('swiglu', DET ? 'SwiGLU · × gate (one fused kernel)' : 'SwiGLU', C2, z);
+    if (DET) P.push(`<path class="wire" d="M ${gateX} ${dispTop + 16} L ${gateX} ${z + 13} L ${C2 + W + 1} ${z + 13}" marker-end="url(#arr)"/>`);
+    z = opNode('swiglu', DET ? 'SwiGLU · × top-k weight (one fused kernel)' : 'SwiGLU', C2, z);
     z = wireOut(['swiglu'], SX2, z, DET ? { name: 'swiglu out (routed)', tdims: `${DSV3.topk}×2048`, frac: DSV3.topk / nExp } : undefined);
     z = mmBox(['ffn_down'], C2, z, undefined, DET ? 'ffn down (grouped ×8)' : undefined);
     grp(C2, g2, z + 5, DET ? 'routed experts: top-8 of 256 — grouped GEMMs' : 'experts: top-8 of 256 routed + 1 shared');
