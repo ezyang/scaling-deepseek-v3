@@ -22,7 +22,7 @@ export const MATMULS = [
     dimsNote: 'q latent 1536 → 128 heads × (128 nope + 64 rope) = 24576' },
   { id: 'kv_up', label: 'kv up-proj', dims: '512 → 128×(128+128)',
     dimsNote: 'kv latent 512 → 128 heads × (128 k-nope + 128 v) = 32768' },
-  { id: 'attn', label: 'flash attention', dims: 'causal core',
+  { id: 'attn', label: 'attention', dims: 'softmax(QKᵀ)V · causal',
     dimsNote: 'softmax(QKᵀ)V over causal context ≤ 4096 (average ≈ seq/2)' },
   { id: 'o_proj', label: 'attn out-proj', dims: '128×128 → 7168',
     dimsNote: '128 heads × 128 v-dim = 16384 → hidden 7168' },
