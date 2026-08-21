@@ -1148,13 +1148,13 @@ export class Dsv3Layer extends HTMLElement {
         tensorChip(['qkv_down'], kx + 20, bypTop - 10,
           { name: 'k_rope', tdims: String(DSV3.qkRope), frac: DSV3.qkRope / latTot });
       }
-      const chipY = DET ? y + 16 : y + 4;        // chips sit below the k_rope elbow
+      const chipY = DET ? y + 14 : y + 4;        // chips sit below the k_rope elbow
       tensorChip(['qkv_down'], SX1 + 14, chipY,
         { name: 'q latent', tdims: String(DSV3.qRank), frac: DSV3.qRank / latTot });
       tensorChip(['qkv_down'], RX + 14, chipY, DET
         ? { name: 'kv latent', tdims: String(DSV3.kvRank), frac: DSV3.kvRank / latTot }
         : { name: 'kv latent + k_rope', tdims: `${DSV3.kvRank} + ${DSV3.qkRope}`, frac: (DSV3.kvRank + DSV3.qkRope) / latTot });
-      const latGap = Math.max(30, chipSpace(['qkv_down']) + 14) + (DET ? 12 : 0);
+      const latGap = Math.max(26, chipSpace(['qkv_down']) + 8) + (DET ? 10 : 0);
       wire(SX1, y, y + latGap);
       P.push(`<path class="wire" d="M ${RX} ${y} L ${RX} ${y + latGap}" marker-end="url(#arr)"/>`);
       y += latGap;
