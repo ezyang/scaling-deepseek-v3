@@ -920,7 +920,7 @@ export class Dsv3Layer extends HTMLElement {
     // Aux backward artifacts (rstd, lse) exit each box to the RIGHT — always saved.
     const W = 290, C1 = 60, C2 = 512;
     const SX1 = C1 + 22, SX2 = C2 + 22, RAIL1 = C1 - 26;
-    const WIDTH = C2 + W + (this.detail ? 200 : 180); // right margin fits aux labels (+ shared column in detail)
+    const WIDTH = C2 + W + (this.detail ? 220 : 180); // right margin fits aux labels (+ shared column in detail)
     // dims display: factored (128\u00d7192) or multiplied out (24576)
     const flatten = (s) => {
       if (!this.flatDims || !s) return s;
@@ -1098,8 +1098,8 @@ export class Dsv3Layer extends HTMLElement {
     };
     const plus = (cx, y) => P.push(`<circle cx="${cx}" cy="${y}" r="9" class="box"/>` +
       `<text class="plus" x="${cx}" y="${y + 4}" text-anchor="middle">+</text>`);
-    const grp = (x, y0, y1, label) => P.push(
-      `<rect class="grp" x="${x - 10}" y="${y0}" width="${W + 20}" height="${y1 - y0}" rx="6"/>` +
+    const grp = (x, y0, y1, label, w = W + 20) => P.push(
+      `<rect class="grp" x="${x - 10}" y="${y0}" width="${w}" height="${y1 - y0}" rx="6"/>` +
       `<text class="grplabel" x="${x - 2}" y="${y0 + 11}">${label}</text>`);
     const mmBox = (ids, x, y, markIds, label) => {
       const spec = MATMULS.find(m => m.id === ids[0]);
@@ -1133,6 +1133,7 @@ export class Dsv3Layer extends HTMLElement {
     y = opNode('norm1', 'RMSNorm', C1, y);
     let g1;
     y = wireOut(['norm1'], SX1, y); g1 = y + 3; y += 21;
+    let bypX = 0;                                // k_rope rail x (set in the MLA fork block)
     {
       const RX = C1 + 150 + 22;
       // the down-projection is two separate GEMMs in production stacks
@@ -1160,17 +1161,17 @@ export class Dsv3Layer extends HTMLElement {
       // (64) leaves from its bottom-right corner immediately and rides an
       // outer rail (clear of chip text) down to the kv-side RoPE.
       const latTot = DSV3.qRank + DSV3.kvRank;   // the k_rope dims are never stashed
-      const bypX = C1 + 380;                     // k_rope rail, clear of all chip text
+      bypX = C1 + 340;                           // k_rope rail, clear of all chip text
       let bypTop = 0;
       if (DET) {
-        const kx = C1 + 280;
-        bypTop = y + 6;
+        const kx = C1 + 272;
+        bypTop = y + 20;
         P.push(`<path class="wire" d="M ${kx} ${y} L ${kx} ${bypTop} L ${bypX} ${bypTop}"/>`);
-        P.push(`<text class="tensor tidle" x="${kx + 20}" y="${bypTop - 2}">· k_rope · ${DSV3.qkRope}</text>`);
-        // short hop into the latent norms (nothing is stashed pre-norm)
-        wire(SX1, y, y + 16);
-        P.push(`<path class="wire" d="M ${RX} ${y} L ${RX} ${y + 16}" marker-end="url(#arr)"/>`);
-        y += 16;
+        P.push(`<text class="tensor tidle" x="${C1 + 156}" y="${y + 16}">· k_rope · ${DSV3.qkRope}</text>`);
+        // into the latent norms (nothing is stashed pre-norm)
+        wire(SX1, y, y + 30);
+        P.push(`<path class="wire" d="M ${RX} ${y} L ${RX} ${y + 30}" marker-end="url(#arr)"/>`);
+        y += 30;
         // MLA-internal RMSNorms (q_a_layernorm; kv_a_layernorm norms the 512 only)
         micro('RMSNorm (q latent)', C1, y, 140);
         micro('RMSNorm (kv latent)', C1 + 150, y, 140);
@@ -1188,8 +1189,9 @@ export class Dsv3Layer extends HTMLElement {
       tensorChip(['qkv_down'], RX + 14, y + 4,
         { name: 'kv latent', tdims: String(DSV3.kvRank), frac: DSV3.kvRank / latTot });
       const latGap = Math.max(26, chipSpace(['qkv_down']) + 8);
-      wire(SX1, y, y + latGap);
-      P.push(`<path class="wire" d="M ${RX} ${y} L ${RX} ${y + latGap}" marker-end="url(#arr)"/>`);
+      const wireTop = DET ? y - 14 : y;          // span the rstd band too — no spine gap
+      wire(SX1, wireTop, y + latGap);
+      P.push(`<path class="wire" d="M ${RX} ${wireTop} L ${RX} ${y + latGap}" marker-end="url(#arr)"/>`);
       y += latGap;
       const halfBox = (id, x) => {
         const m = MATMULS.find(mm2 => mm2.id === id);
@@ -1229,7 +1231,7 @@ export class Dsv3Layer extends HTMLElement {
     y = mmBox(['attn'], C1, y);
     y = wireOut(['attn'], SX1, y);
     y = mmBox(['o_proj'], C1, y);
-    grp(C1, g1, y + 5, 'MLA');
+    grp(C1, g1, y + 5, 'MLA', DET ? bypX - C1 + 22 : undefined);
     y = wireOut(['o_proj'], SX1, y + 5);
     y += 13;
     plus(SX1, y);
@@ -1250,7 +1252,7 @@ export class Dsv3Layer extends HTMLElement {
     let z = 16;
     z = opNode('norm2', 'RMSNorm', C2, z);
     let shBot = 0, shTop = 0;
-    const SHX = C2 + 320, shMid = SHX + 132;       // shared-expert mini column; spine on its right edge, clear of chip text
+    const SHX = C2 + 320, shMid = SHX + 22;        // shared-expert mini column; spine down its LEFT, like every column
     const shBox = (name, dims, tip, yy) => P.push(`<g data-tip="${escAttr(tip)}">` +
       `<rect class="box" x="${SHX}" y="${yy}" width="140" height="34" rx="4"/>` +
       `<text class="name" x="${SHX + 6}" y="${yy + 14}">${name}</text>` +
@@ -1277,7 +1279,7 @@ export class Dsv3Layer extends HTMLElement {
       gateTop = z + 9;
       z = micro('sigmoid · group-limited top-k · scale', C2, z);
       P.push(`<path class="wire" d="M ${C2 + W} ${gateTop} L ${gateX} ${gateTop}"/>` +
-        `<text class="tensor tidle" x="${gateX + 8}" y="${gateTop - 4}">top-k weights · 8</text>`);
+        `<text class="tensor tidle" x="${C2 + 198}" y="${z + 11}">top-k weights · 8</text>`);
     }
     z = wireOut(['router'], SX2, z, DET ? { name: 'router state' } : undefined);
     const dispTop = z;
@@ -1297,7 +1299,7 @@ export class Dsv3Layer extends HTMLElement {
         `<text class="grplabel" x="${SHX}" y="${rowG - 6}">shared expert (every token)</text>`);
       shBox('shared gate/up', '7168 → 2×2048',
         'one plain GEMM per token — follows the ffn gate/up mark and dtype (its FLOPs are counted in the grouped strip)', rowG);
-      tensorChip(['gate_up'], SHX + 6, z + 4, { name: 'gate, up (sh)', tdims: '2×2048', frac: 1 / nExp });
+      tensorChip(['gate_up'], shMid + 14, z + 4, { name: 'gate, up (sh)', tdims: '2×2048', frac: 1 / nExp });
     }
     z = wireOut(['gate_up'], SX2, z, DET ? { name: 'gate, up (routed)', tdims: `${DSV3.topk}×2×2048`, frac: DSV3.topk / nExp } : undefined);
     if (DET) wire(shMid, rowG + 34, z);
@@ -1310,7 +1312,7 @@ export class Dsv3Layer extends HTMLElement {
     z = opNode('swiglu', DET ? 'SwiGLU · × top-k weight (one fused kernel)' : 'SwiGLU', C2, z);
     if (DET) {
       micro('SwiGLU (ungated)', SHX, rowS, 140);
-      tensorChip(['swiglu'], SHX + 6, z + 4, { name: 'swiglu out (sh)', tdims: '2048', frac: 1 / nExp });
+      tensorChip(['swiglu'], shMid + 14, z + 4, { name: 'swiglu out (sh)', tdims: '2048', frac: 1 / nExp });
     }
     z = wireOut(['swiglu'], SX2, z, DET ? { name: 'swiglu out (routed)', tdims: `${DSV3.topk}×2048`, frac: DSV3.topk / nExp } : undefined);
     if (DET) wire(shMid, rowS + 18, z);
@@ -1319,7 +1321,7 @@ export class Dsv3Layer extends HTMLElement {
     if (DET) {
       shBox('shared down', '2048 → 7168',
         'one plain GEMM per token — follows the ffn down mark and dtype; its output joins the routed sum', rowD);
-      tensorChip(['ffn_down'], SHX + 6, z + 4, { name: 'shared out', tdims: '7168', frac: 1 / nExp });
+      tensorChip(['ffn_down'], shMid + 14, z + 4, { name: 'shared out', tdims: '7168', frac: 1 / nExp });
       shBot = rowD + 34;
     }
     grp(C2, g2, z + 5, DET ? 'routed experts: top-8 of 256 — grouped GEMMs' : 'experts: top-8 of 256 routed + 1 shared');
@@ -1357,7 +1359,7 @@ export class Dsv3Layer extends HTMLElement {
     }
     // block output: a short down arrow out of the second residual add (= the next block's x0)
     P.push(`<line class="wire" x1="${SX2}" y1="${z + 9}" x2="${SX2}" y2="${z + 26}" marker-end="url(#arr)"/>` +
-      `<text class="tensor tidle" x="${SX2 + 8}" y="${z + 24}">x2</text>`);
+      `<text class="tensor tidle" x="${SX2 + 8}" y="${z + 24}">x2 (block output)</text>`);
     P.push(`<path class="wire" d="M ${SX1} ${x1Y + 9} L ${SX1} ${z} L ${SX2 - 11} ${z}" marker-end="url(#arr)"/>`);
     // branch off the bottom rail up to norm2 (single output from the x1 add)
     P.push(`<circle cx="${midX}" cy="${z}" r="2.5" fill="#898781"/>` +
