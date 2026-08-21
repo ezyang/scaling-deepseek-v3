@@ -1110,9 +1110,9 @@ export class Dsv3Layer extends HTMLElement {
     };
     // display-only elided kernel (detail view): cheap, no marks, not in the graph
     const DET = this.detail;
-    const micro = (label, x, y, w = W, tip) => {
+    const micro = (label, x, y, w = W, tip, pc = '') => {
       const body = `<rect class="micro" x="${x}" y="${y}" width="${w}" height="18" rx="9"/>` +
-        `<text class="microlabel" x="${x + 9}" y="${y + 13}">${label}</text>`;
+        `<text class="microlabel" x="${x + 9}" y="${y + 13}">${label}${pc ? `<tspan class="dims"> ${pc}</tspan>` : ''}</text>`;
       P.push(tip ? `<g data-tip="${escAttr(tip)}">${body}</g>` : body);
       return y + 18;
     };
@@ -1202,8 +1202,8 @@ export class Dsv3Layer extends HTMLElement {
         const normTip = 'input-form backward: reads its INPUT (pre-norm) + rstd — never its output. ' +
           'The pre-norm latent is not stashed; it is exactly recoverable from the post-norm stash, ' +
           '\u03b3, and rstd (x = y / (\u03b3\u00b7rstd)), which is why one latent copy suffices.';
-        micro(`RMSNorm (q latent) (${fmtP(DSV3.qRank)})`, C1, y, 140, normTip);
-        micro(`RMSNorm (kv latent) (${fmtP(DSV3.kvRank)})`, C1 + 150, y, 140, normTip);
+        micro('RMSNorm', C1, y, 140, normTip, `(${fmtP(DSV3.qRank)})`);
+        micro('RMSNorm', C1 + 150, y, 140, normTip, `(${fmtP(DSV3.kvRank)})`);
         y += 18;
         // their rstd: exits the bottom, elbows right (\u2191 = read by the op
         // above, the norm's own backward); a replayed norm regenerates it
@@ -1249,9 +1249,9 @@ export class Dsv3Layer extends HTMLElement {
         wire(SX1, y, y + 16);
         P.push(`<path class="wire" d="M ${RX} ${y} L ${RX} ${y + 16}" marker-end="url(#arr)"/>`);
         y += 16;
-        micro('RoPE (q_rope)', C1, y, 140,
+        micro('RoPE', C1, y, 140,
           'fused_apply_mla_rope_for_q — rotate the 64 rope dims of every q head (fp32), make Q contiguous');
-        micro('RoPE (k_rope) + build K,V', C1 + 150, y, 140,
+        micro('RoPE + build K,V', C1 + 150, y, 140,
           'fused_apply_mla_rope_for_kv — split kv_heads into k_nope and V, rotate k_rope, broadcast it across the 128 heads, concat K = [k_nope | k_rope], make K and V contiguous');
         P.push(`<path class="wire" d="M ${bypX} ${bypTop} L ${bypX} ${y + 9} L ${C1 + W + 1} ${y + 9}" marker-end="url(#arr)"/>`);
         y += 18;
