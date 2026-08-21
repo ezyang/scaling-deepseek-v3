@@ -1161,19 +1161,22 @@ export class Dsv3Layer extends HTMLElement {
       // (64) leaves from its bottom-right corner immediately and rides an
       // outer rail (clear of chip text) down to the kv-side RoPE.
       const latTot = DSV3.qRank + DSV3.kvRank;   // the k_rope dims are never stashed
-      bypX = C1 + 404;                           // k_rope rail, clear of all chip text
+      bypX = C1 + 358;                           // k_rope rail, clear of all chip text
       let bypTop = 0;
       if (DET) {
         const kx = C1 + 272;
         bypTop = y + 14;
         P.push(`<path class="wire" d="M ${kx} ${y} L ${kx} ${bypTop} L ${bypX} ${bypTop}"/>`);
         P.push(`<text class="tensor tidle" x="${kx + 6}" y="${bypTop - 4}">· k_rope · ${DSV3.qkRope}</text>`);
-        // the raw latents feed the norms; the stashed tensor is the normed one below
-        P.push(`<text class="tensor tidle" x="${SX1 + 14}" y="${y + 32}">q latent · ${flatten(String(DSV3.qRank))}</text>` +
-          `<text class="tensor tidle" x="${RX + 14}" y="${y + 32}">kv latent · ${flatten(String(DSV3.kvRank))}</text>`);
-        wire(SX1, y, y + 44);
-        P.push(`<path class="wire" d="M ${RX} ${y} L ${RX} ${y + 44}" marker-end="url(#arr)"/>`);
-        y += 44;
+        // pre-norm latent chips: real graph state (saved at no-AC — the latent
+        // norms' backward input; the replay anchor under recompute presets)
+        tensorChip(['qkv_down'], SX1 + 14, y + 24,
+          { name: 'q latent', tdims: String(DSV3.qRank), frac: DSV3.qRank / latTot });
+        tensorChip(['qkv_down'], RX + 14, y + 24,
+          { name: 'kv latent', tdims: String(DSV3.kvRank), frac: DSV3.kvRank / latTot });
+        wire(SX1, y, y + 48);
+        P.push(`<path class="wire" d="M ${RX} ${y} L ${RX} ${y + 48}" marker-end="url(#arr)"/>`);
+        y += 48;
         // MLA-internal RMSNorms (q_a_layernorm; kv_a_layernorm norms the 512 only)
         const normTip = 'input-form backward: reads its INPUT (pre-norm) + rstd — never its output. ' +
           'The pre-norm latent is not stashed; it is exactly recoverable from the post-norm stash, ' +
@@ -1181,18 +1184,25 @@ export class Dsv3Layer extends HTMLElement {
         micro('RMSNorm (q latent)', C1, y, 140, normTip);
         micro('RMSNorm (kv latent)', C1 + 150, y, 140, normTip);
         y += 18;
-        // their rstd is kept for backward: exits the bottom, elbows right
-        // (\u2191 = read by the op above, the norm's own backward)
-        for (const bx of [C1, C1 + 150]) {
+        // their rstd: exits the bottom, elbows right (\u2191 = read by the op
+        // above, the norm's own backward); a replayed norm regenerates it
+        for (const [nid, bx] of [['q_norm', C1], ['kv_norm', C1 + 150]]) {
+          const rep = ana.replayed.has(nid);
           P.push(`<path class="wire" d="M ${bx + 112} ${y} L ${bx + 112} ${y + 7} L ${bx + 124} ${y + 7}" marker-end="url(#arr)"/>` +
-            `<text class="tensor tsave" x="${bx + 128}" y="${y + 10}">\u2191 rstd</text>`);
+            `<text class="tensor ${rep ? 'tredo' : 'tsave'}" x="${bx + 128}" y="${y + 10}">${rep ? '\u21bb' : '\u2191'} rstd</text>`);
         }
         y += 14;
       }
-      tensorChip(['qkv_down'], SX1 + 14, y + 4,
-        { name: DET ? 'norm(q latent)' : 'q latent', tdims: String(DSV3.qRank), frac: DSV3.qRank / latTot });
-      tensorChip(['qkv_down'], RX + 14, y + 4,
-        { name: DET ? 'norm(kv latent)' : 'kv latent', tdims: String(DSV3.kvRank), frac: DSV3.kvRank / latTot });
+      if (DET) {
+        // the normed latents are their own graph nodes (q_norm / kv_norm)
+        tensorChip(['q_norm'], SX1 + 14, y + 4);
+        tensorChip(['kv_norm'], RX + 14, y + 4);
+      } else {
+        tensorChip(['qkv_down'], SX1 + 14, y + 4,
+          { name: 'q latent', tdims: String(DSV3.qRank), frac: DSV3.qRank / latTot });
+        tensorChip(['qkv_down'], RX + 14, y + 4,
+          { name: 'kv latent', tdims: String(DSV3.kvRank), frac: DSV3.kvRank / latTot });
+      }
       const latGap = Math.max(26, chipSpace(['qkv_down']) + 8);
       const wireTop = DET ? y - 14 : y;          // span the rstd band too — no spine gap
       wire(SX1, wireTop, y + latGap);

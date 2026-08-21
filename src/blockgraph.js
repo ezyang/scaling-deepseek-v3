@@ -27,19 +27,19 @@ export const DTYPE_BYTES = { bf16: 2, mxfp8: 1 + 1 / 32, fp32: 4 };
 export const RECOMPUTE_PRESETS = {
   none: {},
   // DeepSeek-paper policy: recompute RMSNorms, MLA up-projections, SwiGLU
-  dsv3: { norm1: false, norm2: false, q_up: false, kv_up: false, swiglu: false },
+  dsv3: { norm1: false, norm2: false, q_norm: false, kv_norm: false, q_up: false, kv_up: false, swiglu: false },
   // aggressive production policy: recompute ALL of attention (norm1 through
   // the residual add) from x0 in backward; the saved attention-side tensor is
   // norm2's OUTPUT (the attention output post-norm), which the MoE half consumes.
   'attn-replay': {
-    norm1: false, qkv_down: false, q_up: false, kv_up: false, attn: false, o_proj: false, x1: false,
-    swiglu: false,
+    norm1: false, qkv_down: false, q_norm: false, kv_norm: false, q_up: false, kv_up: false,
+    attn: false, o_proj: false, x1: false, swiglu: false,
   },
   // dsv3 + recompute ffn gate/up from the dispatched tokens
-  selective: { norm1: false, norm2: false, q_up: false, kv_up: false, swiglu: false, gate_up: false },
+  selective: { norm1: false, norm2: false, q_norm: false, kv_norm: false, q_up: false, kv_up: false, swiglu: false, gate_up: false },
   // full checkpointing: replay the whole layer from its input (incl. the a2a!)
   full: {
-    norm1: false, qkv_down: false, q_up: false, kv_up: false, attn: false, o_proj: false, x1: false,
+    norm1: false, qkv_down: false, q_norm: false, kv_norm: false, q_up: false, kv_up: false, attn: false, o_proj: false, x1: false,
     norm2: false, router: false, dispatch: false, gate_up: false, swiglu: false, ffn_down: false, combine: false,
   },
 };
@@ -70,12 +70,21 @@ export function blockGraph(kind, a, mm, seqLen) {
     N('norm1', 'RMSNorm', 'vector', ['x0'], 'norm1 out', h, B('qkv_down'), 8 * h, { bucket: 'mla', aux: { name: 'rstd', bytes: 4 } }),
     // stash excludes the k_rope dims: RoPE's backward is a transposed rotation
     // (needs no input), and wkv_a's wgrad needs norm1-out, not its own output
+    // Pre-norm latents kept in bf16 (the latent norms' backward input).
     N('qkv_down', 'q/kv down-proj', 'matmul', ['norm1'], 'latents',
-      a.qRank + a.kvRank, B('q_up'), 2 * (h * a.qRank + h * (a.kvRank + a.qkRope)),
+      a.qRank + a.kvRank, 2, 2 * (h * a.qRank + h * (a.kvRank + a.qkRope)),
       { bucket: 'mla', tdims: `${a.qRank} + ${a.kvRank}` }),
-    N('q_up', 'q up-proj', 'matmul', ['qkv_down'], 'q', a.heads * qk, B('attn'), 2 * a.qRank * a.heads * qk,
+    // the MLA-internal latent norms are real ops: at no-AC both the pre-norm
+    // latent (their backward input) and their normed output (the up-proj wgrad
+    // activation, TE's cached fp8 copy) are stashed; every recompute preset
+    // replays them (the DSv3 paper names RMSNorms explicitly)
+    N('q_norm', 'RMSNorm (q latent)', 'vector', ['qkv_down'], 'norm(q latent)', a.qRank, B('q_up'),
+      8 * a.qRank, { bucket: 'mla', aux: { name: 'rstd', bytes: 4 } }),
+    N('kv_norm', 'RMSNorm (kv latent)', 'vector', ['qkv_down'], 'norm(kv latent)', a.kvRank, B('kv_up'),
+      8 * a.kvRank, { bucket: 'mla', aux: { name: 'rstd', bytes: 4 } }),
+    N('q_up', 'q up-proj', 'matmul', ['q_norm'], 'q', a.heads * qk, B('attn'), 2 * a.qRank * a.heads * qk,
       { bucket: 'mla', tdims: `${a.heads}\u00d7${qk}` }),
-    N('kv_up', 'kv up-proj', 'matmul', ['qkv_down'], 'k,v', a.heads * (qk + a.vHead), B('attn'),
+    N('kv_up', 'kv up-proj', 'matmul', ['kv_norm'], 'k,v', a.heads * (qk + a.vHead), B('attn'),
       2 * a.kvRank * a.heads * (a.qkNope + a.vHead), { bucket: 'mla', tdims: `${a.heads}\u00d7(${qk}+${a.vHead})` }),
     N('attn', 'attention', 'attn', ['q_up', 'kv_up'], 'attn out', a.heads * a.vHead, B('o_proj'),
       2 * a.heads * (qk + a.vHead) * seqLen / 2, { bucket: 'mla', aux: { name: 'lse', bytes: 4 * a.heads }, needsOwnOutput: true, tdims: `${a.heads}\u00d7${a.vHead}` }),
