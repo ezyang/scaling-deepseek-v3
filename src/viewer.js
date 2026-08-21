@@ -1249,61 +1249,37 @@ export class Dsv3Layer extends HTMLElement {
     const nExp = DSV3.topk + DSV3.sharedExperts;   // grouped boxes carry topk/nExp, shared 1/nExp
     let z = 16;
     z = opNode('norm2', 'RMSNorm', C2, z);
-    let shBot = 0;
+    let shBot = 0, shTop = 0;
     const SHX = C2 + 320, shMid = SHX + 132;       // shared-expert mini column; spine on its right edge, clear of chip text
+    const shBox = (name, dims, tip, yy) => P.push(`<g data-tip="${escAttr(tip)}">` +
+      `<rect class="box" x="${SHX}" y="${yy}" width="140" height="34" rx="4"/>` +
+      `<text class="name" x="${SHX + 6}" y="${yy + 14}">${name}</text>` +
+      `<text class="dims" x="${SHX + 6}" y="${yy + 27}">${flatten(dims)}</text></g>`);
     if (!DET) {
       z = wireOut(['norm2'], SX2, z);
     } else {
-      // the shared expert runs on EVERY token as its own plain GEMMs (not part
-      // of the grouped expert GEMMs) — fork norm2-out into a parallel path
+      // the shared expert runs on EVERY token as its own plain GEMMs — fork
+      // norm2-out here; its boxes are drawn row-aligned with the routed ones
       tensorChip(['norm2'], SX2 + 14, z + 4);
       const nGap = Math.max(38, chipSpace(['norm2']) + 20);
       wire(SX2, z, z + nGap);
-      const shTop = z + nGap - 10;
-      let sy = shTop + 18;
+      shTop = z + nGap - 10;
       P.push(`<circle cx="${SX2}" cy="${shTop}" r="2.5" fill="#898781"/>` +
-        `<path class="wire" d="M ${SX2} ${shTop} L ${shMid} ${shTop} L ${shMid} ${sy}" marker-end="url(#arr)"/>` +
-        `<text class="grplabel" x="${SHX}" y="${shTop - 4}">shared expert (every token)</text>`);
-      const shBox = (name, dims, tip) => {
-        P.push(`<g data-tip="${escAttr(tip)}">` +
-          `<rect class="box" x="${SHX}" y="${sy}" width="140" height="34" rx="4"/>` +
-          `<text class="name" x="${SHX + 6}" y="${sy + 14}">${name}</text>` +
-          `<text class="dims" x="${SHX + 6}" y="${sy + 27}">${flatten(dims)}</text></g>`);
-        sy += 34;
-      };
-      const shWire = (h2) => { wire(shMid, sy, sy + h2); sy += h2; };
-      shBox('shared fc1', '7168 → 2×2048',
-        'one plain GEMM per token — follows the ffn gate/up mark and dtype (its FLOPs are counted in the grouped strip)');
-      tensorChip(['gate_up'], SHX + 6, sy + 3, { name: 'gate, up (sh)', tdims: '2×2048', frac: 1 / nExp });
-      shWire(26);
-      sy = micro('SwiGLU (ungated)', SHX, sy, 140);
-      tensorChip(['swiglu'], SHX + 6, sy + 3, { name: 'swiglu out (sh)', tdims: '2048', frac: 1 / nExp });
-      shWire(26);
-      shBox('shared fc2', '2048 → 7168',
-        'one plain GEMM per token — follows the ffn down mark and dtype; its output joins the final residual add');
-      tensorChip(['ffn_down'], SHX + 6, sy + 3, { name: 'shared out', tdims: '7168', frac: 1 / nExp });
-      shBot = sy;
+        `<path class="wire" d="M ${SX2} ${shTop} L ${shMid} ${shTop}"/>`);
       z += nGap;
     }
     z = mmBox(['router'], C2, z);
     const gateX = C2 + 296;                    // gate-weights bypass rail, right of the expert boxes
     let gateTop = 0;
-    if (DET) z = micro('sigmoid · group-limited top-k · scale', C2, z);
-    if (!DET) {
-      z = wireOut(['router'], SX2, z);
-    } else {
-      // the gate weights fork off the router state and bypass the experts
-      // entirely — they rejoin at the × gate multiply after SwiGLU
-      // short name: the sigmoid · top-k micro above already itemizes the state
-      tensorChip(['router'], SX2 + 14, z + 4, { name: 'router state' });
-      const rGap = Math.max(38, chipSpace(['router']) + 20);
-      wire(SX2, z, z + rGap);
-      gateTop = z + rGap - 10;
-      P.push(`<circle cx="${SX2}" cy="${gateTop}" r="2.5" fill="#898781"/>` +
-        `<path class="wire" d="M ${SX2} ${gateTop} L ${gateX} ${gateTop}"/>` +
-        `<text class="tensor tidle" x="${SX2 + 34}" y="${gateTop - 4}">top-k weights · 8</text>`);
-      z += rGap;
+    if (DET) {
+      // the top-k weights are a DEDICATED second output of the top-k block
+      // (right edge) — not a duplicated tensor like the residual/shared forks
+      gateTop = z + 9;
+      z = micro('sigmoid · group-limited top-k · scale', C2, z);
+      P.push(`<path class="wire" d="M ${C2 + W} ${gateTop} L ${gateX} ${gateTop}"/>` +
+        `<text class="tensor tidle" x="${gateX + 8}" y="${gateTop - 4}">top-k weights · 8</text>`);
     }
+    z = wireOut(['router'], SX2, z, DET ? { name: 'router state' } : undefined);
     const dispTop = z;
     z = opNode('dispatch', DET ? 'a2a dispatch (permute + comm) → EP group' : 'a2a dispatch → EP group', C2, z, 'comm');
     // the top-k weights are dispatched too: the rail enters the a2a alongside
@@ -1314,16 +1290,38 @@ export class Dsv3Layer extends HTMLElement {
       `<path class="wire" d="M ${C2 + W} ${dispTop + 16} L ${gateX} ${dispTop + 16}"/>`);
     z = wireOut(['dispatch'], SX2, z);
     const g2 = z + 3; z += 21;
+    const rowG = z;
     z = mmBox(['ffn_gate_up'], C2, z, ['gate_up'], DET ? 'ffn gate/up (grouped ×8)' : undefined);
+    if (DET) {
+      P.push(`<path class="wire" d="M ${shMid} ${shTop} L ${shMid} ${rowG}" marker-end="url(#arr)"/>` +
+        `<text class="grplabel" x="${SHX}" y="${rowG - 6}">shared expert (every token)</text>`);
+      shBox('shared gate/up', '7168 → 2×2048',
+        'one plain GEMM per token — follows the ffn gate/up mark and dtype (its FLOPs are counted in the grouped strip)', rowG);
+      tensorChip(['gate_up'], SHX + 6, z + 4, { name: 'gate, up (sh)', tdims: '2×2048', frac: 1 / nExp });
+    }
     z = wireOut(['gate_up'], SX2, z, DET ? { name: 'gate, up (routed)', tdims: `${DSV3.topk}×2×2048`, frac: DSV3.topk / nExp } : undefined);
+    if (DET) wire(shMid, rowG + 34, z);
     // gate-at-swiglu, not gate-at-combine: by linearity the router weights can
     // multiply the swiglu output before the down-proj (one fused kernel,
     // AMAIA's swiglu_and_scale) — this is what makes the expert outputs a pure
     // intermediate instead of a stash for the combine's backward
     if (DET) P.push(`<path class="wire" d="M ${gateX} ${dispTop + 16} L ${gateX} ${z + 13} L ${C2 + W + 1} ${z + 13}" marker-end="url(#arr)"/>`);
+    const rowS = z;
     z = opNode('swiglu', DET ? 'SwiGLU · × top-k weight (one fused kernel)' : 'SwiGLU', C2, z);
+    if (DET) {
+      micro('SwiGLU (ungated)', SHX, rowS, 140);
+      tensorChip(['swiglu'], SHX + 6, z + 4, { name: 'swiglu out (sh)', tdims: '2048', frac: 1 / nExp });
+    }
     z = wireOut(['swiglu'], SX2, z, DET ? { name: 'swiglu out (routed)', tdims: `${DSV3.topk}×2048`, frac: DSV3.topk / nExp } : undefined);
+    if (DET) wire(shMid, rowS + 18, z);
+    const rowD = z;
     z = mmBox(['ffn_down'], C2, z, undefined, DET ? 'ffn down (grouped ×8)' : undefined);
+    if (DET) {
+      shBox('shared down', '2048 → 7168',
+        'one plain GEMM per token — follows the ffn down mark and dtype; its output joins the routed sum', rowD);
+      tensorChip(['ffn_down'], SHX + 6, z + 4, { name: 'shared out', tdims: '7168', frac: 1 / nExp });
+      shBot = rowD + 34;
+    }
     grp(C2, g2, z + 5, DET ? 'routed experts: top-8 of 256 — grouped GEMMs' : 'experts: top-8 of 256 routed + 1 shared');
     z = wireOut(['ffn_down'], SX2, z + 5);
     z = opNode('combine', DET ? 'a2a combine (comm + unpermute · sum)' : 'a2a combine (weighted by router)', C2, z, 'comm');
@@ -1332,17 +1330,31 @@ export class Dsv3Layer extends HTMLElement {
     // turns right in clear space instead of crossing them
     tensorChip(['combine'], SX2 + 14, z + 4);
     const zc = z;                                  // combine box bottom
-    // detail leaves headroom above the add for its label (above the shared rail)
-    z = Math.max(z + Math.max(22, chipSpace(['combine']) + 10) + (DET ? 48 : 13), col1End - 4);
-    plus(SX2, z);
-    wire(SX2, zc, z - 11);
-    // shared-expert output joins the final add (add_shared_and_residual)
-    if (DET && shBot) P.push(`<path class="wire" d="M ${shMid} ${shBot} L ${shMid} ${z} L ${SX2 + 11} ${z}" marker-end="url(#arr)"/>`);
-    // label the three-way add like its sibling — it is ONE fused kernel, not
-    // (routed + shared) followed by a residual add
-    P.push(`<g data-tip="one fused add kernel (Megatron: add_shared_and_residual) — routed output + shared output + residual x1; no intermediate ffn-out tensor ever materializes">` +
-      `<rect class="res" x="${SX2 + 26}" y="${z - (DET ? 35 : 11)}" width="${DET ? 214 : 126}" height="22" rx="4"/>` +
-      `<text class="oplabel" x="${SX2 + 34}" y="${z - (DET ? 20 : -4)}">${DET ? 'add — routed + shared + residual' : 'residual add'}</text></g>`);
+    if (!DET) {
+      z = Math.max(z + Math.max(22, chipSpace(['combine']) + 10) + 13, col1End - 4);
+      plus(SX2, z);
+      wire(SX2, zc, z - 11);
+      P.push(`<g data-tip="one fused add kernel (Megatron: add_shared_and_residual) — routed output + shared output + residual x1">` +
+        `<rect class="res" x="${SX2 + 26}" y="${z - 11}" width="126" height="22" rx="4"/>` +
+        `<text class="oplabel" x="${SX2 + 34}" y="${z + 4}">residual add</text></g>`);
+    } else {
+      // pedagogical split: (routed + shared) first, then the residual add.
+      // Megatron fuses all three into one add_shared_and_residual kernel.
+      const zA = zc + Math.max(22, chipSpace(['combine']) + 10) + 34;
+      wire(SX2, zc, zA - 11);
+      plus(SX2, zA);
+      P.push(`<path class="wire" d="M ${shMid} ${shBot} L ${shMid} ${zA} L ${SX2 + 11} ${zA}" marker-end="url(#arr)"/>`);
+      P.push(`<g data-tip="routed + shared expert outputs — Megatron fuses this with the residual add (add_shared_and_residual); split here for clarity">` +
+        `<rect class="res" x="${SX2 + 26}" y="${zA - 35}" width="178" height="22" rx="4"/>` +
+        `<text class="oplabel" x="${SX2 + 34}" y="${zA - 20}">add — routed + shared</text></g>`);
+      const zB = Math.max(zA + 34, col1End - 4);
+      wire(SX2, zA + 9, zB - 11);
+      plus(SX2, zB);
+      P.push(`<g data-tip="residual add — x1 + the ffn output">` +
+        `<rect class="res" x="${SX2 + 26}" y="${zB - 11}" width="126" height="22" rx="4"/>` +
+        `<text class="oplabel" x="${SX2 + 34}" y="${zB + 4}">residual add</text></g>`);
+      z = zB;
+    }
     // block output: a short down arrow out of the second residual add (= the next block's x0)
     P.push(`<line class="wire" x1="${SX2}" y1="${z + 9}" x2="${SX2}" y2="${z + 26}" marker-end="url(#arr)"/>` +
       `<text class="tensor tidle" x="${SX2 + 8}" y="${z + 24}">x2</text>`);
