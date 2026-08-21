@@ -1161,17 +1161,19 @@ export class Dsv3Layer extends HTMLElement {
       // (64) leaves from its bottom-right corner immediately and rides an
       // outer rail (clear of chip text) down to the kv-side RoPE.
       const latTot = DSV3.qRank + DSV3.kvRank;   // the k_rope dims are never stashed
-      bypX = C1 + 340;                           // k_rope rail, clear of all chip text
+      bypX = C1 + 404;                           // k_rope rail, clear of all chip text
       let bypTop = 0;
       if (DET) {
         const kx = C1 + 272;
-        bypTop = y + 20;
+        bypTop = y + 14;
         P.push(`<path class="wire" d="M ${kx} ${y} L ${kx} ${bypTop} L ${bypX} ${bypTop}"/>`);
         P.push(`<text class="tensor tidle" x="${kx + 6}" y="${bypTop - 4}">· k_rope · ${DSV3.qkRope}</text>`);
-        // into the latent norms (nothing is stashed pre-norm)
-        wire(SX1, y, y + 30);
-        P.push(`<path class="wire" d="M ${RX} ${y} L ${RX} ${y + 30}" marker-end="url(#arr)"/>`);
-        y += 30;
+        // the raw latents feed the norms; the stashed tensor is the normed one below
+        P.push(`<text class="tensor tidle" x="${SX1 + 14}" y="${y + 32}">q latent · ${flatten(String(DSV3.qRank))}</text>` +
+          `<text class="tensor tidle" x="${RX + 14}" y="${y + 32}">kv latent · ${flatten(String(DSV3.kvRank))}</text>`);
+        wire(SX1, y, y + 44);
+        P.push(`<path class="wire" d="M ${RX} ${y} L ${RX} ${y + 44}" marker-end="url(#arr)"/>`);
+        y += 44;
         // MLA-internal RMSNorms (q_a_layernorm; kv_a_layernorm norms the 512 only)
         const normTip = 'input-form backward: reads its INPUT (pre-norm) + rstd — never its output. ' +
           'The pre-norm latent is not stashed; it is exactly recoverable from the post-norm stash, ' +
@@ -1188,9 +1190,9 @@ export class Dsv3Layer extends HTMLElement {
         y += 14;
       }
       tensorChip(['qkv_down'], SX1 + 14, y + 4,
-        { name: 'q latent', tdims: String(DSV3.qRank), frac: DSV3.qRank / latTot });
+        { name: DET ? 'norm(q latent)' : 'q latent', tdims: String(DSV3.qRank), frac: DSV3.qRank / latTot });
       tensorChip(['qkv_down'], RX + 14, y + 4,
-        { name: 'kv latent', tdims: String(DSV3.kvRank), frac: DSV3.kvRank / latTot });
+        { name: DET ? 'norm(kv latent)' : 'kv latent', tdims: String(DSV3.kvRank), frac: DSV3.kvRank / latTot });
       const latGap = Math.max(26, chipSpace(['qkv_down']) + 8);
       const wireTop = DET ? y - 14 : y;          // span the rstd band too — no spine gap
       wire(SX1, wireTop, y + latGap);
@@ -1274,7 +1276,7 @@ export class Dsv3Layer extends HTMLElement {
       z += nGap;
     }
     z = mmBox(['router'], C2, z);
-    const gateX = C2 + 296;                    // gate-weights bypass rail, right of the expert boxes
+    const gateX = C2 + 306;                    // top-k weights rail — far enough right that elbows clear the arrowheads
     let gateTop = 0;
     if (DET) {
       // the top-k weights are a DEDICATED second output of the top-k block
