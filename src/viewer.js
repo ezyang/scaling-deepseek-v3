@@ -835,9 +835,9 @@ export class Dsv3Layer extends HTMLElement {
     if (this._ctl.dtype) head.append(tl);
     const dl = document.createElement('label');
     dl.style.cssText = 'display:inline-flex;align-items:center;gap:4px;margin-left:8px;color:#52514e;';
-    dl.title = 'Also draw the kernels the terse view folds away: the two down-proj GEMMs (wq_a, wkv_a), ' +
-      'the latent RMSNorms, RoPE, the router’s sigmoid/top-k/normalize, the a2a permutes, and the gating ' +
-      'multiply. Display only — they are cheap, carry no marks, and don’t change the model.';
+    dl.title = 'Also draw the kernels the terse view folds away: the latent RMSNorms, RoPE, the router’s ' +
+      'sigmoid/top-k, the shared-expert GEMMs, the dispatched top-k weights, and the gating multiply. ' +
+      'Display only — they are cheap, carry no marks, and don’t change the model.';
     const dcb = document.createElement('input');
     dcb.type = 'checkbox'; dcb.checked = this.detail;
     dcb.onchange = () => { this.detail = dcb.checked; this.render(); this.changed(true); };
@@ -1113,47 +1113,38 @@ export class Dsv3Layer extends HTMLElement {
     y = wireOut(['norm1'], SX1, y); g1 = y + 3; y += 21;
     {
       const RX = C1 + 150 + 22;
-      if (!DET) {
-        y = mmBox(['qkv_down'], C1, y);
-      } else {
-        // the merged down-proj is really two GEMMs (wq_a | wkv_a): fork norm1-out first
-        P.push(`<circle cx="${SX1}" cy="${y - 10}" r="2.5" fill="#898781"/>` +
-          `<path class="wire" d="M ${SX1} ${y - 10} L ${RX} ${y - 10} L ${RX} ${y}" marker-end="url(#arr)"/>`);
-        const qFrac = DSV3.qRank / (DSV3.qRank + DSV3.kvRank + DSV3.qkRope);
-        const dhalf = (x, name, dims, tip, frac, withBtns) => {
-          P.push(`<g data-tip="${escAttr(tip)}">` +
-            `<rect class="box" x="${x}" y="${y}" width="140" height="60" rx="4"/>` +
-            `<text class="name" x="${x + 6}" y="${y + 13}">${name}</text>` +
-            `<text class="dims" x="${x + 6}" y="${y + 25}">${dims}</text></g>` +
-            (withBtns ? modeBtn(['qkv_down'], x + 140 - 86, y + 29) + dtBtn('qkv_down', x + 140 - 58, y + 29) : ''));
-          flopBlocks(x + 6, y + 52, ana.byId.qkv_down.flopsTok * frac, dt('qkv_down'));
-        };
-        dhalf(C1, 'q down-proj', '7168 → 1536',
-          '2 · 7168 · 1536 FLOP/token — wq_a, one of the two GEMMs the terse view merges', qFrac, true);
-        dhalf(C1 + 150, 'kv down-proj', '7168 → 512 + 64',
-          '2 · 7168 · (512 + 64) FLOP/token — wkv_a; shares q down-proj’s mark and dtype (one graph node)', 1 - qFrac, false);
-        y += 60;
-      }
-      // annotate the latents first, then fork BELOW the annotation so the
-      // horizontal branch doesn't cut through the chip and its block grid
+      // the down-projection is two separate GEMMs in production stacks
+      // (wq_a | wkv_a — AMAIA and Megatron both), so it is split at every tier:
+      // fork norm1-out first
+      P.push(`<circle cx="${SX1}" cy="${y - 10}" r="2.5" fill="#898781"/>` +
+        `<path class="wire" d="M ${SX1} ${y - 10} L ${RX} ${y - 10} L ${RX} ${y}" marker-end="url(#arr)"/>`);
+      const qFrac = DSV3.qRank / (DSV3.qRank + DSV3.kvRank + DSV3.qkRope);
+      const dhalf = (x, name, dims, tip, frac, withBtns) => {
+        P.push(`<g data-tip="${escAttr(tip)}">` +
+          `<rect class="box" x="${x}" y="${y}" width="140" height="60" rx="4"/>` +
+          `<text class="name" x="${x + 6}" y="${y + 13}">${name}</text>` +
+          `<text class="dims" x="${x + 6}" y="${y + 25}">${dims}</text></g>` +
+          (withBtns ? modeBtn(['qkv_down'], x + 140 - 86, y + 29) + dtBtn('qkv_down', x + 140 - 58, y + 29) : ''));
+        flopBlocks(x + 6, y + 52, ana.byId.qkv_down.flopsTok * frac, dt('qkv_down'));
+      };
+      dhalf(C1, 'q down-proj', '7168 → 1536',
+        '2 · 7168 · 1536 FLOP/token — wq_a; a separate GEMM from kv down-proj in production stacks', qFrac, true);
+      dhalf(C1 + 150, 'kv down-proj', '7168 → 512 + 64',
+        '2 · 7168 · (512 + 64) FLOP/token — wkv_a; shares q down-proj’s mark and dtype (one graph node)', 1 - qFrac, false);
+      y += 60;
+      // display-split of the one latents stash: q latent rides the left spine,
+      // kv latent (+ the k_pe that bypasses the up-proj) the right
       const latTot = DSV3.qRank + DSV3.kvRank + DSV3.qkRope;
-      if (!DET) {
-        tensorChip(['qkv_down'], SX1 + 14, y + 4);
-      } else {
-        // display-split of the one latents stash: q latent rides the left
-        // spine, kv latent (+ the k_pe that will bypass the up-proj) the right
-        tensorChip(['qkv_down'], SX1 + 14, y + 4,
-          { name: 'q latent', tdims: String(DSV3.qRank), frac: DSV3.qRank / latTot });
-        tensorChip(['qkv_down'], RX + 14, y + 4,
-          { name: 'kv latent + k_pe', tdims: `${DSV3.kvRank} + ${DSV3.qkRope}`, frac: (DSV3.kvRank + DSV3.qkRope) / latTot });
-      }
+      tensorChip(['qkv_down'], SX1 + 14, y + 4,
+        { name: 'q latent', tdims: String(DSV3.qRank), frac: DSV3.qRank / latTot });
+      tensorChip(['qkv_down'], RX + 14, y + 4,
+        { name: 'kv latent + k_pe', tdims: `${DSV3.kvRank} + ${DSV3.qkRope}`, frac: (DSV3.kvRank + DSV3.qkRope) / latTot });
       const latGap = Math.max(34, chipSpace(['qkv_down']) + 20);
-      const forkY = y + latGap - 11;
       wire(SX1, y, y + latGap);
+      P.push(`<path class="wire" d="M ${RX} ${y} L ${RX} ${y + latGap}" marker-end="url(#arr)"/>`);
       const bypX = C1 + 296;                     // k_pe bypass rail, right of the kv boxes
       let bypTop = 0;
       if (DET) {
-        P.push(`<path class="wire" d="M ${RX} ${y} L ${RX} ${y + latGap}" marker-end="url(#arr)"/>`);
         // k_pe (64) forks off BELOW the chip, BEFORE the latent norm: only the
         // 512 gets normed/up-projected
         bypTop = y + latGap - 10;
@@ -1162,10 +1153,7 @@ export class Dsv3Layer extends HTMLElement {
           `<text class="tensor tidle" x="${RX + 34}" y="${bypTop - 4}">k_pe · 64</text>`);
       }
       y += latGap;
-      if (!DET) {
-        P.push(`<circle cx="${SX1}" cy="${forkY}" r="2.5" fill="#898781"/>` +
-          `<path class="wire" d="M ${SX1} ${forkY} L ${RX} ${forkY} L ${RX} ${y}" marker-end="url(#arr)"/>`);
-      } else {
+      if (DET) {
         // MLA-internal RMSNorms on the latents (q_a_layernorm; kv_a_layernorm norms the 512 only)
         micro('RMSNorm (q latent)', C1, y, 140);
         micro('RMSNorm (kv latent, 512 only)', C1 + 150, y, 140);
