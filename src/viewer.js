@@ -700,6 +700,7 @@ export class Dsv3Layer extends HTMLElement {
     this.dispInflight = st?.dispInflight ?? +(this.getAttribute('xinflight') ?? 1);
     this.transposed = st?.transposed ?? this.hasAttribute('transposed');
     this.detail = st?.detail ?? this.hasAttribute('detail');
+    this.flatDims = st?.flatDims ?? false;
     this.render();
     queueMicrotask(() => this.changed(false)); // push initial recipe + marks to linked widgets
   }
@@ -719,7 +720,7 @@ export class Dsv3Layer extends HTMLElement {
     if (write) writeUrlState(this.urlKey, {
       recipe: this.getAttribute('recipe'), matmuls: this.matmuls, marks: this.marks,
       view: this.view, dispLayers: this.dispLayers, dispInflight: this.dispInflight,
-      transposed: this.transposed, detail: this.detail,
+      transposed: this.transposed, detail: this.detail, flatDims: this.flatDims,
     });
   }
   applyPreset(recipe, recompute, transposed = false) {
@@ -820,6 +821,7 @@ export class Dsv3Layer extends HTMLElement {
       this.dispInflight = +(this.getAttribute('xinflight') ?? 1);
       this.transposed = this.hasAttribute('transposed');
       this.detail = this.hasAttribute('detail');
+      this.flatDims = false;
       clearUrlState(this.urlKey);
       this.render(); this.changed(false);
     };
@@ -833,6 +835,15 @@ export class Dsv3Layer extends HTMLElement {
     tcb.onchange = () => { this.transposed = tcb.checked; this.render(); this.changed(); };
     tl.append(tcb, 'fp8ᵀ dual stash');
     if (this._ctl.dtype) head.append(tl);
+    const mkDimsBtn = () => {
+      const b = document.createElement('button');
+      b.style.cssText = 'font:11px ui-monospace,monospace;padding:2px 8px;border:1px solid #c3c2b7;' +
+        'border-radius:4px;background:#fff;cursor:pointer;margin-left:8px;';
+      b.textContent = this.flatDims ? '24576' : '128\u00d7192';
+      b.title = 'toggle sizes: factored (128\u00d7192) vs multiplied out (24576)';
+      b.onclick = () => { this.flatDims = !this.flatDims; this.render(); this.changed(true); };
+      return b;
+    };
     const dl = document.createElement('label');
     dl.style.cssText = 'display:inline-flex;align-items:center;gap:4px;margin-left:8px;color:#52514e;';
     dl.title = 'Also draw the kernels the terse view folds away: the latent RMSNorms, RoPE, the router’s ' +
@@ -842,10 +853,11 @@ export class Dsv3Layer extends HTMLElement {
     dcb.type = 'checkbox'; dcb.checked = this.detail;
     dcb.onchange = () => { this.detail = dcb.checked; this.render(); this.changed(true); };
     dl.append(dcb, 'elided kernels');
-    head.append(dl, reset);
+    head.append(dl, mkDimsBtn(), reset);
     const ana = analyze(blockGraph('moe', DSV3, this.matmuls, 4096),
       this._ctl.quant ? this.marks : {}, this.transposed);
     if (cmode !== 'static') root.append(head);
+    else { const mini = el('div', 'lv-head'); mini.append('sizes:', mkDimsBtn()); root.append(mini); }
     root.append(this.buildSvg(ana));
     const note = el('div', 'lv-note');
     const M2 = this.view === 'combined' ? this.dispLayers * this.dispInflight * 4096 : 1;
@@ -909,6 +921,15 @@ export class Dsv3Layer extends HTMLElement {
     const W = 290, C1 = 60, C2 = 512;
     const SX1 = C1 + 22, SX2 = C2 + 22, RAIL1 = C1 - 26;
     const WIDTH = C2 + W + (this.detail ? 200 : 180); // right margin fits aux labels (+ shared column in detail)
+    // dims display: factored (128\u00d7192) or multiplied out (24576)
+    const flatten = (s) => {
+      if (!this.flatDims || !s) return s;
+      return String(s).split('\u2192').map(part => {
+        const t = part.trim().replace(/\u00d7/g, '*');
+        if (!/^[\d\s+*()]+$/.test(t)) return part.trim();
+        try { return String(Function('"use strict";return (' + t + ')')()); } catch { return part.trim(); }
+      }).join(' \u2192 ');
+    };
     const dt = (id) => this.matmuls[id];
     const marks = this._ctl.quant ? this.marks : {};   // static: save everything
     const state = (id) => {
@@ -1016,7 +1037,7 @@ export class Dsv3Layer extends HTMLElement {
         // structure only: name + backward-need direction, no bytes/dtype/grid
         const name = esc(name0.replace(' (checkpoint anchor)', ''));  // recompute vocabulary
         // unitless per-token size (element counts, like the op dims — dtype unspecified here)
-        const sz = ov?.tdims ?? ids.map(i => ana.byId[i].tdims).join(' + ');
+        const sz = flatten(ov?.tdims ?? ids.map(i => ana.byId[i].tdims).join(' + '));
         P.push(st === 'idle'
           ? `<text class="tensor tidle" x="${x}" y="${y + 8}">· ${name} — not needed</text>`
           : `<text class="tensor tsave" x="${x}" y="${y + 8}">${needDir(ids)} ${name} <tspan class="tdim">· ${sz}</tspan></text>`);
@@ -1085,7 +1106,7 @@ export class Dsv3Layer extends HTMLElement {
       P.push(`<g${boxTip((markIds ?? ids)[0], spec.dimsNote)}>` +
         `<rect class="box" x="${x}" y="${y}" width="${W}" height="38" rx="4"/>` +
         `<text class="name" x="${x + 8}" y="${y + 13}">${label ?? spec.label}</text>` +
-        `<text class="dims" x="${x + 8}" y="${y + 26}">${spec.dims}</text></g>`);
+        `<text class="dims" x="${x + 8}" y="${y + 26}">${flatten(spec.dims)}</text></g>`);
       P.push(modeBtn(markIds ?? ids, x + W - 86, y + 6));
       P.push(dtBtn(ids[0], x + W - 58, y + 6));
       auxOut((markIds ?? ids)[0], x, y + 19);
@@ -1124,7 +1145,7 @@ export class Dsv3Layer extends HTMLElement {
         P.push(`<g data-tip="${escAttr(tip)}">` +
           `<rect class="box" x="${x}" y="${y}" width="140" height="60" rx="4"/>` +
           `<text class="name" x="${x + 6}" y="${y + 13}">${name}</text>` +
-          `<text class="dims" x="${x + 6}" y="${y + 25}">${dims}</text></g>` +
+          `<text class="dims" x="${x + 6}" y="${y + 25}">${flatten(dims)}</text></g>` +
           (withBtns ? modeBtn(['qkv_down'], x + 140 - 86, y + 29) + dtBtn('qkv_down', x + 140 - 58, y + 29) : ''));
         flopBlocks(x + 6, y + 52, ana.byId.qkv_down.flopsTok * frac, dt('qkv_down'));
       };
@@ -1175,7 +1196,7 @@ export class Dsv3Layer extends HTMLElement {
         P.push(`<g${boxTip(id, m.dimsNote)}>` +
           `<rect class="box" x="${x}" y="${y}" width="140" height="60" rx="4"/>` +
           `<text class="name" x="${x + 6}" y="${y + 13}">${m.label}</text>` +
-          `<text class="dims" x="${x + 6}" y="${y + 25}">${m.dims}</text></g>` +
+          `<text class="dims" x="${x + 6}" y="${y + 25}">${flatten(m.dims)}</text></g>` +
           modeBtn([id], x + 140 - 86, y + 29) + dtBtn(id, x + 140 - 58, y + 29));
         flopBlocks(x + 6, y + 52, ana.byId[id]?.flopsTok, dt(id));
       };
@@ -1185,8 +1206,8 @@ export class Dsv3Layer extends HTMLElement {
         // kernels (Megatron: apply_mla_rope_for_q / _for_kv) — the kv one is
         // rope plus a little extra (split, broadcast, assemble K and V) — feed
         // q and k,v directly into attention. The k_rope rail lands here.
-        P.push(`<text class="tensor tidle" x="${SX1 + 14}" y="${y + 12}">q_heads · 128×192</text>` +
-          `<text class="tensor tidle" x="${RX + 14}" y="${y + 12}">kv_heads · 128×(128+128)</text>`);
+        P.push(`<text class="tensor tidle" x="${SX1 + 14}" y="${y + 12}">q_heads · ${flatten('128×192')}</text>` +
+          `<text class="tensor tidle" x="${RX + 14}" y="${y + 12}">kv_heads · ${flatten('128×(128+128)')}</text>`);
         wire(SX1, y, y + 16);
         P.push(`<path class="wire" d="M ${RX} ${y} L ${RX} ${y + 16}" marker-end="url(#arr)"/>`);
         y += 16;
@@ -1247,7 +1268,7 @@ export class Dsv3Layer extends HTMLElement {
         P.push(`<g data-tip="${escAttr(tip)}">` +
           `<rect class="box" x="${SHX}" y="${sy}" width="140" height="34" rx="4"/>` +
           `<text class="name" x="${SHX + 6}" y="${sy + 14}">${name}</text>` +
-          `<text class="dims" x="${SHX + 6}" y="${sy + 27}">${dims}</text></g>`);
+          `<text class="dims" x="${SHX + 6}" y="${sy + 27}">${flatten(dims)}</text></g>`);
         sy += 34;
       };
       const shWire = (h2) => { wire(shMid, sy, sy + h2); sy += h2; };
@@ -1350,7 +1371,7 @@ export class Dsv3Layer extends HTMLElement {
       P.push(`<g data-tip="${escAttr(`${fmtNum(lmFlops)} FLOP/token = ${FLOP_EXPR.lm_head}\n${lm.dimsNote}`)}">` +
         `<rect class="box" x="${C1 + 184}" y="${h}" width="240" height="${lmH}" rx="4"/>` +
         `<text class="name" x="${C1 + 192}" y="${h + 14}">${lm.label}</text>` +
-        `<text class="dims" x="${C1 + 192}" y="${h + 28}">${lm.dims}</text></g>` + dtBtn('lm_head', C1 + 184 + 240 - 58, h + 7));
+        `<text class="dims" x="${C1 + 192}" y="${h + 28}">${flatten(lm.dims)}</text></g>` + dtBtn('lm_head', C1 + 184 + 240 - 58, h + 7));
       flopBlocks(C1 + 192, h + 33, lmFlops, dt('lm_head'));
       P.push(`<line class="wire" x1="${C1 + 424}" y1="${h + 17}" x2="${C1 + 454}" y2="${h + 17}" marker-end="url(#arr)"/>`);
       P.push(`<rect class="op" x="${C1 + 458}" y="${h + 6}" width="140" height="22" rx="11"/>` +
