@@ -4,7 +4,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>What should a DeepSeek-V3 training profile look like?</title>
+  <title>DeepSeek-V3: from roofline to reality</title>
   <style>
     :root { color-scheme: light; }
     body {
@@ -16,6 +16,7 @@
     h2 { font-size: 20px; margin: 44px 0 8px; }
     p, li { max-width: 720px; color: #1c1c1a; }
     .sub { color: #52514e; margin-top: 0; }
+    .dek { font-size: 19px; line-height: 1.45; color: #52514e; margin: 4px 0 20px; max-width: 620px; }
     code { font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; background: #f3f2ee; border-radius: 4px; padding: 1px 5px; }
     dsv3-trace, dsv3-layer, dsv3-controls, dsv3-memory, dsv3-stack { display: block; margin: 14px 0; }
     .note { font-size: 13.5px; color: #52514e; max-width: 720px; }
@@ -26,31 +27,77 @@
 
 <body>
   <main>
-    <h1>What should a DeepSeek-V3 training profile look like?</h1>
-    <p class="sub">A simulator you can read: a memory model and a Perfetto-style trace estimator for
-      DSv3-family MoE training, built up one refinement at a time. This page collects the posts and hosts
-      the sandbox; each post works one real configuration end to end.</p>
+    <h1>DeepSeek-V3: from roofline to reality</h1>
+    <p class="dek">A series of worked performance analyses of DeepSeek-V3</p>
+
+    <p>If you want to learn how to efficiently train an LLM on many GPUs, you
+    may have already heard of resources like <a
+    href="https://jax-ml.github.io/scaling-book/">How to Scale Your Model</a>
+    and <a
+    href="https://huggingface.co/spaces/nanotron/ultrascale-playbook">The
+    Ultra-Scale Playbook</a>, which teach you all of the foundational concepts
+    necessary to achieve good MFU.  However, it is one thing to learn
+    out of a textbook and another to actually do the analysis in a production
+    setting on a model you are planning to train in a month.
+    </p>
+
+    <p>The purpose of this post series is to really dig into what exactly these
+    analyses would look like for DeepSeek-V3, a historically important and
+    influential mixture-of-experts transformer model.  In my opinion,
+    DeepSeek-V3 has stood the test of time as an unusually clean exemplar of
+    the "platonic MoE model." It has very few anachronisms--I could count them
+    on one hand--the three initial dense layers, use of global attention
+    everywhere, the built-in MTP, perhaps where exactly the norms are placed.
+    I don't think you will be poorly served from closely studying DeepSeek-V3.
+    It also helps that <a
+    href="https://mlcommons.org/2026/05/deepseek-v3-training-v6-0/">MLPerf 6.0
+    added DeepSeek-V3 as a large-scale pretraining benchmark.</a></p>
+
+    <p>My goal for this series is that we start with a roofline
+    model of DeepSeek-V3: an overly simplified approximation of the behavior of
+    DeepSeek-V3 which tells us what the absolute best, "speed of light" performance
+    we could hope to achieve on it is.  And then, we progressively refine this
+    model with more real world correction factors, until we end up with a model
+    that is reasonably able to predict what a PyTorch profile trace would look like
+    if you had actually run it.  We should be able to understand why NVIDIA
+    chose the performance settings they did in their MLPerf submission.  We
+    should be able to understand the tradeoff space if we planning to try to
+    pretrain DeepSeek-V3.</p>
+
+    <p><em>AI disclosure:</em> The graphics and visualizations are 100% vibe
+    coded with Fable, but I have been reviewing the widgets themselves
+    carefully.  The text can be assumed to be human-written, except when
+    otherwise disclosed.</p>
 
     <h2>Posts</h2>
     <ul class="posts">
-      <li><a href="./studies/01-hopper-memory.html">Study 01 — a DSv3-family MoE on 2048 H100s:
-        memory</a> (PP8 · EP64, FP8 tile scaling, attn-replay recompute, DualPipe in-flight) — does it even
+      <li><a href="./studies/01-deepseek-diagram.html">A DeepSeek-V3 transformer block</a> —
+        An infra-oriented description of the DSv3 transformer block.</li>
+      <!--
+      <li><a href="./studies/02-hopper-memory.html">A DSv3-family MoE on 2048 H100s: memory</a>
+        (PP8 · EP64, FP8 tile scaling, attn-replay recompute, DualPipe in-flight) — does it even
         fit on 80 GB, and what the aggressive recompute policy buys and costs.</li>
-      <li><a href="./studies/02-nvidia-mlperf-gb300.html">Study 02 — NVIDIA's MLPerf 6.0 256×GB300
+      <li><a href="./studies/03-nvidia-mlperf-gb300.html">NVIDIA's MLPerf 6.0 256×GB300
         submission</a> (PP2 · EP32, MXFP8 incl. FP8 attention, fp8 parameter gather, <em>no</em> activation
         checkpointing) — per-stash precision accounting; 140/288 GB watermark; timing anchors for the
         upcoming timing posts.</li>
       <li><a href="./drafts/full-article.html">The full article</a><span class="tag">draft</span> — the
         cumulative essay: roofline → kernel costs → pipeline bubbles → EP all-to-all → FSDP → overhead →
         jitter, each refinement ruling out configurations.</li>
+      -->
     </ul>
 
-    <h2 id="sandbox">Sandbox</h2>
-    <p>Every widget, linked to one configuration. The structure widget sets the layer stack; the
-      transformer-block schematic sets each matmul's precision and each op's save 💾 / recompute ↻ mark; the
-      controls set hardware, parallelism, and schedule, and every simulated effect toggles independently.
-      All of it drives the memory watermark and the simulated profile at once. State persists in the URL,
-      so a configuration is shareable.</p>
+    <h2 id="model">The performance model</h2>
+    <p></p>
+    <p>All of the posts are built off of a shared model of DeepSeek-V3's
+    memory and performance behavior.  Below, I've placed all of the widgets
+    for interacting with this model below, in case you want to work with the
+    model directly.  <strong>There are still mistakes in the model.</strong>
+    Part of the reason I'm writing the posts incrementally is that I'm
+    using these posts to flush out bugs and omissions from various parts of
+    the model.  Remember, the model here isn't the important thing: the
+    important thing is teaching you how the model works, so you can build your
+    own for your own model.</p>
     <dsv3-stack id="stack-sand" for="mem-sand trace-sand" choices="0,3" dense="3"></dsv3-stack>
     <dsv3-layer id="layer-sand" for="mem-sand trace-sand" recipe="nv-mxfp8"></dsv3-layer>
     <dsv3-controls id="ctl-sand" for="mem-sand trace-sand" layer="layer-sand" toggles
@@ -59,10 +106,6 @@
       values='{"pp":1,"ep":64,"dp":256,"globalBatch":6144}'></dsv3-controls>
     <dsv3-memory id="mem-sand" configs='[{"label":"your config","note":"watermark at the worst stage","recipe":"nv-mxfp8"}]'></dsv3-memory>
     <dsv3-trace id="trace-sand" level="1" height="380" title="your config — simulated profile"></dsv3-trace>
-    <p class="note">Things to try: start from a non-PP config and walk it toward PP16; push seqLen or the
-      global batch until a bar goes red; H800 with only <i>expert a2a</i> on; <code>granularity: op</code>
-      zoomed into a single MoE layer; <code>dpRanksToSim: 4</code> with jitter on; flip the structure widget
-      between all-MoE and 3-dense-first and watch rank 0.</p>
   </main>
   <script type="module">
     import './src/viewer.js';

@@ -4,165 +4,108 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>The DSv3 block diagram: what it shows and why</title>
+  <title>A DeepSeek-V3 transformer block</title>
   <link rel="stylesheet" href="./study.css">
 </head>
 
 <body>
   <main>
-    <h1>The DSv3 block diagram: what it shows and why</h1>
-    <p class="sub">The one widget every other page leans on, on its own, with the reasoning behind it.</p>
+    <h1>A DeepSeek-V3 transformer block</h1>
 
-    <p>This diagram is not an illustration of a DeepSeek-V3 transformer block. It is the <b>input surface</b>
-      for the memory and roofline models: the precision of every GEMM and the save-vs-recompute mark on every
-      op live here, and the numbers on the other pages are computed from whatever state you leave it in. That
-      one fact decides almost everything below — a picture you can only look at, and a picture you have to
-      answer questions with, are different pictures.</p>
+<!--
 
-    <dsv3-layer id="diagram"></dsv3-layer>
 
-    <p class="note">Nothing is linked to this instance (no <code>for=</code> target), so it is safe to poke
-      at. Its state persists in the URL hash, so a configuration you like is shareable; <em>reset</em> puts it
-      back.</p>
+- The matrix multiplies, and then everything else
+- The things that save for backwards
+- Potential fusions
+- Orienting yourself in the profile (what are the big kernels)
 
-    <h2>1. Structure — what is a box, and what isn't</h2>
 
-    <p><b>A node is an op with a distinct backward appetite.</b> The graph
-      (<code>src/blockgraph.js</code>) exists to answer one question: if I refuse to stash this tensor, what
-      do I have to replay, and what does that force me to stash instead? So the granularity rule is
-      <em>split whenever the answer can differ</em>. A matmul's backward needs its input; a norm's backward
-      needs its input plus the per-token <code>rstd</code>; flash attention needs its <em>own output</em> and
-      the softmax <code>lse</code>; a residual add needs nothing at all. Those are four different behaviours,
-      so they are four kinds of box.</p>
+i don't need perfect, i need done
 
-    <p><b>Corollaries, in the order they bit us.</b></p>
+
+- gemm only, but with norms.  rope? (yes from profile perspective)
+- talk through save for backward
+- talk through how the graph looks
+- talk through the remat strategy
+- talk through the low precision
+- talk about the fusions
+
+
+-->
+
+    <p>Before we can calculate any rooflines or look at profiles,
+    we need a basic working understanding of how the DeepSeek-V3 architecture
+    is put together.  The classic path here would be to read
+    the <a href="https://arxiv.org/abs/2412.19437">DeepSeek-V3 Technical Report</a>
+    and then look at some of the implementations of DeepSeek-V3: either the
+    official <a href="https://github.com/deepseek-ai/DeepSeek-V3/blob/main/inference/model.py">inference reference</a> or a trainable implementation in <a href="https://github.com/pytorch/torchtitan/blob/main/torchtitan/models/deepseek_v3/model.py">torchtitan</a> or <a href="https://github.com/NVIDIA/Megatron-LM/blob/99a108127dc4441da2ac1b71774549bb2d841608/megatron/core/models/gpt/gpt_layer_specs.py">Megatron</a> (<a href="https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/fd5c4737f6870910e65b65c23da82f73d65af29f/src/megatron/bridge/recipes/deepseek/deepseek_v3.py">config</a>).  (TODO: Link to simplified Megatron DSv3 implementation.)
+    </p>
+
+    <p>However, there are some aspects where I think the pre-existing
+    literature could be clearer.  For example, the official DeepSeek
+    architecture diagram looks like this:
+    </p>
+
+    <figure style="margin: 14px 0;">
+      <img src="../assets/dsv3-paper-fig2-architecture.png" alt="DeepSeek-V3 architecture: Multi-Head Latent Attention and DeepSeekMoE" width="687"
+        style="max-width: 100%; height: auto; border: 1px solid #e1e0d9; border-radius: 6px; background: #fff;">
+      <figcaption class="note">Figure 2 of the <a href="https://arxiv.org/abs/2412.19437">DeepSeek-V3 Technical
+        Report</a>: the transformer block with MLA (bottom) and DeepSeekMoE (top).</figcaption>
+    </figure>
+
+    <p>I personally find the MLA diagram quite difficult to parse!  The difficulty is that the diagram
+    focuses on the latent spaces you are projecting between (it doesn't even have any
+    explicit indication where a matrix multiply is happening), whereas as an
+    infra person I'm more interested in knowing what kernels I am going
+    to be running and what the more expensive operations are (the ones we should
+    be optimizing, c.f., Amdahl's law.)  You <em>could</em> get this information by pointing
+    a coding agent at a training codebase.
+    But I think a schematic diagram
+    is still quite helpful, especially for visualizing data dependencies in
+    the transformer block.  Fable helped me put together this diagram which
+    highlights the most important operations in the DSv3 transformer
+    block:</p>
+
+    <dsv3-layer id="diagram" detail controls="static" block-only nocaption></dsv3-layer>
+
+    <p>There are a few things I'm hoping to convey in this diagram:</p>
+
     <ul>
-      <li><b>The q and kv up-projections are separate boxes.</b> They were one box until we noticed they
-        already carried separate precision markers — if two things can be marked differently, they cannot
-        share a box.</li>
-      <li><b>The residual adds are ops.</b> The ⊕ on the spine is the junction; the small dashed box beside
-        it is the op, with its own 💾/↻ button. Earlier the <em>tensor</em> chip (x1) was the clickable
-        thing, which made the residual the one control in the diagram that worked differently from every
-        other control.</li>
-      <li><b>The a2a dispatch and combine are ops too</b> (the violet boxes), because under full
-        checkpointing the communication itself replays — a real and expensive consequence that a diagram
-        which drew comms as mere arrows could not express.</li>
-      <li><b>The router is not just "probabilities".</b> Production routers retain logits and scores (both
-        fp32, even when the associated loss weights are zero), top-k weights and indices, and int32 routing
-        maps — a little over 2 KiB/token, not the 1 KiB the probability vector suggests. The box is labelled
-        "router state" for that reason. This one is implementation-specific and will need its own retention
-        set per framework.</li>
-      <li><b>The combine's backward reads the SwiGLU output and the router state, not the expert
-        outputs.</b> Gate weights are applied to the swiglu output <em>before</em> the linear down-projection
-        — mathematically identical to gating the expert outputs, and it makes the expert outputs a pure
-        intermediate. That is a ~30 GiB difference at study-01 scale, and it is visible in the diagram only
-        because the combine is allowed to declare non-obvious backward needs.</li>
+        <li>The <strong>bold</strong> boxes are entirely matrix multiplies (or attention).
+        In roofline analysis, we often approximate FLOPs by only considering matmuls,
+        as the quadratic cost of doing matmuls means they tend to dominate the overall
+        FLOPs of a model.  It's OK to squint your eyes and ignore the rest of the boxes!</li>
+
+        <li>Unlike what you would see in a mathematical description of MLA, we have
+        condensed the number of matmul blocks by applying some conventional
+        horizontal fusions, e.g., fusing the K and V matmuls together.
+        Any serious training implementation will have applied these fusions, as they are
+        easy to implement and improve your matmul efficiency.  It's good to know
+        to expect five GEMM kernels in the MLA region!</li>
+
+        <li>If you click the "sizes" button, you can toggle between seeing the
+        internal structure versus the topline number that has it multiplied out.
+        For example, the parenthetical numbers in grey all denote the parameter
+        count associated with an operation.  On the <strong>ffn gate/up</strong>,
+        you can either see that it is 29M × 256 (the size of a single expert
+        multiplied by the number of routed experts) or 7.5B (the total routed
+        experts parameter count of a single layer).  In the topline view
+        you can see that FFN has an order of magnitude more parameters
+        than any of the other operations in the transformer block.</li>
+
+        <li>The intermediate activations are all named, and any that are saved
+        for backwards are annotated with an arrow (e.g., ↓ or ↑) pointing at
+        the operation who needs that saved for backwards.  On occasion multiple
+        operations save the same tensor for backwards (drawn as ⇅).  Note that
+        this diagram overstates how many activations you'd actually typically
+        save for backwards--more on this in a future post.</li>
     </ul>
 
-    <p><b>Marks go on ops; annotations on wires are derived.</b> You choose a policy — save this op's output,
-      or replay this op in backward — and the diagram computes the consequence: the transitive replay
-      closure, and therefore which tensors are <em>forced</em> to stay stashed. Every wire label is an
-      output, tagged with what happened to it: <span title="saved">↓ ↑ ⇅</span> saved and read by the op
-      below / the producer's own backward / both, ↻ recomputed, · not needed, 🔒 always saved. The pedagogy
-      is in the derivation: marking one op ↻ visibly turns some neighbouring · into ↓. A diagram that let you
-      mark tensors directly would let you express incoherent policies and would teach nothing.</p>
-
-    <p><b>The block is the checkpoint region.</b> Its input x0 is always saved (🔒) — it is the anchor every
-      replay chain terminates at — and its output x2 is the next block's x0, charged there, not here. Fixing
-      the boundary this way is what makes one block's inventory composable by multiplication instead of
-      double-counting the residual stream. Aux artifacts (<code>rstd</code>, <code>lse</code>) exit their box
-      to the <em>right</em> rather than down the spine, because they are not dataflow; they are saved unless
-      their op replays, since a replay regenerates them for free.</p>
-
-    <p><b>What is deliberately not here.</b> Parallelism (that's the controls strip), the watermark itself
-      (that's the memory bars), forward temporaries (not set in stone, and not the point), the layer
-      <em>structure</em> — the real family stacks 3 dense blocks before the sparse ones, which is a separate
-      <code>&lt;dsv3-stack&gt;</code> widget so this one can stay about a single block. RoPE is fused into
-      the q/kv paths and always recomputed (negligible), so it is footnoted rather than drawn. The shared
-      expert and the dense MLP follow the ffn boxes' choices. The MLA-internal norms are the one asymmetry we
-      have not resolved: the diagram draws the two block-level RMSNorms and not the norms inside MLA.</p>
-
-    <p><b>The head is drawn once, below a dashed rule.</b> Everything above the rule is one of ×61 blocks;
-      below it are the final norm, the lm head, and the loss. Keeping them on the page — rather than in a
-      separate figure — is the point of the <em>combined</em> view: at ×61 the head stops looking like the
-      big thing, which is the intuition most people get wrong.</p>
-
-    <h2>2. The two block grids — quantities, in situ</h2>
-
-    <p>Both encodings answer "how big, relative to the other choices I could make", so both are counted in
-      little squares rather than printed as numbers you would have to compare arithmetically.</p>
-    <ul>
-      <li><b>Orange grid, under a saved tensor: bytes.</b> ▪ = 4 KB/token. In the <em>combined</em> view the
-        chip's number is the real total — ×layers × in-flight microbatches × tokens — so it tallies with the
-        memory bars on the study pages when you set those two display knobs to your PP stage.</li>
-      <li><b>Coloured strip, inside an op box: FLOPs as time at peak.</b> Scaled so the largest op in the
-        block fills exactly one 30-square row, with mxfp8 counted half (2× peak) and fp32 double (half peak),
-        so the strips read as duration rather than arithmetic. The lm head uses the same scale, divided by
-        the layer count in combined view — per-token vocab work, independent of depth. Norms and SwiGLU get a
-        muted fig-leaf square: they are bandwidth-bound and their compute precision is unspecified, and
-        pretending otherwise would be a lie told in colour.</li>
-      <li><b>The tally at the right of the caption</b> totals fwd (1×) + bwd (2×, dgrad + wgrad) + replay, in
-        the same squares at the same scale. It exists so the cost of recompute is not an abstraction: mark
-        ops ↻ and the replay row grows under your cursor.</li>
-    </ul>
-    <p><b>Colour means dtype, everywhere:</b> dark bf16, blue mxfp8, plum fp32 — on FLOP strips and on
-      saved-tensor tags alike, and sorted into contiguous runs within a tally row so each colour is one
-      block. The stash tag also states the dtype the simulator <em>ascribes</em> to that tensor (the dtype of
-      the matmul whose backward reads it), because that is a genuine degree of freedom and hiding it would
-      hide an assumption.</p>
-
-    <h2>3. Aesthetics — verticality and the rest</h2>
-
-    <p><b>Dataflow runs top-down; the spine runs down the left of each column.</b> The vertical axis is
-      natural for a residual stream, and the wire is shunted to the left edge rather than centred because the
-      right of the spine is where the payload goes: every output gets a tensor chip and possibly a grid of
-      squares. Boxes were also flattened (they had a lot of whitespace) to buy that room back.</p>
-
-    <p><b>Two columns, MLA and MoE, not one tall one.</b> A single column was correct and unusable: you could
-      not see the block and its outputs — the memory bars, the trace — on one screen, and the whole point is
-      to watch the outputs move while you toggle. Splitting the block at the first residual add halves the
-      height. For the same reason the FLOP tally floats to the right of the caption (there was blank space
-      there anyway), and on the study pages the whole widget is narrow enough to sit beside its outputs.</p>
-
-    <p><b>Residual wires take the long way around, once.</b> The first residual runs down a rail on the far
-      left and comes in at the ⊕. The second does <em>not</em> swing up and back down again; the ⊕ has a
-      single output downward, and the feed to the second RMSNorm branches off the bottom rail at a junction
-      dot. Junction dots are kept clear of arrowheads, and the x1 chip sits clear of the wire. These are
-      small, but a diagram that people are supposed to read as a graph has to be unambiguous about where the
-      wires actually go.</p>
-
-    <p><b>Nothing reflows.</b> Chip space is reserved for the worst case (saved, bf16) whether or not the
-      tensor is currently saved, so toggling a mark or a precision changes colours and glyphs but never moves
-      a box. Layout that jumps under an interaction destroys the comparison you were making.</p>
-
-    <p><b>Two colours with two jobs, no overlap.</b> Orange means <em>saved for backward</em> — a state.
-      Violet means <em>communication</em> — a kind. They were briefly conflated (dashed orange for the a2a
-      boxes, which read as "recompute", which it is not), and separating them is the difference between a
-      legend you can hold in your head and one you have to keep re-reading. Dashed outlines are reserved for
-      the residual-add boxes, which are ops in the model but not really boxes in the picture.</p>
-
-    <p><b>Nothing is encoded by colour alone.</b> Every state has a glyph: ↓ ↑ ⇅ ↻ · 🔒 ←, and the mode
-      button reads 💾 or ↻ in text. The dtype buttons print the dtype name.</p>
-
-    <p><b>Controls are uniform and adjacent.</b> Every markable op has the same 24 px 💾/↻ button in the same
-      corner, with the dtype button next to it, same size, everywhere. One click cycles precision (bf16 →
-      mxfp8 → fp32); one click flips the mark. Presets recognise themselves: toggle away from a preset and
-      the selector says <em>custom</em>, toggle back and it says the preset's name again.</p>
-
-    <p><b>Tooltips are instant, light, pinnable, and rationed.</b> They appear on hover with no delay, click
-      to pin (orange border) and click again to dismiss; the card is light, not a black bubble. They are
-      attached only to op boxes and the small grey dimension strings — the two places where a number needs
-      explaining — and the hit target is the whole box, not just its label. Each op's tooltip gives the
-      per-token FLOP count <em>and the expression it came from</em>, so the model can be checked rather than
-      trusted.</p>
-
-    <h2>4. How it plugs in</h2>
-    <p class="note">Set <code>for="id1 id2"</code> to the ids of a <code>&lt;dsv3-memory&gt;</code> or
-      <code>&lt;dsv3-trace&gt;</code>, and every edit here patches those widgets' precision and save-marks;
-      <code>recipe</code> and <code>recompute</code> pick the starting preset, and <code>xlayers</code> /
-      <code>xinflight</code> the combined-view multipliers. A <code>&lt;dsv3-controls&gt;</code> strip can
-      drive the schematic and the outputs together through hardware/parallelism bundles. All interactive
-      state round-trips through the URL hash.</p>
+    <p>That's it for this post.  This diagram isn't earth shaking but we are going
+    to return to it again and again as we start doing analyses.  For example, we
+    are going to come straight back to it when we do a roofline analysis of memory
+    usage in the next post.</p>
   </main>
   <script type="module">
     import '../src/viewer.js';

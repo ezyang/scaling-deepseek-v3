@@ -4,14 +4,45 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>A DSv3-family MoE on 2048 H100s: memory</title>
+  <title>Memory: a Hopper case study</title>
   <link rel="stylesheet" href="./study.css">
 </head>
 
 <body>
   <main>
-    <h1>A DSv3-family MoE on 2048 H100s: memory</h1>
-    <p class="sub">Does it even fit on 80 GB — and what the aggressive recompute policy buys and costs.</p>
+    <h1>Memory: a Hopper case study</h1>
+    <p class="sub">How to fit it on 80 GB.</p>
+
+    <p>Memory usage is kind of like : you don't really care how much memory your using unless you OOM,
+    at which point you care a lot about your memory usage.</p>
+
+    <p>Assuming you are keeping fixed your model architecture and your parameter count, you
+    have two primary levers by which you can : activation checkpointing and low precision.
+    We're first going to talk through these two levers, and then we're going to work the calculation
+    for Hopper GPUs (DeepSeek-V3 was trained on H800s).
+    </p>
+
+    <h2>Activation checkpointing</h2>
+
+    <p>Activation checkpointing is a really good tool for reducing memory use</p>
+
+    ac diagram here
+
+    the remat explanation here
+
+    <h2>Low precision</h2>
+
+    the hopper fp8 strategy (and blackwell mxfp8)
+
+    (we should delay the kernel discussion because it doesn't matter yet)
+
+    <h2>Parallelism</h2>
+
+    FSDP, EP, PP
+
+    <h2>Fitting DeepSeek-V3 on Hopper</h2>
+
+    SLOP BELOW
 
     <p><b>Configuration.</b> A <b>288-routed-expert DSv3-family variant</b> (62 MoE layers — modeled
       all-sparse, a simplification; the real family stacks 3 dense blocks first, see the structure widget
