@@ -13,50 +13,146 @@
     <h1>Memory: a Hopper case study</h1>
     <p class="sub">How to fit it on 80 GB.</p>
 
-    <p>Memory usage is kind of like : you don't really care how much memory your using unless you OOM,
-    at which point you care a lot about your memory usage.</p>
+    <p class="note"><em>AI disclosure:</em> the first draft of this post was written by Fable;
+    I have edited it.</p>
 
-    <p>Assuming you are keeping fixed your model architecture and your parameter count, you
-    have two primary levers by which you can : activation checkpointing and low precision.
-    We're first going to talk through these two levers, and then we're going to work the calculation
-    for Hopper GPUs (DeepSeek-V3 was trained on H800s).
-    </p>
+    <p>Memory usage is kind of like a fire alarm: you don't really care how much
+    memory you're using until you OOM, at which point you care about nothing
+    else.  Unlike step time, where every percent is worth chasing, memory only
+    has to clear the bar.  But you would like to know <em>how</em> you are going
+    to clear the bar before you rent two thousand GPUs, and that means being
+    able to do the memory calculation on paper.</p>
+
+    <p>Assuming you are keeping fixed your model architecture and your parameter
+    count, you have two primary levers for reducing the bytes a training step
+    needs: activation checkpointing and low precision.  Parallelism is a third
+    lever of a different kind: it doesn't reduce the bytes, it divides them over
+    more GPUs.  We're first going to talk through these levers, and then we're
+    going to work the calculation for Hopper GPUs.  (DeepSeek-V3 was trained on
+    H800s, but for memory purposes an H800 is an H100: 80 GB of HBM.)</p>
 
     <h2>Activation checkpointing</h2>
 
-    <p>Activation checkpointing is a really good tool for reducing memory use</p>
+    <p>At the end of the forward pass you are at (or near) the memory high-water
+    mark, because autograd is keeping alive every intermediate activation that
+    the backward pass will need.  Activation checkpointing (also called
+    rematerialization) is the observation that you don't have to <em>save</em> a
+    tensor for it to be available in backward: you can recompute it on the spot
+    from something earlier that you did save.  You pay FLOPs, you get back
+    bytes.</p>
 
-    ac diagram here
+    <p>Here is the transformer block diagram from the
+    <a href="./01-deepseek-diagram.html">last post</a>, now with a save/recompute
+    control on every operation.  Each op is marked either 💾 (save its output
+    for backward) or ↻ (recompute it during backward).  The annotations on the
+    wires are <em>derived</em> from those marks: the diagram works out which
+    tensors backward actually reads, and therefore which ones must stay
+    resident.</p>
 
-    the remat explanation here
+    <dsv3-layer id="ac-layer" controls="marks" recipe="bf16" recompute="dsv3" block-only></dsv3-layer>
+
+    <p>Some things to notice as you play with the marks:</p>
+
+    <ul>
+      <li><strong>Marks go on operations, not tensors.</strong>  If you mark an
+      op ↻, its output no longer needs to be saved — but the inputs it reads
+      now <em>do</em>, because the replay has to start from something.  The
+      diagram computes this transitive closure for you.  (A diagram that let
+      you mark tensors directly would let you express incoherent policies.)</li>
+
+      <li><strong>The block is the checkpoint region.</strong>  Its input x0 is
+      always saved (the 🔒): it is the anchor that every chain of recomputation
+      eventually terminates at.  The block's output is the next block's x0, so
+      it is charged there.</li>
+
+      <li><strong>The DeepSeek-V3 paper states its policy outright</strong>:
+      recompute the RMSNorms, the MLA up-projections, and SwiGLU.  That's the
+      <em>dsv3</em> preset the diagram starts in.  Notice what these ops have in
+      common: they are cheap to rerun (elementwise, or small GEMMs) and their
+      outputs are large.  That's the whole game — spend FLOPs where they are
+      cheap, save bytes where they are big.  The tally in the caption prices
+      the replay.</li>
+
+      <li><strong>Production policies go much further.</strong>  Try marking
+      every op in the MLA column ↻ (norms, projections, attention, even the
+      residual add).  Backward then replays the entire attention half from x0 —
+      about +40% of forward FLOPs — and in exchange the attention side of the
+      block stashes exactly <em>one</em> tensor.  We'll use this policy in the
+      case study below.</li>
+    </ul>
 
     <h2>Low precision</h2>
 
-    the hopper fp8 strategy (and blackwell mxfp8)
+    <p>The second lever is to store the bytes you do keep in a smaller format.
+    On Hopper, DeepSeek's recipe runs the big GEMMs in FP8 (E4M3) with
+    fine-grained scaling: one fp32 scale per 1×128 tile of elements, which works
+    out to a ~3% overhead on top of 1 byte per element.  Our model adopts a
+    simplifying convention that is worth making explicit: a saved activation is
+    stored in the dtype of the GEMM that will read it during backward.  Flip
+    the dtype buttons below and watch the stash sizes follow.</p>
 
-    (we should delay the kernel discussion because it doesn't matter yet)
+    <dsv3-layer id="fp8-layer" controls="dtype" recipe="dsv3-fp8" recompute="none" block-only></dsv3-layer>
+
+    <p>Two recipes matter for us.  The <em>dsv3-fp8</em> recipe is the Hopper
+    one: linears in tile-scaled FP8, but the attention core, its output, and
+    the router kept wide — not everything survives quantization.  The
+    <em>nv-mxfp8</em> recipe is the Blackwell one (we'll meet it again in the
+    MLPerf post): MXFP8 with power-of-two block scales on <em>every</em> GEMM,
+    including FP8 attention.  One Hopper-specific tax deserves a callout: the
+    weight gradient GEMM reads its activations <em>transposed</em>, and 1×128
+    per-row scales don't survive a transpose — so on Hopper, FP8 stashes that
+    feed a wgrad are kept in <em>both</em> orientations.  Turn on the fp8ᵀ
+    toggle above and watch the ᵀ×2 tags appear.  MXFP8's power-of-two scales
+    requantize exactly across a transpose, so Blackwell keeps one copy.  (The
+    kernel-level story of how these GEMMs actually run can wait; it doesn't
+    matter for memory.)</p>
 
     <h2>Parallelism</h2>
 
-    FSDP, EP, PP
+    <p>Neither lever above touches the other half of the memory bill: weights,
+    gradients, and optimizer state.  For a 671B-parameter model this is the
+    elephant — at bf16 weights, fp32 gradient accumulators, and an fp32 + 2×bf16
+    Adam, you are staring at multiple terabytes before the first token flows.
+    This is what parallelism divides:</p>
+
+    <ul>
+      <li><strong>FSDP / ZeRO</strong> shards states across the data-parallel
+      ranks.  ZeRO-1 shards just the optimizer; ZeRO-3 shards weights and
+      gradients too, at the cost of all-gathering layers on demand.</li>
+
+      <li><strong>Expert parallelism</strong> shards the experts — and in a
+      model where the routed experts are ~95% of the parameters, EP is doing
+      most of the work.  At EP64, each rank holds 256/64 = 4 experts per
+      layer.</li>
+
+      <li><strong>Pipeline parallelism</strong> divides the layers across
+      ranks.  But note the catch: at 1F1B steady state, stage s holds
+      min(pp−s, m) microbatches of activations in flight, so the first rank
+      keeps roughly pp microbatches alive.  Fewer layers per rank × more
+      microbatches in flight ≈ a wash for activations; PP divides weights, not
+      stashes.</li>
+    </ul>
+
+    <p>The interplay between all three (plus the two levers) is why the final
+    calculation is worth actually doing, so let's do it.</p>
 
     <h2>Fitting DeepSeek-V3 on Hopper</h2>
 
-    SLOP BELOW
+    <p><b>Configuration.</b>  We work a <b>288-routed-expert DSv3-family
+    variant</b> (62 MoE layers — modeled all-sparse, a simplification; the real
+    family stacks 3 dense blocks first, see the structure widget below — vocab
+    128000, no MTP) trained on <b>2048 H100-class GPUs</b>: FSDP-replicas 4 ×
+    PP 8 × EP 64 (our decomposition: <code>gpus=2048, pp=8, ep=64 → dp=256,
+    dp/ep=4</code>), seq 4096, mbs 1, 64 microbatches.  Precision: FP8 GEMMs
+    with 1×128 tile scales (weights kept ×2 for the transposed copy, +4/128
+    fp32 scale bytes), fp32 gradient accumulators, a 3-state AMSGrad optimizer
+    sharded over all 2048 GPUs.  Recompute: the <b>attn-replay</b> policy from
+    above — replay all of attention from the block input, save the post-norm
+    output plus the fp8 expert inputs and gate/up, recompute swiglu-out.
+    Pipeline in-flight: a DualPipe-style two-chunk layout holds 17 microbatches
+    × 4 layers per chunk ≡ 8.5 microbatches/rank.</p>
 
-    <p><b>Configuration.</b> A <b>288-routed-expert DSv3-family variant</b> (62 MoE layers — modeled
-      all-sparse, a simplification; the real family stacks 3 dense blocks first, see the structure widget
-      below — vocab 128000, no MTP) trained on <b>2048 H100-class GPUs</b>: FSDP-replicas 4 × PP 8 × EP 64
-      (our decomposition: <code>gpus=2048, pp=8, ep=64 → dp=256, dp/ep=4</code>), seq 4096, mbs 1,
-      64 microbatches. Precision: FP8 GEMMs with 1×128 tile scales (weights kept ×2 for the transposed
-      copy, +4/128 fp32 scale bytes), fp32 gradient accumulators, a 3-state AMSGrad optimizer sharded over
-      all 2048 GPUs. Recompute: the <b>attn-replay</b> policy — replay <em>all</em> of attention (norm,
-      down/up projections, SDPA core, out-proj, and the residual add) from the block input during backward,
-      save the post-norm output plus the fp8 expert inputs and gate/up, recompute swiglu-out. Pipeline
-      in-flight: DualPipe's two-chunk layout holds 17 microbatches × 4 layers per chunk ≡ 8.5
-      microbatches/rank.</p>
-
-    <h2>Our per-rank inventory</h2>
+    <h3>Our per-rank inventory</h3>
     <div id="inventory"></div>
     <p><b>Why this fits on 80 GB.</b> Three modeling points carry the number. <b>(1) Gating placement:</b>
       the router's gate weights are applied to the swiglu output <em>before</em> the linear down-proj —
@@ -69,14 +165,14 @@
       <b>(3) The in-flight law:</b> DualPipe's two-chunk schedule halves the naive (2·PP+1) in-flight count
       per layer, so the activation column is 8.5×, not 17×.</p>
 
-    <h2>Layer structure</h2>
+    <h3>Layer structure</h3>
     <p class="note"><b>Structure disclosure:</b> everything above models <b>all 62 layers as MoE</b>. The
       real model family stacks 3 dense-FFN blocks (inter 18432) before the sparse ones to stabilize early
       routing. The pinned row below stays on the simplification; the toggle patches the exploration row
       with the structure you pick (dense first layers trade expert stashes for a fatter FFN on rank 0).</p>
     <dsv3-stack id="stack1" for="mem-widget" choices="0,3" dense="0"></dsv3-stack>
 
-    <h2>Widgets at this configuration</h2>
+    <h3>Widgets at this configuration</h3>
     <p class="note">The block schematic is set to this study's recipe (DSv3 FP8, attn-replay recompute
       marks) and drives the memory bars; the parallelism controls below it feed the exploration row, so you
       can vary pp (or anything else) and see whether the scheme still fits. The first row stays pinned to
