@@ -26,3 +26,25 @@
 .series-nav .empty { border: none; background: none; }
 .series-nav .up { flex: 0 0 auto; justify-content: center; text-align: center; }
 h3 { font-size: 16.5px; margin: 30px 0 6px; }
+
+/* margin notes (Tufte-style, CSS-only). Usage, inside a <p>:
+     ... claim<span class="mn-ref"></span><span class="mn">the note text</span> ...
+   The ref renders a superscript number; the note floats into the right
+   gutter (main 980px − prose 760px) beside it. On narrow viewports the
+   note becomes an inset footnote box in the flow. Numbering is automatic
+   (CSS counter, per page). Keep notes short — a very tall note next to a
+   full-width figure/widget is cleared below it. */
+main { counter-reset: mn; }
+.mn-ref { counter-increment: mn; }
+.mn-ref::after { content: counter(mn); font-size: 11px; vertical-align: super;
+  line-height: 0; color: #b05f00; font-weight: 600; padding-left: 1px; }
+.mn { float: right; clear: right; width: 190px; margin-right: -220px;
+  margin-top: 4px; margin-bottom: 8px; font-size: 12.5px; line-height: 1.5;
+  color: #52514e; }
+.mn::before { content: counter(mn) ". "; color: #b05f00; font-weight: 600; }
+dsv3-layer, dsv3-memory, dsv3-stack, dsv3-trace, figure, table.xcheck { clear: right; }
+@media (max-width: 1040px) {
+  .mn { float: none; clear: none; width: auto; margin: 8px 0;
+    display: block; padding: 6px 10px; border-left: 3px solid #e1e0d9;
+    background: #f3f2ee; border-radius: 0 4px 4px 0; }
+}
