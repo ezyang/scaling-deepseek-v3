@@ -20,6 +20,7 @@
     .ivtd { color: #898781; font-weight: 400; }
     .ividle { font: 13px system-ui; color: #a8a69e; white-space: nowrap; }
     .ivbtn { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; padding: 2px 8px;
+      min-width: 7.5ch; box-sizing: content-box; text-align: center;
       border: 1px solid #c3c2b7; border-radius: 4px; background: #fff; cursor: pointer; }
   </style>
 </head>
@@ -101,8 +102,7 @@ i don't need perfect, i need done
         easy to implement and improve your matmul efficiency.  It's good to know
         to expect five GEMM kernels in the MLA region!</li>
 
-        <li>If you click the "sizes" button (here is a live one, wired to the
-        diagram above: <button type="button" class="ivbtn" id="sizes-live">128×192</button>),
+        <li>If you click the sizes button (sizes: <button type="button" class="ivbtn" id="sizes-live">128×192</button>)
         you can toggle between seeing the
         internal structure versus the topline number that has it multiplied out.
         For example, the parenthetical numbers in grey <span class="ivdims">(29M)</span>
