@@ -10,6 +10,18 @@
   <meta property="og:description" content="An infra-oriented description of the DeepSeek-V3 transformer block: the kernels you actually run, their parameter counts, and what gets saved for backward.">
   <meta property="og:type" content="article">
   <link rel="stylesheet" href="./study.css">
+  <style>
+    /* inline recreations of the diagram's visual vocabulary, for the bullets */
+    .ivmm, .ivop { display: inline-block; padding: 0 6px; border-radius: 4px; line-height: 1.45; white-space: nowrap; }
+    .ivmm { font: 600 13px system-ui; background: #fff; border: 1px solid #c3c2b7; }
+    .ivop { font: 13px system-ui; color: #52514e; background: #f3f2ee; border: 1px solid #e1e0d9; border-radius: 6px; }
+    .ivdims { font: 13px system-ui; color: #898781; white-space: nowrap; }
+    .ivsave { font: 600 13px system-ui; color: #7a5200; white-space: nowrap; }
+    .ivtd { color: #898781; font-weight: 400; }
+    .ividle { font: 13px system-ui; color: #a8a69e; white-space: nowrap; }
+    .ivbtn { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; padding: 2px 8px;
+      border: 1px solid #c3c2b7; border-radius: 4px; background: #fff; cursor: pointer; }
+  </style>
 </head>
 
 <body>
@@ -76,10 +88,11 @@ i don't need perfect, i need done
     <p>There are a few things I'm hoping to convey in this diagram:</p>
 
     <ul>
-        <li>The <strong>bold</strong> boxes are entirely matrix multiplies (or attention).
+        <li>The <span class="ivmm">bold boxes</span> are entirely matrix multiplies (or attention).
         In roofline analysis, we often approximate FLOPs by only considering matmuls,
         as the quadratic cost of doing matmuls means they tend to dominate the overall
-        FLOPs of a model.  It's OK to squint your eyes and ignore the rest of the boxes!</li>
+        FLOPs of a model.  It's OK to squint your eyes and ignore
+        <span class="ivop">the rest of the boxes</span>!</li>
 
         <li>Unlike what you would see in a mathematical description of MLA, we have
         condensed the number of matmul blocks by applying some conventional
@@ -88,20 +101,26 @@ i don't need perfect, i need done
         easy to implement and improve your matmul efficiency.  It's good to know
         to expect five GEMM kernels in the MLA region!</li>
 
-        <li>If you click the "sizes" button, you can toggle between seeing the
+        <li>If you click the "sizes" button (here is a live one, wired to the
+        diagram above: <button type="button" class="ivbtn" id="sizes-live">128×192</button>),
+        you can toggle between seeing the
         internal structure versus the topline number that has it multiplied out.
-        For example, the parenthetical numbers in grey all denote the parameter
-        count associated with an operation.  On the <strong>ffn gate/up</strong>,
-        you can either see that it is 29M × 256 (the size of a single expert
-        multiplied by the number of routed experts) or 7.5B (the total routed
+        For example, the parenthetical numbers in grey <span class="ivdims">(29M)</span>
+        all denote the parameter
+        count associated with an operation.  On the <span class="ivmm">ffn gate/up</span>,
+        you can either see that it is <span class="ivdims">(29M ×256)</span> (the size of a single expert
+        multiplied by the number of routed experts) or <span class="ivdims">(7.5B)</span> (the total routed
         experts parameter count of a single layer).  In the topline view
         you can see that FFN has an order of magnitude more parameters
         than any of the other operations in the transformer block.</li>
 
-        <li>The intermediate activations are all named, and any that are saved
-        for backwards are annotated with an arrow (e.g., ↓ or ↑) pointing at
+        <li>The intermediate activations are all named (even ones nothing
+        reads, like <span class="ividle">· attn proj out</span>), and any that are saved
+        for backwards are annotated with an arrow (e.g.,
+        <span class="ivsave">↓ q latent <span class="ivtd">· 1536</span></span>) pointing at
         the operation that needs them saved for backwards.  On occasion multiple
-        operations save the same tensor for backwards (drawn as ⇅).  Note that
+        operations save the same tensor for backwards (drawn as
+        <span class="ivsave">⇅</span>).  Note that
         this diagram overstates how many activations you'd actually typically
         save for backwards--more on this in a future post.</li>
     </ul>
@@ -114,6 +133,13 @@ i don't need perfect, i need done
   <script type="module">
     import '../src/viewer.js';
     import './series.js';
+    // the inline "sizes" button in the bullets drives the diagram's dims toggle
+    const d = document.getElementById('diagram');
+    const b = document.getElementById('sizes-live');
+    const sync = () => { b.textContent = d.flatDims ? '24576' : '128×192'; };
+    b.onclick = () => { d.flatDims = !d.flatDims; d.render(); d.changed(true); sync(); };
+    d.addEventListener('recipe', sync);  // the widget's own button fires this too
+    sync();
   </script>
 </body>
 
