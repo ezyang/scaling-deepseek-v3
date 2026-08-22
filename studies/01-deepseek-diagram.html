@@ -114,11 +114,10 @@ i don't need perfect, i need done
         you can see that FFN has an order of magnitude more parameters
         than any of the other operations in the transformer block.</li>
 
-        <li>The intermediate activations are all named (even ones nothing
-        reads, like <span class="ividle">· attn proj out</span>), and any that are saved
-        for backwards are annotated with an arrow (e.g.,
-        <span class="ivsave">↓ q latent <span class="ivtd">· 1536</span></span>) pointing at
-        the operation that needs them saved for backwards.  On occasion multiple
+        <li>The intermediate activations are all named (e.g., <span class="ividle">· attn proj out</span>), and any that are saved
+        for backwards are bold orange with an arrow (e.g.,
+        <span class="ivsave">↓ q latent <span class="ivtd">· 1536</span></span>), where
+        the arrow points to the operation whose backwards needs that activation.  On occasion multiple
         operations save the same tensor for backwards (drawn as
         <span class="ivsave">⇅</span>).  Note that
         this diagram overstates how many activations you'd actually typically

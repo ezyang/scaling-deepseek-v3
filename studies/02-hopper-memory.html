@@ -11,27 +11,73 @@
 <body>
   <main>
     <h1>Memory: a Hopper case study</h1>
-    <p class="sub">How to fit it on 80 GB.</p>
-
-    <p class="note"><em>AI disclosure:</em> the first draft of this post was written by Fable;
-    I have edited it.</p>
+    <p class="sub">How to fit it on 80 GiB.</p>
 
     <p>GPU memory is kind of like oxygen: you don't really think about it
-    until you run out, at which point you care about nothing
-    else.  Unlike step time, where every percent is worth chasing, memory only
-    has to clear the bar.  But you would like to know <em>how</em> you are going
-    to clear the bar before you rent two thousand GPUs, and that means being
-    able to do the memory calculation on paper.</p>
+    until you run out, at which point you care about nothing else.
+    Fortunately, it is comparatively simpler to debug OOMs in LLM pretraining,
+    because the memory usage of your trainer doesn't depend on doing distributed
+    communications at scale (assuming your memory allocations and deallocations are
+    deterministic--a very good idea!)  In modern PyTorch, you can use <strong>fake
+    ProcessGroup (fake PG)</strong> to do a very high fidelity simulation of
+    the memory usage of any given rank in an arbitrarily large training config
+    on a single GPU.</p>
 
-    <p>Assuming you are keeping fixed your model architecture and your parameter
-    count, you have two primary levers for reducing the bytes a training step
-    needs: activation checkpointing and low precision.  Parallelism is a third
-    lever of a different kind: it doesn't reduce the bytes, it divides them over
-    more GPUs.  We're first going to talk through these levers, and then we're
-    going to work the calculation for Hopper GPUs.  (DeepSeek-V3 was trained on
-    H800s, but for memory purposes an H800 is an H100: 80 GB of HBM.)</p>
+    <p>However, it's good to have an expectation about how much memory
+    your model <em>should</em> be using, given choices on parallelism, activation
+    checkpointing and low precision, so that you can tell if your implementation
+    is buggy and using more memory than it should be.  It's also common to be in
+    a fairly memory constrained regime, where in your hero run you will be
+    trying to just barely fit your model in memory while trying not to
+    sacrifice too much MFU.  For example, the original DeepSeek-V3 pretrain
+    was done on 2048 H800 GPUs (same amount of memory as any H100), as we'll
+    see, memory is pretty tight in this setting!</p>
+
+    <p>This post is organized as follows: first, we'll recap at a high level
+    what memory is used for in LLM training.  Next, we will individually
+    discuss each knob you have for adjusting memory usage, using simplified
+    models to build intuition for how these knobs affect memory.  Then we'll
+    put it all together to reproduce DeepSeek-V3's 2048 GPU Hopper training
+    configuration.  Credit where credit is due: this analysis is based off of
+    an unpublished analysis done by Daniel Haziza.</p>
+
+    <h2>What is memory used for in training?</h2>
+
+    <p>When discussing the memory usage of model training, there are two
+    important simplifications we typically apply:</p>
+
+    <ol>
+        <li>We only care about the high watermark--the peak memory usage--during
+        training, because that's the memory usage you need to bring down if
+        you want to fix an OOM.</li>
+        <li>While the exact memory usage depends on implementation details
+        of your training framework, there are some things that <em>must</em>
+        be stored in memory (no matter how you implement it), and reasoning
+        about those will characterize the majority of memory usage of your model.</li>
+    </ol>
+
+
+
+    <p>Broadly speaking, here are the things you will always<span class="mn-ref"></span><span class="mn">We might not always actually have these resident in memory; for example you can play tricks with CPU offloading to get rid of the optimizer states from GPU when you don't need them. But "morally" you have to keep them around!</span> save in memory:</p>
+
+    <ol>
+      <li>Parameters, of course!</li>
+      <li>Optimizer states, with similar reasoning for parameters (they must persist
+      across steps to be mutated).</li>
+      <li>Activations (saved for backwards), because typically your high watermark
+      occurs right when backwards is starting, at which point you have freed
+      any of your saved for backwards tensors yet</li>
+    </ol>
+
+    <p>If PP is involved, we also must add:</p>
+
+    <ol>
+      <li>Gradients</li>
+    </ol>
 
     <h2>Activation checkpointing</h2>
+
+    <p></p>
 
     <p>At the end of the forward pass you are at (or near) the memory high-water
     mark, because autograd is keeping alive every intermediate activation that
@@ -157,7 +203,7 @@
 
     <h3>Our per-rank inventory</h3>
     <div id="inventory"></div>
-    <p><b>Why this fits on 80 GB.</b> Three modeling points carry the number. <b>(1) Gating placement:</b>
+    <p><b>Why this fits on 80 GiB.</b> Three modeling points carry the number. <b>(1) Gating placement:</b>
       the router's gate weights are applied to the swiglu output <em>before</em> the linear down-proj —
       mathematically identical to gating the expert outputs, and it makes the expert outputs a pure
       intermediate rather than a ~30 GiB stash for the combine's backward. <b>(2) The attn-replay
@@ -211,7 +257,7 @@
     const { inflight, hardware, gpus, pp, ep, zero, mbs, seqLen, microbatches, recompute, recipe, arch, ...conventions } = CFG_OVERRIDES;
     document.getElementById('stack1').setAttribute('arch', JSON.stringify(VARIANT_ARCH));
     document.getElementById('mem-widget').setAttribute('configs', JSON.stringify([
-      { label: 'study config (pinned)', note: 'PP8 · EP64 · 2048 GPUs · H100 80 GB · DualPipe in-flight 8.5 — mid rank (pp1); precision/marks from the schematic', dispStage: 1, ...CFG_OVERRIDES },
+      { label: 'study config (pinned)', note: 'PP8 · EP64 · 2048 GPUs · H100 80 GiB · DualPipe in-flight 8.5 — mid rank (pp1); precision/marks from the schematic', dispStage: 1, ...CFG_OVERRIDES },
       { label: 'explore (knobs above)', note: 'study accounting conventions + 1F1B in-flight; parallelism from the controls', ...conventions },
     ]));
   </script>
