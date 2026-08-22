@@ -16,8 +16,8 @@
     <p class="note"><em>AI disclosure:</em> the first draft of this post was written by Fable;
     I have edited it.</p>
 
-    <p>Memory usage is kind of like a fire alarm: you don't really care how much
-    memory you're using until you OOM, at which point you care about nothing
+    <p>GPU memory is kind of like oxygen: you don't really think about it
+    until you run out, at which point you care about nothing
     else.  Unlike step time, where every percent is worth chasing, memory only
     has to clear the bar.  But you would like to know <em>how</em> you are going
     to clear the bar before you rent two thousand GPUs, and that means being
@@ -47,7 +47,10 @@
     for backward) or ↻ (recompute it during backward).  The annotations on the
     wires are <em>derived</em> from those marks: the diagram works out which
     tensors backward actually reads, and therefore which ones must stay
-    resident.</p>
+    resident.  For now, assume every saved tensor is stored in bf16 (2 bytes
+    per element) &mdash; that's what the byte counts and the yellow memory
+    grids are priced at; we'll revisit that assumption in the next
+    section.</p>
 
     <dsv3-layer id="ac-layer" controls="marks" recipe="bf16" recompute="dsv3" block-only></dsv3-layer>
 
