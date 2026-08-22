@@ -905,10 +905,13 @@ export class Dsv3Layer extends HTMLElement {
         : '',
     ];
     note.textContent = parts.filter(Boolean).join(' ');
-    const foot = el('div', 'lv-foot2');
-    foot.append(note);
-    if (cmode !== 'static') foot.append(this._tallySvg);
-    root.append(foot);
+    // nocaption: the page explains the diagram in its own prose
+    if (!this.hasAttribute('nocaption')) {
+      const foot = el('div', 'lv-foot2');
+      foot.append(note);
+      if (cmode !== 'static') foot.append(this._tallySvg);
+      root.append(foot);
+    }
     if (this._ctl.quant) this.attachTip(root);   // no tooltips on the structure-only tier
     this.append(style, root);
   }
