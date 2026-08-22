@@ -66,19 +66,19 @@ console.log(`anchor NeMo/GB300 (mxfp8 m=32 pp2 ep32): ${Math.round(nemo.tokPerSe
 const { memoryUsage, actBreakdownPerToken, resolveMatmuls } = await import('../src/memory.js');
 const mem = (o) => memoryUsage(defaultConfig({ hardware: 'gb300', ...o }));
 const ddp = mem({ pp: 1, ep: 1, zero: 0, recompute: 'none' }); // dp = gpus/pp = 256
-check('DDP replication never fits', !ddp.fits && ddp.worst.total > 4000, `${(ddp.worst.total / 1024).toFixed(1)} TB`);
+check('DDP replication never fits', !ddp.fits && ddp.worst.total > 4000, `${(ddp.worst.total / 1024).toFixed(1)} TiB`);
 const dsv3 = mem({ pp: 16, ep: 16, zero: 1, recompute: 'selective' });
-check('PP16/EP16/ZeRO-1 selective fits 256xGB300', dsv3.fits, `${dsv3.worst.total.toFixed(0)}/${dsv3.capacityGB} GB`);
+check('PP16/EP16/ZeRO-1 selective fits 256xGB300', dsv3.fits, `${dsv3.worst.total.toFixed(0)}/${dsv3.capacityGB} GiB`);
 const fat = mem({ pp: 16, ep: 16, zero: 1, recompute: 'none', mbs: 4 });
-check('mbs=4 without recompute is OOM', !fat.fits, `${fat.worst.total.toFixed(0)} GB`);
+check('mbs=4 without recompute is OOM', !fat.fits, `${fat.worst.total.toFixed(0)} GiB`);
 const mmRecipe = resolveMatmuls({ recipe: 'nv-mxfp8' });
 const acts = ['none', 'selective', 'full'].map(r =>
   Object.values(actBreakdownPerToken('moe', DSV3, r, mmRecipe)).reduce((x, y) => x + y, 0));
 check('recompute strictly shrinks activations', acts[0] > acts[1] && acts[1] > acts[2],
-  acts.map(b => (b / 1024).toFixed(0) + 'KB/tok').join(' > '));
+  acts.map(b => (b / 1024).toFixed(0) + 'KiB/tok').join(' > '));
 const actsBf16 = Object.values(actBreakdownPerToken('moe', DSV3, 'selective', resolveMatmuls({ recipe: 'bf16' }))).reduce((x, y) => x + y, 0);
 check('fp8 recipe shrinks stashes vs bf16', acts[1] < actsBf16,
-  `${(acts[1] / 1024).toFixed(0)} < ${(actsBf16 / 1024).toFixed(0)} KB/tok`);
+  `${(acts[1] / 1024).toFixed(0)} < ${(actsBf16 / 1024).toFixed(0)} KiB/tok`);
 
 // ---- block-graph invariants (attn-replay policy, router state, vocab split) -----
 const { blockGraph, analyze, RECOMPUTE_PRESETS } = await import('../src/blockgraph.js');
@@ -100,7 +100,7 @@ check('fp8ᵀ dual stash: wgrad-read fp8 only (dispatch, norm2; not gate_up/x0/r
   [...arT.dual].sort().join(','));
 check('fp8ᵀ adds exactly the dual payloads',
   Math.abs((arT.savedBytes - ar.savedBytes) - (ar.byId.dispatch.outBytes + ar.byId.norm2.outBytes)) < 1,
-  `+${((arT.savedBytes - ar.savedBytes) / 1024).toFixed(1)} KB/tok`);
+  `+${((arT.savedBytes - ar.savedBytes) / 1024).toFixed(1)} KiB/tok`);
 const noT = mem({ hardware: 'h100', gpus: 2048, pp: 8, ep: 64, zero: 1, recompute: 'attn-replay', recipe: 'dsv3-fp8' });
 const withT = mem({ hardware: 'h100', gpus: 2048, pp: 8, ep: 64, zero: 1, recompute: 'attn-replay', recipe: 'dsv3-fp8', transposedStash: true });
 check('transposedStash grows the H100 watermark by GiBs',

@@ -20,8 +20,8 @@
       scales) on every GEMM <em>including the attention core</em> — q/k/v are saved MXFP8, the attention
       output is saved bf16, rstd/lse fp32 — with fp8 parameter gather (fp8-only working weights), fp32
       master weights and bf16 grads/Adam moments. <b>No activation checkpointing.</b> That is the headline of
-      this study: with pp = 2 only two microbatches are ever in flight, and GB300's 288 GB absorbs the full
-      stash-everything inventory with ~150 GB to spare.</p>
+      this study: with pp = 2 only two microbatches are ever in flight, and GB300's 288 GiB absorbs the full
+      stash-everything inventory with ~150 GiB to spare.</p>
 
     <h2>Cross-check — configuration</h2>
     <div id="counts"></div>

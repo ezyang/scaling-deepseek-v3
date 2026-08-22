@@ -107,7 +107,7 @@ export class TraceViewer {
     if (stats?.mem) {
       const m = stats.mem;
       const memEl = el('span');
-      memEl.textContent = ` · mem ${m.worst.total.toFixed(0)}/${m.capacityGB} GB` + (m.fits ? '' : ' — does not fit ✗');
+      memEl.textContent = ` · mem ${m.worst.total.toFixed(0)}/${m.capacityGB} GiB` + (m.fits ? '' : ' — does not fit ✗');
       memEl.style.color = m.fits ? '#52514e' : '#d03b3b';
       if (!m.fits) memEl.style.fontWeight = '600';
       this.statsEl.append(memEl);
@@ -541,7 +541,7 @@ export class Dsv3Memory extends HTMLElement {
       // a row may pin the displayed pipeline stage (e.g. a reference that models
       // a mid rank); default is the worst stage
       const w = r.cfg.dispStage != null ? (r.mem.perStage[r.cfg.dispStage] ?? r.mem.worst) : r.mem.worst;
-      const segs = []; // cumulative GB ranges for pointer -> segment lookup
+      const segs = []; // cumulative GiB ranges for pointer -> segment lookup
       let x = 0;
       for (const [name, get, c, ink] of MEM_PARTS) {
         const gb = get(w);
@@ -559,14 +559,14 @@ export class Dsv3Memory extends HTMLElement {
         x += gb;
         if (x >= scaleMax) break;
       }
-      // hover tooltip: track the pointer in GB space so even sub-pixel segments resolve
+      // hover tooltip: track the pointer in GiB space so even sub-pixel segments resolve
       bar.addEventListener('mousemove', (e) => {
         // clientX-based: offsetX would be relative to the hovered child segment
         const gbAt = (e.clientX - bar.getBoundingClientRect().left) / bar.clientWidth * scaleMax;
         const s = segs.find(g => gbAt >= g.from && gbAt < g.to);
         if (!s) { tip.style.display = 'none'; return; }
-        tip.innerHTML = `<b>${esc(s.name)}</b> ${s.gb.toFixed(1)} GB · ${(s.gb / w.total * 100).toFixed(1)}% of total<br>` +
-          `worst stage pp${w.stage} · ${w.inFlight} microbatch(es) in flight · total ${w.total.toFixed(0)}/${r.mem.capacityGB} GB`;
+        tip.innerHTML = `<b>${esc(s.name)}</b> ${s.gb.toFixed(1)} GiB · ${(s.gb / w.total * 100).toFixed(1)}% of total<br>` +
+          `worst stage pp${w.stage} · ${w.inFlight} microbatch(es) in flight · total ${w.total.toFixed(0)}/${r.mem.capacityGB} GiB`;
         tip.style.display = 'block';
         // cursor-relative in both axes so the box tracks smoothly across bars
         const rootBox = root.getBoundingClientRect();
@@ -578,13 +578,13 @@ export class Dsv3Memory extends HTMLElement {
       const capGB = r.mem.capacityGB;
       const cap = el('div', 'mv-cap');
       cap.style.left = (capGB / scaleMax * 100) + '%';
-      cap.innerHTML = `<i>${capGB} GB</i>`;
+      cap.innerHTML = `<i>${capGB} GiB</i>`;
       bar.append(cap);
       if (w.total > scaleMax) bar.append(el('div', 'mv-clip'));
       const verdict = el('div', 'mv-verdict');
       verdict.innerHTML = r.mem.fits
-        ? `<b class="ok">✓ fits</b> ${w.total.toFixed(0)}/${capGB} GB (pp${w.stage})`
-        : `<b class="no">✗ ${(w.total / capGB).toFixed(w.total / capGB > 20 ? 0 : 1)}× over</b> ${fmtGB(w.total)}/${capGB} GB`;
+        ? `<b class="ok">✓ fits</b> ${w.total.toFixed(0)}/${capGB} GiB (pp${w.stage})`
+        : `<b class="no">✗ ${(w.total / capGB).toFixed(w.total / capGB > 20 ? 0 : 1)}× over</b> ${fmtGB(w.total)}/${capGB} GiB`;
       row.append(label, bar, verdict);
       root.append(row);
     }
@@ -592,7 +592,7 @@ export class Dsv3Memory extends HTMLElement {
     this.append(style, root);
   }
 }
-function fmtGB(gb) { return gb >= 1024 ? (gb / 1024).toFixed(1) + ' TB' : gb.toFixed(0) + ' GB'; }
+function fmtGB(gb) { return gb >= 1024 ? (gb / 1024).toFixed(1) + ' TiB' : gb.toFixed(0) + ' GiB'; }
 if (typeof customElements !== 'undefined' && !customElements.get('dsv3-memory')) {
   customElements.define('dsv3-memory', Dsv3Memory);
 }
@@ -864,8 +864,8 @@ export class Dsv3Layer extends HTMLElement {
     const parts = [
       !this._ctl.quant ? '' :
       (this.view === 'combined'
-        ? `stashed for backward: ${(ana.savedBytes * M2 / 2 ** 30).toFixed(1)} GB total = ${(ana.savedBytes / 1024).toFixed(0)} KB/token\u00b7layer \u00d7 ${this.dispLayers} layers \u00d7 ${this.dispInflight} in-flight \u00d7 4096 tokens (set layers/in-flight to your PP stage to tally with the memory bars) \u00b7 `
-        : `stashed for backward: ${(ana.savedBytes / 1024).toFixed(0)} KB/token\u00b7layer \u00b7 `) +
+        ? `stashed for backward: ${(ana.savedBytes * M2 / 2 ** 30).toFixed(1)} GiB total = ${(ana.savedBytes / 1024).toFixed(0)} KiB/token\u00b7layer \u00d7 ${this.dispLayers} layers \u00d7 ${this.dispInflight} in-flight \u00d7 4096 tokens (set layers/in-flight to your PP stage to tally with the memory bars) \u00b7 `
+        : `stashed for backward: ${(ana.savedBytes / 1024).toFixed(0)} KiB/token\u00b7layer \u00b7 `) +
       `backward replays +${(ana.replayFrac * 100).toFixed(0)}% of fwd FLOPs` +
       (ana.replayComm.length ? ` + a2a ${ana.replayComm.join('+')}` : '') + '.',
       this._ctl.marks
@@ -874,7 +874,7 @@ export class Dsv3Layer extends HTMLElement {
           ? 'Each wire label is an output, tagged with the recompute policy\u2019s derived result \u2014'
           : 'Each wire label is an output, tagged with whether backward reads it \u2014',
       this._ctl.quant
-        ? '\u2193 \u2191 \u21c5 saved for backward, read by the op below / above / both (\u25aa = 4 KB/token; violet boxes = communication), ' +
+        ? '\u2193 \u2191 \u21c5 saved for backward, read by the op below / above / both (\u25aa = 4 KiB/token; violet boxes = communication), ' +
           '\u21bb recomputed, \u00b7 not needed, \ud83d\udd12 always saved; ' +
           'right arrows are aux backward artifacts (rstd, lse), \u2190 saved unless their op replays.'
         : '\u2193 \u2191 \u21c5 read by the op below / above / both, \u00b7 not needed (violet boxes = communication); ' +
@@ -919,7 +919,7 @@ export class Dsv3Layer extends HTMLElement {
     const P = [];
     // Two columns (MLA | MoE), head row underneath. The dataflow spine runs
     // down the LEFT of each column; output tensors are annotated on the spine
-    // (▣ saved + block grid, ▪ = 4 KB/token · ↻ recomputed · · not needed).
+    // (▣ saved + block grid, ▪ = 4 KiB/token · ↻ recomputed · · not needed).
     // Aux backward artifacts (rstd, lse) exit each box to the RIGHT — always saved.
     const W = 290, C1 = 60, C2 = 512;
     const SX1 = C1 + 22, SX2 = C2 + 22, RAIL1 = C1 - 26;
@@ -982,13 +982,13 @@ export class Dsv3Layer extends HTMLElement {
         s += `<rect x="${x + (i % per) * 6}" y="${y + Math.floor(i / per) * 6}" width="5" height="5" fill="#eda100"/>`;
       return { svg: s, rows: Math.ceil(n / per) };
     };
-    const fmtB = (bytes) => bytes >= 1024 ? (bytes / 1024).toFixed(1) + ' KB' : bytes + ' B';
+    const fmtB = (bytes) => bytes >= 1024 ? (bytes / 1024).toFixed(1) + ' KiB' : bytes + ' B';
     // combined view: totals over the block column — layers × in-flight microbatches × 4096 tokens
     const M = this.view === 'combined' ? this.dispLayers * this.dispInflight * 4096 : 1;
     const fmtMem = (bytes) => {
       if (M === 1) return fmtB(bytes);
       const b = bytes * M;
-      return b >= 2 ** 30 ? (b / 2 ** 30).toFixed(1) + ' GB' : b >= 2 ** 20 ? (b / 2 ** 20).toFixed(0) + ' MB' : (b / 1024).toFixed(0) + ' KB';
+      return b >= 2 ** 30 ? (b / 2 ** 30).toFixed(1) + ' GiB' : b >= 2 ** 20 ? (b / 2 ** 20).toFixed(0) + ' MiB' : (b / 1024).toFixed(0) + ' KiB';
     };
     // FLOP cost strip inside each op box, MFU-style: TIME at peak
     // (bf16-equivalent; mxfp8 counted half since its peak is 2x). Scaled so the

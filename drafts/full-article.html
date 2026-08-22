@@ -54,7 +54,7 @@
       first principles, adding one correction term at a time, ordered by impact on the headline number. Each
       refinement doubles as an elimination round: as the model learns about a new cost, whole regions of the
       parallelism configuration space get ruled out, until only the defensible configs survive. We work on a
-      cluster of <b>256 GB300 NVL72</b> GPUs (288 GB HBM, 72-GPU NVLink domains), sequence length 4096 — 256
+      cluster of <b>256 GB300 NVL72</b> GPUs (288 GiB HBM, 72-GPU NVLink domains), sequence length 4096 — 256
       because that is the scale we have the most real traces to check against. Cluster size is a knob
       (<code>gpus</code>, with dp = gpus/pp) in every widget and the sandbox.</p>
     <p class="note">Workshop state: the memory step below is the first section in this style; the timing
@@ -120,22 +120,22 @@
       {"label":"FSDP, no EP","note":"must gather 11.5B-param layers to run them","pp":1,"ep":1,"zero":3,"recipe":"nv-mxfp8"},
       {"label":"FSDP + EP64","note":"selective recompute","pp":1,"ep":64,"zero":3,"recipe":"nv-mxfp8"},
       {"label":"FSDP + EP64, no recompute","note":"stash everything — only 1 microbatch is live","pp":1,"ep":64,"zero":3,"recipe":"nv-mxfp8","recompute":"none"},
-      {"label":"FSDP + EP64 — on H800","note":"same config, 80 GB part","hardware":"h800","pp":1,"ep":64,"zero":3,"recipe":"nv-mxfp8"},
+      {"label":"FSDP + EP64 — on H800","note":"same config, 80 GiB part","hardware":"h800","pp":1,"ep":64,"zero":3,"recipe":"nv-mxfp8"},
       {"label":"FSDP + EP64, seq 32k","note":"long context, selective recompute","pp":1,"ep":64,"zero":3,"recipe":"nv-mxfp8","seqLen":32768}
     ]'></dsv3-memory>
     <ul>
-      <li><b>Replication is dead on arrival</b> (7.5 TB, 27× over) and <b>ZeRO-1 alone barely helps</b>
-        (3.1 TB): replicated weights + gradients are the wall. Something must shard the weights.</li>
-      <li><b>EP is weight sharding.</b> ZeRO-1 + EP64 fits (~186 GB) with no FSDP machinery at all — sharding
-        the experts 64 ways removes 97% of the parameter problem. FSDP without EP also fits (~134 GB) but
-        pays a 65 GB working set gathering whole MoE layers; FSDP + EP64 is comfortable (~75 GB).</li>
-      <li><b>Recompute is optional on GB300 without PP</b>: stash-everything is ~107 GB, since only one
-        microbatch is ever live; mbs = 4 with selective recompute is ~171 GB. Context length is the non-PP
-        wall: seq 32k lands at ~298 GB — just over the line.</li>
-      <li><b>The hardware rows are closer than they used to be.</b> The 75 GB config fits an 80 GB H800 too —
-        barely, and only with selective recompute (stash-everything is 107 GB, dead on Hopper). At 256 GPUs,
-        parameter state alone is ~32 GB with FSDP+EP (~21 GB of it optimizer), so an H800 lives within ~5 GB
-        of its life; <b>on GB300 the same config leaves 200+ GB of headroom</b> — room for bigger
+      <li><b>Replication is dead on arrival</b> (7.5 TiB, 27× over) and <b>ZeRO-1 alone barely helps</b>
+        (3.1 TiB): replicated weights + gradients are the wall. Something must shard the weights.</li>
+      <li><b>EP is weight sharding.</b> ZeRO-1 + EP64 fits (~186 GiB) with no FSDP machinery at all — sharding
+        the experts 64 ways removes 97% of the parameter problem. FSDP without EP also fits (~134 GiB) but
+        pays a 65 GiB working set gathering whole MoE layers; FSDP + EP64 is comfortable (~75 GiB).</li>
+      <li><b>Recompute is optional on GB300 without PP</b>: stash-everything is ~107 GiB, since only one
+        microbatch is ever live; mbs = 4 with selective recompute is ~171 GiB. Context length is the non-PP
+        wall: seq 32k lands at ~298 GiB — just over the line.</li>
+      <li><b>The hardware rows are closer than they used to be.</b> The 75 GiB config fits an 80 GiB H800 too —
+        barely, and only with selective recompute (stash-everything is 107 GiB, dead on Hopper). At 256 GPUs,
+        parameter state alone is ~32 GiB with FSDP+EP (~21 GiB of it optimizer), so an H800 lives within ~5 GiB
+        of its life; <b>on GB300 the same config leaves 200+ GiB of headroom</b> — room for bigger
         microbatches, longer context, or skipping recompute entirely. That headroom is the finding, and it is
         why the timing sections, not memory, will pick the GB300 config.</li>
     </ul>
@@ -149,20 +149,20 @@
       {"label":"PP16 · EP16 · ZeRO-1","note":"selective recompute","pp":16,"ep":16,"zero":1,"recipe":"nv-mxfp8"},
       {"label":"PP16 · EP16 · ZeRO-1","note":"no recomputation","pp":16,"ep":16,"zero":1,"recipe":"nv-mxfp8","recompute":"none"},
       {"label":"PP16 · EP16 · ZeRO-1, mbs=4","note":"no recompute — 15 microbatches in flight × mbs 4","pp":16,"ep":16,"zero":1,"recipe":"nv-mxfp8","recompute":"none","mbs":4},
-      {"label":"PP16 · EP16 — on H800","note":"selective recompute, 80 GB part","hardware":"h800","pp":16,"ep":16,"zero":1,"recipe":"nv-mxfp8"}
+      {"label":"PP16 · EP16 — on H800","note":"selective recompute, 80 GiB part","hardware":"h800","pp":16,"ep":16,"zero":1,"recipe":"nv-mxfp8"}
     ]'></dsv3-memory>
     <ul>
-      <li>On GB300 at mbs = 1 the watermark is a wash with the best non-PP config (~74 GB either way): the
+      <li>On GB300 at mbs = 1 the watermark is a wash with the best non-PP config (~74 GiB either way): the
         parameter savings and the in-flight activation multiplier cancel almost exactly.</li>
-      <li>No-recompute still fits (~106 GB); mbs = 4 without recompute does not (~289 GB) — with PP the
+      <li>No-recompute still fits (~106 GiB); mbs = 4 without recompute does not (~289 GiB) — with PP the
         activation side reacts 15× faster to every microbatch/sequence-length decision.</li>
-      <li>On 256 H800s, PP16 + selective recompute fits at ~74/80 GB — the same near-the-edge story as
+      <li>On 256 H800s, PP16 + selective recompute fits at ~74/80 GiB — the same near-the-edge story as
         non-PP, with no extra margin bought by the pipeline: PP’s parameter savings went to the in-flight
-        activations. Skipping recompute (106 GB) is GB300-only either way.</li>
+        activations. Skipping recompute (106 GiB) is GB300-only either way.</li>
     </ul>
     <p><b>Survivors so far, on 256 × GB300:</b> memory eliminates replication and bare ZeRO-1 — and almost
       nothing else. Non-PP (FSDP or ZeRO-1, with EP) and every reasonable PP · EP with selective recompute
-      all fit with 200+ GB of headroom; even an H800 squeaks by at ~74/80 GB once recompute is on. Memory is
+      all fit with 200+ GiB of headroom; even an H800 squeaks by at ~74/80 GiB once recompute is on. Memory is
       not the discriminator at this scale; what it buys GB300 is <em>slack</em> — bigger microbatches, longer
       context, no recompute — and the timing sections will decide what that slack is worth.</p>
 
@@ -216,7 +216,7 @@
       <li><a href="../studies/02-hopper-memory.html">Study 01 — a DSv3-family MoE on 2048 Hopper GPUs</a> (PP8 · EP64, FP8 tile scaling, attn-replay recompute) — the memory story and the DualPipe in-flight ÷2.</li>
       <li><a href="../studies/03-nvidia-mlperf-gb300.html">Study 02 — NVIDIA's MLPerf 6.0 256×GB300
         submission</a> (PP2 · EP32, MXFP8 incl. FP8 attention, fp8 parameter gather, <em>no</em> activation
-        checkpointing) — per-stash precision accounting asserted; 140/288 GB watermark; timing anchors for
+        checkpointing) — per-stash precision accounting asserted; 140/288 GiB watermark; timing anchors for
         the upcoming timing sections.</li>
     </ul>
   </main>
