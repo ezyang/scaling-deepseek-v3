@@ -5,6 +5,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>A DeepSeek-V3 transformer block</title>
+  <meta name="description" content="An infra-oriented description of the DeepSeek-V3 transformer block: the kernels you actually run, their parameter counts, and what gets saved for backward.">
+  <meta property="og:title" content="A DeepSeek-V3 transformer block">
+  <meta property="og:description" content="An infra-oriented description of the DeepSeek-V3 transformer block: the kernels you actually run, their parameter counts, and what gets saved for backward.">
+  <meta property="og:type" content="article">
   <link rel="stylesheet" href="./study.css">
 </head>
 
@@ -39,7 +43,7 @@ i don't need perfect, i need done
     is put together.  The classic path here would be to read
     the <a href="https://arxiv.org/abs/2412.19437">DeepSeek-V3 Technical Report</a>
     and then look at some of the implementations of DeepSeek-V3: either the
-    official <a href="https://github.com/deepseek-ai/DeepSeek-V3/blob/main/inference/model.py">inference reference</a> or a trainable implementation in <a href="https://github.com/pytorch/torchtitan/blob/main/torchtitan/models/deepseek_v3/model.py">torchtitan</a> or <a href="https://github.com/NVIDIA/Megatron-LM/blob/99a108127dc4441da2ac1b71774549bb2d841608/megatron/core/models/gpt/gpt_layer_specs.py">Megatron</a> (<a href="https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/fd5c4737f6870910e65b65c23da82f73d65af29f/src/megatron/bridge/recipes/deepseek/deepseek_v3.py">config</a>).  (TODO: Link to simplified Megatron DSv3 implementation.)
+    official <a href="https://github.com/deepseek-ai/DeepSeek-V3/blob/main/inference/model.py">inference reference</a> or a trainable implementation in <a href="https://github.com/pytorch/torchtitan/blob/main/torchtitan/models/deepseek_v3/model.py">torchtitan</a> or <a href="https://github.com/NVIDIA/Megatron-LM/blob/99a108127dc4441da2ac1b71774549bb2d841608/megatron/core/models/gpt/gpt_layer_specs.py">Megatron</a> (<a href="https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/fd5c4737f6870910e65b65c23da82f73d65af29f/src/megatron/bridge/recipes/deepseek/deepseek_v3.py">config</a>).
     </p>
 
     <p>However, there are some aspects where I think the pre-existing
@@ -96,7 +100,7 @@ i don't need perfect, i need done
 
         <li>The intermediate activations are all named, and any that are saved
         for backwards are annotated with an arrow (e.g., ↓ or ↑) pointing at
-        the operation who needs that saved for backwards.  On occasion multiple
+        the operation that needs them saved for backwards.  On occasion multiple
         operations save the same tensor for backwards (drawn as ⇅).  Note that
         this diagram overstates how many activations you'd actually typically
         save for backwards--more on this in a future post.</li>

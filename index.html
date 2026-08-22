@@ -5,6 +5,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>DeepSeek-V3: from roofline to reality</title>
+  <meta name="description" content="A series of worked performance analyses of DeepSeek-V3: from a roofline model to predicting real training profiles, with an interactive memory and timing model.">
+  <meta property="og:title" content="DeepSeek-V3: from roofline to reality">
+  <meta property="og:description" content="A series of worked performance analyses of DeepSeek-V3, with an interactive memory and timing model.">
+  <meta property="og:type" content="website">
   <style>
     :root { color-scheme: light; }
     body {
@@ -61,7 +65,7 @@
     that is reasonably able to predict what a PyTorch profile trace would look like
     if you had actually run it.  We should be able to understand why NVIDIA
     chose the performance settings they did in their MLPerf submission.  We
-    should be able to understand the tradeoff space if we planning to try to
+    should be able to understand the tradeoff space if we're planning to try to
     pretrain DeepSeek-V3.</p>
 
     <p><em>AI disclosure:</em> The graphics and visualizations are 100% vibe
@@ -88,10 +92,9 @@
     </ul>
 
     <h2 id="model">The performance model</h2>
-    <p></p>
     <p>All of the posts are built off of a shared model of DeepSeek-V3's
     memory and performance behavior.  Below, I've placed all of the widgets
-    for interacting with this model below, in case you want to work with the
+    for interacting with this model, in case you want to work with the
     model directly.  <strong>There are still mistakes in the model.</strong>
     Part of the reason I'm writing the posts incrementally is that I'm
     using these posts to flush out bugs and omissions from various parts of

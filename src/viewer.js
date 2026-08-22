@@ -1160,7 +1160,7 @@ export class Dsv3Layer extends HTMLElement {
     {
       const RX = C1 + 150 + 22;
       // the down-projection is two separate GEMMs in production stacks
-      // (wq_a | wkv_a — AMAIA and Megatron both), so it is split at every tier:
+      // (wq_a | wkv_a in every production stack), so it is split at every tier:
       // fork norm1-out first
       P.push(`<circle cx="${SX1}" cy="${y - 10}" r="2.5" fill="#898781"/>` +
         `<path class="wire" d="M ${SX1} ${y - 10} L ${RX} ${y - 10} L ${RX} ${y}" marker-end="url(#arr)"/>`);
@@ -1345,7 +1345,7 @@ export class Dsv3Layer extends HTMLElement {
     if (DET) wire(shMid, rowG + 34, z);
     // gate-at-swiglu, not gate-at-combine: by linearity the router weights can
     // multiply the swiglu output before the down-proj (one fused kernel,
-    // AMAIA's swiglu_and_scale) — this is what makes the expert outputs a pure
+    // a fused swiglu-and-scale kernel) — this is what makes the expert outputs a pure
     // intermediate instead of a stash for the combine's backward
     if (DET) P.push(`<path class="wire" d="M ${gateX} ${dispTop + 16} L ${gateX} ${z + 13} L ${C2 + W + 1} ${z + 13}" marker-end="url(#arr)"/>`);
     const rowS = z;
