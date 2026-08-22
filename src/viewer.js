@@ -468,7 +468,6 @@ const MEM_PARTS = [
   ['act·residual', (w) => w.act.residual, '#f5c65e', '#0b0b0b'],
   ['act·logits', (w) => w.act.logits, '#fbe1a4', '#0b0b0b'],
   ['buffers', (w) => w.buffers, '#e87ba4', '#0b0b0b'],
-  ['overhead', (w) => w.overhead, '#898781', '#fff'],
 ];
 const MEM_CSS = `
 .mv { font: 12px system-ui, -apple-system, "Segoe UI", sans-serif; color: #0b0b0b;

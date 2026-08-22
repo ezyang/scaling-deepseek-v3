@@ -29,7 +29,6 @@ export const CFG_OVERRIDES = {
   optShard: 'world',                  // optimizer sharded over all 2048 GPUs
   weightBytes: 2 * (1 + 4 / 128),     // fp8 ×2 (transpose) × tile-scale overhead
   inflight: 8.5,                      // DualPipe two-chunk layout: 17 mb × 4 layers/chunk ≡ 8.5 × 8 layers/rank
-  overheadGB: 0,
 };
 
 // Our per-rank inventory at this configuration (mid rank + the two vocab ranks).

@@ -37,7 +37,6 @@ export function defaultConfig(overrides = {}) {
     recipe: null,                        // per-matmul precision preset (memory.js RECIPES); null = derive from dtype
     matmuls: null,                       // per-matmul dtype overrides, e.g. {o_proj:'bf16'}
     saved: null,                         // per-op save/recompute marks over the recompute preset, e.g. {x1:false}
-    overheadGB: 6,                       // CUDA/NCCL context + fragmentation reserve
     kernelOverheadUs: 5, hostGapUs: 40,
     gcProb: 0.02, gcMs: 150, opSigma: 0.03,
     seed: 42,

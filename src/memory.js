@@ -3,8 +3,10 @@
 // The watermark moment is 1F1B steady state: min(pp−s, m) forward activation
 // sets are live on stage s, gradient accumulators are allocated (backwards
 // have started), optimizer state is resident, and comm/FSDP working buffers
-// are in flight. Forward-pass temporaries (op workspace) are deliberately
-// ignored — they are not set in stone. Pure module (no DOM) so Node can use it.
+// are in flight. Forward-pass temporaries (op workspace) and non-tensor
+// overhead (CUDA/NCCL context, allocator fragmentation) are deliberately
+// ignored — this is a roofline: it is assumed you didn't get it completely
+// correct. Pure module (no DOM) so Node can use it.
 
 import { DSV3, HARDWARE, stageLayerKinds, stageParams, attnLayerParams } from './model.js';
 import { blockGraph, analyze, resolveMarks, DTYPE_BYTES } from './blockgraph.js';
@@ -151,9 +153,8 @@ export function memoryUsage(cfg) {
     const buffers = (layers.includes('moe') ? tokens * a.topk * a.hidden * (DTYPE_BYTES[mm.ffn_gate_up] + 2) : 0)
       + (zero >= 3 ? 3 * maxLayer * 2 : 0);                 // 2 gathered weight buffers + 1 grad bucket
 
-    const overhead = (cfg.overheadGB ?? 6) * GB;            // CUDA/NCCL context, allocator slack, misc
-    const entry = { stage: s, inFlight, weights, vocab, grads, vocabGrads, optimizer, vocabOpt, act, buffers, overhead };
-    entry.total = weights + vocab + grads + vocabGrads + optimizer + vocabOpt + act.total + buffers + overhead;
+    const entry = { stage: s, inFlight, weights, vocab, grads, vocabGrads, optimizer, vocabOpt, act, buffers };
+    entry.total = weights + vocab + grads + vocabGrads + optimizer + vocabOpt + act.total + buffers;
     perStage.push(toGB(entry));
   }
   const worst = perStage.reduce((x, y) => (y.total > x.total ? y : x));
@@ -166,7 +167,7 @@ export function memoryUsage(cfg) {
 
 function toGB(e) {
   const out = { stage: e.stage, inFlight: e.inFlight, act: {} };
-  for (const k of ['weights', 'vocab', 'grads', 'vocabGrads', 'optimizer', 'vocabOpt', 'buffers', 'overhead', 'total']) out[k] = e[k] / GB;
+  for (const k of ['weights', 'vocab', 'grads', 'vocabGrads', 'optimizer', 'vocabOpt', 'buffers', 'total']) out[k] = e[k] / GB;
   for (const k of Object.keys(e.act)) out.act[k] = e.act[k] / GB;
   return out;
 }
