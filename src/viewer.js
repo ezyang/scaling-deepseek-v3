@@ -1355,10 +1355,24 @@ export class Dsv3Layer extends HTMLElement {
     let z = (ONLY === 'ffn' ? 36 : 16) + (TABS ? 34 : 0);
     if (ONLY !== 'mla') {
     if (TABS) {
-      const tab = (x, w, kind, label, sub) =>
-        `<foreignObject x="${x}" y="8" width="${w}" height="26">` +
-        `<button xmlns="http://www.w3.org/1999/xhtml" data-kind="${kind}" class="st ktab${this.kind === kind ? ' on' : ''}" ` +
-        `title="flip the FFN column — the MLA half is identical in both block kinds">${label} <span class="ktsub">${sub}</span></button></foreignObject>`;
+      P.push('__ENC__');   // placeholder: the FFN-section enclosure, sized after the column is drawn
+      // tab shapes: the ACTIVE tab fuses into the enclosure (its fill covers
+      // the shared edge, its border stops at it); the inactive tab is a
+      // detached grey flap sitting on the enclosure's top edge
+      const tab = (x, w, kind, label, sub) => {
+        const on = this.kind === kind, r = 6, y0 = 8, y1 = 34;
+        const shape = `M ${x} ${y1} L ${x} ${y0 + r} Q ${x} ${y0} ${x + r} ${y0} ` +
+          `L ${x + w - r} ${y0} Q ${x + w} ${y0} ${x + w} ${y0 + r} L ${x + w} ${y1}`;
+        return `<g data-kind="${kind}" style="cursor:${on ? 'default' : 'pointer'}"` +
+          ` title="flip the FFN column — the MLA half is identical in both block kinds">` +
+          (on
+            ? `<path d="${shape} Z" fill="#fcfcfb" stroke="none" transform="translate(0,1.6)"/>` +
+              `<path d="${shape} Z" fill="#fcfcfb" stroke="none"/>` +
+              `<path d="${shape}" fill="none" stroke="#c3c2b7"/>`
+            : `<path d="${shape} Z" fill="#eeede7" stroke="#d8d6cb"/>`) +
+          `<text x="${x + 10}" y="${y0 + 17}" style="font:600 11px system-ui" fill="${on ? '#0b0b0b' : '#898781'}">${label}` +
+          `<tspan style="font:10px system-ui" fill="${on ? '#898781' : '#a8a69e'}"> ${sub}</tspan></text></g>`;
+      };
       P.push(tab(C2 + 42, 148, 'dense', 'dense FFN', `×${DSV3.denseLayers ?? 3} · ${fmtP(3 * DSV3.hidden * DSV3.denseInter)}`) +
         tab(C2 + 198, 168, 'moe', 'MoE FFN', `×${DSV3.layers - (DSV3.denseLayers ?? 3)} · ${fmtP((DSV3.routedExperts + 1) * 3 * DSV3.hidden * DSV3.moeInter + DSV3.hidden * DSV3.routedExperts)}`));
     }
@@ -1537,6 +1551,12 @@ export class Dsv3Layer extends HTMLElement {
       P.push(`<circle cx="${midX}" cy="${z}" r="2.5" fill="#898781"/>` +
         `<path class="wire" d="M ${midX} ${z} L ${midX} 6 L ${SX2} 6 L ${SX2} ${norm2Top}" marker-end="url(#arr)"/>`);
     }
+    if (TABS) {
+      // the enclosure the active tab fuses into — fixed extent regardless of
+      // kind (the MoE-detail footprint), so it doesn't move across flips
+      P[P.indexOf('__ENC__')] =
+        `<rect x="${C2 - 14}" y="34" width="${(DET ? 470 : 385) + 14}" height="${z}" rx="8" fill="#fcfcfb" stroke="#c3c2b7"/>`;
+    }
     }  // end FFN column (skipped in only="mla" mode)
     const col2End = ONLY === 'mla' ? 0 : z + 42;   // room for the add label under the plus
 
@@ -1620,7 +1640,7 @@ export class Dsv3Layer extends HTMLElement {
     for (const b of svgEl.querySelectorAll('button[data-mark]')) {
       b.onclick = () => this.toggleMark(b.dataset.mark.split(','));
     }
-    for (const b of svgEl.querySelectorAll('button[data-kind]')) {
+    for (const b of svgEl.querySelectorAll('[data-kind]')) {
       b.onclick = () => {
         if (this.kind === b.dataset.kind) return;
         this.kind = b.dataset.kind; this.render(); this.changed(true);
