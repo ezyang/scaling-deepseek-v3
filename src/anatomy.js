@@ -62,9 +62,15 @@ export class Dsv3AnatomyPlan extends HTMLElement {
     const dst = this.layerEl()?.querySelector('.lv');
     if (!src || !dst) { this._ov.innerHTML = ''; return; }
     const h = this._ov.getBoundingClientRect(), a = src.getBoundingClientRect(), b = dst.getBoundingClientRect();
-    const L = (x1, y1, x2, y2) =>
-      `<line x1="${x1 - h.left}" y1="${y1 - h.top}" x2="${x2 - h.left}" y2="${y2 - h.top}" ` +
-      `stroke="#c3c2b7" stroke-width="1.2" stroke-dasharray="5 4"/>`;
+    // flow-style cubics: horizontal out of the block, horizontal into the
+    // card — the top line arcs up and the bottom arcs down, so they read as
+    // two distinct edges of the expansion cone
+    const L = (x1, y1, x2, y2) => {
+      const g = Math.max(24, (x2 - x1) * 0.6);
+      return `<path d="M ${x1 - h.left} ${y1 - h.top} C ${x1 - h.left + g} ${y1 - h.top}, ` +
+        `${x2 - h.left - g} ${y2 - h.top}, ${x2 - h.left} ${y2 - h.top}" ` +
+        `fill="none" stroke="#c3c2b7" stroke-width="1.2" stroke-dasharray="5 4"/>`;
+    };
     this._ov.innerHTML = L(a.right, a.top, b.left, b.top) + L(a.right, a.bottom, b.left, b.bottom);
   }
   draw() {
