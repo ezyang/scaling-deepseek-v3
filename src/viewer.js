@@ -672,6 +672,10 @@ dsv3-layer { display: block; margin: 14px 0 26px; }
 .lv button.st.mode { width: 24px; padding: 0; text-align: center; height: 20px; }
 .lv button.st.dtb { width: 52px; padding: 0; text-align: center; height: 20px; font-weight: 600;
   background: #fff; border: 1px solid #c3c2b7; }
+.lv button.st.ktab { width: 100%; height: 24px; font: 600 11px system-ui; text-align: center;
+  background: #f3f2ee; border: 1px solid #e1e0d9; color: #898781; border-radius: 6px 6px 0 0; }
+.lv button.st.ktab.on { background: #fff; border-color: #c3c2b7; color: #0b0b0b; cursor: default; }
+.lv .ktsub { font-weight: 400; font-size: 10px; }
 .lv text.tensor { font: 10px system-ui; }
 .lv .tsave { fill: #7a5200; font-weight: 600; }
 .lv .tdim { fill: #898781; font-weight: 400; }
@@ -873,11 +877,18 @@ export class Dsv3Layer extends HTMLElement {
     if (cmode !== 'static') root.append(head);
     else {
       const mini = el('div', 'lv-head');
-      if (this.getAttribute('only') === 'mla') mini.append('sizes:', mkDimsBtn());  // MLA is kind-independent
+      // no kind select when MLA-only (kind-independent) or when the tabs carry the flip
+      if (this.getAttribute('only') === 'mla' || this.hasAttribute('kindtabs')) mini.append('sizes:', mkDimsBtn());
       else mini.append('block: ', mkKindSel(), ' · sizes:', mkDimsBtn());
       root.append(mini);
     }
-    root.append(this.buildSvg(ana));
+    // dense mode also analyzes the MoE graph, purely for LAYOUT: the dense
+    // column reserves whitespace where the routing rows sit, so flipping
+    // kinds keeps every surviving element in the same place
+    const anaM = this.kind === 'dense'
+      ? analyze(blockGraph('moe', DSV3, this.matmuls, 4096), this._ctl.quant ? this.marks : {}, this.transposed)
+      : null;
+    root.append(this.buildSvg(ana, anaM));
     const note = el('div', 'lv-note');
     const M2 = this.view === 'combined' ? this.dispLayers * this.dispInflight * 4096 : 1;
     const parts = [
@@ -936,7 +947,7 @@ export class Dsv3Layer extends HTMLElement {
     if (this._ctl.quant) this.attachTip(root);   // no tooltips on the structure-only tier
     this.append(style, root);
   }
-  buildSvg(ana) {
+  buildSvg(ana, anaM = null) {
     const P = [];
     // Two columns (MLA | MoE), head row underneath. The dataflow spine runs
     // down the LEFT of each column; output tensors are annotated on the spine
@@ -1120,14 +1131,18 @@ export class Dsv3Layer extends HTMLElement {
       P.push(`<line class="wire" x1="${cx}" y1="${y1}" x2="${cx}" y2="${y2}" marker-end="url(#arr)"/>`);
     // reserve chip space for the WORST case (saved, bf16) so toggling
     // save/recompute or precision never reflows the layout
-    const chipSpace = (ids) => {
+    const chipSpaceA = (anaX, ids) => {
       if (!this._ctl.quant) return 18;                 // one text line, no grid
       // worst case per element: bf16 (2 B), or dual fp8 orientations (2 × 1.03 B)
       const perElem = this.transposed ? 2 * (1 + 1 / 32) : 2;
-      const worst = ids.reduce((t, i) => t + ana.byId[i].elems * perElem, 0);
+      const worst = ids.reduce((t, i) => t + anaX.byId[i].elems * perElem, 0);
       const rows = Math.ceil(Math.max(1, Math.round(worst / 1024 / 4)) / 16);
       return 12 + rows * 6 + 2;
     };
+    const chipSpace = (ids) => chipSpaceA(ana, ids);
+    // the MoE column's wire gaps, measured on the parallel MoE analysis —
+    // the dense column advances by these to stay row-aligned across the flip
+    const gapM = (ids) => Math.max(22, chipSpaceA(anaM, ids) + 10);
     const wireOut = (ids, sx, y, ov) => {
       tensorChip(ids, sx + 14, y + 4, ov);
       const gap = Math.max(22, chipSpace(ids) + 10);
@@ -1335,20 +1350,40 @@ export class Dsv3Layer extends HTMLElement {
     // ---- column 2: the FFN half (MoE machinery, or one wide dense FFN);
     // skipped in only="mla" mode ----
     const nExp = DSV3.topk + DSV3.sharedExperts;   // grouped boxes carry topk/nExp, shared 1/nExp
-    let z = ONLY === 'ffn' ? 36 : 16;
+    // kindtabs: dense/MoE flip tabs (with the per-block tally) above the FFN column
+    const TABS = this.hasAttribute('kindtabs') && ONLY !== 'mla';
+    let z = (ONLY === 'ffn' ? 36 : 16) + (TABS ? 34 : 0);
     if (ONLY !== 'mla') {
+    if (TABS) {
+      const tab = (x, w, kind, label, sub) =>
+        `<foreignObject x="${x}" y="8" width="${w}" height="26">` +
+        `<button xmlns="http://www.w3.org/1999/xhtml" data-kind="${kind}" class="st ktab${this.kind === kind ? ' on' : ''}" ` +
+        `title="flip the FFN column — the MLA half is identical in both block kinds">${label} <span class="ktsub">${sub}</span></button></foreignObject>`;
+      P.push(tab(C2 + 42, 148, 'dense', 'dense FFN', `×${DSV3.denseLayers ?? 3} · ${fmtP(3 * DSV3.hidden * DSV3.denseInter)}`) +
+        tab(C2 + 198, 168, 'moe', 'MoE FFN', `×${DSV3.layers - (DSV3.denseLayers ?? 3)} · ${fmtP((DSV3.routedExperts + 1) * 3 * DSV3.hidden * DSV3.moeInter + DSV3.hidden * DSV3.routedExperts)}`));
+    }
+    const norm2Top = z;
     if (ONLY === 'ffn') {
       // component view: input arrives from the block wiring (post-attention x1);
       // the residual fork and add live there, not here
-      P.push(`<text class="oplabel" x="${SX2 + 14}" y="${12}">x1 (7168) — from the block wiring</text>`);
-      wire(SX2, 6, z);
+      P.push(`<text class="oplabel" x="${SX2 + 14}" y="${TABS ? 46 : 12}">x1 (7168) — from the block wiring</text>`);
+      wire(SX2, TABS ? 40 : 6, z);
     }
     z = opNode('norm2', 'RMSNorm', C2, z, 'op', `(${fmtP(DSV3.hidden)})`);
     if (this.kind === 'dense') {
       // dense block: same spine, a single wide FFN — no router, no a2a, no
-      // shared column; detail view adds nothing (nothing is elided here)
-      z = wireOut(['norm2'], SX2, z);
+      // shared column. The column advances through the MoE rows' positions
+      // (whitespace where the routing machinery sits, gaps measured on the
+      // parallel MoE analysis) so flipping kinds keeps elements in place.
+      tensorChip(['norm2'], SX2 + 14, z + 4);
+      const spineFrom = z;   // one continuous spine through the whitespace below
+      // norm2 gap (same formulas as the MoE branch), then whitespace where the
+      // routing rows sit: router box (+ top-k micro in detail) + its chip,
+      // a2a dispatch + its chip
+      z += (DET ? Math.max(38, chipSpace(['norm2']) + 20) : Math.max(22, chipSpace(['norm2']) + 10))
+        + 38 + (DET ? 18 : 0) + gapM(['router']) + 22 + gapM(['dispatch']);
       const gTop = z + 3; z += 21;
+      wire(SX2, spineFrom, z);
       z = mmBox(['ffn_gate_up'], C2, z, ['gate_up'], 'ffn gate/up', `7168 → 2×${DSV3.denseInter}`);
       z = wireOut(['gate_up'], SX2, z);
       z = opNode('swiglu', 'SwiGLU', C2, z);
@@ -1360,7 +1395,9 @@ export class Dsv3Layer extends HTMLElement {
       if (ONLY === 'ffn') {
         z = zc + Math.max(22, chipSpace(['ffn_down']) + 10);
       } else {
-        z = Math.max(zc + Math.max(22, chipSpace(['ffn_down']) + 10) + 13, col1End - 4);
+        // whitespace where the a2a combine sits; the add clamps to col1End,
+        // the same row the MoE residual add lands on
+        z = Math.max(zc + gapM(['ffn_down']) + 22 + gapM(['combine']) + 13, col1End - 4);
         wire(SX2, zc, z - 11);
         plus(SX2, z);
         P.push(`<g data-tip="residual add — x1 + the ffn output">` +
@@ -1498,7 +1535,7 @@ export class Dsv3Layer extends HTMLElement {
       P.push(`<path class="wire" d="M ${SX1} ${x1Y + 9} L ${SX1} ${z} L ${SX2 - 11} ${z}" marker-end="url(#arr)"/>`);
       // branch off the bottom rail up to norm2 (single output from the x1 add)
       P.push(`<circle cx="${midX}" cy="${z}" r="2.5" fill="#898781"/>` +
-        `<path class="wire" d="M ${midX} ${z} L ${midX} 6 L ${SX2} 6 L ${SX2} 16" marker-end="url(#arr)"/>`);
+        `<path class="wire" d="M ${midX} ${z} L ${midX} 6 L ${SX2} 6 L ${SX2} ${norm2Top}" marker-end="url(#arr)"/>`);
     }
     }  // end FFN column (skipped in only="mla" mode)
     const col2End = ONLY === 'mla' ? 0 : z + 42;   // room for the add label under the plus
@@ -1582,6 +1619,12 @@ export class Dsv3Layer extends HTMLElement {
     }
     for (const b of svgEl.querySelectorAll('button[data-mark]')) {
       b.onclick = () => this.toggleMark(b.dataset.mark.split(','));
+    }
+    for (const b of svgEl.querySelectorAll('button[data-kind]')) {
+      b.onclick = () => {
+        if (this.kind === b.dataset.kind) return;
+        this.kind = b.dataset.kind; this.render(); this.changed(true);
+      };
     }
     return svgEl;
   }

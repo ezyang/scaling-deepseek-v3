@@ -1,29 +1,11 @@
 <!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>anatomy experiment</title><link rel="stylesheet" href="../studies/study.css">
-<style>
-  main { max-width: none; padding: 18px 18px 60px; }
-  .grid { display: grid; grid-template-columns: 290px auto auto; gap: 0 8px; align-items: start;
-    justify-content: start; }
-  .mlacol, .ffncol { zoom: 0.72; }   /* fit the whole transformer on one laptop screen */
-  .comp h3 { font-size: 15px; margin: 4px 0 2px; padding-left: 10px; border-left: 4px solid var(--acc); }
-  .comp h3 .dims { font-weight: 400; font-size: 12px; color: #898781; }
-  dsv3-layer { margin: 6px 0 10px; }
-  dsv3-anatomy-plan { margin: 6px 0; }
-</style></head>
+<title>anatomy experiment</title><link rel="stylesheet" href="../studies/study.css"></head>
 <body><main>
-<h1 style="margin-bottom:2px">Experiment: one consolidated anatomy</h1>
-<p class="note" style="margin-top:2px">The plan (left) owns the residual wiring; each component (right) is drawn
-exactly once as a pure sub-layer function. Slot colors match the component headings.</p>
-<div class="grid">
-  <div><dsv3-anatomy-plan></dsv3-anatomy-plan></div>
-  <div class="mlacol comp" style="--acc:#a06a00"><h3 style="color:#a06a00">MLA (attention) <span class="dims">— 187M / block, both block kinds</span></h3>
-    <dsv3-layer id="an-mla" detail controls="static" only="mla" block-only nocaption></dsv3-layer></div>
-  <div class="ffncol">
-    <div class="comp" style="--acc:#2a78d6"><h3 style="color:#2a78d6">dense FFN <span class="dims">— 396M / block, first 3 blocks</span></h3>
-    <dsv3-layer id="an-dense" detail controls="static" only="ffn" kind="dense" block-only nocaption></dsv3-layer></div>
-    <div class="comp" style="--acc:#6b5bd2"><h3 style="color:#6b5bd2">MoE FFN <span class="dims">— 11.3B / block, remaining 58 blocks</span></h3>
-    <dsv3-layer id="an-moe" detail controls="static" only="ffn" kind="moe" block-only nocaption></dsv3-layer></div>
-  </div>
-</div>
+<h1>Experiment: one consolidated anatomy</h1>
+<p class="note">A schematic plan on top (click a block kind); one full transformer block below.
+The FFN column flips via the tabs — the dense view keeps whitespace where the routing
+machinery sits, so elements stay put across flips.</p>
+<dsv3-anatomy-plan layer="an-block"></dsv3-anatomy-plan>
+<dsv3-layer id="an-block" detail controls="static" kindtabs block-only nocaption></dsv3-layer>
 </main><script type="module">import '../src/viewer.js'; import '../src/anatomy.js';</script></body></html>
