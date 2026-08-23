@@ -49,13 +49,18 @@ export class Dsv3AnatomyPlan extends HTMLElement {
     const S = [];
     S.push(`<defs><marker id="planarr" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto-start-reverse">` +
       `<path d="M 0 0 L 8 4 L 0 8 z" fill="#898781"/></marker></defs>`);
-    const SX = 14, BX = 26, W = 152;
-    const wire = (y1, y2) => S.push(`<line class="wire" x1="${SX}" y1="${y1}" x2="${SX}" y2="${y2}" marker-end="url(#planarr)"/>`);
+    const BX = 8, W = 158, CX = BX + W / 2;   // spine runs through the box centers
+    // named intermediates on the wires, in the diagram's tensor-label style
+    const wire = (gap, name) => {
+      S.push(`<line class="wire" x1="${CX}" y1="${y}" x2="${CX}" y2="${y + gap}" marker-end="url(#planarr)"/>`);
+      if (name) S.push(`<text class="dims" x="${CX + 7}" y="${y + gap / 2 + 3}" font-style="italic">${name}</text>`);
+      y += gap;
+    };
     let y = 14;
-    S.push(`<text class="oplabel" x="${BX}" y="${y - 2}">tokens</text>`);
-    wire(y, y + 12); y += 12;
+    S.push(`<text class="oplabel" x="${CX - 22}" y="${y - 2}">tokens</text>`);
+    wire(14);
     const op = (label, dims, h = 22) => {
-      S.push(`<rect class="op" x="${BX}" y="${y}" width="${W}" height="${h}" rx="${h / 2 > 11 ? 6 : h / 2}"/>` +
+      S.push(`<rect class="op" x="${BX}" y="${y}" width="${W}" height="${h}" rx="6"/>` +
         `<text class="oplabel" x="${BX + 9}" y="${y + 15}">${label}${dims ? ` <tspan class="dims">${dims}</tspan>` : ''}</text>`);
       y += h;
     };
@@ -68,18 +73,18 @@ export class Dsv3AnatomyPlan extends HTMLElement {
       y += 34;
     };
     op('embedding', `(${fmtP(E)})`);
-    wire(y, y + 14); y += 14;
+    wire(24, 'x · 7168');
     blockBox('dense', 'dense block ×3', `${fmtP(DENSE)} each`);
-    wire(y, y + 14); y += 14;
+    wire(24, 'x · 7168');
     blockBox('moe', 'MoE block ×58', `${fmtP(MOE)} each`);
-    wire(y, y + 14); y += 14;
+    wire(24, 'x · 7168');
     op('final RMSNorm', '(7.2K)');
-    wire(y, y + 12); y += 12;
+    wire(24, 'norm out · 7168');
     S.push(`<rect class="box" x="${BX}" y="${y}" width="${W}" height="34" rx="4"/>` +
       `<text class="name" x="${BX + 8}" y="${y + 14}">lm head</text>` +
       `<text class="dims" x="${BX + 8}" y="${y + 27}">7168 → 129280 (${fmtP(E)})</text>`);
     y += 34;
-    wire(y, y + 12); y += 12;
+    wire(24, 'logits · 129280');
     op('softmax / loss', null);
     y += 8;
     S.push(`<text class="grplabel" x="${BX}" y="${y + 12}">click a block kind — the</text>` +
