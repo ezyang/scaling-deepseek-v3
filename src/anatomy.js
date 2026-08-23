@@ -36,14 +36,37 @@ export class Dsv3AnatomyPlan extends HTMLElement {
     const style = document.createElement('style'); style.textContent = CSS;
     this._root = document.createElement('div'); this._root.className = 'anp';
     this.append(style, this._root);
+    // overlay across the shared container: the angled "expansion" lines from
+    // the highlighted plan block to the transformer-block diagram it expands into
+    const host = this.parentElement;
+    if (host && getComputedStyle(host).position === 'static') host.style.position = 'relative';
+    this._ov = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    this._ov.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible;';
+    host?.append(this._ov);
     this.draw();
     // re-sync the highlight when the layer flips from its own tabs
     queueMicrotask(() => {
       this.layerEl()?.addEventListener('recipe', () => this.draw());
       this.draw();
     });
+    const up = () => this.expansion();
+    window.addEventListener('resize', up);
+    window.addEventListener('scroll', up, { passive: true });   // the plan is sticky
   }
   layerEl() { return document.getElementById(this.getAttribute('layer') ?? ''); }
+  // dashed lines from the active plan box's right corners to the diagram
+  // card's left corners — "this block expands into that diagram"
+  expansion() {
+    if (!this._ov) return;
+    const src = this._root.querySelector('g.on rect');
+    const dst = this.layerEl()?.querySelector('.lv');
+    if (!src || !dst) { this._ov.innerHTML = ''; return; }
+    const h = this._ov.getBoundingClientRect(), a = src.getBoundingClientRect(), b = dst.getBoundingClientRect();
+    const L = (x1, y1, x2, y2) =>
+      `<line x1="${x1 - h.left}" y1="${y1 - h.top}" x2="${x2 - h.left}" y2="${y2 - h.top}" ` +
+      `stroke="#c3c2b7" stroke-width="1.2" stroke-dasharray="5 4"/>`;
+    this._ov.innerHTML = L(a.right, a.top, b.left, b.top) + L(a.right, a.bottom, b.left, b.bottom);
+  }
   draw() {
     const kind = this.layerEl()?.kind ?? 'moe';
     const S = [];
@@ -100,6 +123,7 @@ export class Dsv3AnatomyPlan extends HTMLElement {
         this.draw();
       };
     }
+    requestAnimationFrame(() => this.expansion());   // measure after layout settles
   }
 }
 customElements.define('dsv3-anatomy-plan', Dsv3AnatomyPlan);
