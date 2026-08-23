@@ -46,19 +46,34 @@ export class Dsv3AnatomyPlan extends HTMLElement {
         + `<text class="oplabel" x="${LX + 14}" y="${y + 15.5}">${label}${dims ? ` <tspan class="dims">${dims}</tspan>` : ''}</text>`);
       return y + 24;
     };
-    // a block: title + its two halves stacked vertically, color-coded to the
-    // component diagrams below the plan
+    // a block: title + its two halves stacked vertically with the RESIDUAL
+    // WIRING drawn here (the component diagrams are pure sub-layer functions —
+    // input forks around each half and rejoins at a ⊕)
     const block = (y, title, count, ffnKey, ffnLabel, total) => {
-      const h = 100;
+      const h = 178;
+      const cx = LX + LW / 2, RXX = LX + 14, SLW = LW - 78, SLX = cx - SLW / 2 + 8;
       S.push(`<rect class="card" x="${LX}" y="${y}" width="${LW}" height="${h}" rx="8"/>`
-        + `<text class="title" x="${LX + 12}" y="${y + 17}">${title} <tspan class="dims">×${count} · ${total}</tspan></text>`);
+        + `<text class="title" x="${LX + 12}" y="${y + 17}">${title} ×${count} <tspan class="dims">· ${total}</tspan></text>`);
       const slot = (sy, key, label, p) => S.push(
-        `<rect class="slot" x="${LX + 12}" y="${sy}" width="${LW - 24}" height="26" rx="5" stroke="${ACC[key]}"/>`
-        + `<text class="oplabel" x="${LX + 21}" y="${sy + 17}" fill="${ACC[key]}">${label}</text>`
-        + `<text class="dims" x="${LX + LW - 21}" y="${sy + 17}" text-anchor="end">${p}</text>`);
-      slot(y + 26, 'mla', 'MLA (attention)', fmtP(P.mla));
-      wire(y + 52, y + 62);
-      slot(y + 62, ffnKey, ffnLabel, ffnKey === 'dense' ? fmtP(P.dense) : fmtP(P.moeFfn));
+        `<rect class="slot" x="${SLX}" y="${sy}" width="${SLW}" height="26" rx="5" stroke="${ACC[key]}"/>`
+        + `<text class="oplabel" x="${SLX + 9}" y="${sy + 17}" fill="${ACC[key]}">${label}</text>`
+        + `<text class="dims" x="${SLX + SLW - 9}" y="${sy + 17}" text-anchor="end">${p}</text>`);
+      const plus = (py) => S.push(`<circle cx="${cx}" cy="${py}" r="8" fill="#fff" stroke="#c3c2b7"/>`
+        + `<text x="${cx}" y="${py + 3.5}" text-anchor="middle" font-size="12" font-weight="600" fill="#52514e">+</text>`);
+      // residual bypass rail: fork above the half, rejoin at its ⊕
+      const rail = (ty, py) => S.push(`<circle cx="${cx}" cy="${ty}" r="2.5" fill="#898781"/>`
+        + `<path class="wire" d="M ${cx} ${ty} L ${RXX} ${ty} L ${RXX} ${py} L ${cx - 9} ${py}" marker-end="url(#anparr)"/>`);
+      const t1 = y + 26;
+      S.push(`<line class="wire" x1="${cx}" y1="${t1}" x2="${cx}" y2="${t1 + 8}" marker-end="url(#anparr)"/>`);
+      slot(t1 + 8, 'mla', 'MLA (attention)', fmtP(P.mla));
+      S.push(`<line class="wire" x1="${cx}" y1="${t1 + 34}" x2="${cx}" y2="${t1 + 45}" marker-end="url(#anparr)"/>`);
+      plus(t1 + 52); rail(t1, t1 + 52);
+      const t2 = t1 + 66;
+      S.push(`<line class="wire" x1="${cx}" y1="${t1 + 60}" x2="${cx}" y2="${t2 + 8}" marker-end="url(#anparr)"/>`);
+      slot(t2 + 8, ffnKey, ffnLabel, ffnKey === 'dense' ? fmtP(P.dense) : fmtP(P.moeFfn));
+      S.push(`<line class="wire" x1="${cx}" y1="${t2 + 34}" x2="${cx}" y2="${t2 + 45}" marker-end="url(#anparr)"/>`);
+      plus(t2 + 52); rail(t2, t2 + 52);
+      S.push(`<line class="wire" x1="${cx}" y1="${t2 + 60}" x2="${cx}" y2="${y + h - 4}"/>`);
       return y + h;
     };
     let y = 10;

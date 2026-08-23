@@ -1310,6 +1310,12 @@ export class Dsv3Layer extends HTMLElement {
     y = mmBox(['o_proj'], C1, y);
     grp(C1, g1, y + 5, 'MLA', DET ? bypX - C1 + 22 : undefined);
     y = wireOut(['o_proj'], SX1, y + 5);
+    if (ONLY === 'mla') {
+      // component view: the residual add lives in the block wiring, not here
+      P.push(`<text class="tensor tidle" x="${SX1 + 8}" y="${y + 4}">→ ⊕ residual add (block wiring)</text>`);
+      x1Y = y;
+      col1End = y + 24;
+    } else {
     y += 13;
     plus(SX1, y);
     P.push(`<path class="wire" d="M ${SX1} ${tap1} L ${RAIL1} ${tap1} L ${RAIL1} ${y} L ${SX1 - 11} ${y}" marker-end="url(#arr)"/>`);
@@ -1321,10 +1327,6 @@ export class Dsv3Layer extends HTMLElement {
     tensorChip(['x1'], SX1 + 16, y + 15);
     x1Y = y;
     col1End = y + 46;
-    if (ONLY === 'mla') {   // terminal: x1 feeds the FFN half, drawn separately
-      P.push(`<line class="wire" x1="${SX1}" y1="${y + 9}" x2="${SX1}" y2="${y + 46}" marker-end="url(#arr)"/>` +
-        `<text class="tensor tidle" x="${SX1 + 8}" y="${y + 44}">x1 → the FFN half</text>`);
-      col1End = y + 66;
     }
     }  // end MLA column
 
@@ -1336,10 +1338,10 @@ export class Dsv3Layer extends HTMLElement {
     let z = ONLY === 'ffn' ? 36 : 16;
     if (ONLY !== 'mla') {
     if (ONLY === 'ffn') {
-      // the input arrives from the MLA half (drawn separately); fork the residual here
-      P.push(`<text class="oplabel" x="${SX2 + 14}" y="${12}">x1 — the attention half's output (7168)</text>` +
-        `<circle cx="${SX2}" cy="${16}" r="2.5" fill="#898781"/>`);
-      wire(SX2, 16, z);
+      // component view: input arrives from the block wiring (post-attention x1);
+      // the residual fork and add live there, not here
+      P.push(`<text class="oplabel" x="${SX2 + 14}" y="${12}">x1 (7168) — from the block wiring</text>`);
+      wire(SX2, 6, z);
     }
     z = opNode('norm2', 'RMSNorm', C2, z, 'op', `(${fmtP(DSV3.hidden)})`);
     if (this.kind === 'dense') {
@@ -1355,12 +1357,16 @@ export class Dsv3Layer extends HTMLElement {
       grp(C2, gTop, z + 5, 'dense FFN — every token');
       tensorChip(['ffn_down'], SX2 + 14, z + 9);
       const zc = z + 5;
-      z = Math.max(zc + Math.max(22, chipSpace(['ffn_down']) + 10) + 13, col1End - 4);
-      wire(SX2, zc, z - 11);
-      plus(SX2, z);
-      P.push(`<g data-tip="residual add — x1 + the ffn output">` +
-        `<rect class="res" x="${SX2 + 26}" y="${z - 11}" width="126" height="22" rx="4"/>` +
-        `<text class="oplabel" x="${SX2 + 34}" y="${z + 4}">residual add</text></g>`);
+      if (ONLY === 'ffn') {
+        z = zc + Math.max(22, chipSpace(['ffn_down']) + 10);
+      } else {
+        z = Math.max(zc + Math.max(22, chipSpace(['ffn_down']) + 10) + 13, col1End - 4);
+        wire(SX2, zc, z - 11);
+        plus(SX2, z);
+        P.push(`<g data-tip="residual add — x1 + the ffn output">` +
+          `<rect class="res" x="${SX2 + 26}" y="${z - 11}" width="126" height="22" rx="4"/>` +
+          `<text class="oplabel" x="${SX2 + 34}" y="${z + 4}">residual add</text></g>`);
+      }
     } else {
     let shBot = 0, shTop = 0;
     const SHX = C2 + 320, shMid = SHX + 22;        // shared-expert mini column; spine down its LEFT, like every column
@@ -1446,15 +1452,21 @@ export class Dsv3Layer extends HTMLElement {
     tensorChip(['combine'], SX2 + 14, z + 4);
     const zc = z;                                  // combine box bottom
     if (!DET) {
+      if (ONLY === 'ffn') {
+        z = zc + Math.max(22, chipSpace(['combine']) + 10);
+      } else {
       z = Math.max(z + Math.max(22, chipSpace(['combine']) + 10) + 13, col1End - 4);
       plus(SX2, z);
       wire(SX2, zc, z - 11);
       P.push(`<g data-tip="one fused add kernel (Megatron: add_shared_and_residual) — routed output + shared output + residual x1">` +
         `<rect class="res" x="${SX2 + 26}" y="${z - 11}" width="126" height="22" rx="4"/>` +
         `<text class="oplabel" x="${SX2 + 34}" y="${z + 4}">residual add</text></g>`);
+      }
     } else {
       // pedagogical split: (routed + shared) first, then the residual add.
       // Megatron fuses all three into one add_shared_and_residual kernel.
+      // (The routed+shared sum is INTERNAL to the MoE FFN, so the component
+      // view keeps it; only the residual add belongs to the block wiring.)
       const zA = zc + Math.max(22, chipSpace(['combine']) + 10) + 34;
       wire(SX2, zc, zA - 11);
       plus(SX2, zA);
@@ -1462,6 +1474,9 @@ export class Dsv3Layer extends HTMLElement {
       P.push(`<g data-tip="routed + shared expert outputs — Megatron fuses this with the residual add (add_shared_and_residual); split here for clarity">` +
         `<rect class="res" x="${SX2 + 26}" y="${zA - 35}" width="178" height="22" rx="4"/>` +
         `<text class="oplabel" x="${SX2 + 34}" y="${zA - 20}">add — routed + shared</text></g>`);
+      if (ONLY === 'ffn') {
+        z = zA;
+      } else {
       const zB = Math.max(zA + 34, col1End - 4);
       wire(SX2, zA + 9, zB - 11);
       plus(SX2, zB);
@@ -1469,15 +1484,17 @@ export class Dsv3Layer extends HTMLElement {
         `<rect class="res" x="${SX2 + 26}" y="${zB - 11}" width="126" height="22" rx="4"/>` +
         `<text class="oplabel" x="${SX2 + 34}" y="${zB + 4}">residual add</text></g>`);
       z = zB;
+      }
     }
     }  // end MoE column
+    if (ONLY === 'ffn') {
+      // component view: output hands off to the block wiring's residual add
+      P.push(`<line class="wire" x1="${SX2}" y1="${z + 9}" x2="${SX2}" y2="${z + 24}" marker-end="url(#arr)"/>` +
+        `<text class="tensor tidle" x="${SX2 + 8}" y="${z + 24}">→ ⊕ residual add (block wiring)</text>`);
+    } else {
     // block output: a short down arrow out of the second residual add (= the next block's x0)
     P.push(`<line class="wire" x1="${SX2}" y1="${z + 9}" x2="${SX2}" y2="${z + 26}" marker-end="url(#arr)"/>` +
       `<text class="tensor tidle" x="${SX2 + 8}" y="${z + 24}">x2 (block output)</text>`);
-    if (ONLY === 'ffn') {
-      // residual rail: from the input fork straight down to the final add
-      P.push(`<path class="wire" d="M ${SX2} ${16} L ${C2 - 26} ${16} L ${C2 - 26} ${z} L ${SX2 - 11} ${z}" marker-end="url(#arr)"/>`);
-    } else {
       P.push(`<path class="wire" d="M ${SX1} ${x1Y + 9} L ${SX1} ${z} L ${SX2 - 11} ${z}" marker-end="url(#arr)"/>`);
       // branch off the bottom rail up to norm2 (single output from the x1 add)
       P.push(`<circle cx="${midX}" cy="${z}" r="2.5" fill="#898781"/>` +
