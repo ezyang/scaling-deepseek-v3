@@ -700,6 +700,9 @@ export class Dsv3Layer extends HTMLElement {
     this.transposed = st?.transposed ?? this.hasAttribute('transposed');
     this.detail = st?.detail ?? this.hasAttribute('detail');
     this.flatDims = st?.flatDims ?? false;
+    // which block variant to draw: the MLA column is identical; only the FFN
+    // column differs (kind="dense" pins the dense-FFN variant, default MoE)
+    this.kind = st?.kind ?? (this.getAttribute('kind') === 'dense' ? 'dense' : 'moe');
     this.render();
     queueMicrotask(() => this.changed(false)); // push initial recipe + marks to linked widgets
   }
@@ -720,6 +723,7 @@ export class Dsv3Layer extends HTMLElement {
       recipe: this.getAttribute('recipe'), matmuls: this.matmuls, marks: this.marks,
       view: this.view, dispLayers: this.dispLayers, dispInflight: this.dispInflight,
       transposed: this.transposed, detail: this.detail, flatDims: this.flatDims,
+      kind: this.kind,
     });
   }
   applyPreset(recipe, recompute, transposed = false) {
@@ -751,7 +755,17 @@ export class Dsv3Layer extends HTMLElement {
       quant: cmode !== 'static',
     };
     const head = el('div', 'lv-head');
-    head.append('DSv3 block');
+    // block-variant select: the MLA column is shared; only the FFN column swaps
+    const mkKindSel = () => {
+      const s = document.createElement('select');
+      for (const [v, t] of [['moe', 'MoE block'], ['dense', 'dense block']]) {
+        const o = document.createElement('option'); o.value = v; o.textContent = t; o.selected = v === this.kind; s.append(o);
+      }
+      s.title = 'sparse (MoE) vs dense block — the MLA half is identical; only the FFN column differs';
+      s.onchange = () => { this.kind = s.value; this.render(); this.changed(true); };
+      return s;
+    };
+    head.append('DSv3 ', mkKindSel());
     if (this._ctl.dtype) head.append(' · precision: ');
     const preset = document.createElement('select');
     for (const name of Object.keys(RECIPES)) {
@@ -821,6 +835,7 @@ export class Dsv3Layer extends HTMLElement {
       this.transposed = this.hasAttribute('transposed');
       this.detail = this.hasAttribute('detail');
       this.flatDims = false;
+      this.kind = this.getAttribute('kind') === 'dense' ? 'dense' : 'moe';
       clearUrlState(this.urlKey);
       this.render(); this.changed(false);
     };
@@ -853,10 +868,15 @@ export class Dsv3Layer extends HTMLElement {
     dcb.onchange = () => { this.detail = dcb.checked; this.render(); this.changed(true); };
     dl.append(dcb, 'elided kernels');
     head.append(dl, mkDimsBtn(), reset);
-    const ana = analyze(blockGraph('moe', DSV3, this.matmuls, 4096),
+    const ana = analyze(blockGraph(this.kind, DSV3, this.matmuls, 4096),
       this._ctl.quant ? this.marks : {}, this.transposed);
     if (cmode !== 'static') root.append(head);
-    else { const mini = el('div', 'lv-head'); mini.append('sizes:', mkDimsBtn()); root.append(mini); }
+    else {
+      const mini = el('div', 'lv-head');
+      if (this.getAttribute('only') === 'mla') mini.append('sizes:', mkDimsBtn());  // MLA is kind-independent
+      else mini.append('block: ', mkKindSel(), ' · sizes:', mkDimsBtn());
+      root.append(mini);
+    }
     root.append(this.buildSvg(ana));
     const note = el('div', 'lv-note');
     const M2 = this.view === 'combined' ? this.dispLayers * this.dispInflight * 4096 : 1;
@@ -881,12 +901,14 @@ export class Dsv3Layer extends HTMLElement {
           'right arrows are aux backward artifacts (rstd, lse).',
       this._ctl.marks ? 'Marking an op \u21bb forces the outputs it reads to stay saved.' : '',
       this.detail ? 'Small italic boxes are kernels the terse view folds away \u2014 cheap vector/permute ops with no marks of their own (negligible FLOPs and bytes).' : '',
-      this.detail
-        ? (this._ctl.quant ? 'The shared expert follows the grouped ffn boxes\u2019 mark and dtype; its FLOPs are counted in their strips.' : '')
-        : (this._ctl.quant
-          ? `Shared expert${this.hasAttribute('block-only') ? '' : ' + dense MLPs'} follow${this.hasAttribute('block-only') ? 's' : ''} the ffn choices`
-          : `The shared expert${this.hasAttribute('block-only') ? ' shares' : ' and dense MLPs share'} the ffn boxes`)
-          + `; RoPE is fused into the q/kv paths${this._ctl.quant ? ' and always recomputed' : ''} (negligible).`,
+      (this.kind === 'dense'
+        ? ''   // no shared expert in a dense block
+        : this.detail
+          ? (this._ctl.quant ? 'The shared expert follows the grouped ffn boxes\u2019 mark and dtype; its FLOPs are counted in their strips. ' : '')
+          : (this._ctl.quant
+            ? `Shared expert${this.hasAttribute('block-only') ? '' : ' + dense MLPs'} follow${this.hasAttribute('block-only') ? 's' : ''} the ffn choices; `
+            : `The shared expert${this.hasAttribute('block-only') ? ' shares' : ' and dense MLPs share'} the ffn boxes; `))
+          + `RoPE is fused into the q/kv paths${this._ctl.quant ? ' and always recomputed' : ''} (negligible).`,
       !this._ctl.quant ? '' :
       'The block strip inside each op is its FLOP cost as time at peak, scaled so the block\u2019s largest op fills one row (' +
       'mxfp8 counted half \u2014 2\u00d7 peak; fp32 counted double \u2014 half peak; dtype colors here and on the saved-tensor tags: blue mxfp8, dark bf16, plum fp32); ' +
@@ -920,9 +942,13 @@ export class Dsv3Layer extends HTMLElement {
     // down the LEFT of each column; output tensors are annotated on the spine
     // (▣ saved + block grid, ▪ = 4 KiB/token · ↻ recomputed · · not needed).
     // Aux backward artifacts (rstd, lse) exit each box to the RIGHT — always saved.
-    const W = 290, C1 = 60, C2 = 512;
+    // only="mla" / only="ffn" draws a single column (for composed anatomy
+    // pages that show each component once); default draws the full block
+    const ONLY = this.getAttribute('only');
+    const W = 290, C1 = 60, C2 = ONLY === 'ffn' ? 60 : 512;
     const SX1 = C1 + 22, SX2 = C2 + 22, RAIL1 = C1 - 26;
-    const WIDTH = C2 + W + (this.detail ? 220 : 180); // right margin fits aux labels (+ shared column in detail)
+    const WIDTH = ONLY === 'mla' ? C1 + W + 250
+      : C2 + W + (this.detail ? 220 : 180); // right margin fits aux labels (+ shared column in detail)
     // dims display: factored (128\u00d7192) or multiplied out (24576)
     const flatten = (s) => {
       if (!this.flatDims || !s) return s;
@@ -942,8 +968,13 @@ export class Dsv3Layer extends HTMLElement {
       kv_up: DSV3.kvRank * DSV3.heads * (DSV3.qkNope + DSV3.vHead),
       o_proj: DSV3.heads * DSV3.vHead * DSV3.hidden,
       router: DSV3.hidden * DSV3.routedExperts,
-      ffn_gate_up: [DSV3.hidden * 2 * DSV3.moeInter, DSV3.routedExperts],
-      ffn_down: [DSV3.moeInter * DSV3.hidden, DSV3.routedExperts],
+      ...(this.kind === 'dense' ? {
+        ffn_gate_up: DSV3.hidden * 2 * DSV3.denseInter,
+        ffn_down: DSV3.denseInter * DSV3.hidden,
+      } : {
+        ffn_gate_up: [DSV3.hidden * 2 * DSV3.moeInter, DSV3.routedExperts],
+        ffn_down: [DSV3.moeInter * DSV3.hidden, DSV3.routedExperts],
+      }),
       lm_head: DSV3.hidden * DSV3.vocab,
     };
     const pstr = (id) => {
@@ -1009,8 +1040,14 @@ export class Dsv3Layer extends HTMLElement {
       q_up: '2 · 1536 · 128·192', kv_up: '2 · 512 · 128·256',
       attn: '2 · 128 heads · (192 + 128) · 4096/2 (causal average context)',
       o_proj: '2 · 128·128 · 7168', router: '2 · 7168 · 256',
-      gate_up: '2 · (2 · 7168 · 2048) · 9 experts', swiglu: '≈ 6 · 2048 · 9 — elementwise',
-      ffn_down: '2 · (2048 · 7168) · 9 experts', lm_head: '2 · 7168 · 129280',
+      ...(this.kind === 'dense' ? {
+        gate_up: '2 · (2 · 7168 · 18432)', swiglu: '≈ 6 · 18432 — elementwise',
+        ffn_down: '2 · (18432 · 7168)',
+      } : {
+        gate_up: '2 · (2 · 7168 · 2048) · 9 experts', swiglu: '≈ 6 · 2048 · 9 — elementwise',
+        ffn_down: '2 · (2048 · 7168) · 9 experts',
+      }),
+      lm_head: '2 · 7168 · 129280',
       dispatch: 'a2a communication — no FLOPs', combine: 'a2a communication — no FLOPs',
     };
     const escAttr = (s) => esc(s).replace(/"/g, '&quot;').replace(/\n/g, '&#10;');
@@ -1027,6 +1064,7 @@ export class Dsv3Layer extends HTMLElement {
     };
     const FLOP_ROW = 30;
     const FLOP_UNIT = Math.max(...['qkv_down', 'q_up', 'kv_up', 'attn', 'o_proj', 'router', 'gate_up', 'swiglu', 'ffn_down']
+      .filter(id => ana.byId[id])            // dense blocks have no router
       .map(id => flopEq(ana.byId[id].flopsTok, opDt(id)))) / FLOP_ROW;
     const flopBlocks = (x, y, flopsTok, dt2) => {
       if (!flopsTok || !this._ctl.quant) return 0;
@@ -1123,12 +1161,12 @@ export class Dsv3Layer extends HTMLElement {
     const grp = (x, y0, y1, label, w = W + 20) => P.push(
       `<rect class="grp" x="${x - 10}" y="${y0}" width="${w}" height="${y1 - y0}" rx="6"/>` +
       `<text class="grplabel" x="${x - 2}" y="${y0 + 11}">${label}</text>`);
-    const mmBox = (ids, x, y, markIds, label) => {
+    const mmBox = (ids, x, y, markIds, label, dims) => {
       const spec = MATMULS.find(m => m.id === ids[0]);
-      P.push(`<g${boxTip((markIds ?? ids)[0], spec.dimsNote)}>` +
+      P.push(`<g${boxTip((markIds ?? ids)[0], dims ? undefined : spec.dimsNote)}>` +
         `<rect class="box" x="${x}" y="${y}" width="${W}" height="38" rx="4"/>` +
         `<text class="name" x="${x + 8}" y="${y + 13}">${label ?? spec.label}</text>` +
-        `<text class="dims" x="${x + 8}" y="${y + 26}">${flatten(spec.dims)}${pstr(ids[0])}</text></g>`);
+        `<text class="dims" x="${x + 8}" y="${y + 26}">${flatten(dims ?? spec.dims)}${pstr(ids[0])}</text></g>`);
       P.push(modeBtn(markIds ?? ids, x + W - 86, y + 6));
       P.push(dtBtn(ids[0], x + W - 58, y + 6));
       auxOut((markIds ?? ids)[0], x, y + 19);
@@ -1146,8 +1184,9 @@ export class Dsv3Layer extends HTMLElement {
       return y + h2;
     };
 
-    // ---- column 1: MLA ----
-    let y = 14;
+    // ---- column 1: MLA (skipped in only="ffn" mode) ----
+    let y = 14, x1Y = 14, col1End = 44;
+    if (ONLY !== 'ffn') {
     P.push(`<text class="oplabel" x="${SX1 + 14}" y="${y}">x — residual stream (7168)</text>`);
     tensorChip(['x0'], SX1 + 170, y - 8);
     const tap1 = y + 6;
@@ -1280,15 +1319,49 @@ export class Dsv3Layer extends HTMLElement {
       `<text class="oplabel" x="${SX1 + 24}" y="${y + 4}">residual add</text></g>` +
       modeBtn(['x1'], SX1 + 16 + 126 - 30, y - 10));
     tensorChip(['x1'], SX1 + 16, y + 15);
-    const x1Y = y;
-    const col1End = y + 46;
+    x1Y = y;
+    col1End = y + 46;
+    if (ONLY === 'mla') {   // terminal: x1 feeds the FFN half, drawn separately
+      P.push(`<line class="wire" x1="${SX1}" y1="${y + 9}" x2="${SX1}" y2="${y + 46}" marker-end="url(#arr)"/>` +
+        `<text class="tensor tidle" x="${SX1 + 8}" y="${y + 44}">x1 → the FFN half</text>`);
+      col1End = y + 66;
+    }
+    }  // end MLA column
 
     const midX = (C1 + W + C2) / 2 + 40;
 
-    // ---- column 2: MoE ----
+    // ---- column 2: the FFN half (MoE machinery, or one wide dense FFN);
+    // skipped in only="mla" mode ----
     const nExp = DSV3.topk + DSV3.sharedExperts;   // grouped boxes carry topk/nExp, shared 1/nExp
-    let z = 16;
+    let z = ONLY === 'ffn' ? 36 : 16;
+    if (ONLY !== 'mla') {
+    if (ONLY === 'ffn') {
+      // the input arrives from the MLA half (drawn separately); fork the residual here
+      P.push(`<text class="oplabel" x="${SX2 + 14}" y="${12}">x1 — the attention half's output (7168)</text>` +
+        `<circle cx="${SX2}" cy="${16}" r="2.5" fill="#898781"/>`);
+      wire(SX2, 16, z);
+    }
     z = opNode('norm2', 'RMSNorm', C2, z, 'op', `(${fmtP(DSV3.hidden)})`);
+    if (this.kind === 'dense') {
+      // dense block: same spine, a single wide FFN — no router, no a2a, no
+      // shared column; detail view adds nothing (nothing is elided here)
+      z = wireOut(['norm2'], SX2, z);
+      const gTop = z + 3; z += 21;
+      z = mmBox(['ffn_gate_up'], C2, z, ['gate_up'], 'ffn gate/up', `7168 → 2×${DSV3.denseInter}`);
+      z = wireOut(['gate_up'], SX2, z);
+      z = opNode('swiglu', 'SwiGLU', C2, z);
+      z = wireOut(['swiglu'], SX2, z);
+      z = mmBox(['ffn_down'], C2, z, undefined, 'ffn down', `${DSV3.denseInter} → 7168`);
+      grp(C2, gTop, z + 5, 'dense FFN — every token');
+      tensorChip(['ffn_down'], SX2 + 14, z + 9);
+      const zc = z + 5;
+      z = Math.max(zc + Math.max(22, chipSpace(['ffn_down']) + 10) + 13, col1End - 4);
+      wire(SX2, zc, z - 11);
+      plus(SX2, z);
+      P.push(`<g data-tip="residual add — x1 + the ffn output">` +
+        `<rect class="res" x="${SX2 + 26}" y="${z - 11}" width="126" height="22" rx="4"/>` +
+        `<text class="oplabel" x="${SX2 + 34}" y="${z + 4}">residual add</text></g>`);
+    } else {
     let shBot = 0, shTop = 0;
     const SHX = C2 + 320, shMid = SHX + 22;        // shared-expert mini column; spine down its LEFT, like every column
     const shBox = (name, dims, tip, yy, pc = '') => P.push(`<g data-tip="${escAttr(tip)}">` +
@@ -1397,14 +1470,21 @@ export class Dsv3Layer extends HTMLElement {
         `<text class="oplabel" x="${SX2 + 34}" y="${zB + 4}">residual add</text></g>`);
       z = zB;
     }
+    }  // end MoE column
     // block output: a short down arrow out of the second residual add (= the next block's x0)
     P.push(`<line class="wire" x1="${SX2}" y1="${z + 9}" x2="${SX2}" y2="${z + 26}" marker-end="url(#arr)"/>` +
       `<text class="tensor tidle" x="${SX2 + 8}" y="${z + 24}">x2 (block output)</text>`);
-    P.push(`<path class="wire" d="M ${SX1} ${x1Y + 9} L ${SX1} ${z} L ${SX2 - 11} ${z}" marker-end="url(#arr)"/>`);
-    // branch off the bottom rail up to norm2 (single output from the x1 add)
-    P.push(`<circle cx="${midX}" cy="${z}" r="2.5" fill="#898781"/>` +
-      `<path class="wire" d="M ${midX} ${z} L ${midX} 6 L ${SX2} 6 L ${SX2} 16" marker-end="url(#arr)"/>`);
-    const col2End = z + 42;   // room for the add label under the plus
+    if (ONLY === 'ffn') {
+      // residual rail: from the input fork straight down to the final add
+      P.push(`<path class="wire" d="M ${SX2} ${16} L ${C2 - 26} ${16} L ${C2 - 26} ${z} L ${SX2 - 11} ${z}" marker-end="url(#arr)"/>`);
+    } else {
+      P.push(`<path class="wire" d="M ${SX1} ${x1Y + 9} L ${SX1} ${z} L ${SX2 - 11} ${z}" marker-end="url(#arr)"/>`);
+      // branch off the bottom rail up to norm2 (single output from the x1 add)
+      P.push(`<circle cx="${midX}" cy="${z}" r="2.5" fill="#898781"/>` +
+        `<path class="wire" d="M ${midX} ${z} L ${midX} 6 L ${SX2} 6 L ${SX2} 16" marker-end="url(#arr)"/>`);
+    }
+    }  // end FFN column (skipped in only="mla" mode)
+    const col2End = ONLY === 'mla' ? 0 : z + 42;   // room for the add label under the plus
 
     // ---- head row (unless block-only: show the transformer block alone,
     // making no claims about the surrounding stack) ----
