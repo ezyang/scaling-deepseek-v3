@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<!-- Diagram lint harness: instantiates the widget matrix and checks the
+     geometric consequences of the visual grammar (docs/diagram-grammar.md):
+     no arrowhead lands in text, no wire passes through a label, labels don't
+     overlap each other, text isn't clipped by the SVG edge or cut by a box
+     border, op boxes don't partially overlap. Driven by scripts/diagramlint.mjs
+     (headless Chrome + dump-dom); results land in <pre id="lint-out"> as JSON. -->
+<html lang="en"><head><meta charset="utf-8"><title>diagram lint</title>
+<link rel="stylesheet" href="../studies/study.css"></head>
+<body><main>
+  <div data-widget="full-moe-static-detail-tabs"><dsv3-layer id="w1" detail controls="static" kindtabs block-only nocaption></dsv3-layer></div>
+  <div data-widget="full-dense-static-detail-tabs"><dsv3-layer id="w2" detail controls="static" kindtabs kind="dense" block-only nocaption></dsv3-layer></div>
+  <div data-widget="full-moe-fullctl-fp8-detail"><dsv3-layer id="w3" detail recipe="dsv3-fp8" recompute="dsv3" transposed></dsv3-layer></div>
+  <div data-widget="full-dense-fullctl-bf16"><dsv3-layer id="w4" recipe="bf16" recompute="none" kind="dense" block-only></dsv3-layer></div>
+  <div data-widget="marks-tier-attnreplay"><dsv3-layer id="w5" controls="marks" recipe="bf16" recompute="attn-replay" block-only></dsv3-layer></div>
+  <div data-widget="dtype-tier-mxfp8"><dsv3-layer id="w6" controls="dtype" recipe="nv-mxfp8" recompute="none" block-only></dsv3-layer></div>
+  <div data-widget="only-mla-static-detail"><dsv3-layer id="w7" detail controls="static" only="mla" block-only nocaption></dsv3-layer></div>
+  <div data-widget="only-ffn-moe-static-detail"><dsv3-layer id="w8" detail controls="static" only="ffn" block-only nocaption></dsv3-layer></div>
+  <div data-widget="only-ffn-dense-static-detail"><dsv3-layer id="w9" detail controls="static" only="ffn" kind="dense" block-only nocaption></dsv3-layer></div>
+  <div data-widget="terse-static"><dsv3-layer id="w10" controls="static" block-only nocaption></dsv3-layer></div>
+  <div data-widget="full-moe-static-flatdims"><dsv3-layer id="w11" detail controls="static" block-only nocaption></dsv3-layer></div>
+  <div data-widget="anatomy-plan"><dsv3-anatomy-plan id="wp"></dsv3-anatomy-plan></div>
+  <pre id="lint-out"></pre>
+</main>
+<script type="module">
+import '../src/viewer.js';
+import '../src/anatomy.js';
+
+const out = [];
+const push = (v) => { if (out.length < 400) out.push(v); };
+const snip = (s) => (s ?? '').replace(/\s+/g, ' ').trim().slice(0, 48);
+const inter = (a, b) => {
+  const x = Math.max(0, Math.min(a.right, b.right) - Math.max(a.left, b.left));
+  const y = Math.max(0, Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top));
+  return x * y;
+};
+const contains = (a, b, tol = 1.5) =>
+  b.left >= a.left - tol && b.right <= a.right + tol && b.top >= a.top - tol && b.bottom <= a.bottom + tol;
+const ptIn = (x, y, r, pad = 0) =>
+  x > r.left - pad && x < r.right + pad && y > r.top - pad && y < r.bottom + pad;
+// sample a wire's screen-space points via its own length parameterization
+const samples = (el, step = 3) => {
+  const m = el.getScreenCTM(), svg = el.ownerSVGElement, pts = [];
+  if (!m || !el.getTotalLength) return pts;
+  let len = 0;
+  try { len = el.getTotalLength(); } catch { return pts; }
+  for (let d = 0; d <= len; d += step) {
+    const p = el.getPointAtLength(d), q = svg.createSVGPoint();
+    q.x = p.x; q.y = p.y;
+    const s = q.matrixTransform(m);
+    pts.push([s.x, s.y, d, len]);
+  }
+  return pts;
+};
+
+function lintWidget(name, host) {
+  for (const svg of host.querySelectorAll('svg')) {
+    const svgR = svg.getBoundingClientRect();
+    const texts = [...svg.querySelectorAll('text')]
+      .filter(t => t.textContent.trim())
+      .map(t => ({ el: t, r: t.getBoundingClientRect(), s: snip(t.textContent) }));
+    const OPBOX = ['box', 'op', 'comm', 'res', 'micro'];
+    const rects = [...svg.querySelectorAll('rect')]
+      .map(r => ({ el: r, r: r.getBoundingClientRect(), cls: r.getAttribute('class') ?? '' }))
+      .filter(r => r.r.width > 8 && r.r.height > 8)
+      .filter(r => OPBOX.some(c => r.cls.split(' ').includes(c)) ||
+        (r.el.getAttribute('stroke') && r.el.getAttribute('fill') !== 'none') || r.cls === 'grp' || r.cls === 'card');
+    const wires = [...svg.querySelectorAll('line.wire, path.wire')];
+    const arrows = [...svg.querySelectorAll('[marker-end]')];
+
+    // A. arrowhead landing inside a label
+    for (const a of arrows) {
+      const pts = samples(a, 1000);   // just need the endpoint
+      let end;
+      try {
+        const L = a.getTotalLength(), p = a.getPointAtLength(L), q = a.ownerSVGElement.createSVGPoint();
+        q.x = p.x; q.y = p.y; const s = q.matrixTransform(a.getScreenCTM()); end = [s.x, s.y];
+      } catch { continue; }
+      for (const t of texts)
+        if (ptIn(end[0], end[1], t.r, 1))
+          push({ check: 'arrowhead-in-text', widget: name, text: t.s, x: Math.round(end[0] - svgR.left), y: Math.round(end[1] - svgR.top) });
+    }
+    // B. wire passing through a label (interior only; endpoints belong to A)
+    for (const w of wires) {
+      const hit = new Set();
+      for (const [x, y, d, len] of samples(w)) {
+        if (d < 8 || d > len - 8) continue;
+        for (const t of texts)
+          if (!hit.has(t) && x > t.r.left + 1 && x < t.r.right - 1 && y > t.r.top + 1 && y < t.r.bottom - 1) {
+            hit.add(t);
+            const d0 = w.getAttribute('d') ?? `${w.getAttribute('x1')},${w.getAttribute('y1')}->${w.getAttribute('x2')},${w.getAttribute('y2')}`;
+            push({ check: 'wire-through-text', widget: name, text: t.s, x: Math.round(x - svgR.left), y: Math.round(y - svgR.top), wire: d0.slice(0, 60) });
+          }
+      }
+    }
+    // C. label-label overlap
+    for (let i = 0; i < texts.length; i++)
+      for (let j = i + 1; j < texts.length; j++)
+        if (inter(texts[i].r, texts[j].r) > 6)
+          push({ check: 'text-overlap', widget: name, a: texts[i].s, b: texts[j].s });
+    // D. text clipped by the SVG edge
+    for (const t of texts)
+      if (t.r.left < svgR.left - 1 || t.r.right > svgR.right + 1 || t.r.top < svgR.top - 1 || t.r.bottom > svgR.bottom + 1)
+        push({ check: 'text-clipped-by-svg', widget: name, text: t.s });
+    // E. text cut by a box border (partially inside a stroked rect)
+    for (const t of texts)
+      for (const b of rects) {
+        const ov = inter(t.r, b.r);
+        if (ov > 8 && !contains(b.r, t.r) && ov < (t.r.width * t.r.height) - 8) {
+          // escaping a rect it meaningfully enters = visually cut by the border
+          push({ check: 'text-crossing-rect', widget: name, text: t.s, rect: b.cls || 'enclosure' });
+        }
+      }
+    // F. op boxes partially overlapping (containers may contain, not cross)
+    const ops = rects.filter(r => OPBOX.some(c => r.cls.split(' ').includes(c)));
+    for (let i = 0; i < ops.length; i++)
+      for (let j = i + 1; j < ops.length; j++) {
+        const a = ops[i], b = ops[j];
+        if (inter(a.r, b.r) > 4 && !contains(a.r, b.r) && !contains(b.r, a.r))
+          push({ check: 'box-overlap', widget: name, a: a.cls, b: b.cls, x: Math.round(a.r.left - svgR.left), y: Math.round(a.r.top - svgR.top) });
+      }
+  }
+}
+
+// let custom elements render, flip w11 to flatDims, then lint everything
+requestAnimationFrame(() => setTimeout(() => {
+  const w11 = document.getElementById('w11');
+  if (w11?.render) { w11.flatDims = true; w11.render(); }
+  for (const host of document.querySelectorAll('[data-widget]'))
+    lintWidget(host.dataset.widget, host);
+  document.getElementById('lint-out').textContent = JSON.stringify(out, null, 1);
+  document.title = 'LINT-DONE';
+}, 300));
+</script></body></html>

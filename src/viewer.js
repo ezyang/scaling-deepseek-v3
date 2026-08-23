@@ -956,10 +956,13 @@ export class Dsv3Layer extends HTMLElement {
     // only="mla" / only="ffn" draws a single column (for composed anatomy
     // pages that show each component once); default draws the full block
     const ONLY = this.getAttribute('only');
-    const W = 290, C1 = 60, C2 = ONLY === 'ffn' ? 60 : 512;
+    // quant tiers carry byte-quantity labels (e.g. attention's lse) that need
+    // more room between the columns; the static tier keeps its published width
+    const W = 290, C1 = 60,
+      C2 = ONLY === 'ffn' ? 60 : !this._ctl.quant ? 512 : this.detail ? 576 : 524;
     const SX1 = C1 + 22, SX2 = C2 + 22, RAIL1 = C1 - 26;
     const WIDTH = ONLY === 'mla' ? C1 + W + 250
-      : C2 + W + (this.detail ? 220 : 180); // right margin fits aux labels (+ shared column in detail)
+      : C2 + W + (this.detail ? (this._ctl.quant ? 264 : 224) : 180); // right margin fits aux labels (+ shared column in detail; quant byte tags are wider)
     // dims display: factored (128\u00d7192) or multiplied out (24576)
     const flatten = (s) => {
       if (!this.flatDims || !s) return s;
@@ -1121,7 +1124,8 @@ export class Dsv3Layer extends HTMLElement {
         P.push(g.svg);
         h = 12 + g.rows * 6 + 2;
       } else if (st === 'redo') {
-        P.push(`<text class="tensor tredo" x="${x}" y="${y + 8}">↻ ${esc(name0)} — recomputed</text>`);
+        // ov.short: narrow fork columns drop the suffix (the ↻ glyph carries it)
+        P.push(`<text class="tensor tredo" x="${x}" y="${y + 8}">↻ ${esc(name0)}${ov?.short ? '' : ' — recomputed'}</text>`);
       } else {
         P.push(`<text class="tensor tidle" x="${x}" y="${y + 8}">· ${esc(name0)}</text>`);
       }
@@ -1154,17 +1158,20 @@ export class Dsv3Layer extends HTMLElement {
       const n = ana.byId[id];
       if (!n.aux) return;
       const replayed = ana.replayed.has(id); // a replay regenerates its aux
-
-      P.push(`<line class="wire" x1="${x + W}" y1="${yMid}" x2="${x + W + 10}" y2="${yMid}" marker-end="url(#arr)"/>` +
+      // attention sits inside the MLA group: its lse label starts past the
+      // group border so the border never cuts through the text
+      const xt = (id === 'attn' && MLAGW) ? Math.max(x + W + 14, C1 - 10 + MLAGW + 8) : x + W + 14;
+      P.push(`<line class="wire" x1="${x + W}" y1="${yMid}" x2="${xt - 4}" y2="${yMid}" marker-end="url(#arr)"/>` +
         (replayed
-          ? `<text class="tensor tredo" x="${x + W + 14}" y="${yMid + 3}">↻ ${esc(n.aux.name)}</text>`
+          ? `<text class="tensor tredo" x="${xt}" y="${yMid + 3}">↻ ${esc(n.aux.name)}</text>`
           : !this._ctl.quant
-            ? `<text class="tensor tsave" x="${x + W + 14}" y="${yMid + 3}">← ${esc(n.aux.name)}</text>`
-            : `<text class="tensor tsave" x="${x + W + 14}" y="${yMid + 3}">← ${esc(n.aux.name)} · ${fmtMem(n.aux.bytes)} ` +
+            ? `<text class="tensor tsave" x="${xt}" y="${yMid + 3}">← ${esc(n.aux.name)}</text>`
+            : `<text class="tensor tsave" x="${xt}" y="${yMid + 3}">← ${esc(n.aux.name)} · ${fmtMem(n.aux.bytes)} ` +
               `<tspan fill="${DT_STYLE.fp32}">fp32</tspan></text>`));
     };
     // display-only elided kernel (detail view): cheap, no marks, not in the graph
     const DET = this.detail;
+    let MLAGW = 0;   // MLA group width — attention's lse label starts past its right edge
     const micro = (label, x, y, w = W, tip, pc = '') => {
       const body = `<rect class="micro" x="${x}" y="${y}" width="${w}" height="18" rx="9"/>` +
         `<text class="microlabel" x="${x + 9}" y="${y + 13}">${label}${pc ? `<tspan class="dims"> ${pc}</tspan>` : ''}</text>`;
@@ -1248,9 +1255,9 @@ export class Dsv3Layer extends HTMLElement {
         // pre-norm latent chips: real graph state (saved at no-AC — the latent
         // norms' backward input; the replay anchor under recompute presets)
         tensorChip(['qkv_down'], SX1 + 14, y + 24,
-          { name: 'q latent', tdims: String(DSV3.qRank), frac: DSV3.qRank / latTot });
+          { name: 'q latent', tdims: String(DSV3.qRank), frac: DSV3.qRank / latTot, short: true });
         tensorChip(['qkv_down'], RX + 14, y + 24,
-          { name: 'kv latent', tdims: String(DSV3.kvRank), frac: DSV3.kvRank / latTot });
+          { name: 'kv latent', tdims: String(DSV3.kvRank), frac: DSV3.kvRank / latTot, short: true });
         wire(SX1, y, y + 48);
         P.push(`<path class="wire" d="M ${RX} ${y} L ${RX} ${y + 48}" marker-end="url(#arr)"/>`);
         y += 48;
@@ -1272,13 +1279,13 @@ export class Dsv3Layer extends HTMLElement {
       }
       if (DET) {
         // the normed latents are their own graph nodes (q_norm / kv_norm)
-        tensorChip(['q_norm'], SX1 + 14, y + 4);
-        tensorChip(['kv_norm'], RX + 14, y + 4);
+        tensorChip(['q_norm'], SX1 + 14, y + 4, { short: true });
+        tensorChip(['kv_norm'], RX + 14, y + 4, { short: true });
       } else {
         tensorChip(['qkv_down'], SX1 + 14, y + 4,
-          { name: 'q latent', tdims: String(DSV3.qRank), frac: DSV3.qRank / latTot });
+          { name: 'q latent', tdims: String(DSV3.qRank), frac: DSV3.qRank / latTot, short: true });
         tensorChip(['qkv_down'], RX + 14, y + 4,
-          { name: 'kv latent', tdims: String(DSV3.kvRank), frac: DSV3.kvRank / latTot });
+          { name: 'kv latent', tdims: String(DSV3.kvRank), frac: DSV3.kvRank / latTot, short: true });
       }
       const latGap = Math.max(26, chipSpace(['qkv_down']) + 8);
       const wireTop = DET ? y - 14 : y;          // span the rstd band too — no spine gap
@@ -1320,10 +1327,11 @@ export class Dsv3Layer extends HTMLElement {
         `<circle cx="${SX1}" cy="${y + gap - 14}" r="2.5" fill="#898781"/>`);
       y += gap;
     }
+    MLAGW = DET ? bypX - C1 + 22 : 336;   // before the attn row: its lse label clears this edge
     y = mmBox(['attn'], C1, y);
     y = wireOut(['attn'], SX1, y);
     y = mmBox(['o_proj'], C1, y);
-    grp(C1, g1, y + 5, 'MLA', DET ? bypX - C1 + 22 : undefined);
+    grp(C1, g1, y + 5, 'MLA', MLAGW);
     y = wireOut(['o_proj'], SX1, y + 5);
     if (ONLY === 'mla') {
       // component view: the residual add lives in the block wiring, not here
@@ -1345,7 +1353,7 @@ export class Dsv3Layer extends HTMLElement {
     }
     }  // end MLA column
 
-    const midX = (C1 + W + C2) / 2 + 40;
+    const midX = C2 - 16;   // the norm2 return rail hugs column 2, clear of column 1's aux labels
 
     // ---- column 2: the FFN half (MoE machinery, or one wide dense FFN);
     // skipped in only="mla" mode ----
@@ -1399,7 +1407,7 @@ export class Dsv3Layer extends HTMLElement {
       if (TABS) { drawTabs(z + g0 - 46); encTop = z + g0 - 20; }
       z += g0 + 38 + (DET ? 18 : 0) + gapM(['router']) + 22 + gapM(['dispatch']);
       const gTop = z + 3; z += 21;
-      wire(SX2, spineFrom, z);
+      wire(SX2, spineFrom, gTop - 3);   // arrow stops above the group, like the MoE rows
       z = mmBox(['ffn_gate_up'], C2, z, ['gate_up'], 'ffn gate/up', `7168 → 2×${DSV3.denseInter}`);
       z = wireOut(['gate_up'], SX2, z);
       z = opNode('swiglu', 'SwiGLU', C2, z);
@@ -1568,7 +1576,7 @@ export class Dsv3Layer extends HTMLElement {
       // region (past norm2, before the residual add), fixed extent regardless
       // of kind (the MoE footprint) so it doesn't move across flips
       P[P.indexOf('__ENC__')] =
-        `<rect x="${C2 - 14}" y="${encTop}" width="${(DET ? 470 : 385) + 14}" height="${encBot - encTop}" rx="8" fill="#fcfcfb" stroke="#c3c2b7"/>`;
+        `<rect x="${C2 - 14}" y="${encTop}" width="${(DET ? 500 : 385) + 14}" height="${encBot - encTop}" rx="8" fill="#fcfcfb" stroke="#c3c2b7"/>`;
     }
     }  // end FFN column (skipped in only="mla" mode)
     const col2End = ONLY === 'mla' ? 0 : z + 42;   // room for the add label under the plus
