@@ -1352,19 +1352,19 @@ export class Dsv3Layer extends HTMLElement {
     const nExp = DSV3.topk + DSV3.sharedExperts;   // grouped boxes carry topk/nExp, shared 1/nExp
     // kindtabs: dense/MoE flip tabs (with the per-block tally) above the FFN column
     const TABS = this.hasAttribute('kindtabs') && ONLY !== 'mla';
-    let z = (ONLY === 'ffn' ? 36 : 16) + (TABS ? 34 : 0);
+    let z = ONLY === 'ffn' ? 36 : 16;
+    let encTop = 0, encBot = 0;   // enclosure extent: just the kind-dependent region
     if (ONLY !== 'mla') {
-    if (TABS) {
-      P.push('__ENC__');   // placeholder: the FFN-section enclosure, sized after the column is drawn
-      // tab shapes: the ACTIVE tab fuses into the enclosure (its fill covers
-      // the shared edge, its border stops at it); the inactive tab is a
-      // detached grey flap sitting on the enclosure's top edge
+    if (TABS) P.push('__ENC__');  // placeholder: the enclosure, sized after the column is drawn
+    // tab shapes at y=ty (26 tall): the ACTIVE tab fuses into the enclosure
+    // below it (its fill covers the shared edge, its border stops at it); the
+    // inactive tab is a detached grey flap on the enclosure's top edge
+    const drawTabs = (ty) => {
       const tab = (x, w, kind, label, sub) => {
-        const on = this.kind === kind, r = 6, y0 = 8, y1 = 34;
+        const on = this.kind === kind, r = 6, y0 = ty, y1 = ty + 26;
         const shape = `M ${x} ${y1} L ${x} ${y0 + r} Q ${x} ${y0} ${x + r} ${y0} ` +
           `L ${x + w - r} ${y0} Q ${x + w} ${y0} ${x + w} ${y0 + r} L ${x + w} ${y1}`;
-        return `<g data-kind="${kind}" style="cursor:${on ? 'default' : 'pointer'}"` +
-          ` title="flip the FFN column — the MLA half is identical in both block kinds">` +
+        return `<g data-kind="${kind}" style="cursor:${on ? 'default' : 'pointer'}">` +
           (on
             ? `<path d="${shape} Z" fill="#fcfcfb" stroke="none" transform="translate(0,1.6)"/>` +
               `<path d="${shape} Z" fill="#fcfcfb" stroke="none"/>` +
@@ -1375,7 +1375,7 @@ export class Dsv3Layer extends HTMLElement {
       };
       P.push(tab(C2 + 42, 148, 'dense', 'dense FFN', `×${DSV3.denseLayers ?? 3} · ${fmtP(3 * DSV3.hidden * DSV3.denseInter)}`) +
         tab(C2 + 198, 168, 'moe', 'MoE FFN', `×${DSV3.layers - (DSV3.denseLayers ?? 3)} · ${fmtP((DSV3.routedExperts + 1) * 3 * DSV3.hidden * DSV3.moeInter + DSV3.hidden * DSV3.routedExperts)}`));
-    }
+    };
     const norm2Top = z;
     if (ONLY === 'ffn') {
       // component view: input arrives from the block wiring (post-attention x1);
@@ -1391,11 +1391,13 @@ export class Dsv3Layer extends HTMLElement {
       // parallel MoE analysis) so flipping kinds keeps elements in place.
       tensorChip(['norm2'], SX2 + 14, z + 4);
       const spineFrom = z;   // one continuous spine through the whitespace below
-      // norm2 gap (same formulas as the MoE branch), then whitespace where the
-      // routing rows sit: router box (+ top-k micro in detail) + its chip,
-      // a2a dispatch + its chip
-      z += (DET ? Math.max(38, chipSpace(['norm2']) + 20) : Math.max(22, chipSpace(['norm2']) + 10))
-        + 38 + (DET ? 18 : 0) + gapM(['router']) + 22 + gapM(['dispatch']);
+      // norm2 gap (same formulas as the MoE branch, + room for the tab row),
+      // then whitespace where the routing rows sit: router box (+ top-k micro
+      // in detail) + its chip, a2a dispatch + its chip
+      const g0 = (DET ? Math.max(38, chipSpace(['norm2']) + 20) : Math.max(22, chipSpace(['norm2']) + 10))
+        + (TABS ? 36 : 0);
+      if (TABS) { drawTabs(z + g0 - 46); encTop = z + g0 - 20; }
+      z += g0 + 38 + (DET ? 18 : 0) + gapM(['router']) + 22 + gapM(['dispatch']);
       const gTop = z + 3; z += 21;
       wire(SX2, spineFrom, z);
       z = mmBox(['ffn_gate_up'], C2, z, ['gate_up'], 'ffn gate/up', `7168 → 2×${DSV3.denseInter}`);
@@ -1406,6 +1408,9 @@ export class Dsv3Layer extends HTMLElement {
       grp(C2, gTop, z + 5, 'dense FFN — every token');
       tensorChip(['ffn_down'], SX2 + 14, z + 9);
       const zc = z + 5;
+      // enclosure bottom mirrors the MoE footprint (combine + its chip, and
+      // the routed+shared add in detail), so the box doesn't move across flips
+      encBot = zc + gapM(['ffn_down']) + 22 + gapM(['combine']) + (DET ? 48 : 4);
       if (ONLY === 'ffn') {
         z = zc + Math.max(22, chipSpace(['ffn_down']) + 10);
       } else {
@@ -1426,13 +1431,18 @@ export class Dsv3Layer extends HTMLElement {
       `<text class="name" x="${SHX + 6}" y="${yy + 14}">${name}</text>` +
       `<text class="dims" x="${SHX + 6}" y="${yy + 27}">${flatten(dims)}${pc}</text></g>`);
     if (!DET) {
-      z = wireOut(['norm2'], SX2, z);
+      const g0 = Math.max(22, chipSpace(['norm2']) + 10) + (TABS ? 36 : 0);
+      tensorChip(['norm2'], SX2 + 14, z + 4);
+      wire(SX2, z, z + g0);
+      if (TABS) { drawTabs(z + g0 - 46); encTop = z + g0 - 20; }
+      z += g0;
     } else {
       // the shared expert runs on EVERY token as its own plain GEMMs — fork
       // norm2-out here; its boxes are drawn row-aligned with the routed ones
       tensorChip(['norm2'], SX2 + 14, z + 4);
-      const nGap = Math.max(38, chipSpace(['norm2']) + 20);
+      const nGap = Math.max(38, chipSpace(['norm2']) + 20) + (TABS ? 36 : 0);
       wire(SX2, z, z + nGap);
+      if (TABS) { drawTabs(z + nGap - 46); encTop = z + nGap - 20; }
       shTop = z + nGap - 10;
       P.push(`<circle cx="${SX2}" cy="${shTop}" r="2.5" fill="#898781"/>` +
         `<path class="wire" d="M ${SX2} ${shTop} L ${shMid} ${shTop}"/>`);
@@ -1503,6 +1513,7 @@ export class Dsv3Layer extends HTMLElement {
     tensorChip(['combine'], SX2 + 14, z + 4);
     const zc = z;                                  // combine box bottom
     if (!DET) {
+      encBot = zc + Math.max(22, chipSpace(['combine']) + 10) + 4;
       if (ONLY === 'ffn') {
         z = zc + Math.max(22, chipSpace(['combine']) + 10);
       } else {
@@ -1525,6 +1536,7 @@ export class Dsv3Layer extends HTMLElement {
       P.push(`<g data-tip="routed + shared expert outputs — Megatron fuses this with the residual add (add_shared_and_residual); split here for clarity">` +
         `<rect class="res" x="${SX2 + 26}" y="${zA - 35}" width="178" height="22" rx="4"/>` +
         `<text class="oplabel" x="${SX2 + 34}" y="${zA - 20}">add — routed + shared</text></g>`);
+      encBot = zA + 14;   // the routed+shared add is MoE-internal — inside the box
       if (ONLY === 'ffn') {
         z = zA;
       } else {
@@ -1552,10 +1564,11 @@ export class Dsv3Layer extends HTMLElement {
         `<path class="wire" d="M ${midX} ${z} L ${midX} 6 L ${SX2} 6 L ${SX2} ${norm2Top}" marker-end="url(#arr)"/>`);
     }
     if (TABS) {
-      // the enclosure the active tab fuses into — fixed extent regardless of
-      // kind (the MoE-detail footprint), so it doesn't move across flips
+      // the enclosure the active tab fuses into — scoped to the kind-dependent
+      // region (past norm2, before the residual add), fixed extent regardless
+      // of kind (the MoE footprint) so it doesn't move across flips
       P[P.indexOf('__ENC__')] =
-        `<rect x="${C2 - 14}" y="34" width="${(DET ? 470 : 385) + 14}" height="${z}" rx="8" fill="#fcfcfb" stroke="#c3c2b7"/>`;
+        `<rect x="${C2 - 14}" y="${encTop}" width="${(DET ? 470 : 385) + 14}" height="${encBot - encTop}" rx="8" fill="#fcfcfb" stroke="#c3c2b7"/>`;
     }
     }  // end FFN column (skipped in only="mla" mode)
     const col2End = ONLY === 'mla' ? 0 : z + 42;   // room for the add label under the plus
