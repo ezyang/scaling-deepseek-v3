@@ -124,12 +124,39 @@ function lintWidget(name, host) {
   }
 }
 
+// scroll-restoration placeholders: every widget on the real pages should
+// declare a min-height close to its rendered height (docs/diagram-grammar.md
+// — reserved, non-reflowing space applies to the page too)
+async function lintPlaceholders() {
+  const PAGES = ['/index.html', '/studies/01-deepseek-diagram.html', '/studies/02-hopper-memory.html'];
+  const WTAGS = 'dsv3-anatomy, dsv3-layer, dsv3-stack, dsv3-memory, dsv3-trace, dsv3-controls, dsv3-param-tally';
+  for (const p of PAGES) {
+    const f = document.createElement('iframe');
+    f.style.cssText = 'width:1440px;height:900px;border:0;position:absolute;left:-9999px;top:0;';
+    document.body.append(f);
+    await new Promise(r => { f.onload = r; f.src = p; });
+    await new Promise(r => setTimeout(r, 400));
+    for (const el of f.contentDocument.querySelectorAll(WTAGS)) {
+      if (el.tagName === 'DSV3-LAYER' && el.closest('dsv3-anatomy')) continue;  // the wrapper carries it
+      const hh = el.getBoundingClientRect().height;
+      if (hh < 40) continue;
+      const name = el.tagName.toLowerCase() + (el.id ? '#' + el.id : '');
+      const decl = parseFloat(el.style.minHeight) || 0;
+      if (!decl) push({ check: 'placeholder-height-missing', page: p, el: name, actual: Math.round(hh) });
+      else if (Math.abs(hh - decl) > 48)
+        push({ check: 'placeholder-height-drift', page: p, el: name, declared: decl, actual: Math.round(hh) });
+    }
+    f.remove();
+  }
+}
+
 // let custom elements render, flip w11 to flatDims, then lint everything
-requestAnimationFrame(() => setTimeout(() => {
+requestAnimationFrame(() => setTimeout(async () => {
   const w11 = document.getElementById('w11');
   if (w11?.render) { w11.flatDims = true; w11.render(); }
   for (const host of document.querySelectorAll('[data-widget]'))
     lintWidget(host.dataset.widget, host);
+  await lintPlaceholders();
   document.getElementById('lint-out').textContent = JSON.stringify(out, null, 1);
   document.title = 'LINT-DONE';
 }, 300));

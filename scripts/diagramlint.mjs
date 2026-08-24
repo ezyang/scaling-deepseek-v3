@@ -26,7 +26,7 @@ await new Promise(r => srv.listen(0, r));
 const url = `http://localhost:${srv.address().port}/scripts/diagramlint.html`;
 
 const dom = await new Promise((resolve, reject) => {
-  execFile(CHROME, ['--headless', '--disable-gpu', '--hide-scrollbars', '--virtual-time-budget=5000',
+  execFile(CHROME, ['--headless', '--disable-gpu', '--hide-scrollbars', '--virtual-time-budget=12000',
     '--window-size=1500,4000', '--dump-dom', url], { maxBuffer: 64 * 1024 * 1024 },
     (err, stdout) => err ? reject(err) : resolve(stdout));
 });

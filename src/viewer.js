@@ -690,6 +690,8 @@ ${tokensCss('.lv')}
 .lv .tsave { fill: #7a5200; font-weight: 600; }
 .lv .tdim { fill: #898781; font-weight: 400; }
 .lv .micro { fill: #f7f6f1; stroke: #d8d6cb; }
+.lv g[data-op].hl > rect { stroke: #eda100; stroke-width: 1.6; }
+.lv g[data-op].hl .dims { fill: #b05f00; font-weight: 600; }
 .lv .microlabel { font: italic 10px system-ui; fill: #52514e; }
 .lv .tredo { fill: #52514e; font-style: italic; }
 .lv .tidle { fill: #a8a69e; }
@@ -957,6 +959,14 @@ export class Dsv3Layer extends HTMLElement {
     }
     if (this._ctl.quant) this.attachTip(root);   // no tooltips on the structure-only tier
     this.append(style, root);
+    this.applyHl();
+  }
+  // spreadsheet-style highlighting: mark the boxes whose parameters a
+  // clicked tally row sums (dsv3-param-tally drives this)
+  highlightOps(ids) { this._hl = new Set(ids ?? []); this.applyHl(); }
+  applyHl() {
+    for (const g of this.querySelectorAll('[data-op]'))
+      g.classList.toggle('hl', this._hl?.has(g.dataset.op) ?? false);
   }
   buildSvg(ana, anaM = null) {
     const P = [];
@@ -1196,7 +1206,7 @@ export class Dsv3Layer extends HTMLElement {
       `<text class="grplabel" x="${x - 2}" y="${y0 + 11}">${label}</text>`);
     const mmBox = (ids, x, y, markIds, label, dims) => {
       const spec = MATMULS.find(m => m.id === ids[0]);
-      P.push(`<g${boxTip((markIds ?? ids)[0], dims ? undefined : spec.dimsNote)}>` +
+      P.push(`<g data-op="${ids[0]}"${boxTip((markIds ?? ids)[0], dims ? undefined : spec.dimsNote)}>` +
         `<rect class="box" x="${x}" y="${y}" width="${W}" height="38" rx="4"/>` +
         `<text class="name" x="${x + 8}" y="${y + 13}">${label ?? spec.label}</text>` +
         `<text class="dims" x="${x + 8}" y="${y + 26}">${flatten(dims ?? spec.dims)}${pstr(ids[0])}</text></g>`);
@@ -1237,7 +1247,7 @@ export class Dsv3Layer extends HTMLElement {
         `<path class="wire" d="M ${SX1} ${y - 10} L ${RX} ${y - 10} L ${RX} ${y}" marker-end="url(#arr)"/>`);
       const qFrac = DSV3.qRank / (DSV3.qRank + DSV3.kvRank + DSV3.qkRope);
       const dhalf = (x, name, dims, tip, frac, withBtns, pc = '') => {
-        P.push(`<g data-tip="${escAttr(tip)}">` +
+        P.push(`<g data-op="qkv_down" data-tip="${escAttr(tip)}">` +
           `<rect class="box" x="${x}" y="${y}" width="140" height="60" rx="4"/>` +
           `<text class="name" x="${x + 6}" y="${y + 13}">${name}</text>` +
           `<text class="dims" x="${x + 6}" y="${y + 25}">${flatten(dims)}${pc}</text></g>` +
@@ -1305,7 +1315,7 @@ export class Dsv3Layer extends HTMLElement {
       y += latGap;
       const halfBox = (id, x) => {
         const m = MATMULS.find(mm2 => mm2.id === id);
-        P.push(`<g${boxTip(id, m.dimsNote)}>` +
+        P.push(`<g data-op="${id}"${boxTip(id, m.dimsNote)}>` +
           `<rect class="box" x="${x}" y="${y}" width="140" height="60" rx="4"/>` +
           `<text class="name" x="${x + 6}" y="${y + 13}">${m.label}</text>` +
           `<text class="dims" x="${x + 6}" y="${y + 25}">${flatten(m.dims)}${pstr(id)}</text></g>` +
@@ -1443,7 +1453,7 @@ export class Dsv3Layer extends HTMLElement {
     } else {
     let shBot = 0, shTop = 0;
     const SHX = C2 + 320, shMid = SHX + 22;        // shared-expert mini column; spine down its LEFT, like every column
-    const shBox = (name, dims, tip, yy, pc = '') => P.push(`<g data-tip="${escAttr(tip)}">` +
+    const shBox = (name, dims, tip, yy, pc = '') => P.push(`<g data-op="shared" data-tip="${escAttr(tip)}">` +
       `<rect class="box" x="${SHX}" y="${yy}" width="140" height="34" rx="4"/>` +
       `<text class="name" x="${SHX + 6}" y="${yy + 14}">${name}</text>` +
       `<text class="dims" x="${SHX + 6}" y="${yy + 27}">${flatten(dims)}${pc}</text></g>`);
@@ -1602,7 +1612,7 @@ export class Dsv3Layer extends HTMLElement {
       const lmRows = this._ctl.quant
         ? Math.ceil(Math.max(1, Math.round(flopEq(lmFlops, dt('lm_head')) / FLOP_UNIT)) / FLOP_ROW) : 0;
       lmH = 38 + lmRows * 6;
-      P.push(`<g data-tip="${escAttr(`${fmtNum(lmFlops)} FLOP/token = ${FLOP_EXPR.lm_head}\n${lm.dimsNote}`)}">` +
+      P.push(`<g data-op="lm_head" data-tip="${escAttr(`${fmtNum(lmFlops)} FLOP/token = ${FLOP_EXPR.lm_head}\n${lm.dimsNote}`)}">` +
         `<rect class="box" x="${C1 + 184}" y="${h}" width="240" height="${lmH}" rx="4"/>` +
         `<text class="name" x="${C1 + 192}" y="${h + 14}">${lm.label}</text>` +
         `<text class="dims" x="${C1 + 192}" y="${h + 28}">${flatten(lm.dims)}${pstr('lm_head')}</text></g>` + dtBtn('lm_head', C1 + 184 + 240 - 58, h + 7));

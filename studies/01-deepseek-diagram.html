@@ -87,7 +87,7 @@ i don't need perfect, i need done
     the schematic of the dense block is hidden by default (you can toggle it
     by pressing "dense block/FFN".)</p>
 
-    <dsv3-anatomy layer-id="diagram" detail controls="static" nocaption></dsv3-anatomy>
+    <dsv3-anatomy style="min-height:723px" layer-id="diagram" detail controls="static" nocaption></dsv3-anatomy>
 
     <p>There are a few things I'm hoping to convey in this diagram:</p>
 
@@ -126,6 +126,16 @@ i don't need perfect, i need done
         this diagram overstates how many activations you'd actually typically
         save for backwards--more on this in a future post.</li>
     </ul>
+
+    <h2>Computing the parameter count</h2>
+
+    <p>As a first exercise, let's use the diagram to compute DeepSeek-V3's
+    headline 671B parameter count.  Every grey parenthetical in the diagram is
+    a parameter count, so the total is just a sum; the table below runs it.
+    Click a row to highlight the cells in the diagram that it sums (rows over
+    the hidden FFN kind flip the diagram first).</p>
+
+    <dsv3-param-tally style="min-height:206px" layer-id="diagram"></dsv3-param-tally>
 
     <p>That's it for this post.  These diagrams aren't earth shaking but we are going
     to return to them again and again as we start doing analyses.  For example, we

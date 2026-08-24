@@ -30,6 +30,8 @@ ${tokensCss('.anp')}
 .anp .box.on { fill: #fff8ea; stroke: #eda100; }
 .anp [data-kind] { cursor: pointer; }
 .anp [data-kind].on { cursor: default; }
+.anp g[data-op].hl rect { stroke: #eda100; stroke-width: 1.5; }
+.anp g[data-op].hl .dims { fill: #b05f00; font-weight: 600; }
 `;
 
 export class Dsv3AnatomyPlan extends HTMLElement {
@@ -89,20 +91,20 @@ export class Dsv3AnatomyPlan extends HTMLElement {
     let y = 14;
     S.push(`<text class="oplabel" x="${CX - 22}" y="${y - 2}">tokens</text>`);
     wire(14);
-    const op = (label, dims, h = 22) => {
-      S.push(`<rect class="op" x="${BX}" y="${y}" width="${W}" height="${h}" rx="6"/>` +
-        `<text class="oplabel" x="${BX + 9}" y="${y + 15}">${label}${dims ? ` <tspan class="dims">${dims}</tspan>` : ''}</text>`);
+    const op = (label, dims, h = 22, opId = null) => {
+      S.push(`${opId ? `<g data-op="${opId}">` : ''}<rect class="op" x="${BX}" y="${y}" width="${W}" height="${h}" rx="6"/>` +
+        `<text class="oplabel" x="${BX + 9}" y="${y + 15}">${label}${dims ? ` <tspan class="dims">${dims}</tspan>` : ''}</text>${opId ? '</g>' : ''}`);
       y += h;
     };
     const blockBox = (k, label, dims) => {
       const on = kind === k;
-      S.push(`<g data-kind="${k}" class="${on ? 'on' : ''}">` +
+      S.push(`<g data-kind="${k}" data-op="block-${k}" class="${on ? 'on' : ''}">` +
         `<rect class="box${on ? ' on' : ''}" x="${BX}" y="${y}" width="${W}" height="34" rx="4"/>` +
         `<text class="name" x="${BX + 8}" y="${y + 14}">${label}</text>` +
         `<text class="dims" x="${BX + 8}" y="${y + 27}">${dims}</text></g>`);
       y += 34;
     };
-    op('embedding', `(${fmtP(E)})`);
+    op('embedding', `(${fmtP(E)})`, 22, 'embed');
     wire(24, `x · ${A.hidden}`);
     blockBox('dense', `dense block ×${A.denseLayers}`, `${fmtP(DENSE)} each`);
     wire(24, `x · ${A.hidden}`);
@@ -110,9 +112,9 @@ export class Dsv3AnatomyPlan extends HTMLElement {
     wire(24, `x · ${A.hidden}`);
     op('final RMSNorm', `(${fmtP(A.hidden)})`);
     wire(24, `norm out · ${A.hidden}`);
-    S.push(`<rect class="box" x="${BX}" y="${y}" width="${W}" height="34" rx="4"/>` +
+    S.push(`<g data-op="lm_head"><rect class="box" x="${BX}" y="${y}" width="${W}" height="34" rx="4"/>` +
       `<text class="name" x="${BX + 8}" y="${y + 14}">lm head</text>` +
-      `<text class="dims" x="${BX + 8}" y="${y + 27}">${A.hidden} → ${A.vocab} (${fmtP(E)})</text>`);
+      `<text class="dims" x="${BX + 8}" y="${y + 27}">${A.hidden} → ${A.vocab} (${fmtP(E)})</text></g>`);
     y += 34;
     wire(24, `logits · ${A.vocab}`);
     op('softmax / loss', null);
@@ -127,7 +129,13 @@ export class Dsv3AnatomyPlan extends HTMLElement {
         this.draw();
       };
     }
+    this.applyHl();
     requestAnimationFrame(() => this.expansion());   // measure after layout settles
+  }
+  highlightOps(ids) { this._hl = new Set(ids ?? []); this.applyHl(); }
+  applyHl() {
+    for (const g of this._root.querySelectorAll('[data-op]'))
+      g.classList.toggle('hl', this._hl?.has(g.dataset.op) ?? false);
   }
 }
 customElements.define('dsv3-anatomy-plan', Dsv3AnatomyPlan);
@@ -163,3 +171,86 @@ export class Dsv3Anatomy extends HTMLElement {
   }
 }
 customElements.define('dsv3-anatomy', Dsv3Anatomy);
+
+
+// <dsv3-param-tally layer-id="...">: the parameter count computed FROM the
+// diagram, spreadsheet-style. Each row is a derived sum; clicking it
+// highlights the diagram "cells" (boxes) whose grey parentheticals it sums,
+// and the plan box carrying its multiplier. Rows over the hidden FFN kind
+// flip the diagram to that kind first, so the cells are always visible.
+const T = {
+  qkvDown: A.hidden * (A.qRank + A.kvRank + A.qkRope),
+  qUp: A.qRank * A.heads * (A.qkNope + A.qkRope),
+  kvUp: A.kvRank * A.heads * (A.qkNope + A.vHead),
+  oProj: A.heads * A.vHead * A.hidden,
+  router: A.hidden * A.routedExperts,
+  expert: 3 * A.hidden * A.moeInter,
+  denseFfn: 3 * A.hidden * A.denseInter,
+};
+const TALLY_ROWS = [
+  { label: 'MLA (attention)', kind: null,
+    ops: ['qkv_down', 'q_up', 'kv_up', 'o_proj'], plan: ['block-dense', 'block-moe'],
+    formula: `${fmtP(T.qkvDown)} + ${fmtP(T.qUp)} + ${fmtP(T.kvUp)} + ${fmtP(T.oProj)}`,
+    per: MLA, count: A.layers, mult: `× ${A.layers} blocks` },
+  { label: 'dense FFN', kind: 'dense',
+    ops: ['ffn_gate_up', 'ffn_down'], plan: ['block-dense'],
+    formula: `${fmtP(2 * A.hidden * A.denseInter)} + ${fmtP(A.denseInter * A.hidden)}`,
+    per: T.denseFfn, count: A.denseLayers, mult: `× ${A.denseLayers} blocks` },
+  { label: 'MoE FFN', kind: 'moe',
+    ops: ['router', 'ffn_gate_up', 'ffn_down', 'shared'], plan: ['block-moe'],
+    formula: `${fmtP(T.router)} + (${fmtP(2 * A.hidden * A.moeInter)} + ${fmtP(A.moeInter * A.hidden)}) × ${A.routedExperts} + ${fmtP(T.expert)} shared`,
+    per: MOE - MLA, count: A.layers - A.denseLayers, mult: `× ${A.layers - A.denseLayers} blocks` },
+  { label: 'embedding', kind: null, ops: [], plan: ['embed'],
+    formula: `${A.hidden} × ${A.vocab}`, per: E, count: 1, mult: '× 1' },
+  { label: 'lm head', kind: null, ops: ['lm_head'], plan: ['lm_head'],
+    formula: `${A.hidden} × ${A.vocab}`, per: E, count: 1, mult: '× 1' },
+];
+const TALLY_CSS = `
+dsv3-param-tally { display: block; margin: 14px 0; }
+.ptal { font: 13.5px system-ui, -apple-system, "Segoe UI", sans-serif; color: #0b0b0b; }
+.ptal table { border-collapse: collapse; width: 100%; max-width: 760px; }
+.ptal th, .ptal td { text-align: left; padding: 5px 12px 5px 0; border-bottom: 1px solid #e1e0d9;
+  font-variant-numeric: tabular-nums; vertical-align: top; }
+.ptal th { color: #52514e; font-weight: 600; font-size: 12.5px; }
+.ptal td.num { text-align: right; padding-right: 0; white-space: nowrap; }
+.ptal .formula { color: #898781; font-size: 12.5px; }
+.ptal tbody tr { cursor: pointer; }
+.ptal tbody tr:hover { background: #f7f6f1; }
+.ptal tbody tr.sel { background: #fff8ea; }
+.ptal tbody tr.sel td:first-child { font-weight: 600; }
+.ptal tfoot td { font-weight: 600; border-bottom: none; }
+.ptal .note { color: #898781; font-size: 12px; margin-top: 4px; }
+`;
+export class Dsv3ParamTally extends HTMLElement {
+  connectedCallback() {
+    const style = document.createElement('style'); style.textContent = TALLY_CSS;
+    const root = document.createElement('div'); root.className = 'ptal';
+    const total = TALLY_ROWS.reduce((t, r) => t + r.per * r.count, 0);
+    root.innerHTML = `<table><thead><tr><th>component</th><th>parameters, per copy</th>` +
+      `<th>copies</th><th style="text-align:right">total</th></tr></thead><tbody>` +
+      TALLY_ROWS.map((r, i) => `<tr data-row="${i}"><td>${r.label}</td>` +
+        `<td><span class="formula">${r.formula} =</span> ${fmtP(r.per)}</td>` +
+        `<td>${r.mult}</td><td class="num">${fmtP(r.per * r.count)}</td></tr>`).join('') +
+      `</tbody><tfoot><tr><td colspan="3">total</td><td class="num">${fmtP(total)}</td></tr></tfoot></table>` +
+      `<div class="note">click a row to highlight the diagram cells it sums · ` +
+      `RMSNorm weights and the MTP module are omitted (&lt; 0.01%)</div>`;
+    this.append(style, root);
+    const lid = this.getAttribute('layer-id') ?? '';
+    const layer = () => document.getElementById(lid);
+    const plan = () => document.querySelector(`dsv3-anatomy-plan[layer="${lid}"]`);
+    for (const tr of root.querySelectorAll('tbody tr')) {
+      tr.onclick = () => {
+        const r = TALLY_ROWS[+tr.dataset.row], on = !tr.classList.contains('sel');
+        for (const t of root.querySelectorAll('tr.sel')) t.classList.remove('sel');
+        const l = layer();
+        if (on && r.kind && l && l.kind !== r.kind) {   // the cells live on the hidden FFN kind: flip to it
+          l.kind = r.kind; l.render(); l.changed(true);
+        }
+        tr.classList.toggle('sel', on);
+        l?.highlightOps?.(on ? r.ops : []);
+        plan()?.highlightOps?.(on ? r.plan : []);
+      };
+    }
+  }
+}
+customElements.define('dsv3-param-tally', Dsv3ParamTally);
