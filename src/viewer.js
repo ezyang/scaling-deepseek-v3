@@ -959,7 +959,8 @@ export class Dsv3Layer extends HTMLElement {
     // quant tiers carry byte-quantity labels (e.g. attention's lse) that need
     // more room between the columns; the static tier keeps its published width
     const W = 290, C1 = 60,
-      C2 = ONLY === 'ffn' ? 60 : !this._ctl.quant ? 512 : this.detail ? 576 : 524;
+      C2 = (ONLY === 'ffn' ? 60 : !this._ctl.quant ? 512 : this.detail ? 576 : 524)
+        + (ONLY !== 'ffn' && this._ctl.quant && this.hasAttribute('kindtabs') ? 20 : 0);
     const SX1 = C1 + 22, SX2 = C2 + 22, RAIL1 = C1 - 26;
     const WIDTH = ONLY === 'mla' ? C1 + W + 250
       : C2 + W + (this.detail ? (this._ctl.quant ? 264 : 224) : 180); // right margin fits aux labels (+ shared column in detail; quant byte tags are wider)
@@ -1353,7 +1354,9 @@ export class Dsv3Layer extends HTMLElement {
     }
     }  // end MLA column
 
-    const midX = C2 - 16;   // the norm2 return rail hugs column 2, clear of column 1's aux labels
+    // the norm2 return rail: right of all of column 1's aux labels, and clear
+    // of the kindtabs enclosure border (at C2 - 14) when tabs are drawn
+    const midX = this.hasAttribute('kindtabs') ? C2 - 34 : C2 - 16;
 
     // ---- column 2: the FFN half (MoE machinery, or one wide dense FFN);
     // skipped in only="mla" mode ----
