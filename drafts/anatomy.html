@@ -1,18 +1,8 @@
 <!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>anatomy experiment</title><link rel="stylesheet" href="../studies/study.css">
-<style>
-  main { max-width: none; }   /* natural diagram size — no scaling */
-  .anat { display: grid; grid-template-columns: 200px auto; gap: 0 34px; align-items: start; justify-content: start; }
-  .anat dsv3-anatomy-plan { position: sticky; top: 14px; margin-top: 46px; }
-</style></head>
+<title>anatomy</title><link rel="stylesheet" href="../studies/study.css"></head>
 <body><main>
-<h1>Experiment: one consolidated anatomy</h1>
-<p class="note">The whole-model plan lives in the margin, vertical, in the diagram's own visual
-language; one full transformer block beside it. Flip the FFN via the plan's block boxes or the
-tabs — the enclosure scopes exactly what changes, and elements stay put across flips.</p>
-<div class="anat">
-  <dsv3-anatomy-plan layer="an-block"></dsv3-anatomy-plan>
-  <dsv3-layer id="an-block" detail controls="static" kindtabs block-only nocaption></dsv3-layer>
-</div>
+<h1>The anatomy composition</h1>
+<p class="note">Shipped as <code>&lt;dsv3-anatomy&gt;</code> — this page is now just a showcase.</p>
+<dsv3-anatomy layer-id="an-block" detail controls="static" nocaption></dsv3-anatomy>
 </main><script type="module">import '../src/viewer.js'; import '../src/anatomy.js';</script></body></html>

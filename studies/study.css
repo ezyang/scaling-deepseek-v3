@@ -13,7 +13,7 @@
     .xcheck th, .xcheck td { text-align: left; padding: 5px 12px 5px 0; border-bottom: 1px solid #e1e0d9; font-variant-numeric: tabular-nums; vertical-align: top; }
     .xcheck th { color: #52514e; font-weight: 600; }
     .xcheck .note { font-size: 12px; }
-    dsv3-memory { display: block; margin: 14px 0; }
+    dsv3-memory, dsv3-anatomy { display: block; margin: 14px 0; }
 
 /* series navigation (injected by series.js) */
 .series-strip { font-size: 13px; color: #52514e; margin: 0 0 6px; }

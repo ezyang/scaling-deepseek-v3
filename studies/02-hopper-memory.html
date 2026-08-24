@@ -25,7 +25,7 @@
 
     <p>However, it's good to have an expectation about how much memory
     your model <em>should</em> be using, given choices on parallelism, activation
-    checkpointing and low precision, so that you can tell if your implementation
+    checkpointing and low precision, so you can tell if your implementation
     is buggy and using more memory than it should be.  It's also common to be in
     a fairly memory constrained regime, where in your hero run you will be
     trying to just barely fit your model in memory while trying not to
@@ -43,37 +43,50 @@
 
     <h2>What is memory used for in training?</h2>
 
-    <p>When discussing the memory usage of model training, there are two
-    important simplifications we typically apply:</p>
+    <p>While your exact memory usage depends on implementation details of your
+    training framework, it's still possible to reason through what the major
+    consumers of memory will be: at a high level, you need to spend memory on
+    parameters, optimizer states, activations (saved for backwards) and
+    gradients.  Now, exactly how much memory you will need on a single GPU
+    depends on both parallelization choices (how we are distributing things
+    across ranks) as well as our direct memory adjustment knobs (activation
+    checkpointing, low precision).  But to keep things simple, let's
+    first work out the global (across all ranks) memory usage of DeepSeek-V3
+    training assuming everything in bfloat16 and no activation
+    checkpointing.</p>
 
-    <ol>
-        <li>We only care about the high watermark--the peak memory usage--during
-        training, because that's the memory usage you need to bring down if
-        you want to fix an OOM.</li>
-        <li>While the exact memory usage depends on implementation details
-        of your training framework, there are some things that <em>must</em>
-        be stored in memory (no matter how you implement it), and reasoning
-        about those will characterize the majority of memory usage of your model.</li>
-    </ol>
+    <p><strong>Parameters.</strong>  In <a href="./01-deepseek-diagram.html">the
+    previous post</a>, we described the overall structure of DSv3.  If we assume
+    the parameters are bfloat16, we can tally up the overall memory usage of
+    the entire model.</p>
+
+    TODO: full transformer block diagram.  I think we should have the yellow blocks
+    (maybe a different color) that we had designed for activations, but in the place
+    where FLOP blocks would have been, to show the parameter sizes.   This would
+    be a one off for this diagram.  When tallying we should probably have sub-sums for
+    the components before they then get summed up into the full.  It should be clear
+    what equations we're running, but mostly from intuitive design.  The boxes should
+    have the actual memory numbers not just the dimensionless count numbers.  We should
+    have a toggle for swapping between cumulative or individual numbers in the
+    sub-sections (e.g., MLA).  Cumulative so that the blocks/numbers are aggregated
+    over all copies of the section.
+
+    <p>TODO: some text captioning the diagram, like the desc above</p>
+
+    (I feel there's something else I wanted to write here but I forgot)
+
+    <p><strong>Optimizer states.</strong>  DeepSeek-V3 was trained with AdamW.</p>
+
+    <p><strong>Activations.</strong></p>
+
+    <p><strong>Gradients.</strong></p>
+
+    <strong>Full tally</strong>
+    show the tally bar
 
 
 
-    <p>Broadly speaking, here are the things you will always<span class="mn-ref"></span><span class="mn">We might not always actually have these resident in memory; for example you can play tricks with CPU offloading to get rid of the optimizer states from GPU when you don't need them. But "morally" you have to keep them around!</span> save in memory:</p>
-
-    <ol>
-      <li>Parameters, of course!</li>
-      <li>Optimizer states, with similar reasoning for parameters (they must persist
-      across steps to be mutated).</li>
-      <li>Activations (saved for backwards), because typically your high watermark
-      occurs right when backwards is starting, at which point you have freed
-      any of your saved for backwards tensors yet</li>
-    </ol>
-
-    <p>If PP is involved, we also must add:</p>
-
-    <ol>
-      <li>Gradients</li>
-    </ol>
+    SLOP BELOW
 
     <h2>Activation checkpointing</h2>
 
@@ -98,7 +111,7 @@
     grids are priced at; we'll revisit that assumption in the next
     section.</p>
 
-    <dsv3-layer id="ac-layer" controls="marks" recipe="bf16" recompute="dsv3" block-only></dsv3-layer>
+    <dsv3-anatomy layer-id="ac-layer" controls="marks" recipe="bf16" recompute="dsv3"></dsv3-anatomy>
 
     <p>Some things to notice as you play with the marks:</p>
 
@@ -140,7 +153,7 @@
     stored in the dtype of the GEMM that will read it during backward.  Flip
     the dtype buttons below and watch the stash sizes follow.</p>
 
-    <dsv3-layer id="fp8-layer" controls="dtype" recipe="dsv3-fp8" recompute="none" block-only></dsv3-layer>
+    <dsv3-anatomy layer-id="fp8-layer" controls="dtype" recipe="dsv3-fp8" recompute="none"></dsv3-anatomy>
 
     <p>Two recipes matter for us.  The <em>dsv3-fp8</em> recipe is the Hopper
     one: linears in tile-scaled FP8, but the attention core, its output, and
@@ -229,8 +242,8 @@
       exploration row uses our 1F1B in-flight law instead — a pinned in-flight would be wrong away from
       pp = 8 — and reports the <em>worst</em> rank, usually pp0, whose bar grows a separate
       "weights (embed/head)" segment for the 917M-param embedding.</p>
-    <dsv3-layer id="study1-layer" for="mem-widget" recipe="dsv3-fp8" recompute="attn-replay"
-      xlayers="8" xinflight="8.5"></dsv3-layer>
+    <dsv3-anatomy layer-id="study1-layer" for="mem-widget" recipe="dsv3-fp8" recompute="attn-replay"
+      xlayers="8" xinflight="8.5"></dsv3-anatomy>
     <dsv3-controls id="study-ctl" for="mem-widget" layer="study1-layer"
       bundles="dsv3-h100,nvidia-mlperf-gb300"
       fields="hardware,pp,ep,dp,zero,seqLen,globalBatch"
@@ -239,6 +252,7 @@
   </main>
   <script type="module">
     import '../src/viewer.js';
+    import '../src/anatomy.js';
     import './series.js';
     import { CFG_OVERRIDES, VARIANT_ARCH, inventory } from './02-hopper-memory.js';
     // per-rank inventory table (our model's numbers)

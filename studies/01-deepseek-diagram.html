@@ -83,7 +83,7 @@ i don't need perfect, i need done
     highlights the most important operations in the DSv3 transformer
     block:</p>
 
-    <dsv3-layer id="diagram" detail controls="static" block-only nocaption></dsv3-layer>
+    <dsv3-anatomy layer-id="diagram" detail controls="static" nocaption></dsv3-anatomy>
 
     <p>There are a few things I'm hoping to convey in this diagram:</p>
 
@@ -176,6 +176,7 @@ i don't need perfect, i need done
   </main>
   <script type="module">
     import '../src/viewer.js';
+    import '../src/anatomy.js';
     import './series.js';
     // the inline "sizes" button in the bullets drives the diagram's dims toggle
     const d = document.getElementById('diagram');

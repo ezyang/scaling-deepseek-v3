@@ -1,11 +1,11 @@
-// <dsv3-anatomy-plan layer="id">: EXPERIMENT — the top-level plan as a
-// VERTICAL margin strip in the block diagram's own visual language (same
-// box/op/wire/name/dims styling): embedding → dense block ×3 → MoE block ×58
-// → final RMSNorm → lm head → softmax/loss. No MLA/FFN/residual internals —
-// that's the block diagram's job. Clicking the dense or MoE box flips the
-// linked <dsv3-layer>'s kind (active box wears the save-yellow highlight);
-// the strip re-syncs if the layer is flipped from its own tabs.
-// Standalone module so the experiment is easy to remove.
+// The anatomy composition: <dsv3-anatomy> = a vertical margin plan
+// (<dsv3-anatomy-plan>, the top-level structure in the block diagram's own
+// visual language) beside ONE full transformer block (<dsv3-layer kindtabs>),
+// joined by a dashed expansion cone from the highlighted plan block to the
+// diagram. Clicking a plan block or a tab flips the FFN column; the two stay
+// in sync. The plan shows embedding → dense ×3 → MoE ×58 → final RMSNorm →
+// lm head → softmax/loss with parameter counts — no MLA/FFN/residual
+// internals (that's the block diagram's job).
 
 import { DSV3 } from './model.js';
 import { fmtP, tokensCss } from './viewer.js';
@@ -134,3 +134,35 @@ export class Dsv3AnatomyPlan extends HTMLElement {
   }
 }
 customElements.define('dsv3-anatomy-plan', Dsv3AnatomyPlan);
+
+// <dsv3-anatomy layer-id="..." [layer attrs...]>: the shipped composition.
+// Forwards layer attributes to an inner <dsv3-layer kindtabs block-only>
+// whose id is layer-id (so URL state, dsv3-controls layer= links, and page
+// scripts keep working). The grid breaks out of a width-capped <main> so the
+// diagram renders at natural size (it scales only below ~1330px viewports).
+const ANAT_CSS = `
+dsv3-anatomy { display: block; margin: 14px 0 26px; }
+dsv3-anatomy .anat-grid { display: grid; grid-template-columns: 186px minmax(0, 1fr);
+  gap: 0 28px; align-items: start; position: relative; left: 50%;
+  transform: translateX(-50%); width: min(1330px, calc(100vw - 32px)); }
+dsv3-anatomy dsv3-anatomy-plan { margin-top: 46px; }
+`;
+const FWD = ['controls', 'recipe', 'recompute', 'detail', 'transposed', 'for',
+  'nocaption', 'kind', 'xlayers', 'xinflight'];
+export class Dsv3Anatomy extends HTMLElement {
+  connectedCallback() {
+    const lid = this.getAttribute('layer-id') ?? ((this.id || 'anatomy') + '-layer');
+    const style = document.createElement('style'); style.textContent = ANAT_CSS;
+    const grid = document.createElement('div'); grid.className = 'anat-grid';
+    const plan = document.createElement('dsv3-anatomy-plan');
+    plan.setAttribute('layer', lid);
+    const layer = document.createElement('dsv3-layer');
+    layer.id = lid;
+    layer.setAttribute('kindtabs', '');
+    layer.setAttribute('block-only', '');
+    for (const a of FWD) if (this.hasAttribute(a)) layer.setAttribute(a, this.getAttribute(a));
+    grid.append(plan, layer);
+    this.append(style, grid);
+  }
+}
+customElements.define('dsv3-anatomy', Dsv3Anatomy);

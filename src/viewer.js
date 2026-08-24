@@ -779,7 +779,8 @@ export class Dsv3Layer extends HTMLElement {
       s.onchange = () => { this.kind = s.value; this.render(); this.changed(true); };
       return s;
     };
-    head.append('DSv3 ', mkKindSel());
+    if (this.hasAttribute('kindtabs')) head.append('DSv3 block');   // the tabs carry the flip
+    else head.append('DSv3 ', mkKindSel());
     if (this._ctl.dtype) head.append(' · precision: ');
     const preset = document.createElement('select');
     for (const name of Object.keys(RECIPES)) {

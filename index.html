@@ -23,6 +23,7 @@
     .dek { font-size: 19px; line-height: 1.45; color: #52514e; margin: 4px 0 20px; max-width: 620px; }
     code { font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; background: #f3f2ee; border-radius: 4px; padding: 1px 5px; }
     dsv3-trace, dsv3-layer, dsv3-controls, dsv3-memory, dsv3-stack { display: block; margin: 14px 0; }
+    dsv3-anatomy { display: block; margin: 14px 0; }
     .note { font-size: 13.5px; color: #52514e; max-width: 720px; }
     .posts li { margin: 8px 0; }
     .posts .tag { font-size: 12px; color: #52514e; background: #f0efe9; border-radius: 4px; padding: 1px 6px; margin-left: 6px; }
@@ -104,8 +105,7 @@
     the model.  Remember, the model here isn't the important thing: the
     important thing is teaching you how the model works, so you can build your
     own for your own model.</p>
-    <dsv3-stack id="stack-sand" for="mem-sand trace-sand" choices="0,3" dense="3"></dsv3-stack>
-    <dsv3-layer id="layer-sand" for="mem-sand trace-sand" recipe="nv-mxfp8"></dsv3-layer>
+    <dsv3-anatomy id="an-sand" layer-id="layer-sand" for="mem-sand trace-sand" recipe="nv-mxfp8"></dsv3-anatomy>
     <dsv3-controls id="ctl-sand" for="mem-sand trace-sand" layer="layer-sand" toggles
       bundles="nvidia-mlperf-gb300,dsv3-h100"
       fields="hardware,dtype,pp,ep,dp,zero,granularity,seqLen,globalBatch,dpRanksToSim,seed"
@@ -115,8 +115,7 @@
   </main>
   <script type="module">
     import './src/viewer.js';
-    import { DSV3 } from './src/model.js';
-    document.getElementById('stack-sand').setAttribute('arch', JSON.stringify(DSV3));
+    import './src/anatomy.js';
   </script>
 </body>
 

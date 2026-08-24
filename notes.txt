@@ -1,0 +1,145 @@
+  def amaia_moe_transformer_block(x, freqs, mask):
+      # x: [tokens, 7168], BF16 residual stream
+
+      # ================================================================
+      # Attention — activation-checkpointed
+      # ================================================================
+
+      attn_input = rmsnorm(x)                              # BF16 output
+
+      q_latent = fp8_linear(attn_input, Wq_a)              # MM1: 7168 → 1536
+      q_latent = rmsnorm(q_latent)
+
+      kv_packed = fp8_linear(attn_input, Wkv_a)            # MM2: 7168 → 512+64
+
+      q_heads = fp8_linear(q_latent, Wq_b)                 # MM3: 1536 → 128×192
+
+      q_partial, kv_latent, k_rope = prepare_q_and_kv_latent(
+          q_heads,
+          kv_packed,
+          freqs,
+      )
+      # reshape q_heads
+      # split q_heads → q_content[128], q_rope[64]
+      # split kv_packed → kv_latent[512], k_rope[64]
+      # broadcast k_rope over 128 heads
+      # apply RoPE to q_rope and k_rope
+      # concatenate q_content and q_rope → q_partial[192]
+
+      kv_latent = rmsnorm(kv_latent)
+
+      kv_heads = fp8_linear(kv_latent, Wkv_b)              # MM4: 512 → 128×256
+
+      q, k, v = finish_qkv(q_partial, kv_heads, k_rope)
+      # reshape kv_heads → [tokens, 128, 256]
+      # split kv_heads → k_content[128], v[128]
+      # concatenate k_content and k_rope → k[192]
+      # q = q_partial
+
+      context = flash_attention(                           # Flash Attention
+          q,                                               # [tokens, 128, 192]
+          k,                                               # [tokens, 128, 192]
+          v,                                               # [tokens, 128, 128]
+          mask,
+      )
+
+      context = flatten_heads(context)                     # 128×128 → 16384
+
+      attn_output = fp8_linear(context, Wo)                # MM5: 16384 → 7168
+
+      x_after_attn, moe_input = residual_add_rmsnorm(
+          x,
+          attn_output,
+      )
+      # x_after_attn = x + attn_output
+      # moe_input = RMSNorm(x_after_attn)
+
+      # ================================================================
+      # MoE FFN — not checkpointed at 2ceeaec
+      # ================================================================
+
+      router_logits = fp32_linear(moe_input, W_router)     # MM6: 7168 → 256
+
+      topk_idx, topk_weight, router_state = route_top8(
+          router_logits,
+      )
+      # sigmoid
+      # group selection
+      # top-k expert selection
+      # gather original probabilities
+      # normalize and scale routing weights
+
+      moe_input_fp8 = quantize_fp8_with_transpose(moe_input)
+
+      # ----------------------------------------------------------------
+      # Shared expert
+      # ----------------------------------------------------------------
+
+      shared_gate_up = fp8_grouped_gemm(                   # MM7
+          moe_input_fp8,
+          W13_shared,                                      # 7168 → 2×2048
+      )
+
+      shared_output = fused_swiglu_fp8_grouped_gemm(       # MM8
+          shared_gate_up,
+          W2_shared,                                       # 2048 → 7168
+      )
+      # SwiGLU(shared_gate_up)
+      # quantize SwiGLU output to FP8
+      # down-projection GEMM
+
+      # ----------------------------------------------------------------
+      # Routed experts
+      # ----------------------------------------------------------------
+
+      dispatched, expert_layout = dispatch_and_pack(
+          moe_input_fp8,
+          topk_idx,
+          topk_weight,
+      )
+      # DeepEP all-to-all dispatch
+      # build expert mappings
+      # expand each token into its eight expert copies
+      # arrange/transposed FP8 expert input
+
+      routed_gate_up = fp8_grouped_gemm(                   # MM9
+          dispatched,
+          W13_routed,                                      # 7168 → 2×2048
+          expert_layout,
+      )
+
+      routed_expert_output = fused_swiglu_fp8_grouped_gemm( # MM10
+          routed_gate_up,
+          W2_routed,                                       # 2048 → 7168
+          expert_layout,
+          activation_multiplier=topk_weight,
+      )
+      # SwiGLU(routed_gate_up)
+      # multiply by routing weight
+      # quantize result to FP8
+      # grouped down-projection GEMM
+
+      routed_expert_output = attach_auxiliary_losses(
+          routed_expert_output,
+          router_state,
+      )
+
+      routed_output = reduce_and_combine(
+          routed_expert_output,
+          expert_layout,
+      )
+      # sum the top-8 expert copies
+      # DeepEP all-to-all combine
+
+      moe_output = add_shared_and_routed(
+          shared_output,
+          routed_output,
+      )
+
+      moe_output = quantize_gradient_to_fp8(moe_output)
+      # Forward is an identity.
+      # Incoming backward gradient is quantized to FP8.
+
+      output = residual_add(x_after_attn, moe_output)
+
+      return output
