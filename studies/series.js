@@ -3,7 +3,7 @@
 // prev/next cards at the end of <main>. Ordering = manifest order; file slugs
 // match the visible ordinal (post N of M).
 export const SERIES = [
-  { href: '01-deepseek-diagram.html', title: 'The DeepSeek-V3 architecture' },
+  { href: '01-deepseek-diagram.html', title: 'An infra-oriented diagram of the DeepSeek-V3 architecture' },
   // published incrementally — uncomment as posts go live (keep in step with index.html's list)
   // { href: '02-hopper-memory.html', title: 'A DSv3-family MoE on 2048 H100s: memory' },
   // { href: '03-nvidia-mlperf-gb300.html', title: 'NVIDIA’s MLPerf 6.0 submitted configuration (256 × GB300)' },

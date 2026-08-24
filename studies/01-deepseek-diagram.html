@@ -4,9 +4,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>The DeepSeek-V3 architecture</title>
+  <title>An infra-oriented diagram of the DeepSeek-V3 architecture</title>
   <meta name="description" content="An infra-oriented description of the DeepSeek-V3 architecture: the kernels you actually run, their parameter counts, and what gets saved for backward.">
-  <meta property="og:title" content="The DeepSeek-V3 architecture">
+  <meta property="og:title" content="An infra-oriented diagram of the DeepSeek-V3 architecture">
   <meta property="og:description" content="An infra-oriented description of the DeepSeek-V3 architecture: the kernels you actually run, their parameter counts, and what gets saved for backward.">
   <meta property="og:type" content="article">
   <link rel="stylesheet" href="./study.css">
@@ -27,7 +27,7 @@
 
 <body>
   <main>
-    <h1>The DeepSeek-V3 architecture</h1>
+    <h1>An infra-oriented diagram of the DeepSeek-V3 architecture</h1>
 
 <!--
 
@@ -52,8 +52,7 @@ i don't need perfect, i need done
 -->
 
     <p>Before we can calculate any rooflines or look at profiles,
-    we need a basic working understanding of how the DeepSeek-V3 architecture
-    is put together.  The classic path here would be to read
+    we need a basic working understanding of the DeepSeek-V3 architecture.  The classic path here would be to read
     the <a href="https://arxiv.org/abs/2412.19437">DeepSeek-V3 Technical Report</a>
     and then look at some of the implementations of DeepSeek-V3: either the
     official <a href="https://github.com/deepseek-ai/DeepSeek-V3/blob/main/inference/model.py">inference reference</a> or a trainable implementation in <a href="https://github.com/pytorch/torchtitan/blob/main/torchtitan/models/deepseek_v3/model.py">torchtitan</a> or <a href="https://github.com/NVIDIA/Megatron-LM/blob/99a108127dc4441da2ac1b71774549bb2d841608/megatron/core/models/gpt/gpt_layer_specs.py">Megatron</a> (<a href="https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/fd5c4737f6870910e65b65c23da82f73d65af29f/src/megatron/bridge/recipes/deepseek/deepseek_v3.py">config</a>).
