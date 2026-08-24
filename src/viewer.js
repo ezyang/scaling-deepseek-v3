@@ -6,6 +6,11 @@ import { fmtUs, fmtNum, DSV3 } from './model.js';
 import { simulate, LEVELS, defaultConfig } from './sim.js';
 import { memoryUsage, resolveMatmuls, MATMULS, RECIPES } from './memory.js';
 import { blockGraph, analyze, RECOMPUTE_PRESETS } from './blockgraph.js';
+
+// parameter-count formatter for the dims parentheticals ('(29M \u00d7256)' / '(7.5B)')
+export const fmtP = (n) => n >= 1e9 ? (n / 1e9).toFixed(1) + 'B'
+  : n >= 9.95e6 ? Math.round(n / 1e6) + 'M' : n >= 1e6 ? (n / 1e6).toFixed(1) + 'M'
+  : n >= 1e3 ? (n / 1e3).toFixed(1).replace(/\.0$/, '') + 'K' : String(n);
 import { downloadTrace, openInPerfetto } from './trace.js';
 
 // shared light-card tooltip style (trace, memory bars, schematic)
@@ -641,6 +646,21 @@ export function patchTargets(forAttr, patch) {
 // Every matmul carries a dtype <select>; the chosen per-matmul precisions are
 // pushed to the widgets named in `for="id1 id2"` (memory now, rooflines later).
 const DT_STYLE = { bf16: '#52514e', mxfp8: '#2a78d6', fp32: '#9c3a96' };
+// the diagram's visual-language tokens (docs/diagram-grammar.md) — one
+// definition, scoped into each widget's stylesheet (the anatomy plan too)
+export const tokensCss = (s) => `
+${s} .wire { stroke: #898781; stroke-width: 1.2; fill: none; }
+${s} .box { fill: #fff; stroke: #c3c2b7; }
+${s} .op { fill: #f3f2ee; stroke: #e1e0d9; }
+${s} .comm { fill: #f3f1fb; stroke: #6b5bd2; }
+${s} .res { fill: #fcfcfb; stroke: #c3c2b7; stroke-dasharray: 3 2; }
+${s} .grp { fill: none; stroke: #e1e0d9; }
+${s} .name { font: 600 11px system-ui; fill: #0b0b0b; }
+${s} .dims { font: 9px system-ui; fill: #898781; }
+${s} .oplabel { font: 10.5px system-ui; fill: #52514e; }
+${s} .grplabel { font: italic 10px system-ui; fill: #898781; }
+${s} .plus { font: 600 12px system-ui; fill: #52514e; }
+`;
 const LAYER_CSS = `
 dsv3-layer { display: block; margin: 14px 0 26px; }
 .lv { font: 12px system-ui, -apple-system, "Segoe UI", sans-serif; color: #0b0b0b;
@@ -650,17 +670,7 @@ dsv3-layer { display: block; margin: 14px 0 26px; }
 .lv-head { display: flex; align-items: center; gap: 8px; padding-bottom: 6px; color: #52514e; flex-wrap: wrap; }
 .lv-head select { font: 12px system-ui; padding: 2px 6px; border: 1px solid #c3c2b7; border-radius: 4px; background: #fff; }
 .lv svg { display: block; margin: 0 auto; max-width: 100%; height: auto; }
-.lv .wire { stroke: #898781; stroke-width: 1.2; fill: none; }
-.lv .box { fill: #fff; stroke: #c3c2b7; }
-.lv .op { fill: #f3f2ee; stroke: #e1e0d9; }
-.lv .comm { fill: #f3f1fb; stroke: #6b5bd2; }
-.lv .res { fill: #fcfcfb; stroke: #c3c2b7; stroke-dasharray: 3 2; }
-.lv .grp { fill: none; stroke: #e1e0d9; }
-.lv .name { font: 600 11px system-ui; fill: #0b0b0b; }
-.lv .dims { font: 9px system-ui; fill: #898781; }
-.lv .oplabel { font: 10.5px system-ui; fill: #52514e; }
-.lv .grplabel { font: italic 10px system-ui; fill: #898781; }
-.lv .plus { font: 600 12px system-ui; fill: #52514e; }
+${tokensCss('.lv')}
 .lv select.dt { font: 600 10px system-ui; width: 100%; height: 20px; border: 1px solid #c3c2b7;
   border-radius: 3px; background: #fff; }
 .lv button.st { display: block; width: 100%; height: 18px; font: 10px system-ui; border-radius: 3px;
@@ -973,11 +983,6 @@ export class Dsv3Layer extends HTMLElement {
         try { return String(Function('"use strict";return (' + t + ')')()); } catch { return part.trim(); }
       }).join(' \u2192 ');
     };
-    // parameter-count parentheticals on the dims lines; grouped experts
-    // follow the dims toggle: factored '(29M \u00d7256)' vs total '(7.5B)'
-    const fmtP = (n) => n >= 1e9 ? (n / 1e9).toFixed(1) + 'B'
-      : n >= 9.95e6 ? Math.round(n / 1e6) + 'M' : n >= 1e6 ? (n / 1e6).toFixed(1) + 'M'
-      : n >= 1e3 ? (n / 1e3).toFixed(1).replace(/\.0$/, '') + 'K' : String(n);
     const PCNT = {
       q_up: DSV3.qRank * DSV3.heads * (DSV3.qkNope + DSV3.qkRope),
       kv_up: DSV3.kvRank * DSV3.heads * (DSV3.qkNope + DSV3.vHead),
@@ -1181,6 +1186,10 @@ export class Dsv3Layer extends HTMLElement {
     };
     const plus = (cx, y) => P.push(`<circle cx="${cx}" cy="${y}" r="9" class="box"/>` +
       `<text class="plus" x="${cx}" y="${y + 4}" text-anchor="middle">+</text>`);
+    // the dashed add box beside a + junction (residual adds, routed+shared add)
+    const addBox = (x, yMid, label, tip, w = 126) => P.push(`<g data-tip="${escAttr(tip)}">` +
+      `<rect class="res" x="${x}" y="${yMid - 11}" width="${w}" height="22" rx="4"/>` +
+      `<text class="oplabel" x="${x + 8}" y="${yMid + 4}">${label}</text></g>`);
     const grp = (x, y0, y1, label, w = W + 20) => P.push(
       `<rect class="grp" x="${x - 10}" y="${y0}" width="${w}" height="${y1 - y0}" rx="6"/>` +
       `<text class="grplabel" x="${x - 2}" y="${y0 + 11}">${label}</text>`);
@@ -1344,10 +1353,8 @@ export class Dsv3Layer extends HTMLElement {
     plus(SX1, y);
     P.push(`<path class="wire" d="M ${SX1} ${tap1} L ${RAIL1} ${tap1} L ${RAIL1} ${y} L ${SX1 - 11} ${y}" marker-end="url(#arr)"/>`);
     // the residual add is an op like any other: dashed box beside the junction
-    P.push(`<g data-tip="residual add — no FLOPs; its output x1 is what the second RMSNorm&#39;s backward reads">` +
-      `<rect class="res" x="${SX1 + 16}" y="${y - 11}" width="126" height="22" rx="4"/>` +
-      `<text class="oplabel" x="${SX1 + 24}" y="${y + 4}">residual add</text></g>` +
-      modeBtn(['x1'], SX1 + 16 + 126 - 30, y - 10));
+    addBox(SX1 + 16, y, 'residual add', "residual add — no FLOPs; its output x1 is what the second RMSNorm's backward reads");
+    P.push(modeBtn(['x1'], SX1 + 16 + 126 - 30, y - 10));
     tensorChip(['x1'], SX1 + 16, y + 15);
     x1Y = y;
     col1End = y + 46;
@@ -1430,9 +1437,7 @@ export class Dsv3Layer extends HTMLElement {
         z = Math.max(zc + gapM(['ffn_down']) + 22 + gapM(['combine']) + 13, col1End - 4);
         wire(SX2, zc, z - 11);
         plus(SX2, z);
-        P.push(`<g data-tip="residual add — x1 + the ffn output">` +
-          `<rect class="res" x="${SX2 + 26}" y="${z - 11}" width="126" height="22" rx="4"/>` +
-          `<text class="oplabel" x="${SX2 + 34}" y="${z + 4}">residual add</text></g>`);
+        addBox(SX2 + 26, z, 'residual add', 'residual add — x1 + the ffn output');
       }
     } else {
     let shBot = 0, shTop = 0;
@@ -1531,9 +1536,8 @@ export class Dsv3Layer extends HTMLElement {
       z = Math.max(z + Math.max(22, chipSpace(['combine']) + 10) + 13, col1End - 4);
       plus(SX2, z);
       wire(SX2, zc, z - 11);
-      P.push(`<g data-tip="one fused add kernel (Megatron: add_shared_and_residual) — routed output + shared output + residual x1">` +
-        `<rect class="res" x="${SX2 + 26}" y="${z - 11}" width="126" height="22" rx="4"/>` +
-        `<text class="oplabel" x="${SX2 + 34}" y="${z + 4}">residual add</text></g>`);
+      addBox(SX2 + 26, z, 'residual add',
+        'one fused add kernel (Megatron: add_shared_and_residual) — routed output + shared output + residual x1');
       }
     } else {
       // pedagogical split: (routed + shared) first, then the residual add.
@@ -1544,9 +1548,8 @@ export class Dsv3Layer extends HTMLElement {
       wire(SX2, zc, zA - 11);
       plus(SX2, zA);
       P.push(`<path class="wire" d="M ${shMid} ${shBot} L ${shMid} ${zA} L ${SX2 + 11} ${zA}" marker-end="url(#arr)"/>`);
-      P.push(`<g data-tip="routed + shared expert outputs — Megatron fuses this with the residual add (add_shared_and_residual); split here for clarity">` +
-        `<rect class="res" x="${SX2 + 26}" y="${zA - 35}" width="178" height="22" rx="4"/>` +
-        `<text class="oplabel" x="${SX2 + 34}" y="${zA - 20}">add — routed + shared</text></g>`);
+      addBox(SX2 + 26, zA - 24, 'add — routed + shared',
+        'routed + shared expert outputs — Megatron fuses this with the residual add (add_shared_and_residual); split here for clarity', 178);
       encBot = zA + 14;   // the routed+shared add is MoE-internal — inside the box
       if (ONLY === 'ffn') {
         z = zA;
@@ -1554,9 +1557,7 @@ export class Dsv3Layer extends HTMLElement {
       const zB = Math.max(zA + 34, col1End - 4);
       wire(SX2, zA + 9, zB - 11);
       plus(SX2, zB);
-      P.push(`<g data-tip="residual add — x1 + the ffn output">` +
-        `<rect class="res" x="${SX2 + 26}" y="${zB - 11}" width="126" height="22" rx="4"/>` +
-        `<text class="oplabel" x="${SX2 + 34}" y="${zB + 4}">residual add</text></g>`);
+      addBox(SX2 + 26, zB, 'residual add', 'residual add — x1 + the ffn output');
       z = zB;
       }
     }

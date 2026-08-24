@@ -7,26 +7,27 @@
 // the strip re-syncs if the layer is flipped from its own tabs.
 // Standalone module so the experiment is easy to remove.
 
-const E = 7168 * 129280;
-const fmtP = (n) => n >= 1e9 ? (n / 1e9).toFixed(1) + 'B'
-  : n >= 9.95e6 ? Math.round(n / 1e6) + 'M' : (n / 1e6).toFixed(1) + 'M';
-const MLA = 7168 * (1536 + 512 + 64) + 1536 * 128 * 192 + 512 * 128 * 256 + 128 * 128 * 7168;
-const DENSE = MLA + 3 * 7168 * 18432;
-const MOE = MLA + 257 * 3 * 7168 * 2048 + 7168 * 256;
+import { DSV3 } from './model.js';
+import { fmtP, tokensCss } from './viewer.js';
 
-// same visual vocabulary as the block diagram (LAYER_CSS)
+// per-component parameter counts, derived from the architecture
+const A = DSV3;
+const E = A.hidden * A.vocab;
+const MLA = A.hidden * (A.qRank + A.kvRank + A.qkRope)
+  + A.qRank * A.heads * (A.qkNope + A.qkRope)
+  + A.kvRank * A.heads * (A.qkNope + A.vHead)
+  + A.heads * A.vHead * A.hidden;
+const DENSE = MLA + 3 * A.hidden * A.denseInter;
+const MOE = MLA + (A.routedExperts + A.sharedExperts) * 3 * A.hidden * A.moeInter
+  + A.hidden * A.routedExperts;
+
+// the block diagram's visual-language tokens, plus the plan's own bits
 const CSS = `
 dsv3-anatomy-plan { display: block; }
 .anp { font: 12px system-ui, -apple-system, "Segoe UI", sans-serif; color: #0b0b0b; }
 .anp svg { display: block; max-width: 100%; height: auto; }
-.anp .wire { stroke: #898781; stroke-width: 1.2; fill: none; }
-.anp .box { fill: #fff; stroke: #c3c2b7; }
+${tokensCss('.anp')}
 .anp .box.on { fill: #fff8ea; stroke: #eda100; }
-.anp .op { fill: #f3f2ee; stroke: #e1e0d9; }
-.anp .name { font: 600 11px system-ui; fill: #0b0b0b; }
-.anp .dims { font: 9px system-ui; fill: #898781; }
-.anp .oplabel { font: 10.5px system-ui; fill: #52514e; }
-.anp .grplabel { font: italic 10px system-ui; fill: #898781; }
 .anp [data-kind] { cursor: pointer; }
 .anp [data-kind].on { cursor: default; }
 `;
@@ -102,18 +103,18 @@ export class Dsv3AnatomyPlan extends HTMLElement {
       y += 34;
     };
     op('embedding', `(${fmtP(E)})`);
-    wire(24, 'x · 7168');
-    blockBox('dense', 'dense block ×3', `${fmtP(DENSE)} each`);
-    wire(24, 'x · 7168');
-    blockBox('moe', 'MoE block ×58', `${fmtP(MOE)} each`);
-    wire(24, 'x · 7168');
-    op('final RMSNorm', '(7.2K)');
-    wire(24, 'norm out · 7168');
+    wire(24, `x · ${A.hidden}`);
+    blockBox('dense', `dense block ×${A.denseLayers}`, `${fmtP(DENSE)} each`);
+    wire(24, `x · ${A.hidden}`);
+    blockBox('moe', `MoE block ×${A.layers - A.denseLayers}`, `${fmtP(MOE)} each`);
+    wire(24, `x · ${A.hidden}`);
+    op('final RMSNorm', `(${fmtP(A.hidden)})`);
+    wire(24, `norm out · ${A.hidden}`);
     S.push(`<rect class="box" x="${BX}" y="${y}" width="${W}" height="34" rx="4"/>` +
       `<text class="name" x="${BX + 8}" y="${y + 14}">lm head</text>` +
-      `<text class="dims" x="${BX + 8}" y="${y + 27}">7168 → 129280 (${fmtP(E)})</text>`);
+      `<text class="dims" x="${BX + 8}" y="${y + 27}">${A.hidden} → ${A.vocab} (${fmtP(E)})</text>`);
     y += 34;
-    wire(24, 'logits · 129280');
+    wire(24, `logits · ${A.vocab}`);
     op('softmax / loss', null);
     y += 8;
     S.push(`<text class="grplabel" x="${BX}" y="${y + 12}">click a block kind — the</text>` +
