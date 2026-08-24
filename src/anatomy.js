@@ -117,9 +117,6 @@ export class Dsv3AnatomyPlan extends HTMLElement {
     wire(24, `logits · ${A.vocab}`);
     op('softmax / loss', null);
     y += 8;
-    S.push(`<text class="grplabel" x="${BX}" y="${y + 12}">click a block kind — the</text>` +
-      `<text class="grplabel" x="${BX}" y="${y + 24}">diagram flips to match;</text>` +
-      `<text class="grplabel" x="${BX}" y="${y + 36}">MTP not shown</text>`);
     const H = y + 44, WD = BX + W + 10;
     this._root.innerHTML = `<svg viewBox="0 0 ${WD} ${H}" width="${WD}" height="${H}">${S.join('')}</svg>`;
     for (const g of this._root.querySelectorAll('[data-kind]')) {

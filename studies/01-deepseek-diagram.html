@@ -70,18 +70,22 @@ i don't need perfect, i need done
         Report</a>: the transformer block with MLA (bottom) and DeepSeekMoE (top).</figcaption>
     </figure>
 
-    <p>I personally find the MLA diagram quite difficult to parse!  The difficulty is that the diagram
-    focuses on the latent spaces you are projecting between (it doesn't even have any
-    explicit indication where a matrix multiply is happening), whereas as an
-    infra person I'm more interested in knowing what kernels I am going
-    to be running and what the more expensive operations are (the ones we should
-    be optimizing, c.f., Amdahl's law.)  You <em>could</em> get this information by pointing
-    a coding agent at a training codebase.
-    But I think a schematic diagram
-    is still quite helpful, especially for visualizing data dependencies in
-    the transformer block.  Fable helped me put together this diagram which
-    highlights the most important operations in the DSv3 transformer
-    block:</p>
+    <p>I personally find the MLA diagram quite difficult to parse!  The
+    difficulty is that the diagram focuses on the latent spaces you are
+    projecting between (it doesn't even have any explicit indication where a
+    matrix multiply is happening), whereas as an infra person I'm more
+    interested in knowing what kernels I am going to be running and what the
+    more expensive operations are (the ones we should be optimizing, c.f.,
+    Amdahl's law.)  You <em>could</em> get this information by pointing a
+    coding agent at a training codebase.  But I think a schematic diagram is
+    still quite helpful, especially for visualizing data dependencies.</p>
+
+    <p>So, below is a diagram (created with assistance from Fable) which
+    lays out the entire architecture of DeepSeek-V3 in one page.  Later,
+    we'll make variations of this diagram as we compute rooflines, but for now,
+    use it as reasonably complete birds-eye view of DeepSeek-V3.  For space reasons,
+    the schematic of the dense block is hidden by default (you can toggle it
+    by pressing "dense block/FFN".)</p>
 
     <dsv3-anatomy layer-id="diagram" detail controls="static" nocaption></dsv3-anatomy>
 
@@ -122,52 +126,6 @@ i don't need perfect, i need done
         this diagram overstates how many activations you'd actually typically
         save for backwards--more on this in a future post.</li>
     </ul>
-
-    <p class="note"><em>AI disclosure:</em> the sections below are a first
-    draft written by Fable; I have edited them.</p>
-
-    <h2>Zooming out: the whole model</h2>
-
-    <p>The block above is not the only kind of layer in DeepSeek-V3.  The
-    full model looks like this:</p>
-
-    <dsv3-stack id="stack01" dense="3"></dsv3-stack>
-
-    <p>Reading left to right: an embedding table, 61 transformer blocks, and
-    then a final RMSNorm and the lm head that produces the vocabulary logits.
-    The embedding and head are separate (untied) 7168 × 129280 matrices —
-    about 927M parameters <em>each</em>, which will matter later because
-    whichever ranks hold them carry an extra ~1.8&nbsp;GiB of weights that the
-    other ranks don't.  The first <strong>3 of the 61 blocks are dense</strong>:
-    the paper does this to stabilize routing in the earliest layers, where the
-    residual stream is still forming.  The remaining 58 are the MoE block from
-    the diagram above.  (The paper also trains with a <em>multi-token
-    prediction</em> module — an extra transformer block plus projection that
-    predicts token t+2.  We're deferring MTP for now.)</p>
-
-    <h2>The dense block</h2>
-
-    <p>What does a dense block look like?  The attention half is <em>exactly</em>
-    the same — same five GEMMs, same latents, same RoPE.  The entire right-hand
-    column of MoE machinery (router, all-to-alls, 256 grouped experts, shared
-    expert) is replaced by a single wide FFN:</p>
-
-    <dsv3-layer id="dense-diagram" detail controls="static" kind="dense" block-only nocaption></dsv3-layer>
-
-    <p>The dense FFN has intermediate dimension 18432 (9× the per-expert 2048),
-    so it weighs in at 396M parameters — exactly <em>9 experts'</em> worth,
-    but every token runs through all of it.  A dense block is therefore ~584M
-    parameters total against a sparse block's ~11.5B: the three dense blocks
-    are a rounding error in the parameter budget (~1.75B of 671B), but they are
-    <em>not</em> a rounding error in per-token FLOPs, since a token activates
-    only 9 of a sparse block's 257 experts.  In fact the diagrams are the same
-    widget: use the <strong>block</strong> selector in the corner to flip either
-    one between the MoE and dense variants.</p>
-
-    <p>Parameter bookkeeping, to close the loop with the reported 671B total:
-    58 sparse blocks × ~11.5B + 3 dense blocks × ~584M + 927M embedding +
-    927M head ≈ 671B.  The per-block numbers are all readable off the grey
-    parentheticals in the diagrams above.</p>
 
     <p>That's it for this post.  These diagrams aren't earth shaking but we are going
     to return to them again and again as we start doing analyses.  For example, we
