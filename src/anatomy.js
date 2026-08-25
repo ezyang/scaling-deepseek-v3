@@ -75,6 +75,7 @@ export class Dsv3AnatomyPlan extends HTMLElement {
   }
   draw() {
     const kind = this.layerEl()?.kind ?? 'moe';
+    const AV = !!this.layerEl()?.activeView;   // the tally's active/token toggle
     const S = [];
     S.push(`<defs><marker id="planarr" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto-start-reverse">` +
       `<path d="M 0 0 L 8 4 L 0 8 z" fill="#898781"/></marker></defs>`);
@@ -101,11 +102,11 @@ export class Dsv3AnatomyPlan extends HTMLElement {
         `<text class="dims" x="${BX + 8}" y="${y + 27}">${dims}</text></g>`);
       y += 34;
     };
-    op('embedding', `(${fmtP(E)})`, 22, 'embed');
+    op('embedding', AV ? '(not counted)' : `(${fmtP(E)})`, 22, 'embed');
     wire(24, `x · ${A.hidden}`);
     blockBox('dense', `dense block ×${A.denseLayers}`, `${fmtP(DENSE)} each`);
     wire(24, `x · ${A.hidden}`);
-    blockBox('moe', `MoE block ×${A.layers - A.denseLayers}`, `${fmtP(MOE)} each`);
+    blockBox('moe', `MoE block ×${A.layers - A.denseLayers}`, `${fmtP(AV ? PARAMS.activeMoeBlock : MOE)} each`);
     wire(24, `x · ${A.hidden}`);
     op('final RMSNorm', `(${fmtP(A.hidden)})`, 22, 'final_norm');
     wire(24, `norm out · ${A.hidden}`);
@@ -407,7 +408,11 @@ export class Dsv3ParamTally extends HTMLElement {
       b.onclick = () => {
         if (this._mode === b.dataset.mode) return;
         this._mode = b.dataset.mode;
-        layer()?.highlightOps?.(null);
+        const l = layer();
+        if (l) {   // the diagram's parentheticals follow the toggle
+          l.activeView = this._mode === 'active';
+          l.highlightOps?.(null); l.render(); l.changed(true);
+        }
         plan()?.highlightOps?.(null);
         this.build();
       };

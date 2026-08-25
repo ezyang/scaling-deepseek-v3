@@ -149,24 +149,22 @@ i don't need perfect, i need done
     <div class="fnotes">
       <p class="note" id="fn1"><sup>1</sup> I used Fable and Sol to cross-check the
       parameter counts against the official published DeepSeek-V3
-      <a href="https://huggingface.co/deepseek-ai/DeepSeek-V3/blob/main/model.safetensors.index.json">checkpoint index</a>.  Two things in the checkpoint are excluded from the
-      tally: the auxiliary <strong>MTP module</strong> (stored as layer 61;
+      <a href="https://huggingface.co/deepseek-ai/DeepSeek-V3/blob/main/model.safetensors.index.json">checkpoint index</a>.  In our parameter count, we excluded the <strong>MTP module</strong> (stored as layer 61;
       <strong>11,610,061,056</strong> parameters unique to it, since it shares the
       embedding and output head with the main model), and the FP8
       <code>weight_scale_inv</code> tensors, which are quantization metadata rather
-      than model parameters.  Everything that remains — the embedding, layers
-      0–60, the final norm, and the LM head — totals exactly
-      <strong>671,026,419,200</strong> parameters.  This follows DeepSeek's
-      <a href="https://huggingface.co/deepseek-ai/DeepSeek-V3/blob/main/README_WEIGHTS.md">weight-structure documentation</a>.
+      than model parameters.  Everything that remains totals to exactly
+      <strong>671,026,419,200</strong> parameters, matching the advertised
+      671B total.
       Separately, we need to define "active parameter" for the purpose
-      of this calculation: we count the parameters on the computation path
+      of this calculation. We count the parameters on the computation path
       executed for one token: eight routed experts plus the shared expert, the
       full router, and the full output head.  Vocabulary matrices are not treated
       consistently across the MoE literature, so we follow DeepSeek's own
-      corrected
-      accounting: the input embedding is a lookup and is not counted, while the
-      output head counts in full--this gives exactly <strong>36,625,618,432</strong>
-      activated parameters, matching the advertised 37B active.
+      corrected accounting: the input embedding is a lookup and is not
+      counted, while the output head counts in full--this gives exactly
+      <strong>36,625,618,432</strong> activated parameters, matching the
+      advertised 37B active.
       <a href="#fnref1">↩</a></p>
     </div>
   </main>

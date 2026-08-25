@@ -1030,8 +1030,10 @@ export class Dsv3Layer extends HTMLElement {
         ffn_gate_up: DSV3.hidden * 2 * DSV3.denseInter,
         ffn_down: DSV3.denseInter * DSV3.hidden,
       } : {
-        ffn_gate_up: [DSV3.hidden * 2 * DSV3.moeInter, DSV3.routedExperts],
-        ffn_down: [DSV3.moeInter * DSV3.hidden, DSV3.routedExperts],
+        // active view: only the fired experts count (top-k; the shared expert
+        // has its own boxes)
+        ffn_gate_up: [DSV3.hidden * 2 * DSV3.moeInter, this.activeView ? DSV3.topk : DSV3.routedExperts],
+        ffn_down: [DSV3.moeInter * DSV3.hidden, this.activeView ? DSV3.topk : DSV3.routedExperts],
       }),
       lm_head: DSV3.hidden * DSV3.vocab,
     };
@@ -1050,15 +1052,18 @@ export class Dsv3Layer extends HTMLElement {
     const CUM = !!this.cumulative;
     // cumulative is always shown multiplied out — factored ×256 ×58 chains
     // are noise; the sizes toggle keeps governing dims and per-block factoring
-    const pk = (n, noK = false) =>
-      CUM && !noK ? ` (${fmtP(n * KMUL)})` : ` (${fmtP(n)})`;
+    const pk = (n, noK = false) => {
+      const v = CUM && !noK ? fmtP(n * KMUL) : fmtP(n);
+      return PONLY ? ` ${v}` : ` (${v})`;   // paramsonly: no parens — params are the only numbers left
+    };
     const pstr = (id) => {
       const p = PCNT[id];
       if (!p) return '';
       const tot = (Array.isArray(p) ? p[0] * p[1] : p);
-      if (CUM && id !== 'lm_head') return ` (${fmtP(tot * KMUL)})`;
-      if (Array.isArray(p)) return this.flatDims ? ` (${fmtP(tot)})` : ` (${fmtP(p[0])} \u00d7${p[1]})`;
-      return ` (${fmtP(p)})`;
+      const wrap = (str) => PONLY ? ` ${str}` : ` (${str})`;
+      if (CUM && id !== 'lm_head') return wrap(fmtP(tot * KMUL));
+      if (Array.isArray(p)) return this.flatDims ? wrap(fmtP(tot)) : wrap(`${fmtP(p[0])} \u00d7${p[1]}`);
+      return wrap(fmtP(p));
     };
     const dt = (id) => this.matmuls[id];
     const marks = this._ctl.quant ? this.marks : {};   // static: save everything
@@ -1455,7 +1460,7 @@ export class Dsv3Layer extends HTMLElement {
       };
       if (!this.cumulative) {   // cumulative mode: the plan selector alone carries the kind
         P.push(tab(C2 + 42, 148, 'dense', 'dense FFN', `×${DSV3.denseLayers ?? 3} · ${fmtP(PARAMS.denseFfnBlk)}`) +
-          tab(C2 + 198, 168, 'moe', 'MoE FFN', `×${DSV3.layers - (DSV3.denseLayers ?? 3)} · ${fmtP(PARAMS.moeFfnBlk)}`));
+          tab(C2 + 198, 168, 'moe', 'MoE FFN', `×${DSV3.layers - (DSV3.denseLayers ?? 3)} · ${fmtP(this.activeView ? PARAMS.activeMoeFfnBlk : PARAMS.moeFfnBlk)}`));
       }
     };
     const norm2Top = z;
@@ -1591,11 +1596,14 @@ export class Dsv3Layer extends HTMLElement {
     }
     // group tally like the MLA label/tabs; the routing description (top-8 of
     // 256) lives on the router/dispatch boxes, not here
-    grp(C2, g2, z + 5, DET
-      ? (CUM ? `routed experts · ${fmtP(PARAMS.expert * DSV3.routedExperts * KMUL)}`
-             : `routed experts ×${DSV3.routedExperts} · ${fmtP(PARAMS.expert)}`)
-      : (CUM ? `experts · ${fmtP(PARAMS.expert * (DSV3.routedExperts + DSV3.sharedExperts) * KMUL)}`
-             : `experts ×${DSV3.routedExperts + DSV3.sharedExperts} · ${fmtP(PARAMS.expert)}`));
+    {
+      const nR = this.activeView ? DSV3.topk : DSV3.routedExperts;   // fired vs resident
+      grp(C2, g2, z + 5, DET
+        ? (CUM ? `routed experts · ${fmtP(PARAMS.expert * nR * KMUL)}`
+               : `routed experts ×${nR} · ${fmtP(PARAMS.expert)}`)
+        : (CUM ? `experts · ${fmtP(PARAMS.expert * (nR + DSV3.sharedExperts) * KMUL)}`
+               : `experts ×${nR + DSV3.sharedExperts} · ${fmtP(PARAMS.expert)}`));
+    }
     z = wireOut(['ffn_down'], SX2, z + 5);
     z = opNode('combine', DET ? 'a2a combine (comm + unpermute · sum)' : 'a2a combine (weighted by router)', C2, z, 'comm');
     // combine's output wire runs all the way into the x2 add; the add itself
