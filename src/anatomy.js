@@ -139,11 +139,11 @@ export class Dsv3AnatomyPlan extends HTMLElement {
     this.applyHl();
     requestAnimationFrame(() => this.expansion());   // measure after layout settles
   }
-  highlightOps(ids) { this._hl = new Set(ids ?? []); this.applyHl(); }
+  highlightOps(ids) { this._hl = ids ? new Set(ids) : null; this.applyHl(); }  // null clears, [] fades all
   applyHl() {
     for (const g of this._root.querySelectorAll('[data-op]'))
       g.classList.toggle('hl', this._hl?.has(g.dataset.op) ?? false);
-    this._root.querySelector('svg')?.classList.toggle('hlm', !!this._hl?.size);
+    this._root.querySelector('svg')?.classList.toggle('hlm', !!this._hl);
   }
 }
 customElements.define('dsv3-anatomy-plan', Dsv3AnatomyPlan);
@@ -220,11 +220,11 @@ const TALLY_ROWS = [
   { label: 'dense block', kind: 'dense',
     ops: [...MLA_OPS, 'ffn_gate_up', 'ffn_down', 'norm2'], plan: ['block-dense'],
     formula: `attn qkv ${fmtP(Q.attnQkv)} + attn out ${fmtP(Q.attnOut)} + ffn ${fmtP(Q.denseFfn)} + norms ${fmtP(Q.normsBlk)}`,
-    per: DENSE, count: A.denseLayers, mult: `× ${A.denseLayers}` },
+    per: DENSE, count: A.denseLayers, mult: `× ${A.denseLayers} blocks` },
   { label: 'MoE block', kind: 'moe',
     ops: [...MLA_OPS, 'router', 'ffn_gate_up', 'ffn_down', 'shared', 'norm2'], plan: ['block-moe'],
     formula: `attn qkv ${fmtP(Q.attnQkv)} + attn out ${fmtP(Q.attnOut)} + experts ${fmtP(Q.expert)} × (${A.routedExperts} routed + ${A.sharedExperts} shared) + router ${fmtP(T.router)} + norms ${fmtP(Q.normsBlk)}`,
-    per: MOE, count: A.layers - A.denseLayers, mult: `× ${A.layers - A.denseLayers}` },
+    per: MOE, count: A.layers - A.denseLayers, mult: `× ${A.layers - A.denseLayers} blocks` },
   { label: 'final RMSNorm', kind: null, ops: [], plan: ['final_norm'],
     formula: `${A.hidden}`, per: A.hidden, count: 1, mult: '× 1' },
   { label: 'lm head', kind: null, ops: ['lm_head'], plan: ['lm_head'],
@@ -251,8 +251,8 @@ dsv3-param-tally { display: block; margin: 14px 0; }
 .ptal.compact td { padding: 3px 6px 3px 7px; }
 .ptal.compact .formula { font-size: 10px; display: block; }
 .ptal.compact .note { font-size: 10px; font-style: italic; }
-.ptal.compact .fx { display: none; }
-.ptal.compact tr.sel .fx { display: block; color: #52514e; }
+.ptal.compact .fxout { min-height: 52px; padding: 4px 0 0 7px; font-size: 10px;
+  color: #52514e; line-height: 1.4; }   /* fixed slot: selecting never reflows */
 `;
 export class Dsv3ParamTally extends HTMLElement {
   connectedCallback() {
@@ -267,13 +267,13 @@ export class Dsv3ParamTally extends HTMLElement {
         `<th>copies</th><th style="text-align:right">total</th></tr></thead>`) +
       `<tbody>` +
       TALLY_ROWS.map((r, i) => compact
-        ? `<tr data-row="${i}"><td>${r.label}<span class="formula">${fmtP(r.per)} ${r.mult}</span>` +
-          `<span class="formula fx">= ${r.formula}</span></td>` +
+        ? `<tr data-row="${i}"><td>${r.label}<span class="formula">${fmtP(r.per)} ${r.mult}</span></td>` +
           `<td class="num">${fmtP(r.per * r.count)}</td></tr>`
         : `<tr data-row="${i}"><td>${r.label}</td>` +
           `<td><span class="formula">${r.formula} =</span> ${fmtP(r.per)}</td>` +
           `<td>${r.mult}</td><td class="num">${fmtP(r.per * r.count)}</td></tr>`).join('') +
       `</tbody><tfoot><tr><td${compact ? '' : ' colspan="3"'}>total</td><td class="num">${fmtP(total)}</td></tr></tfoot></table>` +
+      (compact ? `<div class="fxout"></div>` : '') +
       `<div class="note">${compact
         ? 'click a row to highlight what it sums · MTP omitted'
         : 'click a row to highlight the diagram cells it sums · only the MTP module is omitted'}</div>`;
@@ -290,8 +290,10 @@ export class Dsv3ParamTally extends HTMLElement {
           l.kind = r.kind; l.render(); l.changed(true);
         }
         tr.classList.toggle('sel', on);
-        l?.highlightOps?.(on ? r.ops : []);
-        plan()?.highlightOps?.(on ? r.plan : []);
+        const fx = root.querySelector('.fxout');
+        if (fx) fx.textContent = on ? `= ${r.formula}` : '';
+        l?.highlightOps?.(on ? r.ops : null);
+        plan()?.highlightOps?.(on ? r.plan : null);
       };
     }
   }

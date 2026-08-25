@@ -690,7 +690,7 @@ ${tokensCss('.lv')}
 .lv .tsave { fill: #7a5200; font-weight: 600; }
 .lv .tdim { fill: #898781; font-weight: 400; }
 .lv .micro { fill: #f7f6f1; stroke: #d8d6cb; }
-.lv svg.hlm > :not(.hl):not(defs):not([data-kind]) { opacity: 0.3; }
+.lv svg.hlm > :not(.hl):not(defs) { opacity: 0.3; }
 .lv g[data-op].hl .dims { fill: #52514e; font-weight: 600; }
 .lv .microlabel { font: italic 10px system-ui; fill: #52514e; }
 .lv .tredo { fill: #52514e; font-style: italic; }
@@ -963,12 +963,14 @@ export class Dsv3Layer extends HTMLElement {
   }
   // spreadsheet-style highlighting: mark the boxes whose parameters a
   // clicked tally row sums (dsv3-param-tally drives this)
-  highlightOps(ids) { this._hl = new Set(ids ?? []); this.applyHl(); }
+  // ids = null clears; ids = [] fades EVERYTHING (a selected sum with no
+  // cells in this diagram — e.g. the embedding row greys the block out)
+  highlightOps(ids) { this._hl = ids ? new Set(ids) : null; this.applyHl(); }
   applyHl() {
     for (const g of this.querySelectorAll('[data-op]'))
       g.classList.toggle('hl', this._hl?.has(g.dataset.op) ?? false);
     // tab visual language: selected cells keep full contrast, the rest fades
-    this.querySelector('svg')?.classList.toggle('hlm', !!this._hl?.size);
+    this.querySelector('svg')?.classList.toggle('hlm', !!this._hl);
   }
   buildSvg(ana, anaM = null) {
     const P = [];
