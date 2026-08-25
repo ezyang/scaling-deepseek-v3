@@ -211,7 +211,7 @@ const TALLY_ROWS = [
       { t: `attn out ${fmtP(Q.attnOut)}`, ops: ['o_proj'] },
       { t: `experts ${fmtP(Q.expert)} × (${A.routedExperts} routed + ${A.sharedExperts} shared)`, ops: ['ffn_gate_up', 'ffn_down', 'shared'] },
       { t: `router ${fmtP(T.routerWeight)}`, ops: ['router'] },
-      { t: `correction bias ${T.routerBias}`, ops: ['router'] },
+      { t: `correction bias ${T.routerBias}`, ops: ['router_bias'] },
       { t: `norms ${fmtP(Q.normsBlk)}`, ops: NORM_OPS },
     ],
     per: MOE, count: A.layers - A.denseLayers, mult: `× ${A.layers - A.denseLayers} blocks`,
@@ -221,7 +221,7 @@ const TALLY_ROWS = [
         { t: `attn out ${fmtP(Q.attnOut)}`, ops: ['o_proj'] },
         { t: `experts ${fmtP(Q.expert)} × (${A.topk} active + ${A.sharedExperts} shared)`, ops: ['ffn_gate_up', 'ffn_down', 'shared'] },
         { t: `router ${fmtP(T.routerWeight)}`, ops: ['router'] },
-        { t: `correction bias ${T.routerBias}`, ops: ['router'] },
+        { t: `correction bias ${T.routerBias}`, ops: ['router_bias'] },
         { t: `norms ${fmtP(Q.normsBlk)}`, ops: NORM_OPS },
       ] } },
   { label: 'final RMSNorm', kind: null, plan: ['final_norm'],
@@ -313,11 +313,13 @@ export class Dsv3ParamTally extends HTMLElement {
     const rowOf = (st) => rows[st.ri];
     const opsOf = (st) => st.ti == null ? rowOf(st).ops : rowOf(st).terms[st.ti].ops;
     const termsHtml = (r) => r.terms.map((t, i) => `<span class="fterm" data-t="${i}">${t.t}</span>`).join(' + ');
-    const wireTerms = (container, ri) => {
+    const wireTerms = (container, ri, inRow = true) => {
       for (const sp of container.querySelectorAll('.fterm')) {
         const ti = +sp.dataset.t;
         sp.onmouseenter = () => { state.hover = { ri, ti }; apply(); };
-        sp.onmouseleave = () => { state.hover = { ri, ti: null }; apply(); };   // still on the row
+        // fxout terms are NOT on a row: leaving must clear the hover, or the
+        // pinned term's highlight is masked by a stranded row-level hover
+        sp.onmouseleave = () => { state.hover = inRow ? { ri, ti: null } : null; apply(); };
         sp.onclick = (ev) => {
           ev.stopPropagation();
           if (state.pin?.ri === ri && state.pin?.ti === ti) state.pin = { ri, ti: null };  // unpin term, keep row
@@ -344,7 +346,7 @@ export class Dsv3ParamTally extends HTMLElement {
         if (fx.dataset.ri !== want) {
           fx.dataset.ri = want;
           fx.innerHTML = want === '' ? '' : `= ${termsHtml(rowOf(show))}`;
-          if (want !== '') wireTerms(fx, show.ri);
+          if (want !== '') wireTerms(fx, show.ri, false);
         }
       }
       for (const sp of root.querySelectorAll('.fterm')) {
@@ -367,18 +369,23 @@ export class Dsv3ParamTally extends HTMLElement {
     const tip = document.createElement('div'); tip.className = 'ptip';
     root.append(tip);
     let tipPin = false;
-    const showTip = (sp) => {
+    // cursor-anchored (offsetLeft/Top of inline spans in table cells lands
+    // far from the pointer): position from the mouse event, following it
+    // while unpinned
+    const showTip = (sp, ev) => {
       tip.textContent = Number(sp.dataset.v).toLocaleString('en-US');
-      tip.style.left = Math.max(0, sp.offsetLeft - 8) + 'px';
-      tip.style.top = (sp.offsetTop + 16) + 'px';
+      const r = root.getBoundingClientRect();
+      tip.style.left = Math.max(0, ev.clientX - r.left + 12) + 'px';
+      tip.style.top = (ev.clientY - r.top + 14) + 'px';
       tip.style.display = 'block';
     };
     for (const sp of root.querySelectorAll('.pnum')) {
-      sp.onmouseenter = () => { if (!tipPin) showTip(sp); };
+      sp.onmouseenter = (ev) => { if (!tipPin) showTip(sp, ev); };
+      sp.onmousemove = (ev) => { if (!tipPin) showTip(sp, ev); };
       sp.onmouseleave = () => { if (!tipPin) tip.style.display = 'none'; };
       sp.onclick = (ev) => {
         ev.stopPropagation();
-        tipPin = true; showTip(sp);
+        tipPin = true; showTip(sp, ev);
         const tr = sp.closest('tbody tr');
         if (tr) pinTo(+tr.dataset.row, null);   // pin the highlights too
         apply();

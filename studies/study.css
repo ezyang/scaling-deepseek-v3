@@ -30,6 +30,11 @@
 .series-nav .up { flex: 0 0 auto; justify-content: center; text-align: center; }
 h3 { font-size: 16.5px; margin: 30px 0 6px; }
 
+/* end-of-post footnotes */
+.fnotes { border-top: 1px solid #e1e0d9; margin-top: 36px; padding-top: 10px; }
+.fnotes p { max-width: 760px; }
+sup a { text-decoration: none; }
+
 /* margin notes (Tufte-style, CSS-only). Usage, inside a <p>:
      ... claim<span class="mn-ref"></span><span class="mn">the note text</span> ...
    The ref renders a superscript number; the note floats into the right

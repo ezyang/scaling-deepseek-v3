@@ -1035,6 +1035,7 @@ export class Dsv3Layer extends HTMLElement {
       lm_head: DSV3.hidden * DSV3.vocab,
     };
     const exactParam = (id) => {
+      if (id === 'router_bias') return PARAMS.routerBias;
       if (id === 'norm1' || id === 'norm2') return DSV3.hidden;
       if (id === 'q_norm') return DSV3.qRank;
       if (id === 'kv_norm') return DSV3.kvRank;
@@ -1443,8 +1444,7 @@ export class Dsv3Layer extends HTMLElement {
           `L ${x + w - r} ${y0} Q ${x + w} ${y0} ${x + w} ${y0 + r} L ${x + w} ${y1}`;
         return `<g data-kind="${kind}" style="cursor:${on ? 'default' : 'pointer'}">` +
           (on
-            ? `<path d="${shape} Z" fill="#fcfcfb" stroke="none" transform="translate(0,1.6)"/>` +
-              `<path d="${shape} Z" fill="#fcfcfb" stroke="none"/>` +
+            ? `<path d="${shape} Z" fill="#fcfcfb" stroke="none"/>` +
               `<path d="${shape}" fill="none" stroke="#c3c2b7"/>`
             : `<path d="${shape} Z" fill="#eeede7" stroke="#d8d6cb"/>`) +
           `<text x="${x + 10}" y="${y0 + 17}" style="font:600 11px system-ui" fill="${on ? '#0b0b0b' : '#898781'}">${label}` +
@@ -1537,7 +1537,7 @@ export class Dsv3Layer extends HTMLElement {
       gateTop = z + 9;
       z = micro('sigmoid · +bias · group top-k · scale', C2, z, W,
         `the learned e_score_correction_bias affects expert selection but not the gating weights\nparameters: ${PARAMS.routerBias.toLocaleString('en-US')}`,
-        pk(PARAMS.routerBias).trim(), 'router');
+        pk(PARAMS.routerBias).trim(), 'router_bias');
       P.push(`<path class="wire" d="M ${C2 + W} ${gateTop} L ${gateX} ${gateTop}"/>` +
         `<text class="tensor tidle" x="${C2 + 198}" y="${z + 11}">top-k weights · 8</text>`);
     }
@@ -1653,8 +1653,17 @@ export class Dsv3Layer extends HTMLElement {
       // of kind (the MoE footprint) so it doesn't move across flips. In
       // cumulative mode the tabs are hidden, so the border goes too (the
       // reserved space stays — flip stability).
-      P[P.indexOf('__ENC__')] = this.cumulative ? '' :
-        `<rect x="${C2 - 14}" y="${encTop}" width="${(DET ? 500 : 385) + 14}" height="${encBot - encTop}" rx="8" fill="#fcfcfb" stroke="#c3c2b7"/>`;
+      {
+        const x0 = C2 - 14, x1 = x0 + (DET ? 500 : 385) + 14, y0 = encTop, y1 = encBot, r = 8;
+        // active tab footprint: the outline leaves a gap there instead of an
+        // opaque eraser (which bleeds the border through when the tab fades)
+        const [tx, tw] = this.kind === 'dense' ? [C2 + 42, 148] : [C2 + 198, 168];
+        P[P.indexOf('__ENC__')] = this.cumulative ? '' :
+          `<rect x="${x0}" y="${y0}" width="${x1 - x0}" height="${y1 - y0}" rx="${r}" fill="#fcfcfb" stroke="none"/>` +
+          `<path d="M ${tx + tw} ${y0} L ${x1 - r} ${y0} Q ${x1} ${y0} ${x1} ${y0 + r} L ${x1} ${y1 - r} ` +
+          `Q ${x1} ${y1} ${x1 - r} ${y1} L ${x0 + r} ${y1} Q ${x0} ${y1} ${x0} ${y1 - r} ` +
+          `L ${x0} ${y0 + r} Q ${x0} ${y0} ${x0 + r} ${y0} L ${tx} ${y0}" fill="none" stroke="#c3c2b7"/>`;
+      }
     }
     }  // end FFN column (skipped in only="mla" mode)
     const col2End = ONLY === 'mla' ? 0 : z + 42;   // room for the add label under the plus
