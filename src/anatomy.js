@@ -185,23 +185,43 @@ customElements.define('dsv3-anatomy', Dsv3Anatomy);
 // plan. RMSNorm weights are counted; only the MTP module is omitted.
 const T = PARAMS, Q = PARAMS;
 
-const MLA_OPS = ['qkv_down', 'q_up', 'kv_up', 'o_proj', 'norm1', 'q_norm', 'kv_norm'];
+// each formula TERM carries the diagram cells it covers, so hovering a
+// variable in the equation highlights exactly its boxes; a row's cells are
+// the union of its terms'
+const ATTN_QKV_OPS = ['qkv_down', 'q_up', 'kv_up'];
+const NORM_OPS = ['norm1', 'q_norm', 'kv_norm', 'norm2'];
 const TALLY_ROWS = [
-  { label: 'embedding', kind: null, ops: [], plan: ['embed'],
-    formula: `${A.hidden} × ${A.vocab}`, per: E, count: 1, mult: '× 1' },
-  { label: 'dense block', kind: 'dense',
-    ops: [...MLA_OPS, 'ffn_gate_up', 'ffn_down', 'norm2'], plan: ['block-dense'],
-    formula: `attn qkv ${fmtP(Q.attnQkv)} + attn out ${fmtP(Q.attnOut)} + ffn ${fmtP(Q.denseFfn)} + norms ${fmtP(Q.normsBlk)}`,
+  { label: 'embedding', kind: null, plan: ['embed'],
+    terms: [{ t: `${A.hidden} × ${A.vocab}`, ops: [] }],
+    per: E, count: 1, mult: '× 1' },
+  { label: 'dense block', kind: 'dense', plan: ['block-dense'],
+    terms: [
+      { t: `attn qkv ${fmtP(Q.attnQkv)}`, ops: ATTN_QKV_OPS },
+      { t: `attn out ${fmtP(Q.attnOut)}`, ops: ['o_proj'] },
+      { t: `ffn ${fmtP(Q.denseFfn)}`, ops: ['ffn_gate_up', 'ffn_down'] },
+      { t: `norms ${fmtP(Q.normsBlk)}`, ops: NORM_OPS },
+    ],
     per: DENSE, count: A.denseLayers, mult: `× ${A.denseLayers} blocks` },
-  { label: 'MoE block', kind: 'moe',
-    ops: [...MLA_OPS, 'router', 'ffn_gate_up', 'ffn_down', 'shared', 'norm2'], plan: ['block-moe'],
-    formula: `attn qkv ${fmtP(Q.attnQkv)} + attn out ${fmtP(Q.attnOut)} + experts ${fmtP(Q.expert)} × (${A.routedExperts} routed + ${A.sharedExperts} shared) + router ${fmtP(T.router)} + norms ${fmtP(Q.normsBlk)}`,
+  { label: 'MoE block', kind: 'moe', plan: ['block-moe'],
+    terms: [
+      { t: `attn qkv ${fmtP(Q.attnQkv)}`, ops: ATTN_QKV_OPS },
+      { t: `attn out ${fmtP(Q.attnOut)}`, ops: ['o_proj'] },
+      { t: `experts ${fmtP(Q.expert)} × (${A.routedExperts} routed + ${A.sharedExperts} shared)`, ops: ['ffn_gate_up', 'ffn_down', 'shared'] },
+      { t: `router ${fmtP(T.router)}`, ops: ['router'] },
+      { t: `norms ${fmtP(Q.normsBlk)}`, ops: NORM_OPS },
+    ],
     per: MOE, count: A.layers - A.denseLayers, mult: `× ${A.layers - A.denseLayers} blocks` },
-  { label: 'final RMSNorm', kind: null, ops: [], plan: ['final_norm'],
-    formula: `${A.hidden}`, per: A.hidden, count: 1, mult: '× 1' },
-  { label: 'lm head', kind: null, ops: ['lm_head'], plan: ['lm_head'],
-    formula: `${A.hidden} × ${A.vocab}`, per: E, count: 1, mult: '× 1' },
+  { label: 'final RMSNorm', kind: null, plan: ['final_norm'],
+    terms: [{ t: `${A.hidden}`, ops: [] }],
+    per: A.hidden, count: 1, mult: '× 1' },
+  { label: 'lm head', kind: null, plan: ['lm_head'],
+    terms: [{ t: `${A.hidden} × ${A.vocab}`, ops: ['lm_head'] }],
+    per: E, count: 1, mult: '× 1' },
 ];
+for (const r of TALLY_ROWS) {
+  r.ops = [...new Set(r.terms.flatMap(t => t.ops))];
+  r.formula = r.terms.map(t => t.t).join(' + ');
+}
 const TALLY_CSS = `
 dsv3-param-tally { display: block; margin: 14px 0; }
 .ptal { font: 13.5px system-ui, -apple-system, "Segoe UI", sans-serif; color: #0b0b0b; }
@@ -212,6 +232,8 @@ dsv3-param-tally { display: block; margin: 14px 0; }
 .ptal td.num { text-align: right; padding-right: 0; white-space: nowrap; }
 .ptal .title, .ptal .note { padding-left: 7px; }
 .ptal .formula { color: #898781; font-size: 12.5px; }
+.ptal .fterm { border-bottom: 1px dotted #c3c2b7; }
+.ptal tr.sel .fterm:hover, .ptal .fxout .fterm:hover { color: #0b0b0b; border-bottom-color: #52514e; }
 .ptal tbody tr { cursor: pointer; }
 .ptal tbody tr:hover { background: #f7f6f1; }
 .ptal tbody tr.sel { background: #fff; box-shadow: inset 3px 0 0 #52514e; }
@@ -242,7 +264,7 @@ export class Dsv3ParamTally extends HTMLElement {
         ? `<tr data-row="${i}"><td>${r.label}<span class="formula">${fmtP(r.per)} ${r.mult}</span></td>` +
           `<td class="num">${fmtP(r.per * r.count)}</td></tr>`
         : `<tr data-row="${i}"><td>${r.label}</td>` +
-          `<td><span class="formula">${r.formula} =</span> ${fmtP(r.per)}</td>` +
+          `<td><span class="formula">${r.terms.map((t, j) => `<span class="fterm" data-t="${j}">${t.t}</span>`).join(' + ')} =</span> ${fmtP(r.per)}</td>` +
           `<td>${r.mult}</td><td class="num">${fmtP(r.per * r.count)}</td></tr>`).join('') +
       `</tbody><tfoot><tr><td${compact ? '' : ' colspan="3"'}>total</td><td class="num">${fmtP(total)}</td></tr></tfoot></table>` +
       (compact ? `<div class="fxout"></div>` : '') +
@@ -253,8 +275,17 @@ export class Dsv3ParamTally extends HTMLElement {
     const lid = this.getAttribute('layer-id') ?? '';
     const layer = () => document.getElementById(lid);
     const plan = () => document.querySelector(`dsv3-anatomy-plan[layer="${lid}"]`);
+    // hovering a formula variable narrows the highlight to just its cells
+    const wireTerms = (container, r) => {
+      for (const sp of container.querySelectorAll('.fterm')) {
+        sp.onmouseenter = () => layer()?.highlightOps?.(r.terms[+sp.dataset.t].ops);
+        sp.onmouseleave = () => layer()?.highlightOps?.(r.ops);
+      }
+    };
+    const termsHtml = (r) => r.terms.map((t, i) => `<span class="fterm" data-t="${i}">${t.t}</span>`).join(' + ');
     for (const tr of root.querySelectorAll('tbody tr')) {
-      tr.onclick = () => {
+      tr.onclick = (ev) => {
+        if (ev.target.closest('.fterm') && tr.classList.contains('sel')) return;  // term hover, not a toggle
         const r = TALLY_ROWS[+tr.dataset.row], on = !tr.classList.contains('sel');
         for (const t of root.querySelectorAll('tr.sel')) t.classList.remove('sel');
         const l = layer();
@@ -263,10 +294,21 @@ export class Dsv3ParamTally extends HTMLElement {
         }
         tr.classList.toggle('sel', on);
         const fx = root.querySelector('.fxout');
-        if (fx) fx.textContent = on ? `= ${r.formula}` : '';
+        if (fx) {
+          fx.innerHTML = on ? `= ${termsHtml(r)}` : '';
+          if (on) wireTerms(fx, r);
+        }
         l?.highlightOps?.(on ? r.ops : null);
         plan()?.highlightOps?.(on ? r.plan : null);
       };
+    }
+    // full-table formula terms hover-highlight while their row is selected
+    for (const tr of root.querySelectorAll('tbody tr')) {
+      const r = TALLY_ROWS[+tr.dataset.row];
+      for (const sp of tr.querySelectorAll('.fterm')) {
+        sp.onmouseenter = () => { if (tr.classList.contains('sel')) layer()?.highlightOps?.(r.terms[+sp.dataset.t].ops); };
+        sp.onmouseleave = () => { if (tr.classList.contains('sel')) layer()?.highlightOps?.(r.ops); };
+      }
     }
   }
 }
