@@ -147,7 +147,7 @@ dsv3-anatomy .anat-grid { display: grid; grid-template-columns: 186px minmax(0, 
 dsv3-anatomy dsv3-anatomy-plan { margin-top: 46px; }
 `;
 const FWD = ['controls', 'recipe', 'recompute', 'detail', 'transposed', 'for',
-  'nocaption', 'kind', 'xlayers', 'xinflight'];
+  'nocaption', 'kind', 'xlayers', 'xinflight', 'paramsonly'];
 export class Dsv3Anatomy extends HTMLElement {
   connectedCallback() {
     const lid = this.getAttribute('layer-id') ?? ((this.id || 'anatomy') + '-layer');
@@ -193,45 +193,46 @@ const ATTN_QKV_OPS = ['qkv_down', 'q_up', 'kv_up'];
 const NORM_OPS = ['norm1', 'q_norm', 'kv_norm', 'norm2'];
 const TALLY_ROWS = [
   { label: 'embedding', kind: null, plan: ['embed'],
-    terms: [{ t: `${A.hidden} × ${A.vocab}`, ops: [] }],
+    terms: [{ name: 'lookup table', val: `${A.hidden} × ${A.vocab}`, ops: [] }],
     per: E, count: 1, mult: '× 1',
     active: { per: 0,
-      terms: [{ t: 'lookup — not counted', ops: [] }] } },
+      terms: [{ name: 'lookup', val: 'not counted', ops: [] }] } },
   { label: 'dense block', kind: 'dense', plan: ['block-dense'],
     terms: [
-      { t: `attn qkv ${fmtP(Q.attnQkv)}`, ops: ATTN_QKV_OPS },
-      { t: `attn out ${fmtP(Q.attnOut)}`, ops: ['o_proj'] },
-      { t: `ffn ${fmtP(Q.denseFfn)}`, ops: ['ffn_gate_up', 'ffn_down'] },
-      { t: `norms ${fmtP(Q.normsBlk)}`, ops: NORM_OPS },
+      { name: 'attn qkv', val: fmtP(Q.attnQkv), ops: ATTN_QKV_OPS },
+      { name: 'attn out', val: fmtP(Q.attnOut), ops: ['o_proj'] },
+      { name: 'ffn', val: fmtP(Q.denseFfn), ops: ['ffn_gate_up', 'ffn_down'] },
+      { name: 'norms', val: fmtP(Q.normsBlk), ops: NORM_OPS },
     ],
     per: DENSE, count: A.denseLayers, mult: `× ${A.denseLayers} blocks` },
   { label: 'MoE block', kind: 'moe', plan: ['block-moe'],
     terms: [
-      { t: `attn qkv ${fmtP(Q.attnQkv)}`, ops: ATTN_QKV_OPS },
-      { t: `attn out ${fmtP(Q.attnOut)}`, ops: ['o_proj'] },
-      { t: `experts ${fmtP(Q.expert)} × (${A.routedExperts} routed + ${A.sharedExperts} shared)`, ops: ['ffn_gate_up', 'ffn_down', 'shared'] },
-      { t: `router ${fmtP(T.routerWeight)}`, ops: ['router'] },
-      { t: `correction bias ${T.routerBias}`, ops: ['router_bias'] },
-      { t: `norms ${fmtP(Q.normsBlk)}`, ops: NORM_OPS },
+      { name: 'attn qkv', val: fmtP(Q.attnQkv), ops: ATTN_QKV_OPS },
+      { name: 'attn out', val: fmtP(Q.attnOut), ops: ['o_proj'] },
+      { name: `experts × (${A.routedExperts} routed + ${A.sharedExperts} shared)`, val: fmtP(Q.expert), ops: ['ffn_gate_up', 'ffn_down', 'shared'] },
+      { name: 'router', val: fmtP(T.routerWeight), ops: ['router'] },
+      { name: 'correction bias', val: String(T.routerBias), ops: ['router_bias'] },
+      { name: 'norms', val: fmtP(Q.normsBlk), ops: NORM_OPS },
     ],
     per: MOE, count: A.layers - A.denseLayers, mult: `× ${A.layers - A.denseLayers} blocks`,
     active: { per: PARAMS.activeMoeBlock,
       terms: [
-        { t: `attn qkv ${fmtP(Q.attnQkv)}`, ops: ATTN_QKV_OPS },
-        { t: `attn out ${fmtP(Q.attnOut)}`, ops: ['o_proj'] },
-        { t: `experts ${fmtP(Q.expert)} × (${A.topk} active + ${A.sharedExperts} shared)`, ops: ['ffn_gate_up', 'ffn_down', 'shared'] },
-        { t: `router ${fmtP(T.routerWeight)}`, ops: ['router'] },
-        { t: `correction bias ${T.routerBias}`, ops: ['router_bias'] },
-        { t: `norms ${fmtP(Q.normsBlk)}`, ops: NORM_OPS },
+        { name: 'attn qkv', val: fmtP(Q.attnQkv), ops: ATTN_QKV_OPS },
+        { name: 'attn out', val: fmtP(Q.attnOut), ops: ['o_proj'] },
+        { name: `experts × (${A.topk} active + ${A.sharedExperts} shared)`, val: fmtP(Q.expert), ops: ['ffn_gate_up', 'ffn_down', 'shared'] },
+        { name: 'router', val: fmtP(T.routerWeight), ops: ['router'] },
+        { name: 'correction bias', val: String(T.routerBias), ops: ['router_bias'] },
+        { name: 'norms', val: fmtP(Q.normsBlk), ops: NORM_OPS },
       ] } },
   { label: 'final RMSNorm', kind: null, plan: ['final_norm'],
-    terms: [{ t: `${A.hidden}`, ops: [] }],
+    terms: [{ name: 'weight', val: String(A.hidden), ops: [] }],
     per: A.hidden, count: 1, mult: '× 1' },
   { label: 'lm head', kind: null, plan: ['lm_head'],
-    terms: [{ t: `${A.hidden} × ${A.vocab}`, ops: ['lm_head'] }],
+    terms: [{ name: 'output matrix', val: `${A.hidden} × ${A.vocab}`, ops: ['lm_head'] }],
     per: E, count: 1, mult: '× 1' },
 ];
 for (const r of TALLY_ROWS) {
+  for (const t of r.terms.concat(r.active?.terms ?? [])) t.t = `${t.name} ${t.val}`;
   r.ops = [...new Set(r.terms.flatMap(t => t.ops))];
   if (r.active) r.active.ops = [...new Set(r.active.terms.flatMap(t => t.ops))];
 }
@@ -251,9 +252,14 @@ dsv3-param-tally { display: block; margin: 14px 0; }
 .ptal td.num { text-align: right; padding-right: 0; white-space: nowrap; }
 .ptal .title, .ptal .note { padding-left: 7px; }
 .ptal .formula { color: #898781; font-size: 12.5px; }
-.ptal .fterm { border-bottom: 1px dotted #c3c2b7; }
-.ptal .fterm:hover { color: #0b0b0b; border-bottom-color: #52514e; }
-.ptal .fterm.pin { color: #0b0b0b; font-weight: 600; border-bottom: 1px solid #52514e; }
+.ptal td .fterm { border-bottom: 1px dotted #c3c2b7; }
+.ptal .fterm:hover { color: #0b0b0b; }
+.ptal td .fterm:hover { border-bottom-color: #52514e; }
+.ptal .fterm.pin { color: #0b0b0b; font-weight: 600; }
+.ptal td .fterm.pin { border-bottom: 1px solid #52514e; }
+.ptal .fxline { display: grid; grid-template-columns: 10px 1fr auto; gap: 0 6px; align-items: baseline; }
+.ptal .fxline .fxop { color: #a8a69e; }
+.ptal .fxline .fxval { text-align: right; font-variant-numeric: tabular-nums; }
 .ptal tbody tr { cursor: pointer; }
 .ptal tbody tr:hover { background: #f7f6f1; }
 .ptal tbody tr.sel { background: #fff; box-shadow: inset 3px 0 0 #52514e; }
@@ -268,8 +274,8 @@ dsv3-param-tally { display: block; margin: 14px 0; }
 .ptal.compact td { padding: 3px 6px 3px 7px; }
 .ptal.compact .formula { font-size: 10px; display: block; }
 .ptal.compact .note { font-size: 10px; font-style: italic; }
-.ptal.compact .fxout { min-height: 52px; padding: 4px 0 0 7px; font-size: 10px;
-  color: #52514e; line-height: 1.4; }   /* fixed slot: selecting never reflows */
+.ptal.compact .fxout { min-height: 96px; padding: 4px 0 0 7px; font-size: 10px;
+  color: #52514e; line-height: 1.5; }   /* fixed slot sized for the six-line MoE equation */
 `;
 export class Dsv3ParamTally extends HTMLElement {
   connectedCallback() {
@@ -312,7 +318,9 @@ export class Dsv3ParamTally extends HTMLElement {
     const state = { pin: null, hover: null };          // {ri, ti|null}
     const rowOf = (st) => rows[st.ri];
     const opsOf = (st) => st.ti == null ? rowOf(st).ops : rowOf(st).terms[st.ti].ops;
-    const termsHtml = (r) => r.terms.map((t, i) => `<span class="fterm" data-t="${i}">${t.t}</span>`).join(' + ');
+    const termsHtml = (r) => r.terms.map((t, i) =>
+      `<div class="fterm fxline" data-t="${i}"><span class="fxop">${i ? '+' : '='}</span>` +
+      `<span class="fxname">${t.name}</span><span class="fxval">${t.val}</span></div>`).join('');
     const wireTerms = (container, ri, inRow = true) => {
       for (const sp of container.querySelectorAll('.fterm')) {
         const ti = +sp.dataset.t;
@@ -345,7 +353,7 @@ export class Dsv3ParamTally extends HTMLElement {
         const want = show ? String(show.ri) : '';
         if (fx.dataset.ri !== want) {
           fx.dataset.ri = want;
-          fx.innerHTML = want === '' ? '' : `= ${termsHtml(rowOf(show))}`;
+          fx.innerHTML = want === '' ? '' : termsHtml(rowOf(show));
           if (want !== '') wireTerms(fx, show.ri, false);
         }
       }

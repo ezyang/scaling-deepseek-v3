@@ -1002,6 +1002,7 @@ export class Dsv3Layer extends HTMLElement {
     // only="mla" / only="ffn" draws a single column (for composed anatomy
     // pages that show each component once); default draws the full block
     const ONLY = this.getAttribute('only');
+    const PONLY = this.hasAttribute('paramsonly');   // parameter-count focus view
     // quant tiers carry byte-quantity labels (e.g. attention's lse) that need
     // more room between the columns; the static tier keeps its published width
     const W = 290, C1 = 60,
@@ -1164,6 +1165,7 @@ export class Dsv3Layer extends HTMLElement {
     // ov (optional): display-split override for a chip that shows part of one
     // graph node — { name, tdims, frac } (bytes and grid scale by frac)
     const tensorChip = (ids, x, y, ov) => {
+      if (PONLY) return 12;   // intermediates hidden; gaps (chipSpace) unchanged
       const id = ids[0], st = state(id), n = ana.byId[id];
       const bytes = ids.reduce((t, i) => t + ana.byId[i].outBytes * (ana.dual.has(i) ? 2 : 1), 0) * (ov?.frac ?? 1);
       const dualTag = ids.some(i => ana.dual.has(i)) ? ' ᵀ×2' : '';
@@ -1218,6 +1220,7 @@ export class Dsv3Layer extends HTMLElement {
     };
     // aux backward artifact, exiting the box to the right
     const auxOut = (id, x, yMid) => {
+      if (PONLY) return;
       const n = ana.byId[id];
       if (!n.aux) return;
       const replayed = ana.replayed.has(id); // a replay regenerates its aux
@@ -1257,7 +1260,7 @@ export class Dsv3Layer extends HTMLElement {
       P.push(`<g data-op="${ids[0]}"${boxTip((markIds ?? ids)[0], dims ? undefined : spec.dimsNote, ids[0])}>` +
         `<rect class="box" x="${x}" y="${y}" width="${W}" height="38" rx="4"/>` +
         `<text class="name" x="${x + 8}" y="${y + 13}">${label ?? spec.label}</text>` +
-        `<text class="dims" x="${x + 8}" y="${y + 26}">${flatten(dims ?? spec.dims)}${pstr(ids[0])}</text></g>`);
+        `<text class="dims" x="${x + 8}" y="${y + 26}">${PONLY ? pstr(ids[0]).trim() : flatten(dims ?? spec.dims) + pstr(ids[0])}</text></g>`);
       P.push(modeBtn(markIds ?? ids, x + W - 86, y + 6));
       P.push(dtBtn(ids[0], x + W - 58, y + 6));
       auxOut((markIds ?? ids)[0], x, y + 19);
@@ -1298,7 +1301,7 @@ export class Dsv3Layer extends HTMLElement {
         P.push(`<g data-op="qkv_down" data-tip="${escAttr(tip)}">` +
           `<rect class="box" x="${x}" y="${y}" width="140" height="60" rx="4"/>` +
           `<text class="name" x="${x + 6}" y="${y + 13}">${name}</text>` +
-          `<text class="dims" x="${x + 6}" y="${y + 25}">${flatten(dims)}${pc}</text></g>` +
+          `<text class="dims" x="${x + 6}" y="${y + 25}">${PONLY ? pc.trim() : flatten(dims) + pc}</text></g>` +
           (withBtns ? modeBtn(['qkv_down'], x + 140 - 86, y + 29) + dtBtn('qkv_down', x + 140 - 58, y + 29) : ''));
         flopBlocks(x + 6, y + 52, ana.byId.qkv_down.flopsTok * frac, dt('qkv_down'));
       };
@@ -1320,7 +1323,7 @@ export class Dsv3Layer extends HTMLElement {
         const kx = C1 + 272;
         bypTop = y + 14;
         P.push(`<path class="wire" d="M ${kx} ${y} L ${kx} ${bypTop} L ${bypX} ${bypTop}"/>`);
-        P.push(`<text class="tensor tidle" x="${kx + 6}" y="${bypTop - 4}">· k_rope · ${DSV3.qkRope}</text>`);
+        if (!PONLY) P.push(`<text class="tensor tidle" x="${kx + 6}" y="${bypTop - 4}">· k_rope · ${DSV3.qkRope}</text>`);
         // pre-norm latent chips: real graph state (saved at no-AC — the latent
         // norms' backward input; the replay anchor under recompute presets)
         tensorChip(['qkv_down'], SX1 + 14, y + 24,
@@ -1339,7 +1342,7 @@ export class Dsv3Layer extends HTMLElement {
         y += 18;
         // their rstd: exits the bottom, elbows right (\u2191 = read by the op
         // above, the norm's own backward); a replayed norm regenerates it
-        for (const [nid, bx] of [['q_norm', C1], ['kv_norm', C1 + 150]]) {
+        if (!PONLY) for (const [nid, bx] of [['q_norm', C1], ['kv_norm', C1 + 150]]) {
           const rep = ana.replayed.has(nid);
           P.push(`<path class="wire" d="M ${bx + 112} ${y} L ${bx + 112} ${y + 7} L ${bx + 124} ${y + 7}" marker-end="url(#arr)"/>` +
             `<text class="tensor ${rep ? 'tredo' : 'tsave'}" x="${bx + 128}" y="${y + 10}">${rep ? '\u21bb' : '\u2191'} rstd</text>`);
@@ -1366,7 +1369,7 @@ export class Dsv3Layer extends HTMLElement {
         P.push(`<g data-op="${id}"${boxTip(id, m.dimsNote)}>` +
           `<rect class="box" x="${x}" y="${y}" width="140" height="60" rx="4"/>` +
           `<text class="name" x="${x + 6}" y="${y + 13}">${m.label}</text>` +
-          `<text class="dims" x="${x + 6}" y="${y + 25}">${flatten(m.dims)}${pstr(id)}</text></g>` +
+          `<text class="dims" x="${x + 6}" y="${y + 25}">${PONLY ? pstr(id).trim() : flatten(m.dims) + pstr(id)}</text></g>` +
           modeBtn([id], x + 140 - 86, y + 29) + dtBtn(id, x + 140 - 58, y + 29));
         flopBlocks(x + 6, y + 52, ana.byId[id]?.flopsTok, dt(id));
       };
@@ -1376,7 +1379,7 @@ export class Dsv3Layer extends HTMLElement {
         // kernels (Megatron: apply_mla_rope_for_q / _for_kv) — the kv one is
         // rope plus a little extra (split, broadcast, assemble K and V) — feed
         // q and k,v directly into attention. The k_rope rail lands here.
-        P.push(`<text class="tensor tidle" x="${SX1 + 14}" y="${y + 12}">q_heads · ${flatten('128×192')}</text>` +
+        if (!PONLY) P.push(`<text class="tensor tidle" x="${SX1 + 14}" y="${y + 12}">q_heads · ${flatten('128×192')}</text>` +
           `<text class="tensor tidle" x="${RX + 14}" y="${y + 12}">kv_heads · ${flatten('128×(128+128)')}</text>`);
         wire(SX1, y, y + 16);
         P.push(`<path class="wire" d="M ${RX} ${y} L ${RX} ${y + 16}" marker-end="url(#arr)"/>`);
@@ -1508,7 +1511,7 @@ export class Dsv3Layer extends HTMLElement {
       P.push(`<g data-op="shared" data-tip="${escAttr(`${tip}\nparameters: ${n.toLocaleString('en-US')}`)}">` +
       `<rect class="box" x="${SHX}" y="${yy}" width="140" height="34" rx="4"/>` +
       `<text class="name" x="${SHX + 6}" y="${yy + 14}">${name}</text>` +
-      `<text class="dims" x="${SHX + 6}" y="${yy + 27}">${flatten(dims)}${pc}</text></g>`);
+      `<text class="dims" x="${SHX + 6}" y="${yy + 27}">${PONLY ? pc.trim() : flatten(dims) + pc}</text></g>`);
     };
     if (!DET) {
       const g0 = Math.max(22, chipSpace(['norm2']) + 10) + (TABS ? 36 : 0);
@@ -1539,7 +1542,7 @@ export class Dsv3Layer extends HTMLElement {
         `the learned e_score_correction_bias affects expert selection but not the gating weights\nparameters: ${PARAMS.routerBias.toLocaleString('en-US')}`,
         pk(PARAMS.routerBias).trim(), 'router_bias');
       P.push(`<path class="wire" d="M ${C2 + W} ${gateTop} L ${gateX} ${gateTop}"/>` +
-        `<text class="tensor tidle" x="${C2 + 198}" y="${z + 11}">top-k weights · 8</text>`);
+        (PONLY ? '' : `<text class="tensor tidle" x="${C2 + 198}" y="${z + 11}">top-k weights · 8</text>`));
     }
     z = wireOut(['router'], SX2, z, DET ? { name: 'router state' } : undefined);
     const dispTop = z;
@@ -1687,7 +1690,7 @@ export class Dsv3Layer extends HTMLElement {
       P.push(`<g data-op="lm_head" data-tip="${escAttr(`${fmtNum(lmFlops)} FLOP/token = ${FLOP_EXPR.lm_head}\n${lm.dimsNote}\nparameters: ${PARAMS.embed.toLocaleString('en-US')}`)}">` +
         `<rect class="box" x="${C1 + 184}" y="${h}" width="240" height="${lmH}" rx="4"/>` +
         `<text class="name" x="${C1 + 192}" y="${h + 14}">${lm.label}</text>` +
-        `<text class="dims" x="${C1 + 192}" y="${h + 28}">${flatten(lm.dims)}${pstr('lm_head')}</text></g>` + dtBtn('lm_head', C1 + 184 + 240 - 58, h + 7));
+        `<text class="dims" x="${C1 + 192}" y="${h + 28}">${PONLY ? pstr('lm_head').trim() : flatten(lm.dims) + pstr('lm_head')}</text></g>` + dtBtn('lm_head', C1 + 184 + 240 - 58, h + 7));
       flopBlocks(C1 + 192, h + 33, lmFlops, dt('lm_head'));
       P.push(`<line class="wire" x1="${C1 + 424}" y1="${h + 17}" x2="${C1 + 454}" y2="${h + 17}" marker-end="url(#arr)"/>`);
       P.push(`<rect class="op" x="${C1 + 458}" y="${h + 6}" width="140" height="22" rx="11"/>` +
