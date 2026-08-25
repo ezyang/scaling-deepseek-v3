@@ -8,25 +8,12 @@
 // internals (that's the block diagram's job).
 
 import { DSV3 } from './model.js';
-import { fmtP, tokensCss } from './viewer.js';
+import { fmtP, tokensCss, applyHighlight } from './viewer.js';
+import { PARAMS } from './params.js';
 
-// per-component parameter counts, derived from the architecture.
-// EXACT: RMSNorm weights are counted (norm1 + the two latent norms in the
-// MLA half; norm2 in each FFN half) — a rounding error, but the formulas
-// shouldn't lie.
+// named parameter quantities, shared with the diagram's tabs (src/params.js)
 const A = DSV3;
-const E = A.hidden * A.vocab;
-const MLA_NORMS = A.hidden + A.qRank + A.kvRank;   // norm1, q latent norm, kv latent norm
-const MLA = A.hidden * (A.qRank + A.kvRank + A.qkRope)
-  + A.qRank * A.heads * (A.qkNope + A.qkRope)
-  + A.kvRank * A.heads * (A.qkNope + A.vHead)
-  + A.heads * A.vHead * A.hidden
-  + MLA_NORMS;
-const DENSE_FFN = 3 * A.hidden * A.denseInter + A.hidden;              // + norm2
-const MOE_FFN = (A.routedExperts + A.sharedExperts) * 3 * A.hidden * A.moeInter
-  + A.hidden * A.routedExperts + A.hidden;                             // + norm2
-const DENSE = MLA + DENSE_FFN;
-const MOE = MLA + MOE_FFN;
+const { embed: E, mla: MLA, denseBlock: DENSE, moeBlock: MOE } = PARAMS;
 
 // the block diagram's visual-language tokens, plus the plan's own bits
 const CSS = `
@@ -38,6 +25,9 @@ ${tokensCss('.anp')}
 .anp [data-kind] { cursor: pointer; }
 .anp [data-kind].on { cursor: default; }
 .anp svg.hlm > :not(.hl):not(defs) { opacity: 0.3; }
+/* the plan's tally-highlighted items wear the same save-yellow as the
+   active block kind — grey pills alone were too understated */
+.anp g[data-op].hl rect { fill: #fff8ea; stroke: #eda100; }
 .anp g[data-op].hl .dims { fill: #52514e; font-weight: 600; }
 `;
 
@@ -140,11 +130,7 @@ export class Dsv3AnatomyPlan extends HTMLElement {
     requestAnimationFrame(() => this.expansion());   // measure after layout settles
   }
   highlightOps(ids) { this._hl = ids ? new Set(ids) : null; this.applyHl(); }  // null clears, [] fades all
-  applyHl() {
-    for (const g of this._root.querySelectorAll('[data-op]'))
-      g.classList.toggle('hl', this._hl?.has(g.dataset.op) ?? false);
-    this._root.querySelector('svg')?.classList.toggle('hlm', !!this._hl);
-  }
+  applyHl() { applyHighlight(this._root, this._hl); }
 }
 customElements.define('dsv3-anatomy-plan', Dsv3AnatomyPlan);
 
@@ -197,22 +183,8 @@ customElements.define('dsv3-anatomy', Dsv3Anatomy);
 // that kind first, so the cells are always visible. compact = the narrow
 // two-column form that <dsv3-anatomy tally> mounts in the margin below the
 // plan. RMSNorm weights are counted; only the MTP module is omitted.
-const T = {
-  qkvDown: A.hidden * (A.qRank + A.kvRank + A.qkRope),
-  qUp: A.qRank * A.heads * (A.qkNope + A.qkRope),
-  kvUp: A.kvRank * A.heads * (A.qkNope + A.vHead),
-  oProj: A.heads * A.vHead * A.hidden,
-  router: A.hidden * A.routedExperts,
-  expert: 3 * A.hidden * A.moeInter,
-};
-// named sub-quantities, so the formulas read as concepts rather than dims
-const Q = {
-  attnQkv: T.qkvDown + T.qUp + T.kvUp,       // q/kv down- and up-projections
-  attnOut: T.oProj,
-  expert: T.expert,                          // one expert (routed and shared are the same shape)
-  denseFfn: 3 * A.hidden * A.denseInter,
-  normsBlk: MLA_NORMS + A.hidden,            // norm1 + latent norms + norm2
-};
+const T = PARAMS, Q = PARAMS;
+
 const MLA_OPS = ['qkv_down', 'q_up', 'kv_up', 'o_proj', 'norm1', 'q_norm', 'kv_norm'];
 const TALLY_ROWS = [
   { label: 'embedding', kind: null, ops: [], plan: ['embed'],

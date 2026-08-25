@@ -6,6 +6,16 @@ import { fmtUs, fmtNum, DSV3 } from './model.js';
 import { simulate, LEVELS, defaultConfig } from './sim.js';
 import { memoryUsage, resolveMatmuls, MATMULS, RECIPES } from './memory.js';
 import { blockGraph, analyze, RECOMPUTE_PRESETS } from './blockgraph.js';
+import { PARAMS } from './params.js';
+
+// spreadsheet-style highlighting, shared by the layer and the anatomy plan:
+// mark the [data-op] groups in `hl` and fade the rest (the tabs' visual
+// language); hl = null clears, an empty set fades everything
+export const applyHighlight = (root, hl) => {
+  for (const g of root.querySelectorAll('[data-op]'))
+    g.classList.toggle('hl', hl?.has(g.dataset.op) ?? false);
+  root.querySelector('svg')?.classList.toggle('hlm', !!hl);
+};
 
 // parameter-count formatter for the dims parentheticals ('(29M \u00d7256)' / '(7.5B)')
 export const fmtP = (n) => n >= 1e9 ? (n / 1e9).toFixed(1) + 'B'
@@ -966,12 +976,7 @@ export class Dsv3Layer extends HTMLElement {
   // ids = null clears; ids = [] fades EVERYTHING (a selected sum with no
   // cells in this diagram — e.g. the embedding row greys the block out)
   highlightOps(ids) { this._hl = ids ? new Set(ids) : null; this.applyHl(); }
-  applyHl() {
-    for (const g of this.querySelectorAll('[data-op]'))
-      g.classList.toggle('hl', this._hl?.has(g.dataset.op) ?? false);
-    // tab visual language: selected cells keep full contrast, the rest fades
-    this.querySelector('svg')?.classList.toggle('hlm', !!this._hl);
-  }
+  applyHl() { applyHighlight(this, this._hl); }
   buildSvg(ana, anaM = null) {
     const P = [];
     // Two columns (MLA | MoE), head row underneath. The dataflow spine runs
@@ -1406,8 +1411,8 @@ export class Dsv3Layer extends HTMLElement {
           `<text x="${x + 10}" y="${y0 + 17}" style="font:600 11px system-ui" fill="${on ? '#0b0b0b' : '#898781'}">${label}` +
           `<tspan style="font:10px system-ui" fill="${on ? '#898781' : '#a8a69e'}"> ${sub}</tspan></text></g>`;
       };
-      P.push(tab(C2 + 42, 148, 'dense', 'dense FFN', `×${DSV3.denseLayers ?? 3} · ${fmtP(3 * DSV3.hidden * DSV3.denseInter)}`) +
-        tab(C2 + 198, 168, 'moe', 'MoE FFN', `×${DSV3.layers - (DSV3.denseLayers ?? 3)} · ${fmtP((DSV3.routedExperts + 1) * 3 * DSV3.hidden * DSV3.moeInter + DSV3.hidden * DSV3.routedExperts)}`));
+      P.push(tab(C2 + 42, 148, 'dense', 'dense FFN', `×${DSV3.denseLayers ?? 3} · ${fmtP(PARAMS.denseFfnBlk)}`) +
+        tab(C2 + 198, 168, 'moe', 'MoE FFN', `×${DSV3.layers - (DSV3.denseLayers ?? 3)} · ${fmtP(PARAMS.moeFfnBlk)}`));
     };
     const norm2Top = z;
     if (ONLY === 'ffn') {
