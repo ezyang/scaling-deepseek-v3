@@ -33,6 +33,8 @@ export const PARAMS = {
   moeFfnBlk: (A.routedExperts + A.sharedExperts) * expert + router + A.hidden,
   finalNorm: A.hidden,
 };
+// the largest single op per block kind — the byte-strip scale unit
+PARAMS.largestOp = { moe: 2 * A.hidden * A.moeInter * A.routedExperts, dense: 2 * A.hidden * A.denseInter };
 PARAMS.denseBlock = PARAMS.mla + PARAMS.denseFfnBlk;
 PARAMS.moeBlock = PARAMS.mla + PARAMS.moeFfnBlk;
 PARAMS.total = 2 * PARAMS.embed + PARAMS.finalNorm

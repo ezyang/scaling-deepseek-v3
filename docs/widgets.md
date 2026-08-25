@@ -16,7 +16,7 @@ carry a measured `style="min-height:…px"` placeholder (scroll restoration);
 | `scope` | view | `model` · `block` · `mla` · `ffn` | how much to draw: block + ×61/head row · the block alone · one column (with hand-off labels to the block wiring) |
 | `controls` | view | `full` · `static` · `marks` · `dtype` | progressive-disclosure tier: which knobs render (static = structure only: no quantities, marks, or tooltips) |
 | `detail` | view | boolean | also draw the elided kernels (latent norms, RoPE, router internals, shared expert, top-k rail) |
-| `lens` | view | absent · `params` | display lens: `params` hides intermediates/dims/aux and unparenthesizes the parameter counts (spacing unchanged) |
+| `lens` | view | absent · `params` · `param-bytes` | display lens: `params` hides intermediates/dims/aux and unparenthesizes the parameter counts (spacing unchanged); `param-bytes` additionally restates every number as bf16 bytes, adds blue weight-size strips (largest op per block = one row; zero-block ops draw nothing), and wears a static bf16 tag on each weight-bearing GEMM |
 | `tabs` | view | boolean | dense/MoE flip tabs (with per-block FFN tallies) above the FFN column, fused into a scoped enclosure |
 | `nocaption` | view | boolean | suppress the foot caption (the page explains the diagram itself) |
 | `recipe` | state | `nv-mxfp8` · `bf16` · `dsv3-fp8` | per-matmul dtype preset |
@@ -42,7 +42,10 @@ Runtime-only properties (driven by other widgets, not attributes):
 
 ## `<dsv3-anatomy-plan layer=…>` — the vertical margin plan
 Bound to a layer: clicking a block kind flips it; re-syncs via the layer's
-`recipe` event; follows `activeView`; supports `highlightOps`.
+`recipe` event; follows `activeView` and the `param-bytes` lens (byte values +
+weight strips on the embedding / final norm / lm head — NEVER on the block
+boxes, whose bytes are shown expanded on the right: no byte is ever
+double-counted anywhere in the figure); supports `highlightOps`.
 
 ## `<dsv3-param-tally layer=…>` — the parameter count, computed from the diagram
 
@@ -51,6 +54,7 @@ Bound to a layer: clicking a block kind flips it; re-syncs via the layer's
 | `layer` | the diagram whose cells rows/terms highlight (hover previews, click pins; hidden-kind pins flip the diagram; hidden-kind hovers show only kind-shared cells) |
 | `compact` | narrow two-column margin form with the fixed equation slot |
 | `mode` | `total` (default) · `active` — initial toggle position |
+| `units` | absent · `bytes` — bf16 memory framing: values in binary bytes, the total/active toggle hidden (activation doesn't change resident bytes). `<dsv3-anatomy lens="param-bytes" tally>` sets this automatically |
 
 ## Other elements (unchanged conventions)
 - `<dsv3-stack arch dense choices for>` — layer-structure strip; the dense-count

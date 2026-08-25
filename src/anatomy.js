@@ -8,7 +8,7 @@
 // internals (that's the block diagram's job).
 
 import { DSV3 } from './model.js';
-import { fmtP, tokensCss, applyHighlight } from './viewer.js';
+import { fmtP, fmtBytes, tokensCss, applyHighlight } from './viewer.js';
 import { PARAMS } from './params.js';
 
 // named parameter quantities, shared with the diagram's tabs (src/params.js)
@@ -74,8 +74,25 @@ export class Dsv3AnatomyPlan extends HTMLElement {
     this._ov.innerHTML = L(a.right, a.top, b.left, b.top) + L(a.right, a.bottom, b.left, b.bottom);
   }
   draw() {
-    const kind = this.layerEl()?.kind ?? 'moe';
-    const AV = !!this.layerEl()?.activeView;   // the tally's active/token toggle
+    const l = this.layerEl();
+    const kind = l?.kind ?? 'moe';
+    const AV = !!l?.activeView;                                  // the tally's active/token toggle
+    const LB = l?.getAttribute('lens') === 'param-bytes';        // bytes framing
+    const KM = kind === 'dense' ? A.denseLayers : A.layers - A.denseLayers;
+    // byte strips share the diagram's scale unit: the block's largest op
+    // fills one row (× block count under cumulative). Block boxes get NO
+    // strips — their bytes are shown expanded on the right (never double
+    // count a byte anywhere in the figure).
+    const UNIT = PARAMS.largestOp[kind] * (l?.cumulative ? KM : 1) / 30;
+    const strip = (x, y, nParams) => {
+      if (!LB) return '';
+      const n = Math.round(nParams / UNIT);
+      let g = '';
+      for (let i = 0; i < n; i++)
+        g += `<rect x="${x + (i % 30) * 5}" y="${y + Math.floor(i / 30) * 5}" width="4" height="3.5" fill="#2a78d6"/>`;
+      return g;
+    };
+    const pv = (n) => LB ? fmtBytes(n * 2) : fmtP(n);
     const S = [];
     S.push(`<defs><marker id="planarr" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto-start-reverse">` +
       `<path d="M 0 0 L 8 4 L 0 8 z" fill="#898781"/></marker></defs>`);
@@ -89,10 +106,12 @@ export class Dsv3AnatomyPlan extends HTMLElement {
     let y = 14;
     S.push(`<text class="oplabel" x="${CX - 22}" y="${y - 2}">tokens</text>`);
     wire(14);
-    const op = (label, dims, h = 22, opId = null) => {
-      S.push(`${opId ? `<g data-op="${opId}">` : ''}<rect class="op" x="${BX}" y="${y}" width="${W}" height="${h}" rx="6"/>` +
-        `<text class="oplabel" x="${BX + 9}" y="${y + 15}">${label}${dims ? ` <tspan class="dims">${dims}</tspan>` : ''}</text>${opId ? '</g>' : ''}`);
-      y += h;
+    const op = (label, dims, h = 22, opId = null, stripN = 0) => {
+      const hh = LB && stripN ? h + 8 : h;   // reserved strip row (stable across toggles)
+      S.push(`${opId ? `<g data-op="${opId}">` : ''}<rect class="op" x="${BX}" y="${y}" width="${W}" height="${hh}" rx="6"/>` +
+        `<text class="oplabel" x="${BX + 9}" y="${y + 15}">${label}${dims ? ` <tspan class="dims">${dims}</tspan>` : ''}</text>` +
+        (LB && stripN ? strip(BX + 9, y + 20, stripN) : '') + `${opId ? '</g>' : ''}`);
+      y += hh;
     };
     const blockBox = (k, label, dims) => {
       const on = kind === k;
@@ -102,18 +121,19 @@ export class Dsv3AnatomyPlan extends HTMLElement {
         `<text class="dims" x="${BX + 8}" y="${y + 27}">${dims}</text></g>`);
       y += 34;
     };
-    op('embedding', AV ? '(not counted)' : `(${fmtP(E)})`, 22, 'embed');
+    op('embedding', AV && !LB ? '(not counted)' : `(${pv(E)})`, 22, 'embed', E);
     wire(24, `x · ${A.hidden}`);
-    blockBox('dense', `dense block ×${A.denseLayers}`, `${fmtP(DENSE)} each`);
+    blockBox('dense', `dense block ×${A.denseLayers}`, `${pv(DENSE)} each`);
     wire(24, `x · ${A.hidden}`);
-    blockBox('moe', `MoE block ×${A.layers - A.denseLayers}`, `${fmtP(AV ? PARAMS.activeMoeBlock : MOE)} each`);
+    blockBox('moe', `MoE block ×${A.layers - A.denseLayers}`, `${pv(AV && !LB ? PARAMS.activeMoeBlock : MOE)} each`);
     wire(24, `x · ${A.hidden}`);
-    op('final RMSNorm', `(${fmtP(A.hidden)})`, 22, 'final_norm');
+    op('final RMSNorm', `(${pv(A.hidden)})`, 22, 'final_norm');
     wire(24, `norm out · ${A.hidden}`);
-    S.push(`<g data-op="lm_head"><rect class="box" x="${BX}" y="${y}" width="${W}" height="34" rx="4"/>` +
+    S.push(`<g data-op="lm_head"><rect class="box" x="${BX}" y="${y}" width="${W}" height="${LB ? 42 : 34}" rx="4"/>` +
       `<text class="name" x="${BX + 8}" y="${y + 14}">lm head</text>` +
-      `<text class="dims" x="${BX + 8}" y="${y + 27}">${A.hidden} → ${A.vocab} (${fmtP(E)})</text></g>`);
-    y += 34;
+      `<text class="dims" x="${BX + 8}" y="${y + 27}">${A.hidden} → ${A.vocab} (${pv(E)})</text>` +
+      (LB ? strip(BX + 8, y + 31, E) : '') + `</g>`);
+    y += LB ? 42 : 34;
     wire(24, `logits · ${A.vocab}`);
     op('softmax / loss', null);
     y += 8;
@@ -162,6 +182,7 @@ export class Dsv3Anatomy extends HTMLElement {
       const tal = document.createElement('dsv3-param-tally');
       tal.setAttribute('layer', lid);
       tal.setAttribute('compact', '');
+      if (this.getAttribute('lens') === 'param-bytes') tal.setAttribute('units', 'bytes');
       col1.append(tal);
     }
     const layer = document.createElement('dsv3-layer');
@@ -194,42 +215,42 @@ const ATTN_QKV_OPS = ['qkv_down', 'q_up', 'kv_up'];
 const NORM_OPS = ['norm1', 'q_norm', 'kv_norm', 'norm2'];
 const TALLY_ROWS = [
   { label: 'embedding', kind: null, plan: ['embed'],
-    terms: [{ name: 'lookup table', val: `${A.hidden} × ${A.vocab}`, ops: [] }],
+    terms: [{ name: 'lookup table', val: `${A.hidden} × ${A.vocab}`, nv: E, ops: [] }],
     per: E, count: 1, mult: '× 1',
     active: { per: 0,
       terms: [{ name: 'lookup', val: 'not counted', ops: [] }] } },
   { label: 'dense block', kind: 'dense', plan: ['block-dense'],
     terms: [
-      { name: 'attn qkv', val: fmtP(Q.attnQkv), ops: ATTN_QKV_OPS },
-      { name: 'attn out', val: fmtP(Q.attnOut), ops: ['o_proj'] },
-      { name: 'ffn', val: fmtP(Q.denseFfn), ops: ['ffn_gate_up', 'ffn_down'] },
-      { name: 'norms', val: fmtP(Q.normsBlk), ops: NORM_OPS },
+      { name: 'attn qkv', val: fmtP(Q.attnQkv), nv: Q.attnQkv, ops: ATTN_QKV_OPS },
+      { name: 'attn out', val: fmtP(Q.attnOut), nv: Q.attnOut, ops: ['o_proj'] },
+      { name: 'ffn', val: fmtP(Q.denseFfn), nv: Q.denseFfn, ops: ['ffn_gate_up', 'ffn_down'] },
+      { name: 'norms', val: fmtP(Q.normsBlk), nv: Q.normsBlk, ops: NORM_OPS },
     ],
     per: DENSE, count: A.denseLayers, mult: `× ${A.denseLayers} blocks` },
   { label: 'MoE block', kind: 'moe', plan: ['block-moe'],
     terms: [
-      { name: 'attn qkv', val: fmtP(Q.attnQkv), ops: ATTN_QKV_OPS },
-      { name: 'attn out', val: fmtP(Q.attnOut), ops: ['o_proj'] },
-      { name: `experts × (${A.routedExperts} routed + ${A.sharedExperts} shared)`, val: fmtP(Q.expert), ops: ['ffn_gate_up', 'ffn_down', 'shared'] },
-      { name: 'router', val: fmtP(T.routerWeight), ops: ['router'] },
-      { name: 'correction bias', val: String(T.routerBias), ops: ['router_bias'] },
-      { name: 'norms', val: fmtP(Q.normsBlk), ops: NORM_OPS },
+      { name: 'attn qkv', val: fmtP(Q.attnQkv), nv: Q.attnQkv, ops: ATTN_QKV_OPS },
+      { name: 'attn out', val: fmtP(Q.attnOut), nv: Q.attnOut, ops: ['o_proj'] },
+      { name: `experts × (${A.routedExperts} routed + ${A.sharedExperts} shared)`, val: fmtP(Q.expert), nv: Q.expert, ops: ['ffn_gate_up', 'ffn_down', 'shared'] },
+      { name: 'router', val: fmtP(T.routerWeight), nv: T.routerWeight, ops: ['router'] },
+      { name: 'correction bias', val: String(T.routerBias), nv: T.routerBias, ops: ['router_bias'] },
+      { name: 'norms', val: fmtP(Q.normsBlk), nv: Q.normsBlk, ops: NORM_OPS },
     ],
     per: MOE, count: A.layers - A.denseLayers, mult: `× ${A.layers - A.denseLayers} blocks`,
     active: { per: PARAMS.activeMoeBlock,
       terms: [
-        { name: 'attn qkv', val: fmtP(Q.attnQkv), ops: ATTN_QKV_OPS },
-        { name: 'attn out', val: fmtP(Q.attnOut), ops: ['o_proj'] },
-        { name: `experts × (${A.topk} active + ${A.sharedExperts} shared)`, val: fmtP(Q.expert), ops: ['ffn_gate_up', 'ffn_down', 'shared'] },
-        { name: 'router', val: fmtP(T.routerWeight), ops: ['router'] },
-        { name: 'correction bias', val: String(T.routerBias), ops: ['router_bias'] },
-        { name: 'norms', val: fmtP(Q.normsBlk), ops: NORM_OPS },
+        { name: 'attn qkv', val: fmtP(Q.attnQkv), nv: Q.attnQkv, ops: ATTN_QKV_OPS },
+        { name: 'attn out', val: fmtP(Q.attnOut), nv: Q.attnOut, ops: ['o_proj'] },
+        { name: `experts × (${A.topk} active + ${A.sharedExperts} shared)`, val: fmtP(Q.expert), nv: Q.expert, ops: ['ffn_gate_up', 'ffn_down', 'shared'] },
+        { name: 'router', val: fmtP(T.routerWeight), nv: T.routerWeight, ops: ['router'] },
+        { name: 'correction bias', val: String(T.routerBias), nv: T.routerBias, ops: ['router_bias'] },
+        { name: 'norms', val: fmtP(Q.normsBlk), nv: Q.normsBlk, ops: NORM_OPS },
       ] } },
   { label: 'final RMSNorm', kind: null, plan: ['final_norm'],
-    terms: [{ name: 'weight', val: String(A.hidden), ops: [] }],
+    terms: [{ name: 'weight', val: String(A.hidden), nv: A.hidden, ops: [] }],
     per: A.hidden, count: 1, mult: '× 1' },
   { label: 'lm head', kind: null, plan: ['lm_head'],
-    terms: [{ name: 'output matrix', val: `${A.hidden} × ${A.vocab}`, ops: ['lm_head'] }],
+    terms: [{ name: 'output matrix', val: `${A.hidden} × ${A.vocab}`, nv: E, ops: ['lm_head'] }],
     per: E, count: 1, mult: '× 1' },
 ];
 for (const r of TALLY_ROWS) {
@@ -289,13 +310,18 @@ export class Dsv3ParamTally extends HTMLElement {
   }
   build() {
     const compact = this.hasAttribute('compact');
-    const mode = this._mode, root = this._root;
+    const bytes = this.getAttribute('units') === 'bytes';   // bf16 memory framing
+    const mode = bytes ? 'total' : this._mode;   // active vs total doesn't change resident bytes
+    const root = this._root;
     const rows = TALLY_ROWS.map(r => rowIn(r, mode));
     const total = rows.reduce((t, r) => t + r.per * r.count, 0);
-    const num = (v) => `<span class="pnum" data-v="${v}">${fmtP(v)}</span>`;
+    const fv = (v) => bytes ? fmtBytes(v * 2) : fmtP(v);
+    const num = (v) => `<span class="pnum" data-v="${bytes ? v * 2 : v}">${fv(v)}</span>`;
+    const tval = (t) => bytes && t.nv != null ? fmtBytes(t.nv * 2) : t.val;
     const modeBtn = (m, label) =>
       `<span class="mbtn${mode === m ? ' on' : ''}" data-mode="${m}">${label}</span>`;
-    const head = `parameters: ${modeBtn('total', 'total')} · ${modeBtn('active', 'active / token')}`;
+    const head = bytes ? 'parameter memory (bf16)'
+      : `parameters: ${modeBtn('total', 'total')} · ${modeBtn('active', 'active / token')}`;
     root.innerHTML =
       (compact ? `<div class="title">${head}</div>` : `<div class="title">${head}</div>`) +
       `<table>` +
@@ -303,10 +329,10 @@ export class Dsv3ParamTally extends HTMLElement {
         `<th>copies</th><th style="text-align:right">total</th></tr></thead>`) +
       `<tbody>` +
       rows.map((r, i) => compact
-        ? `<tr data-row="${i}"><td>${r.label}<span class="formula">${num(r.per)} ${r.mult}</span></td>` +
+        ? `<tr data-row="${i}"><td>${r.label}<span class="formula">${fv(r.per)} ${r.mult}</span></td>` +
           `<td class="num">${num(r.per * r.count)}</td></tr>`
         : `<tr data-row="${i}"><td>${r.label}</td>` +
-          `<td><span class="formula">${r.terms.map((t, j) => `<span class="fterm" data-t="${j}">${t.t}</span>`).join(' + ')} =</span> ${num(r.per)}</td>` +
+          `<td><span class="formula">${r.terms.map((t, j) => `<span class="fterm" data-t="${j}">${t.name} ${tval(t)}</span>`).join(' + ')} =</span> ${num(r.per)}</td>` +
           `<td>${r.mult}</td><td class="num">${num(r.per * r.count)}</td></tr>`).join('') +
       `</tbody><tfoot><tr><td${compact ? '' : ' colspan="3"'}>total</td><td class="num">${num(total)}</td></tr></tfoot></table>` +
       (compact ? `<div class="fxout"></div>` : '');
@@ -321,7 +347,7 @@ export class Dsv3ParamTally extends HTMLElement {
     const opsOf = (st) => st.ti == null ? rowOf(st).ops : rowOf(st).terms[st.ti].ops;
     const termsHtml = (r) => r.terms.map((t, i) =>
       `<div class="fterm fxline" data-t="${i}"><span class="fxop">${i ? '+' : '='}</span>` +
-      `<span class="fxname">${t.name}</span><span class="fxval">${t.val}</span></div>`).join('');
+      `<span class="fxname">${t.name}</span><span class="fxval">${tval(t)}</span></div>`).join('');
     const wireTerms = (container, ri, inRow = true) => {
       for (const sp of container.querySelectorAll('.fterm')) {
         const ti = +sp.dataset.t;

@@ -17,6 +17,12 @@ export const applyHighlight = (root, hl) => {
   root.querySelector('svg')?.classList.toggle('hlm', !!hl);
 };
 
+// binary byte formatter (the param-bytes lens and the bytes tally)
+export const fmtBytes = (b) =>
+  b >= 2 ** 40 ? (b / 2 ** 40).toFixed(2) + ' TiB'
+    : b >= 2 ** 30 ? (b / 2 ** 30).toFixed(1) + ' GiB'
+      : b >= 2 ** 20 ? (b / 2 ** 20).toFixed(1) + ' MiB' : (b / 1024).toFixed(1) + ' KiB';
+
 // parameter-count formatter for the dims parentheticals ('(29M \u00d7256)' / '(7.5B)')
 export const fmtP = (n) => n >= 1e9 ? (n / 1e9).toFixed(1) + 'B'
   : n >= 9.95e6 ? Math.round(n / 1e6) + 'M' : n >= 1e6 ? (n / 1e6).toFixed(1) + 'M'
@@ -1060,11 +1066,7 @@ export class Dsv3Layer extends HTMLElement {
     // are noise; the sizes toggle keeps governing dims and per-block factoring
     // param-bytes lens: two bytes per parameter (the section's stated bf16
     // assumption), formatted as binary bytes
-    const fmtPB = (nParams) => {
-      const b = nParams * 2;
-      return b >= 2 ** 30 ? (b / 2 ** 30).toFixed(1) + ' GiB'
-        : b >= 2 ** 20 ? (b / 2 ** 20).toFixed(1) + ' MiB' : (b / 1024).toFixed(1) + ' KiB';
-    };
+    const fmtPB = (nParams) => fmtBytes(nParams * 2);
     const fmtPV = (n) => PBYTES ? fmtPB(n) : fmtP(n);
     const pk = (n, noK = false) => {
       const v = CUM && !noK ? fmtPV(n * KMUL) : fmtPV(n);
@@ -1289,6 +1291,7 @@ export class Dsv3Layer extends HTMLElement {
       const spec = MATMULS.find(m => m.id === ids[0]);
       P.push(`<g data-op="${ids[0]}"${boxTip((markIds ?? ids)[0], dims ? undefined : spec.dimsNote, ids[0])}>` +
         `<rect class="box" x="${x}" y="${y}" width="${W}" height="38" rx="4"/>` +
+        (PBYTES && exactParam(ids[0]) != null ? `<text class="dims" x="${x + W - 8}" y="${y + 13}" text-anchor="end">bf16</text>` : '') +
         `<text class="name" x="${x + 8}" y="${y + 13}">${label ?? spec.label}</text>` +
         `<text class="dims" x="${x + 8}" y="${y + 26}">${PONLY ? pstr(ids[0]).trim() : flatten(dims ?? spec.dims) + pstr(ids[0])}</text></g>`);
       P.push(modeBtn(markIds ?? ids, x + W - 86, y + 6));
@@ -1331,6 +1334,7 @@ export class Dsv3Layer extends HTMLElement {
       const dhalf = (x, name, dims, tip, frac, withBtns, pc = '', nP = 0) => {
         P.push(`<g data-op="qkv_down" data-tip="${escAttr(tip)}">` +
           `<rect class="box" x="${x}" y="${y}" width="140" height="60" rx="4"/>` +
+          (PBYTES ? `<text class="dims" x="${x + 134}" y="${y + 13}" text-anchor="end">bf16</text>` : '') +
           `<text class="name" x="${x + 6}" y="${y + 13}">${name}</text>` +
           `<text class="dims" x="${x + 6}" y="${y + 25}">${PONLY ? pc.trim() : flatten(dims) + pc}</text></g>` +
           (withBtns ? modeBtn(['qkv_down'], x + 140 - 86, y + 29) + dtBtn('qkv_down', x + 140 - 58, y + 29) : ''));
@@ -1400,6 +1404,7 @@ export class Dsv3Layer extends HTMLElement {
         const m = MATMULS.find(mm2 => mm2.id === id);
         P.push(`<g data-op="${id}"${boxTip(id, m.dimsNote)}>` +
           `<rect class="box" x="${x}" y="${y}" width="140" height="60" rx="4"/>` +
+          (PBYTES ? `<text class="dims" x="${x + 134}" y="${y + 13}" text-anchor="end">bf16</text>` : '') +
           `<text class="name" x="${x + 6}" y="${y + 13}">${m.label}</text>` +
           `<text class="dims" x="${x + 6}" y="${y + 25}">${PONLY ? pstr(id).trim() : flatten(m.dims) + pstr(id)}</text></g>` +
           modeBtn([id], x + 140 - 86, y + 29) + dtBtn(id, x + 140 - 58, y + 29));
