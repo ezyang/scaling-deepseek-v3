@@ -147,10 +147,9 @@ i don't need perfect, i need done
     usage in the next post.</p>
 
     <div class="fnotes">
-      <p class="note" id="fn1"><sup>1</sup> The exact figures in the tally are
-      audited against the tensor shapes in the published
-      <a href="https://huggingface.co/deepseek-ai/DeepSeek-V3/blob/main/model.safetensors.index.json">checkpoint index</a>
-      and all 163 safetensors headers.  Restricting the inventory to the embedding,
+      <p class="note" id="fn1"><sup>1</sup> I used Fable and Sol to cross-check the
+      parameter counts against the official published DeepSeek-V3
+      <a href="https://huggingface.co/deepseek-ai/DeepSeek-V3/blob/main/model.safetensors.index.json">checkpoint index</a>.  Restricting the inventory to the embedding,
       layers 0–60, final norm, and LM head, the main model has exactly
       <strong>671,026,419,200</strong> parameters.  FP8
       <code>weight_scale_inv</code> tensors are quantization metadata rather than model
@@ -158,12 +157,13 @@ i don't need perfect, i need done
       with <strong>11,610,061,056</strong> unique parameters; it is outside the scope of
       this main-model diagram and tally.  This follows DeepSeek's
       <a href="https://huggingface.co/deepseek-ai/DeepSeek-V3/blob/main/README_WEIGHTS.md">weight-structure documentation</a>.
-      The tally's active view counts the parameters on the computation path
+      Separately, we need to define "active parameter" for the purpose
+      of this calculation: we counts the parameters on the computation path
       executed for one token: eight routed experts plus the shared expert, the
       full router, and the full output head.  Vocabulary matrices are not treated
       consistently across the MoE literature, so we follow DeepSeek's own
-      <a href="https://huggingface.co/deepseek-ai/DeepSeek-V3/blob/main/README_WEIGHTS.md">corrected
-      accounting</a>: the input embedding is a lookup and is not counted, while the
+      corrected
+      accounting: the input embedding is a lookup and is not counted, while the
       output head counts in full — exactly <strong>36,625,618,432</strong>
       activated parameters, the advertised 37B.
       <em>(This footnote was written by Fable.)</em>
