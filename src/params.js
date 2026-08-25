@@ -37,11 +37,15 @@ PARAMS.denseBlock = PARAMS.mla + PARAMS.denseFfnBlk;
 PARAMS.moeBlock = PARAMS.mla + PARAMS.moeFfnBlk;
 PARAMS.total = 2 * PARAMS.embed + PARAMS.finalNorm
   + A.denseLayers * PARAMS.denseBlock + (A.layers - A.denseLayers) * PARAMS.moeBlock;
-// ACTIVE per token: ONLY the MoE FFN shrinks (top-k routed + the shared
-// expert fire). An embedding lookup touches one hidden-width row; the untied
-// output head touches its full matrix.
+// ACTIVE per token, following DeepSeek's own corrected accounting
+// (README_WEIGHTS.md: "Activation parameters: 36.6B (including 0.9B for the
+// output Head)"): the INPUT EMBEDDING IS NOT COUNTED (a lookup, no FLOPs);
+// the untied output head is counted in full; only the MoE FFN shrinks
+// (top-k routed + the shared expert fire). Conventions differ across the
+// literature (Qwen reports activated and activated-non-embedding separately);
+// we reproduce the model author's.
 PARAMS.activeMoeFfnBlk = (A.topk + A.sharedExperts) * expert + router + A.hidden;
 PARAMS.activeMoeBlock = PARAMS.mla + PARAMS.activeMoeFfnBlk;
-PARAMS.activeEmbed = A.hidden;
-PARAMS.activeTotal = PARAMS.activeEmbed + PARAMS.embed + PARAMS.finalNorm
+PARAMS.activeEmbed = 0;
+PARAMS.activeTotal = PARAMS.embed + PARAMS.finalNorm
   + A.denseLayers * PARAMS.denseBlock + (A.layers - A.denseLayers) * PARAMS.activeMoeBlock;

@@ -195,8 +195,8 @@ const TALLY_ROWS = [
   { label: 'embedding', kind: null, plan: ['embed'],
     terms: [{ t: `${A.hidden} × ${A.vocab}`, ops: [] }],
     per: E, count: 1, mult: '× 1',
-    active: { per: PARAMS.activeEmbed,
-      terms: [{ t: `1 row × ${A.hidden}`, ops: [] }] } },
+    active: { per: 0,
+      terms: [{ t: 'lookup — not counted', ops: [] }] } },
   { label: 'dense block', kind: 'dense', plan: ['block-dense'],
     terms: [
       { t: `attn qkv ${fmtP(Q.attnQkv)}`, ops: ATTN_QKV_OPS },

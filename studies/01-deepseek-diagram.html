@@ -145,9 +145,14 @@ i don't need perfect, i need done
     with <strong>11,610,061,056</strong> unique parameters; it is outside the scope of
     this main-model diagram and tally.  This follows DeepSeek's
     <a href="https://huggingface.co/deepseek-ai/DeepSeek-V3/blob/main/README_WEIGHTS.md">weight-structure documentation</a>.
-    The tally's active view is the main-model inference path: eight routed experts,
-    one shared expert, the full router and output head, and one selected embedding
-    row, totaling <strong>36,625,625,600</strong> parameters per token.</p>
+    The tally's active view counts the parameters on the computation path
+    executed for one token: eight routed experts plus the shared expert, the
+    full router, and the full output head.  Vocabulary matrices are not treated
+    consistently across the MoE literature, so we follow DeepSeek's own
+    <a href="https://huggingface.co/deepseek-ai/DeepSeek-V3/blob/main/README_WEIGHTS.md">corrected
+    accounting</a>: the input embedding is a lookup and is not counted, while the
+    output head counts in full — exactly <strong>36,625,618,432</strong>
+    activated parameters, the advertised 37B.</p>
 
     <dsv3-anatomy style="min-height:723px" tally layer-id="params-diagram" detail controls="static" nocaption></dsv3-anatomy>
 

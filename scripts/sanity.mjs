@@ -34,6 +34,10 @@ check('L0 == analytic roofline', Math.abs(l0 - roofUs) / roofUs < 1e-9, `${fmtUs
 // Exact checkpoint-header audit (model tensors only; FP8 scale metadata excluded).
 check('DSv3 exact main-model parameter count', PARAMS.total === 671026419200,
   PARAMS.total.toLocaleString('en-US'));
+// DeepSeek's corrected convention (README_WEIGHTS.md): input embedding not
+// counted, output head counted in full — "36.6B", advertised as 37B
+check('DSv3 exact activated parameter count', PARAMS.activeTotal === 36625618432,
+  PARAMS.activeTotal.toLocaleString('en-US'));
 
 // 1F1B bubble fraction ≈ (p-1)/(m+p-1) (approximate: stages are not uniform)
 const l2 = simulate({ ...base, level: 2 }).stats;
