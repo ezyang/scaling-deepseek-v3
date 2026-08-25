@@ -8,20 +8,20 @@
 <html lang="en"><head><meta charset="utf-8"><title>diagram lint</title>
 <link rel="stylesheet" href="../studies/study.css"></head>
 <body><main>
-  <div data-widget="full-moe-static-detail-tabs"><dsv3-layer id="w1" detail controls="static" kindtabs block-only nocaption></dsv3-layer></div>
-  <div data-widget="full-dense-static-detail-tabs"><dsv3-layer id="w2" detail controls="static" kindtabs kind="dense" block-only nocaption></dsv3-layer></div>
+  <div data-widget="full-moe-static-detail-tabs"><dsv3-layer id="w1" detail controls="static" tabs scope="block" nocaption></dsv3-layer></div>
+  <div data-widget="full-dense-static-detail-tabs"><dsv3-layer id="w2" detail controls="static" tabs kind="dense" scope="block" nocaption></dsv3-layer></div>
   <div data-widget="full-moe-fullctl-fp8-detail"><dsv3-layer id="w3" detail recipe="dsv3-fp8" recompute="dsv3" transposed></dsv3-layer></div>
-  <div data-widget="full-dense-fullctl-bf16"><dsv3-layer id="w4" recipe="bf16" recompute="none" kind="dense" block-only></dsv3-layer></div>
-  <div data-widget="marks-tier-attnreplay"><dsv3-layer id="w5" controls="marks" recipe="bf16" recompute="attn-replay" block-only></dsv3-layer></div>
-  <div data-widget="dtype-tier-mxfp8"><dsv3-layer id="w6" controls="dtype" recipe="nv-mxfp8" recompute="none" block-only></dsv3-layer></div>
-  <div data-widget="only-mla-static-detail"><dsv3-layer id="w7" detail controls="static" only="mla" block-only nocaption></dsv3-layer></div>
-  <div data-widget="only-ffn-moe-static-detail"><dsv3-layer id="w8" detail controls="static" only="ffn" block-only nocaption></dsv3-layer></div>
-  <div data-widget="only-ffn-dense-static-detail"><dsv3-layer id="w9" detail controls="static" only="ffn" kind="dense" block-only nocaption></dsv3-layer></div>
-  <div data-widget="terse-static"><dsv3-layer id="w10" controls="static" block-only nocaption></dsv3-layer></div>
-  <div data-widget="full-moe-static-flatdims"><dsv3-layer id="w11" detail controls="static" block-only nocaption></dsv3-layer></div>
-  <div data-widget="marks-tabs-quant"><dsv3-layer id="w12" controls="marks" recipe="bf16" recompute="dsv3" kindtabs block-only></dsv3-layer></div>
-  <div data-widget="paramsonly-static"><dsv3-layer id="w14" detail controls="static" kindtabs paramsonly block-only nocaption></dsv3-layer></div>
-  <div data-widget="anatomy-wrapper"><dsv3-anatomy layer-id="w13" detail controls="static" nocaption></dsv3-anatomy></div>
+  <div data-widget="full-dense-fullctl-bf16"><dsv3-layer id="w4" recipe="bf16" recompute="none" kind="dense" scope="block"></dsv3-layer></div>
+  <div data-widget="marks-tier-attnreplay"><dsv3-layer id="w5" controls="marks" recipe="bf16" recompute="attn-replay" scope="block"></dsv3-layer></div>
+  <div data-widget="dtype-tier-mxfp8"><dsv3-layer id="w6" controls="dtype" recipe="nv-mxfp8" recompute="none" scope="block"></dsv3-layer></div>
+  <div data-widget="only-mla-static-detail"><dsv3-layer id="w7" detail controls="static" scope="mla" nocaption></dsv3-layer></div>
+  <div data-widget="only-ffn-moe-static-detail"><dsv3-layer id="w8" detail controls="static" scope="ffn" nocaption></dsv3-layer></div>
+  <div data-widget="only-ffn-dense-static-detail"><dsv3-layer id="w9" detail controls="static" scope="ffn" kind="dense" nocaption></dsv3-layer></div>
+  <div data-widget="terse-static"><dsv3-layer id="w10" controls="static" scope="block" nocaption></dsv3-layer></div>
+  <div data-widget="full-moe-static-flatdims"><dsv3-layer id="w11" detail controls="static" scope="block" nocaption></dsv3-layer></div>
+  <div data-widget="marks-tabs-quant"><dsv3-layer id="w12" controls="marks" recipe="bf16" recompute="dsv3" tabs scope="block"></dsv3-layer></div>
+  <div data-widget="paramsonly-static"><dsv3-layer id="w14" detail controls="static" tabs lens="params" scope="block" nocaption></dsv3-layer></div>
+  <div data-widget="anatomy-wrapper"><dsv3-anatomy layer="w13" detail controls="static" nocaption></dsv3-anatomy></div>
   <div data-widget="anatomy-plan"><dsv3-anatomy-plan id="wp"></dsv3-anatomy-plan></div>
   <pre id="lint-out"></pre>
 </main>

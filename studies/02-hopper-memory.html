@@ -61,7 +61,7 @@
     we want to start somewhere), we can tally up the overall memory usage of
     the entire model.</p>
 
-    <dsv3-anatomy style="min-height:723px" tally paramsonly layer-id="diagram" detail controls="static" nocaption></dsv3-anatomy>
+    <dsv3-anatomy style="min-height:723px" tally lens="params" layer="diagram" detail controls="static" nocaption></dsv3-anatomy>
 
     TODO: full transformer block diagram.  We're going to do a variation of the
     parameter count diagram, but I think we should have the yellow blocks
@@ -111,7 +111,7 @@
     grids are priced at; we'll revisit that assumption in the next
     section.</p>
 
-    <dsv3-anatomy style="min-height:827px" layer-id="ac-layer" controls="marks" recipe="bf16" recompute="dsv3"></dsv3-anatomy>
+    <dsv3-anatomy style="min-height:827px" layer="ac-layer" controls="marks" recipe="bf16" recompute="dsv3"></dsv3-anatomy>
 
     <p>Some things to notice as you play with the marks:</p>
 
@@ -153,7 +153,7 @@
     stored in the dtype of the GEMM that will read it during backward.  Flip
     the dtype buttons below and watch the stash sizes follow.</p>
 
-    <dsv3-anatomy style="min-height:854px" layer-id="fp8-layer" controls="dtype" recipe="dsv3-fp8" recompute="none"></dsv3-anatomy>
+    <dsv3-anatomy style="min-height:854px" layer="fp8-layer" controls="dtype" recipe="dsv3-fp8" recompute="none"></dsv3-anatomy>
 
     <p>Two recipes matter for us.  The <em>dsv3-fp8</em> recipe is the Hopper
     one: linears in tile-scaled FP8, but the attention core, its output, and
@@ -242,7 +242,7 @@
       exploration row uses our 1F1B in-flight law instead — a pinned in-flight would be wrong away from
       pp = 8 — and reports the <em>worst</em> rank, usually pp0, whose bar grows a separate
       "weights (embed/head)" segment for the 917M-param embedding.</p>
-    <dsv3-anatomy style="min-height:897px" layer-id="study1-layer" for="mem-widget" recipe="dsv3-fp8" recompute="attn-replay"
+    <dsv3-anatomy style="min-height:897px" layer="study1-layer" for="mem-widget" recipe="dsv3-fp8" recompute="attn-replay"
       xlayers="8" xinflight="8.5"></dsv3-anatomy>
     <dsv3-controls id="study-ctl" style="min-height:178px" for="mem-widget" layer="study1-layer"
       bundles="dsv3-h100,nvidia-mlperf-gb300"

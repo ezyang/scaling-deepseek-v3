@@ -1,6 +1,6 @@
 // The anatomy composition: <dsv3-anatomy> = a vertical margin plan
 // (<dsv3-anatomy-plan>, the top-level structure in the block diagram's own
-// visual language) beside ONE full transformer block (<dsv3-layer kindtabs>),
+// visual language) beside ONE full transformer block (<dsv3-layer tabs>),
 // joined by a dashed expansion cone from the highlighted plan block to the
 // diagram. Clicking a plan block or a tab flips the FFN column; the two stay
 // in sync. The plan shows embedding → dense ×3 → MoE ×58 → final RMSNorm →
@@ -135,9 +135,9 @@ export class Dsv3AnatomyPlan extends HTMLElement {
 }
 customElements.define('dsv3-anatomy-plan', Dsv3AnatomyPlan);
 
-// <dsv3-anatomy layer-id="..." [layer attrs...]>: the shipped composition.
-// Forwards layer attributes to an inner <dsv3-layer kindtabs block-only>
-// whose id is layer-id (so URL state, dsv3-controls layer= links, and page
+// <dsv3-anatomy layer="..." [layer attrs...]>: the shipped composition.
+// Forwards layer attributes to an inner <dsv3-layer tabs scope="block">
+// whose id is the layer attr (so URL state, dsv3-controls links, and page
 // scripts keep working). The grid breaks out of a width-capped <main> so the
 // diagram renders at natural size (it scales only below ~1330px viewports).
 const ANAT_CSS = `
@@ -148,10 +148,10 @@ dsv3-anatomy .anat-grid { display: grid; grid-template-columns: 186px minmax(0, 
 dsv3-anatomy dsv3-anatomy-plan { margin-top: 46px; }
 `;
 const FWD = ['controls', 'recipe', 'recompute', 'detail', 'transposed', 'for',
-  'nocaption', 'kind', 'xlayers', 'xinflight', 'paramsonly'];
+  'nocaption', 'kind', 'xlayers', 'xinflight', 'lens'];
 export class Dsv3Anatomy extends HTMLElement {
   connectedCallback() {
-    const lid = this.getAttribute('layer-id') ?? ((this.id || 'anatomy') + '-layer');
+    const lid = this.getAttribute('layer') ?? ((this.id || 'anatomy') + '-layer');
     const style = document.createElement('style'); style.textContent = ANAT_CSS;
     const grid = document.createElement('div'); grid.className = 'anat-grid';
     const col1 = document.createElement('div');
@@ -160,14 +160,14 @@ export class Dsv3Anatomy extends HTMLElement {
     col1.append(plan);
     if (this.hasAttribute('tally')) {   // the parameter tally lives in the margin, below the plan
       const tal = document.createElement('dsv3-param-tally');
-      tal.setAttribute('layer-id', lid);
+      tal.setAttribute('layer', lid);
       tal.setAttribute('compact', '');
       col1.append(tal);
     }
     const layer = document.createElement('dsv3-layer');
     layer.id = lid;
-    layer.setAttribute('kindtabs', '');
-    layer.setAttribute('block-only', '');
+    layer.setAttribute('tabs', '');
+    layer.setAttribute('scope', 'block');
     for (const a of FWD) if (this.hasAttribute(a)) layer.setAttribute(a, this.getAttribute(a));
     grid.append(col1, layer);
     this.append(style, grid);
@@ -176,7 +176,7 @@ export class Dsv3Anatomy extends HTMLElement {
 customElements.define('dsv3-anatomy', Dsv3Anatomy);
 
 
-// <dsv3-param-tally layer-id="..." [compact]>: the parameter count computed
+// <dsv3-param-tally layer="..." [compact]>: the parameter count computed
 // FROM the diagram, spreadsheet-style. Each row is a derived sum; clicking it
 // highlights the diagram "cells" (boxes) whose grey parentheticals it sums —
 // everything else fades (the tabs' visual language) — plus the plan box
@@ -310,7 +310,7 @@ export class Dsv3ParamTally extends HTMLElement {
           `<td>${r.mult}</td><td class="num">${num(r.per * r.count)}</td></tr>`).join('') +
       `</tbody><tfoot><tr><td${compact ? '' : ' colspan="3"'}>total</td><td class="num">${num(total)}</td></tr></tfoot></table>` +
       (compact ? `<div class="fxout"></div>` : '');
-    const lid = this.getAttribute('layer-id') ?? '';
+    const lid = this.getAttribute('layer') ?? '';
     const layer = () => document.getElementById(lid);
     const plan = () => document.querySelector(`dsv3-anatomy-plan[layer="${lid}"]`);
     // interaction model: HOVER previews a row's (or a single term's) cells,

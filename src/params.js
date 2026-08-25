@@ -1,6 +1,6 @@
 // Named parameter quantities, derived once from the architecture and shared
 // by every surface that displays a count (the tally, the plan strip, the
-// kindtabs) — so they can't drift apart.
+// tabs) — so they can't drift apart.
 //
 // Audited against every main-model non-`weight_scale_inv` tensor in the
 // published deepseek-ai/DeepSeek-V3 safetensors headers (embedding, layers

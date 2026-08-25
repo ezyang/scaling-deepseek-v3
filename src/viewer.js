@@ -777,6 +777,9 @@ export class Dsv3Layer extends HTMLElement {
     // progressive disclosure: controls="static|marks|dtype|full" gates which
     // controls are rendered (the diagram and its derived annotations always draw)
     const cmode = this.getAttribute('controls') ?? 'full';
+    // scope: how much of the model this instance draws
+    // (model = block + head row · block = the block alone · mla/ffn = one column)
+    const SCOPE = this.getAttribute('scope') ?? 'model';
     // static = pure structure: save-everything semantics, no quantities
     // (FLOP strips, bytes, grids, dtype tags), no tooltips, minimal caption
     this._ctl = {
@@ -795,7 +798,7 @@ export class Dsv3Layer extends HTMLElement {
       s.onchange = () => { this.kind = s.value; this.render(); this.changed(true); };
       return s;
     };
-    if (this.hasAttribute('kindtabs')) head.append('DSv3 block');   // the tabs carry the flip
+    if (this.hasAttribute('tabs')) head.append('DSv3 block');   // the tabs carry the flip
     else head.append('DSv3 ', mkKindSel());
     if (this._ctl.dtype) head.append(' · precision: ');
     const preset = document.createElement('select');
@@ -917,7 +920,7 @@ export class Dsv3Layer extends HTMLElement {
     else {
       const mini = el('div', 'lv-head');
       // no kind select when MLA-only (kind-independent) or when the tabs carry the flip
-      if (this.getAttribute('only') === 'mla' || this.hasAttribute('kindtabs')) mini.append('sizes:', mkDimsBtn(), mkCumBtn());
+      if (SCOPE === 'mla' || this.hasAttribute('tabs')) mini.append('sizes:', mkDimsBtn(), mkCumBtn());
       else mini.append('block: ', mkKindSel(), ' · sizes:', mkDimsBtn(), mkCumBtn());
       root.append(mini);
     }
@@ -956,8 +959,8 @@ export class Dsv3Layer extends HTMLElement {
         : this.detail
           ? (this._ctl.quant ? 'The shared expert follows the grouped ffn boxes\u2019 mark and dtype; its FLOPs are counted in their strips. ' : '')
           : (this._ctl.quant
-            ? `Shared expert${this.hasAttribute('block-only') ? '' : ' + dense MLPs'} follow${this.hasAttribute('block-only') ? 's' : ''} the ffn choices; `
-            : `The shared expert${this.hasAttribute('block-only') ? ' shares' : ' and dense MLPs share'} the ffn boxes; `))
+            ? `Shared expert${SCOPE === 'model' ? ' + dense MLPs' : ''} follow${SCOPE === 'model' ? '' : 's'} the ffn choices; `
+            : `The shared expert${SCOPE === 'model' ? ' and dense MLPs share' : ' shares'} the ffn boxes; `))
           + `RoPE is fused into the q/kv paths${this._ctl.quant ? ' and always recomputed' : ''} (negligible).`,
       !this._ctl.quant ? '' :
       'The block strip inside each op is its FLOP cost as time at peak, scaled so the block\u2019s largest op fills one row (' +
@@ -1001,13 +1004,14 @@ export class Dsv3Layer extends HTMLElement {
     // Aux backward artifacts (rstd, lse) exit each box to the RIGHT — always saved.
     // only="mla" / only="ffn" draws a single column (for composed anatomy
     // pages that show each component once); default draws the full block
-    const ONLY = this.getAttribute('only');
-    const PONLY = this.hasAttribute('paramsonly');   // parameter-count focus view
+    const SCOPE = this.getAttribute('scope') ?? 'model';
+    const ONLY = SCOPE === 'mla' || SCOPE === 'ffn' ? SCOPE : null;   // single-column scopes
+    const PONLY = this.getAttribute('lens') === 'params';   // parameter-count focus view
     // quant tiers carry byte-quantity labels (e.g. attention's lse) that need
     // more room between the columns; the static tier keeps its published width
     const W = 290, C1 = 60,
       C2 = (ONLY === 'ffn' ? 60 : !this._ctl.quant ? 512 : this.detail ? 576 : 524)
-        + (ONLY !== 'ffn' && this._ctl.quant && this.hasAttribute('kindtabs') ? 20 : 0);
+        + (ONLY !== 'ffn' && this._ctl.quant && this.hasAttribute('tabs') ? 20 : 0);
     const SX1 = C1 + 22, SX2 = C2 + 22, RAIL1 = C1 - 26;
     const WIDTH = ONLY === 'mla' ? C1 + W + 250
       : C2 + W + (this.detail ? (this._ctl.quant ? 264 : 224) : 180); // right margin fits aux labels (+ shared column in detail; quant byte tags are wider)
@@ -1054,7 +1058,7 @@ export class Dsv3Layer extends HTMLElement {
     // are noise; the sizes toggle keeps governing dims and per-block factoring
     const pk = (n, noK = false) => {
       const v = CUM && !noK ? fmtP(n * KMUL) : fmtP(n);
-      return PONLY ? ` ${v}` : ` (${v})`;   // paramsonly: no parens — params are the only numbers left
+      return PONLY ? ` ${v}` : ` (${v})`;   // lens=params: no parens — params are the only numbers left
     };
     const pstr = (id) => {
       const p = PCNT[id];
@@ -1430,14 +1434,14 @@ export class Dsv3Layer extends HTMLElement {
     }  // end MLA column
 
     // the norm2 return rail: right of all of column 1's aux labels, and clear
-    // of the kindtabs enclosure border (at C2 - 14) when tabs are drawn
-    const midX = this.hasAttribute('kindtabs') ? C2 - 34 : C2 - 16;
+    // of the tabs' enclosure border (at C2 - 14) when tabs are drawn
+    const midX = this.hasAttribute('tabs') ? C2 - 34 : C2 - 16;
 
     // ---- column 2: the FFN half (MoE machinery, or one wide dense FFN);
     // skipped in only="mla" mode ----
     const nExp = DSV3.topk + DSV3.sharedExperts;   // grouped boxes carry topk/nExp, shared 1/nExp
-    // kindtabs: dense/MoE flip tabs (with the per-block tally) above the FFN column
-    const TABS = this.hasAttribute('kindtabs') && ONLY !== 'mla';
+    // tabs: dense/MoE flip tabs (with the per-block tally) above the FFN column
+    const TABS = this.hasAttribute('tabs') && ONLY !== 'mla';
     let z = ONLY === 'ffn' ? 36 : 16;
     let encTop = 0, encBot = 0;   // enclosure extent: just the kind-dependent region
     if (ONLY !== 'mla') {
@@ -1679,11 +1683,11 @@ export class Dsv3Layer extends HTMLElement {
     }  // end FFN column (skipped in only="mla" mode)
     const col2End = ONLY === 'mla' ? 0 : z + 42;   // room for the add label under the plus
 
-    // ---- head row (unless block-only: show the transformer block alone,
-    // making no claims about the surrounding stack) ----
+    // ---- head row (scope="model" only: other scopes show the block or a
+    // column alone, making no claims about the surrounding stack) ----
     let h = Math.max(col1End, col2End) + 10;
     let lmH = -20;
-    if (!this.hasAttribute('block-only')) {
+    if (SCOPE === 'model') {   // the surrounding stack: ×61 rule, final norm, lm head, loss
       P.push(`<line class="wire" x1="${C1 - 20}" y1="${h}" x2="${C2 + W + 20}" y2="${h}" stroke-dasharray="3 3"/>`);
       P.push(`<text class="grplabel" x="${C1 - 20}" y="${h - 5}">× 61 blocks, then:</text>`);
       h += 10;
