@@ -138,10 +138,14 @@ async function lintPlaceholders() {
     await new Promise(r => setTimeout(r, 400));
     for (const el of f.contentDocument.querySelectorAll(WTAGS)) {
       if (el.tagName !== 'DSV3-ANATOMY' && el.closest('dsv3-anatomy')) continue;  // the wrapper's min-height covers its children
+      // measure the CONTENT height: min-height inflates the element itself,
+      // which would hide too-large declarations
+      const decl = parseFloat(el.style.minHeight) || 0;
+      el.style.minHeight = '';
       const hh = el.getBoundingClientRect().height;
+      el.style.minHeight = decl ? decl + 'px' : '';
       if (hh < 40) continue;
       const name = el.tagName.toLowerCase() + (el.id ? '#' + el.id : '');
-      const decl = parseFloat(el.style.minHeight) || 0;
       if (!decl) push({ check: 'placeholder-height-missing', page: p, el: name, actual: Math.round(hh) });
       else if (Math.abs(hh - decl) > 48)
         push({ check: 'placeholder-height-drift', page: p, el: name, declared: decl, actual: Math.round(hh) });
