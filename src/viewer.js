@@ -1436,8 +1436,8 @@ export class Dsv3Layer extends HTMLElement {
     y = mmBox(['attn'], C1, y);
     y = wireOut(['attn'], SX1, y);
     y = mmBox(['o_proj'], C1, y);
-    grp(C1, g1, y + 5, CUM ? `MLA · ${fmtP(PARAMS.mla * KMUL)}`
-      : `MLA ×${DSV3.layers} · ${fmtP(PARAMS.mla)}`, MLAGW);
+    grp(C1, g1, y + 5, CUM ? `MLA · ${fmtPV(PARAMS.mla * KMUL)}`
+      : `MLA ×${DSV3.layers} · ${fmtPV(PARAMS.mla)}`, MLAGW);
     y = wireOut(['o_proj'], SX1, y + 5);
     if (ONLY === 'mla') {
       // component view: the residual add lives in the block wiring, not here
@@ -1487,8 +1487,8 @@ export class Dsv3Layer extends HTMLElement {
           `<tspan style="font:10px system-ui" fill="${on ? '#898781' : '#a8a69e'}"> ${sub}</tspan></text></g>`;
       };
       if (!this.cumulative) {   // cumulative mode: the plan selector alone carries the kind
-        P.push(tab(C2 + 42, 148, 'dense', 'dense FFN', `×${DSV3.denseLayers ?? 3} · ${fmtP(PARAMS.denseFfnBlk)}`) +
-          tab(C2 + 198, 168, 'moe', 'MoE FFN', `×${DSV3.layers - (DSV3.denseLayers ?? 3)} · ${fmtP(this.activeView ? PARAMS.activeMoeFfnBlk : PARAMS.moeFfnBlk)}`));
+        P.push(tab(C2 + 42, 148, 'dense', 'dense FFN', `×${DSV3.denseLayers ?? 3} · ${fmtPV(PARAMS.denseFfnBlk)}`) +
+          tab(C2 + 198, 168, 'moe', 'MoE FFN', `×${DSV3.layers - (DSV3.denseLayers ?? 3)} · ${fmtPV(this.activeView ? PARAMS.activeMoeFfnBlk : PARAMS.moeFfnBlk)}`));
       }
     };
     const norm2Top = z;
@@ -1627,10 +1627,10 @@ export class Dsv3Layer extends HTMLElement {
     {
       const nR = this.activeView ? DSV3.topk : DSV3.routedExperts;   // fired vs resident
       grp(C2, g2, z + 5, DET
-        ? (CUM ? `routed experts · ${fmtP(PARAMS.expert * nR * KMUL)}`
-               : `routed experts ×${nR} · ${fmtP(PARAMS.expert)}`)
-        : (CUM ? `experts · ${fmtP(PARAMS.expert * (nR + DSV3.sharedExperts) * KMUL)}`
-               : `experts ×${nR + DSV3.sharedExperts} · ${fmtP(PARAMS.expert)}`));
+        ? (CUM ? `routed experts · ${fmtPV(PARAMS.expert * nR * KMUL)}`
+               : `routed experts ×${nR} · ${fmtPV(PARAMS.expert)}`)
+        : (CUM ? `experts · ${fmtPV(PARAMS.expert * (nR + DSV3.sharedExperts) * KMUL)}`
+               : `experts ×${nR + DSV3.sharedExperts} · ${fmtPV(PARAMS.expert)}`));
     }
     z = wireOut(['ffn_down'], SX2, z + 5);
     z = opNode('combine', DET ? 'a2a combine (comm + unpermute · sum)' : 'a2a combine (weighted by router)', C2, z, 'comm');
