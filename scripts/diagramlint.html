@@ -137,7 +137,7 @@ async function lintPlaceholders() {
     await new Promise(r => { f.onload = r; f.src = p; });
     await new Promise(r => setTimeout(r, 400));
     for (const el of f.contentDocument.querySelectorAll(WTAGS)) {
-      if (el.tagName === 'DSV3-LAYER' && el.closest('dsv3-anatomy')) continue;  // the wrapper carries it
+      if (el.tagName !== 'DSV3-ANATOMY' && el.closest('dsv3-anatomy')) continue;  // the wrapper's min-height covers its children
       const hh = el.getBoundingClientRect().height;
       if (hh < 40) continue;
       const name = el.tagName.toLowerCase() + (el.id ? '#' + el.id : '');

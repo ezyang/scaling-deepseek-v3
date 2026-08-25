@@ -690,8 +690,8 @@ ${tokensCss('.lv')}
 .lv .tsave { fill: #7a5200; font-weight: 600; }
 .lv .tdim { fill: #898781; font-weight: 400; }
 .lv .micro { fill: #f7f6f1; stroke: #d8d6cb; }
-.lv g[data-op].hl > rect { stroke: #eda100; stroke-width: 1.6; }
-.lv g[data-op].hl .dims { fill: #b05f00; font-weight: 600; }
+.lv svg.hlm > :not(.hl):not(defs):not([data-kind]) { opacity: 0.3; }
+.lv g[data-op].hl .dims { fill: #52514e; font-weight: 600; }
 .lv .microlabel { font: italic 10px system-ui; fill: #52514e; }
 .lv .tredo { fill: #52514e; font-style: italic; }
 .lv .tidle { fill: #a8a69e; }
@@ -967,6 +967,8 @@ export class Dsv3Layer extends HTMLElement {
   applyHl() {
     for (const g of this.querySelectorAll('[data-op]'))
       g.classList.toggle('hl', this._hl?.has(g.dataset.op) ?? false);
+    // tab visual language: selected cells keep full contrast, the rest fades
+    this.querySelector('svg')?.classList.toggle('hlm', !!this._hl?.size);
   }
   buildSvg(ana, anaM = null) {
     const P = [];
@@ -1189,10 +1191,10 @@ export class Dsv3Layer extends HTMLElement {
     // display-only elided kernel (detail view): cheap, no marks, not in the graph
     const DET = this.detail;
     let MLAGW = 0;   // MLA group width — attention's lse label starts past its right edge
-    const micro = (label, x, y, w = W, tip, pc = '') => {
+    const micro = (label, x, y, w = W, tip, pc = '', opId = null) => {
       const body = `<rect class="micro" x="${x}" y="${y}" width="${w}" height="18" rx="9"/>` +
         `<text class="microlabel" x="${x + 9}" y="${y + 13}">${label}${pc ? `<tspan class="dims"> ${pc}</tspan>` : ''}</text>`;
-      P.push(tip ? `<g data-tip="${escAttr(tip)}">${body}</g>` : body);
+      P.push(tip || opId ? `<g${opId ? ` data-op="${opId}"` : ''}${tip ? ` data-tip="${escAttr(tip)}"` : ''}>${body}</g>` : body);
       return y + 18;
     };
     const plus = (cx, y) => P.push(`<circle cx="${cx}" cy="${y}" r="9" class="box"/>` +
@@ -1218,7 +1220,7 @@ export class Dsv3Layer extends HTMLElement {
     };
     const opNode = (id, label, x, y, cls = 'op', pc = '') => {
       const h2 = cls === 'comm' ? 22 : 27;
-      P.push(`<g${boxTip(id)}>` +
+      P.push(`<g data-op="${id}"${boxTip(id)}>` +
         `<rect class="${cls}" x="${x}" y="${y}" width="${W}" height="${h2}" rx="6"/>` +
         `<text class="oplabel" x="${x + 10}" y="${y + 15}">${label}${pc ? `<tspan class="dims"> ${pc}</tspan>` : ''}</text></g>` +
         modeBtn([id], x + W - 30, y + 1));
@@ -1286,8 +1288,8 @@ export class Dsv3Layer extends HTMLElement {
         const normTip = 'input-form backward: reads its INPUT (pre-norm) + rstd — never its output. ' +
           'The pre-norm latent is not stashed; it is exactly recoverable from the post-norm stash, ' +
           '\u03b3, and rstd (x = y / (\u03b3\u00b7rstd)), which is why one latent copy suffices.';
-        micro('RMSNorm', C1, y, 140, normTip, `(${fmtP(DSV3.qRank)})`);
-        micro('RMSNorm', C1 + 150, y, 140, normTip, `(${fmtP(DSV3.kvRank)})`);
+        micro('RMSNorm', C1, y, 140, normTip, `(${fmtP(DSV3.qRank)})`, 'q_norm');
+        micro('RMSNorm', C1 + 150, y, 140, normTip, `(${fmtP(DSV3.kvRank)})`, 'kv_norm');
         y += 18;
         // their rstd: exits the bottom, elbows right (\u2191 = read by the op
         // above, the norm's own backward); a replayed norm regenerates it

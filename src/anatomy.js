@@ -10,16 +10,23 @@
 import { DSV3 } from './model.js';
 import { fmtP, tokensCss } from './viewer.js';
 
-// per-component parameter counts, derived from the architecture
+// per-component parameter counts, derived from the architecture.
+// EXACT: RMSNorm weights are counted (norm1 + the two latent norms in the
+// MLA half; norm2 in each FFN half) — a rounding error, but the formulas
+// shouldn't lie.
 const A = DSV3;
 const E = A.hidden * A.vocab;
+const MLA_NORMS = A.hidden + A.qRank + A.kvRank;   // norm1, q latent norm, kv latent norm
 const MLA = A.hidden * (A.qRank + A.kvRank + A.qkRope)
   + A.qRank * A.heads * (A.qkNope + A.qkRope)
   + A.kvRank * A.heads * (A.qkNope + A.vHead)
-  + A.heads * A.vHead * A.hidden;
-const DENSE = MLA + 3 * A.hidden * A.denseInter;
-const MOE = MLA + (A.routedExperts + A.sharedExperts) * 3 * A.hidden * A.moeInter
-  + A.hidden * A.routedExperts;
+  + A.heads * A.vHead * A.hidden
+  + MLA_NORMS;
+const DENSE_FFN = 3 * A.hidden * A.denseInter + A.hidden;              // + norm2
+const MOE_FFN = (A.routedExperts + A.sharedExperts) * 3 * A.hidden * A.moeInter
+  + A.hidden * A.routedExperts + A.hidden;                             // + norm2
+const DENSE = MLA + DENSE_FFN;
+const MOE = MLA + MOE_FFN;
 
 // the block diagram's visual-language tokens, plus the plan's own bits
 const CSS = `
@@ -30,8 +37,8 @@ ${tokensCss('.anp')}
 .anp .box.on { fill: #fff8ea; stroke: #eda100; }
 .anp [data-kind] { cursor: pointer; }
 .anp [data-kind].on { cursor: default; }
-.anp g[data-op].hl rect { stroke: #eda100; stroke-width: 1.5; }
-.anp g[data-op].hl .dims { fill: #b05f00; font-weight: 600; }
+.anp svg.hlm > :not(.hl):not(defs) { opacity: 0.3; }
+.anp g[data-op].hl .dims { fill: #52514e; font-weight: 600; }
 `;
 
 export class Dsv3AnatomyPlan extends HTMLElement {
@@ -110,7 +117,7 @@ export class Dsv3AnatomyPlan extends HTMLElement {
     wire(24, `x · ${A.hidden}`);
     blockBox('moe', `MoE block ×${A.layers - A.denseLayers}`, `${fmtP(MOE)} each`);
     wire(24, `x · ${A.hidden}`);
-    op('final RMSNorm', `(${fmtP(A.hidden)})`);
+    op('final RMSNorm', `(${fmtP(A.hidden)})`, 22, 'final_norm');
     wire(24, `norm out · ${A.hidden}`);
     S.push(`<g data-op="lm_head"><rect class="box" x="${BX}" y="${y}" width="${W}" height="34" rx="4"/>` +
       `<text class="name" x="${BX + 8}" y="${y + 14}">lm head</text>` +
@@ -136,6 +143,7 @@ export class Dsv3AnatomyPlan extends HTMLElement {
   applyHl() {
     for (const g of this._root.querySelectorAll('[data-op]'))
       g.classList.toggle('hl', this._hl?.has(g.dataset.op) ?? false);
+    this._root.querySelector('svg')?.classList.toggle('hlm', !!this._hl?.size);
   }
 }
 customElements.define('dsv3-anatomy-plan', Dsv3AnatomyPlan);
@@ -159,25 +167,36 @@ export class Dsv3Anatomy extends HTMLElement {
     const lid = this.getAttribute('layer-id') ?? ((this.id || 'anatomy') + '-layer');
     const style = document.createElement('style'); style.textContent = ANAT_CSS;
     const grid = document.createElement('div'); grid.className = 'anat-grid';
+    const col1 = document.createElement('div');
     const plan = document.createElement('dsv3-anatomy-plan');
     plan.setAttribute('layer', lid);
+    col1.append(plan);
+    if (this.hasAttribute('tally')) {   // the parameter tally lives in the margin, below the plan
+      const tal = document.createElement('dsv3-param-tally');
+      tal.setAttribute('layer-id', lid);
+      tal.setAttribute('compact', '');
+      col1.append(tal);
+    }
     const layer = document.createElement('dsv3-layer');
     layer.id = lid;
     layer.setAttribute('kindtabs', '');
     layer.setAttribute('block-only', '');
     for (const a of FWD) if (this.hasAttribute(a)) layer.setAttribute(a, this.getAttribute(a));
-    grid.append(plan, layer);
+    grid.append(col1, layer);
     this.append(style, grid);
   }
 }
 customElements.define('dsv3-anatomy', Dsv3Anatomy);
 
 
-// <dsv3-param-tally layer-id="...">: the parameter count computed FROM the
-// diagram, spreadsheet-style. Each row is a derived sum; clicking it
-// highlights the diagram "cells" (boxes) whose grey parentheticals it sums,
-// and the plan box carrying its multiplier. Rows over the hidden FFN kind
-// flip the diagram to that kind first, so the cells are always visible.
+// <dsv3-param-tally layer-id="..." [compact]>: the parameter count computed
+// FROM the diagram, spreadsheet-style. Each row is a derived sum; clicking it
+// highlights the diagram "cells" (boxes) whose grey parentheticals it sums —
+// everything else fades (the tabs' visual language) — plus the plan box
+// carrying its multiplier. Rows over the hidden FFN kind flip the diagram to
+// that kind first, so the cells are always visible. compact = the narrow
+// two-column form that <dsv3-anatomy tally> mounts in the margin below the
+// plan. RMSNorm weights are counted; only the MTP module is omitted.
 const T = {
   qkvDown: A.hidden * (A.qRank + A.kvRank + A.qkRope),
   qUp: A.qRank * A.heads * (A.qkNope + A.qkRope),
@@ -185,23 +204,25 @@ const T = {
   oProj: A.heads * A.vHead * A.hidden,
   router: A.hidden * A.routedExperts,
   expert: 3 * A.hidden * A.moeInter,
-  denseFfn: 3 * A.hidden * A.denseInter,
 };
 const TALLY_ROWS = [
   { label: 'MLA (attention)', kind: null,
-    ops: ['qkv_down', 'q_up', 'kv_up', 'o_proj'], plan: ['block-dense', 'block-moe'],
-    formula: `${fmtP(T.qkvDown)} + ${fmtP(T.qUp)} + ${fmtP(T.kvUp)} + ${fmtP(T.oProj)}`,
+    ops: ['qkv_down', 'q_up', 'kv_up', 'o_proj', 'norm1', 'q_norm', 'kv_norm'],
+    plan: ['block-dense', 'block-moe'],
+    formula: `${fmtP(T.qkvDown)} + ${fmtP(T.qUp)} + ${fmtP(T.kvUp)} + ${fmtP(T.oProj)} + ${fmtP(MLA_NORMS)} norms`,
     per: MLA, count: A.layers, mult: `× ${A.layers} blocks` },
   { label: 'dense FFN', kind: 'dense',
-    ops: ['ffn_gate_up', 'ffn_down'], plan: ['block-dense'],
-    formula: `${fmtP(2 * A.hidden * A.denseInter)} + ${fmtP(A.denseInter * A.hidden)}`,
-    per: T.denseFfn, count: A.denseLayers, mult: `× ${A.denseLayers} blocks` },
+    ops: ['ffn_gate_up', 'ffn_down', 'norm2'], plan: ['block-dense'],
+    formula: `${fmtP(2 * A.hidden * A.denseInter)} + ${fmtP(A.denseInter * A.hidden)} + ${fmtP(A.hidden)} norm`,
+    per: DENSE_FFN, count: A.denseLayers, mult: `× ${A.denseLayers} blocks` },
   { label: 'MoE FFN', kind: 'moe',
-    ops: ['router', 'ffn_gate_up', 'ffn_down', 'shared'], plan: ['block-moe'],
-    formula: `${fmtP(T.router)} + (${fmtP(2 * A.hidden * A.moeInter)} + ${fmtP(A.moeInter * A.hidden)}) × ${A.routedExperts} + ${fmtP(T.expert)} shared`,
-    per: MOE - MLA, count: A.layers - A.denseLayers, mult: `× ${A.layers - A.denseLayers} blocks` },
+    ops: ['router', 'ffn_gate_up', 'ffn_down', 'shared', 'norm2'], plan: ['block-moe'],
+    formula: `${fmtP(T.router)} + (${fmtP(2 * A.hidden * A.moeInter)} + ${fmtP(A.moeInter * A.hidden)}) × ${A.routedExperts} + ${fmtP(T.expert)} shared + ${fmtP(A.hidden)} norm`,
+    per: MOE_FFN, count: A.layers - A.denseLayers, mult: `× ${A.layers - A.denseLayers} blocks` },
   { label: 'embedding', kind: null, ops: [], plan: ['embed'],
     formula: `${A.hidden} × ${A.vocab}`, per: E, count: 1, mult: '× 1' },
+  { label: 'final RMSNorm', kind: null, ops: [], plan: ['final_norm'],
+    formula: `${A.hidden}`, per: A.hidden, count: 1, mult: '× 1' },
   { label: 'lm head', kind: null, ops: ['lm_head'], plan: ['lm_head'],
     formula: `${A.hidden} × ${A.vocab}`, per: E, count: 1, mult: '× 1' },
 ];
@@ -209,31 +230,46 @@ const TALLY_CSS = `
 dsv3-param-tally { display: block; margin: 14px 0; }
 .ptal { font: 13.5px system-ui, -apple-system, "Segoe UI", sans-serif; color: #0b0b0b; }
 .ptal table { border-collapse: collapse; width: 100%; max-width: 760px; }
-.ptal th, .ptal td { text-align: left; padding: 5px 12px 5px 0; border-bottom: 1px solid #e1e0d9;
+.ptal th, .ptal td { text-align: left; padding: 5px 12px 5px 7px; border-bottom: 1px solid #e1e0d9;
   font-variant-numeric: tabular-nums; vertical-align: top; }
 .ptal th { color: #52514e; font-weight: 600; font-size: 12.5px; }
 .ptal td.num { text-align: right; padding-right: 0; white-space: nowrap; }
+.ptal .title, .ptal .note { padding-left: 7px; }
 .ptal .formula { color: #898781; font-size: 12.5px; }
 .ptal tbody tr { cursor: pointer; }
 .ptal tbody tr:hover { background: #f7f6f1; }
-.ptal tbody tr.sel { background: #fff8ea; }
+.ptal tbody tr.sel { background: #fff; box-shadow: inset 3px 0 0 #52514e; }
 .ptal tbody tr.sel td:first-child { font-weight: 600; }
 .ptal tfoot td { font-weight: 600; border-bottom: none; }
 .ptal .note { color: #898781; font-size: 12px; margin-top: 4px; }
+.ptal.compact { font-size: 11.5px; }
+.ptal.compact .title { font: 600 11px system-ui; color: #52514e; margin: 0 0 2px; }
+.ptal.compact td { padding: 3px 6px 3px 7px; }
+.ptal.compact .formula { font-size: 10px; display: block; }
+.ptal.compact .note { font-size: 10px; font-style: italic; }
 `;
 export class Dsv3ParamTally extends HTMLElement {
   connectedCallback() {
+    const compact = this.hasAttribute('compact');
     const style = document.createElement('style'); style.textContent = TALLY_CSS;
-    const root = document.createElement('div'); root.className = 'ptal';
+    const root = document.createElement('div'); root.className = 'ptal' + (compact ? ' compact' : '');
     const total = TALLY_ROWS.reduce((t, r) => t + r.per * r.count, 0);
-    root.innerHTML = `<table><thead><tr><th>component</th><th>parameters, per copy</th>` +
-      `<th>copies</th><th style="text-align:right">total</th></tr></thead><tbody>` +
-      TALLY_ROWS.map((r, i) => `<tr data-row="${i}"><td>${r.label}</td>` +
-        `<td><span class="formula">${r.formula} =</span> ${fmtP(r.per)}</td>` +
-        `<td>${r.mult}</td><td class="num">${fmtP(r.per * r.count)}</td></tr>`).join('') +
-      `</tbody><tfoot><tr><td colspan="3">total</td><td class="num">${fmtP(total)}</td></tr></tfoot></table>` +
-      `<div class="note">click a row to highlight the diagram cells it sums · ` +
-      `RMSNorm weights and the MTP module are omitted (&lt; 0.01%)</div>`;
+    root.innerHTML =
+      (compact ? `<div class="title">parameters</div>` : '') +
+      `<table>` +
+      (compact ? '' : `<thead><tr><th>component</th><th>parameters, per copy</th>` +
+        `<th>copies</th><th style="text-align:right">total</th></tr></thead>`) +
+      `<tbody>` +
+      TALLY_ROWS.map((r, i) => compact
+        ? `<tr data-row="${i}"><td>${r.label}<span class="formula">${fmtP(r.per)} ${r.mult.replace(' blocks', '')}</span></td>` +
+          `<td class="num">${fmtP(r.per * r.count)}</td></tr>`
+        : `<tr data-row="${i}"><td>${r.label}</td>` +
+          `<td><span class="formula">${r.formula} =</span> ${fmtP(r.per)}</td>` +
+          `<td>${r.mult}</td><td class="num">${fmtP(r.per * r.count)}</td></tr>`).join('') +
+      `</tbody><tfoot><tr><td${compact ? '' : ' colspan="3"'}>total</td><td class="num">${fmtP(total)}</td></tr></tfoot></table>` +
+      `<div class="note">${compact
+        ? 'click a row to highlight what it sums · MTP omitted'
+        : 'click a row to highlight the diagram cells it sums · only the MTP module is omitted'}</div>`;
     this.append(style, root);
     const lid = this.getAttribute('layer-id') ?? '';
     const layer = () => document.getElementById(lid);
