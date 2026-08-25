@@ -210,7 +210,15 @@ const TALLY_ROWS = [
       { t: `router ${fmtP(T.router)}`, ops: ['router'] },
       { t: `norms ${fmtP(Q.normsBlk)}`, ops: NORM_OPS },
     ],
-    per: MOE, count: A.layers - A.denseLayers, mult: `× ${A.layers - A.denseLayers} blocks` },
+    per: MOE, count: A.layers - A.denseLayers, mult: `× ${A.layers - A.denseLayers} blocks`,
+    active: { per: PARAMS.activeMoeBlock,
+      terms: [
+        { t: `attn qkv ${fmtP(Q.attnQkv)}`, ops: ATTN_QKV_OPS },
+        { t: `attn out ${fmtP(Q.attnOut)}`, ops: ['o_proj'] },
+        { t: `experts ${fmtP(Q.expert)} × (${A.topk} active + ${A.sharedExperts} shared)`, ops: ['ffn_gate_up', 'ffn_down', 'shared'] },
+        { t: `router ${fmtP(T.router)}`, ops: ['router'] },
+        { t: `norms ${fmtP(Q.normsBlk)}`, ops: NORM_OPS },
+      ] } },
   { label: 'final RMSNorm', kind: null, plan: ['final_norm'],
     terms: [{ t: `${A.hidden}`, ops: [] }],
     per: A.hidden, count: 1, mult: '× 1' },
@@ -220,11 +228,17 @@ const TALLY_ROWS = [
 ];
 for (const r of TALLY_ROWS) {
   r.ops = [...new Set(r.terms.flatMap(t => t.ops))];
-  r.formula = r.terms.map(t => t.t).join(' + ');
+  if (r.active) r.active.ops = [...new Set(r.active.terms.flatMap(t => t.ops))];
 }
+// resolve a row in the current mode ('total' | 'active')
+const rowIn = (r, mode) => mode === 'active' && r.active ? { ...r, ...r.active } : r;
 const TALLY_CSS = `
 dsv3-param-tally { display: block; margin: 14px 0; }
-.ptal { font: 13.5px system-ui, -apple-system, "Segoe UI", sans-serif; color: #0b0b0b; }
+.ptal { font: 13.5px system-ui, -apple-system, "Segoe UI", sans-serif; color: #0b0b0b; position: relative; }
+.ptal .pnum { cursor: pointer; }
+.ptal .ptip { display: none; position: absolute; z-index: 6; background: #fff;
+  border: 1px solid #c3c2b7; border-radius: 4px; padding: 2px 8px; font: 11px ui-monospace, Menlo, monospace;
+  box-shadow: 0 2px 8px rgba(11,11,11,0.12); pointer-events: none; white-space: nowrap; }
 .ptal table { border-collapse: collapse; width: 100%; max-width: 760px; }
 .ptal th, .ptal td { text-align: left; padding: 5px 12px 5px 7px; border-bottom: 1px solid #e1e0d9;
   font-variant-numeric: tabular-nums; vertical-align: top; }
@@ -233,7 +247,8 @@ dsv3-param-tally { display: block; margin: 14px 0; }
 .ptal .title, .ptal .note { padding-left: 7px; }
 .ptal .formula { color: #898781; font-size: 12.5px; }
 .ptal .fterm { border-bottom: 1px dotted #c3c2b7; }
-.ptal tr.sel .fterm:hover, .ptal .fxout .fterm:hover { color: #0b0b0b; border-bottom-color: #52514e; }
+.ptal .fterm:hover { color: #0b0b0b; border-bottom-color: #52514e; }
+.ptal .fterm.pin { color: #0b0b0b; font-weight: 600; border-bottom: 1px solid #52514e; }
 .ptal tbody tr { cursor: pointer; }
 .ptal tbody tr:hover { background: #f7f6f1; }
 .ptal tbody tr.sel { background: #fff; box-shadow: inset 3px 0 0 #52514e; }
@@ -242,6 +257,9 @@ dsv3-param-tally { display: block; margin: 14px 0; }
 .ptal .note { color: #898781; font-size: 12px; margin-top: 4px; }
 .ptal.compact { font-size: 11.5px; }
 .ptal.compact .title { font: 600 11px system-ui; color: #52514e; margin: 0 0 2px; }
+.ptal .title { font: 600 12px system-ui; color: #52514e; margin: 0 0 4px; }
+.ptal .mbtn { font-weight: 400; color: #898781; cursor: pointer; border-bottom: 1px dotted #c3c2b7; }
+.ptal .mbtn.on { font-weight: 600; color: #0b0b0b; border-bottom: 1px solid #52514e; cursor: default; }
 .ptal.compact td { padding: 3px 6px 3px 7px; }
 .ptal.compact .formula { font-size: 10px; display: block; }
 .ptal.compact .note { font-size: 10px; font-style: italic; }
@@ -250,65 +268,129 @@ dsv3-param-tally { display: block; margin: 14px 0; }
 `;
 export class Dsv3ParamTally extends HTMLElement {
   connectedCallback() {
-    const compact = this.hasAttribute('compact');
+    this._mode = this.getAttribute('mode') === 'active' ? 'active' : 'total';
     const style = document.createElement('style'); style.textContent = TALLY_CSS;
-    const root = document.createElement('div'); root.className = 'ptal' + (compact ? ' compact' : '');
-    const total = TALLY_ROWS.reduce((t, r) => t + r.per * r.count, 0);
+    this._root = document.createElement('div');
+    this._root.className = 'ptal' + (this.hasAttribute('compact') ? ' compact' : '');
+    this.append(style, this._root);
+    this.build();
+  }
+  build() {
+    const compact = this.hasAttribute('compact');
+    const mode = this._mode, root = this._root;
+    const rows = TALLY_ROWS.map(r => rowIn(r, mode));
+    const total = rows.reduce((t, r) => t + r.per * r.count, 0);
+    const num = (v) => `<span class="pnum" data-v="${v}">${fmtP(v)}</span>`;
+    const modeBtn = (m, label) =>
+      `<span class="mbtn${mode === m ? ' on' : ''}" data-mode="${m}">${label}</span>`;
+    const head = `parameters: ${modeBtn('total', 'total')} · ${modeBtn('active', 'active / token')}`;
     root.innerHTML =
-      (compact ? `<div class="title">parameters</div>` : '') +
+      (compact ? `<div class="title">${head}</div>` : `<div class="title">${head}</div>`) +
       `<table>` +
       (compact ? '' : `<thead><tr><th>component</th><th>parameters, per copy</th>` +
         `<th>copies</th><th style="text-align:right">total</th></tr></thead>`) +
       `<tbody>` +
-      TALLY_ROWS.map((r, i) => compact
-        ? `<tr data-row="${i}"><td>${r.label}<span class="formula">${fmtP(r.per)} ${r.mult}</span></td>` +
-          `<td class="num">${fmtP(r.per * r.count)}</td></tr>`
+      rows.map((r, i) => compact
+        ? `<tr data-row="${i}"><td>${r.label}<span class="formula">${num(r.per)} ${r.mult}</span></td>` +
+          `<td class="num">${num(r.per * r.count)}</td></tr>`
         : `<tr data-row="${i}"><td>${r.label}</td>` +
-          `<td><span class="formula">${r.terms.map((t, j) => `<span class="fterm" data-t="${j}">${t.t}</span>`).join(' + ')} =</span> ${fmtP(r.per)}</td>` +
-          `<td>${r.mult}</td><td class="num">${fmtP(r.per * r.count)}</td></tr>`).join('') +
-      `</tbody><tfoot><tr><td${compact ? '' : ' colspan="3"'}>total</td><td class="num">${fmtP(total)}</td></tr></tfoot></table>` +
-      (compact ? `<div class="fxout"></div>` : '') +
-      `<div class="note">${compact
-        ? 'click a row to highlight what it sums · MTP omitted'
-        : 'click a row to highlight the diagram cells it sums · only the MTP module is omitted'}</div>`;
-    this.append(style, root);
+          `<td><span class="formula">${r.terms.map((t, j) => `<span class="fterm" data-t="${j}">${t.t}</span>`).join(' + ')} =</span> ${num(r.per)}</td>` +
+          `<td>${r.mult}</td><td class="num">${num(r.per * r.count)}</td></tr>`).join('') +
+      `</tbody><tfoot><tr><td${compact ? '' : ' colspan="3"'}>total</td><td class="num">${num(total)}</td></tr></tfoot></table>` +
+      (compact ? `<div class="fxout"></div>` : '');
     const lid = this.getAttribute('layer-id') ?? '';
     const layer = () => document.getElementById(lid);
     const plan = () => document.querySelector(`dsv3-anatomy-plan[layer="${lid}"]`);
-    // hovering a formula variable narrows the highlight to just its cells
-    const wireTerms = (container, r) => {
+    // interaction model: HOVER previews a row's (or a single term's) cells,
+    // CLICK pins them; the display always shows hover ?? pin. Pinning a row
+    // of the hidden FFN kind flips the diagram (previews don't).
+    const state = { pin: null, hover: null };          // {ri, ti|null}
+    const rowOf = (st) => rows[st.ri];
+    const opsOf = (st) => st.ti == null ? rowOf(st).ops : rowOf(st).terms[st.ti].ops;
+    const termsHtml = (r) => r.terms.map((t, i) => `<span class="fterm" data-t="${i}">${t.t}</span>`).join(' + ');
+    const wireTerms = (container, ri) => {
       for (const sp of container.querySelectorAll('.fterm')) {
-        sp.onmouseenter = () => layer()?.highlightOps?.(r.terms[+sp.dataset.t].ops);
-        sp.onmouseleave = () => layer()?.highlightOps?.(r.ops);
+        const ti = +sp.dataset.t;
+        sp.onmouseenter = () => { state.hover = { ri, ti }; apply(); };
+        sp.onmouseleave = () => { state.hover = { ri, ti: null }; apply(); };   // still on the row
+        sp.onclick = (ev) => {
+          ev.stopPropagation();
+          if (state.pin?.ri === ri && state.pin?.ti === ti) state.pin = { ri, ti: null };  // unpin term, keep row
+          else pinTo(ri, ti);
+          apply();
+        };
       }
     };
-    const termsHtml = (r) => r.terms.map((t, i) => `<span class="fterm" data-t="${i}">${t.t}</span>`).join(' + ');
+    const pinTo = (ri, ti) => {
+      state.pin = { ri, ti };
+      const r = rows[ri], l = layer();
+      if (r.kind && l && l.kind !== r.kind) { l.kind = r.kind; l.render(); l.changed(true); }
+    };
+    const apply = () => {
+      const cur = state.hover ?? state.pin;
+      layer()?.highlightOps?.(cur ? opsOf(cur) : null);
+      plan()?.highlightOps?.(cur ? rowOf(cur).plan : null);
+      for (const tr of root.querySelectorAll('tbody tr'))
+        tr.classList.toggle('sel', state.pin?.ri === +tr.dataset.row);
+      const fx = root.querySelector('.fxout');
+      if (fx) {   // the equation slot follows hover ?? pin (fixed height: no reflow)
+        const show = state.hover ?? state.pin;
+        const want = show ? String(show.ri) : '';
+        if (fx.dataset.ri !== want) {
+          fx.dataset.ri = want;
+          fx.innerHTML = want === '' ? '' : `= ${termsHtml(rowOf(show))}`;
+          if (want !== '') wireTerms(fx, show.ri);
+        }
+      }
+      for (const sp of root.querySelectorAll('.fterm')) {
+        const ri = sp.closest('tr') ? +sp.closest('tr').dataset.row : state.pin?.ri;
+        sp.classList.toggle('pin', state.pin != null && state.pin.ti != null &&
+          state.pin.ri === ri && state.pin.ti === +sp.dataset.t);
+      }
+    };
     for (const tr of root.querySelectorAll('tbody tr')) {
-      tr.onclick = (ev) => {
-        if (ev.target.closest('.fterm') && tr.classList.contains('sel')) return;  // term hover, not a toggle
-        const r = TALLY_ROWS[+tr.dataset.row], on = !tr.classList.contains('sel');
-        for (const t of root.querySelectorAll('tr.sel')) t.classList.remove('sel');
-        const l = layer();
-        if (on && r.kind && l && l.kind !== r.kind) {   // the cells live on the hidden FFN kind: flip to it
-          l.kind = r.kind; l.render(); l.changed(true);
-        }
-        tr.classList.toggle('sel', on);
-        const fx = root.querySelector('.fxout');
-        if (fx) {
-          fx.innerHTML = on ? `= ${termsHtml(r)}` : '';
-          if (on) wireTerms(fx, r);
-        }
-        l?.highlightOps?.(on ? r.ops : null);
-        plan()?.highlightOps?.(on ? r.plan : null);
+      const ri = +tr.dataset.row;
+      tr.onmouseenter = () => { state.hover = { ri, ti: null }; apply(); };
+      tr.onmouseleave = () => { state.hover = null; apply(); };
+      tr.onclick = () => {
+        if (state.pin?.ri === ri && state.pin?.ti == null) state.pin = null;   // unpin
+        else pinTo(ri, null);
+        apply();
+      };
+      wireTerms(tr, ri);   // full-table formula terms
+    }
+    const tip = document.createElement('div'); tip.className = 'ptip';
+    root.append(tip);
+    let tipPin = false;
+    const showTip = (sp) => {
+      tip.textContent = Number(sp.dataset.v).toLocaleString('en-US');
+      tip.style.left = Math.max(0, sp.offsetLeft - 8) + 'px';
+      tip.style.top = (sp.offsetTop + 16) + 'px';
+      tip.style.display = 'block';
+    };
+    for (const sp of root.querySelectorAll('.pnum')) {
+      sp.onmouseenter = () => { if (!tipPin) showTip(sp); };
+      sp.onmouseleave = () => { if (!tipPin) tip.style.display = 'none'; };
+      sp.onclick = (ev) => {
+        ev.stopPropagation();
+        tipPin = true; showTip(sp);
+        const tr = sp.closest('tbody tr');
+        if (tr) pinTo(+tr.dataset.row, null);   // pin the highlights too
+        apply();
       };
     }
-    // full-table formula terms hover-highlight while their row is selected
-    for (const tr of root.querySelectorAll('tbody tr')) {
-      const r = TALLY_ROWS[+tr.dataset.row];
-      for (const sp of tr.querySelectorAll('.fterm')) {
-        sp.onmouseenter = () => { if (tr.classList.contains('sel')) layer()?.highlightOps?.(r.terms[+sp.dataset.t].ops); };
-        sp.onmouseleave = () => { if (tr.classList.contains('sel')) layer()?.highlightOps?.(r.ops); };
-      }
+    if (this._dismiss) document.removeEventListener('click', this._dismiss);
+    this._dismiss = () => { tipPin = false; tip.style.display = 'none'; };
+    document.addEventListener('click', this._dismiss);
+    // the heading is the total/active toggle; switching rebuilds and clears
+    for (const b of root.querySelectorAll('.mbtn')) {
+      b.onclick = () => {
+        if (this._mode === b.dataset.mode) return;
+        this._mode = b.dataset.mode;
+        layer()?.highlightOps?.(null);
+        plan()?.highlightOps?.(null);
+        this.build();
+      };
     }
   }
 }

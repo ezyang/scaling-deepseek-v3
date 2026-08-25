@@ -29,3 +29,9 @@ PARAMS.denseBlock = PARAMS.mla + PARAMS.denseFfnBlk;
 PARAMS.moeBlock = PARAMS.mla + PARAMS.moeFfnBlk;
 PARAMS.total = 2 * PARAMS.embed + PARAMS.finalNorm
   + A.denseLayers * PARAMS.denseBlock + (A.layers - A.denseLayers) * PARAMS.moeBlock;
+// ACTIVE per token: ONLY the MoE FFN shrinks (top-k routed + the shared
+// expert fire); everything else — embedding included — is dense per token
+PARAMS.activeMoeFfnBlk = (A.topk + A.sharedExperts) * expert + router + A.hidden;
+PARAMS.activeMoeBlock = PARAMS.mla + PARAMS.activeMoeFfnBlk;
+PARAMS.activeTotal = 2 * PARAMS.embed + PARAMS.finalNorm
+  + A.denseLayers * PARAMS.denseBlock + (A.layers - A.denseLayers) * PARAMS.activeMoeBlock;

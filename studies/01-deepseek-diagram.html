@@ -129,11 +129,11 @@ i don't need perfect, i need done
 
     <h2>Computing the parameter count</h2>
 
-    <p>As a first exercise, let's use the diagram to compute DeepSeek-V3's
-    headline 671B parameter count.  Every grey parenthetical in the diagram is
-    a parameter count, so the total is just a sum.  Here is another copy of
-    the diagram with the tally in its margin: click a row to highlight the
-    cells it sums (rows over the hidden FFN kind flip the diagram first).</p>
+    <p>Here's a simple first use of the diagram: let's use it to compute DeepSeek-V3's
+    parameter count.  In the copy of the diagram
+    below, in the bottom left I've added a tally of all the parameters; you can hover
+    over rows to see specifically which boxes contribute parameters.  You can see the
+    inactive parameter count is dominated the FFN expert weights!</p>
 
     <dsv3-anatomy style="min-height:723px" tally layer-id="params-diagram" detail controls="static" nocaption></dsv3-anatomy>
 

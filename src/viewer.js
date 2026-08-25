@@ -726,6 +726,10 @@ export class Dsv3Layer extends HTMLElement {
     this.transposed = st?.transposed ?? this.hasAttribute('transposed');
     this.detail = st?.detail ?? this.hasAttribute('detail');
     this.flatDims = st?.flatDims ?? false;
+    // cumulative: every parameter parenthetical multiplies by the selected
+    // kind's block count (×3 dense / ×58 MoE); the tabs hide — the kind then
+    // comes from the plan selector alone
+    this.cumulative = st?.cumulative ?? this.hasAttribute('cumulative');
     // which block variant to draw: the MLA column is identical; only the FFN
     // column differs (kind="dense" pins the dense-FFN variant, default MoE)
     this.kind = st?.kind ?? (this.getAttribute('kind') === 'dense' ? 'dense' : 'moe');
@@ -749,7 +753,7 @@ export class Dsv3Layer extends HTMLElement {
       recipe: this.getAttribute('recipe'), matmuls: this.matmuls, marks: this.marks,
       view: this.view, dispLayers: this.dispLayers, dispInflight: this.dispInflight,
       transposed: this.transposed, detail: this.detail, flatDims: this.flatDims,
-      kind: this.kind,
+      kind: this.kind, cumulative: this.cumulative,
     });
   }
   applyPreset(recipe, recompute, transposed = false) {
@@ -862,6 +866,7 @@ export class Dsv3Layer extends HTMLElement {
       this.transposed = this.hasAttribute('transposed');
       this.detail = this.hasAttribute('detail');
       this.flatDims = false;
+      this.cumulative = this.hasAttribute('cumulative');
       this.kind = this.getAttribute('kind') === 'dense' ? 'dense' : 'moe';
       clearUrlState(this.urlKey);
       this.render(); this.changed(false);
@@ -876,6 +881,17 @@ export class Dsv3Layer extends HTMLElement {
     tcb.onchange = () => { this.transposed = tcb.checked; this.render(); this.changed(); };
     tl.append(tcb, 'fp8ᵀ dual stash');
     if (this._ctl.dtype) head.append(tl);
+    const KBLK = this.kind === 'dense' ? (DSV3.denseLayers ?? 3) : DSV3.layers - (DSV3.denseLayers ?? 3);
+    const mkCumBtn = () => {
+      const b = document.createElement('button');
+      b.style.cssText = 'font:11px ui-monospace,monospace;padding:2px 8px;border:1px solid #c3c2b7;' +
+        'border-radius:4px;background:#fff;cursor:pointer;margin-left:8px;min-width:9ch;box-sizing:content-box;';
+      b.textContent = this.cumulative ? `\u00d7${KBLK} blocks` : 'per block';
+      b.title = 'toggle parameter counts: one block vs cumulative over all blocks of this kind ' +
+        '(the tabs hide in cumulative mode \u2014 the multiplier follows the selected block kind)';
+      b.onclick = () => { this.cumulative = !this.cumulative; this.render(); this.changed(true); };
+      return b;
+    };
     const mkDimsBtn = () => {
       const b = document.createElement('button');
       b.style.cssText = 'font:11px ui-monospace,monospace;padding:2px 8px;border:1px solid #c3c2b7;' +
@@ -894,15 +910,15 @@ export class Dsv3Layer extends HTMLElement {
     dcb.type = 'checkbox'; dcb.checked = this.detail;
     dcb.onchange = () => { this.detail = dcb.checked; this.render(); this.changed(true); };
     dl.append(dcb, 'elided kernels');
-    head.append(dl, mkDimsBtn(), reset);
+    head.append(dl, mkDimsBtn(), mkCumBtn(), reset);
     const ana = analyze(blockGraph(this.kind, DSV3, this.matmuls, 4096),
       this._ctl.quant ? this.marks : {}, this.transposed);
     if (cmode !== 'static') root.append(head);
     else {
       const mini = el('div', 'lv-head');
       // no kind select when MLA-only (kind-independent) or when the tabs carry the flip
-      if (this.getAttribute('only') === 'mla' || this.hasAttribute('kindtabs')) mini.append('sizes:', mkDimsBtn());
-      else mini.append('block: ', mkKindSel(), ' · sizes:', mkDimsBtn());
+      if (this.getAttribute('only') === 'mla' || this.hasAttribute('kindtabs')) mini.append('sizes:', mkDimsBtn(), mkCumBtn());
+      else mini.append('block: ', mkKindSel(), ' · sizes:', mkDimsBtn(), mkCumBtn());
       root.append(mini);
     }
     // dense mode also analyzes the MoE graph, purely for LAYOUT: the dense
@@ -1017,10 +1033,21 @@ export class Dsv3Layer extends HTMLElement {
       }),
       lm_head: DSV3.hidden * DSV3.vocab,
     };
+    // cumulative: block params carry ×K (the selected kind's block count);
+    // the sizes toggle collapses the whole product. The lm head is not a
+    // block parameter and never multiplies.
+    const KMUL = this.kind === 'dense' ? (DSV3.denseLayers ?? 3) : DSV3.layers - (DSV3.denseLayers ?? 3);
+    const CUM = !!this.cumulative;
+    // cumulative is always shown multiplied out — factored ×256 ×58 chains
+    // are noise; the sizes toggle keeps governing dims and per-block factoring
+    const pk = (n, noK = false) =>
+      CUM && !noK ? ` (${fmtP(n * KMUL)})` : ` (${fmtP(n)})`;
     const pstr = (id) => {
       const p = PCNT[id];
       if (!p) return '';
-      if (Array.isArray(p)) return this.flatDims ? ` (${fmtP(p[0] * p[1])})` : ` (${fmtP(p[0])} \u00d7${p[1]})`;
+      const tot = (Array.isArray(p) ? p[0] * p[1] : p);
+      if (CUM && id !== 'lm_head') return ` (${fmtP(tot * KMUL)})`;
+      if (Array.isArray(p)) return this.flatDims ? ` (${fmtP(tot)})` : ` (${fmtP(p[0])} \u00d7${p[1]})`;
       return ` (${fmtP(p)})`;
     };
     const dt = (id) => this.matmuls[id];
@@ -1243,9 +1270,9 @@ export class Dsv3Layer extends HTMLElement {
     tensorChip(['x0'], SX1 + 170, y - 8);
     const tap1 = y + 6;
     wire(SX1, y + 3, y + 18); y += 18;
-    y = opNode('norm1', 'RMSNorm', C1, y, 'op', `(${fmtP(DSV3.hidden)})`);
+    y = opNode('norm1', 'RMSNorm', C1, y, 'op', pk(DSV3.hidden).trim());
     let g1;
-    y = wireOut(['norm1'], SX1, y); g1 = y + 3; y += 21;
+    y = wireOut(['norm1'], SX1, y); g1 = y + 3; y += 27;
     let bypX = 0;                                // k_rope rail x (set in the MLA fork block)
     {
       const RX = C1 + 150 + 22;
@@ -1263,7 +1290,7 @@ export class Dsv3Layer extends HTMLElement {
           (withBtns ? modeBtn(['qkv_down'], x + 140 - 86, y + 29) + dtBtn('qkv_down', x + 140 - 58, y + 29) : ''));
         flopBlocks(x + 6, y + 52, ana.byId.qkv_down.flopsTok * frac, dt('qkv_down'));
       };
-      const pQ = ` (${fmtP(DSV3.hidden * DSV3.qRank)})`, pKV = ` (${fmtP(DSV3.hidden * (DSV3.kvRank + DSV3.qkRope))})`;
+      const pQ = pk(DSV3.hidden * DSV3.qRank), pKV = pk(DSV3.hidden * (DSV3.kvRank + DSV3.qkRope));
       dhalf(C1, 'q down-proj', '7168 → 1536',
         '2 · 7168 · 1536 FLOP/token — wq_a; a separate GEMM from kv down-proj in production stacks', qFrac, true, pQ);
       dhalf(C1 + 150, 'kv down-proj', '7168 → 512 + 64',
@@ -1295,8 +1322,8 @@ export class Dsv3Layer extends HTMLElement {
         const normTip = 'input-form backward: reads its INPUT (pre-norm) + rstd — never its output. ' +
           'The pre-norm latent is not stashed; it is exactly recoverable from the post-norm stash, ' +
           '\u03b3, and rstd (x = y / (\u03b3\u00b7rstd)), which is why one latent copy suffices.';
-        micro('RMSNorm', C1, y, 140, normTip, `(${fmtP(DSV3.qRank)})`, 'q_norm');
-        micro('RMSNorm', C1 + 150, y, 140, normTip, `(${fmtP(DSV3.kvRank)})`, 'kv_norm');
+        micro('RMSNorm', C1, y, 140, normTip, pk(DSV3.qRank).trim(), 'q_norm');
+        micro('RMSNorm', C1 + 150, y, 140, normTip, pk(DSV3.kvRank).trim(), 'kv_norm');
         y += 18;
         // their rstd: exits the bottom, elbows right (\u2191 = read by the op
         // above, the norm's own backward); a replayed norm regenerates it
@@ -1361,7 +1388,8 @@ export class Dsv3Layer extends HTMLElement {
     y = mmBox(['attn'], C1, y);
     y = wireOut(['attn'], SX1, y);
     y = mmBox(['o_proj'], C1, y);
-    grp(C1, g1, y + 5, 'MLA', MLAGW);
+    grp(C1, g1, y + 5, CUM ? `MLA · ${fmtP(PARAMS.mla * KMUL)}`
+      : `MLA ×${DSV3.layers} · ${fmtP(PARAMS.mla)}`, MLAGW);
     y = wireOut(['o_proj'], SX1, y + 5);
     if (ONLY === 'mla') {
       // component view: the residual add lives in the block wiring, not here
@@ -1411,8 +1439,10 @@ export class Dsv3Layer extends HTMLElement {
           `<text x="${x + 10}" y="${y0 + 17}" style="font:600 11px system-ui" fill="${on ? '#0b0b0b' : '#898781'}">${label}` +
           `<tspan style="font:10px system-ui" fill="${on ? '#898781' : '#a8a69e'}"> ${sub}</tspan></text></g>`;
       };
-      P.push(tab(C2 + 42, 148, 'dense', 'dense FFN', `×${DSV3.denseLayers ?? 3} · ${fmtP(PARAMS.denseFfnBlk)}`) +
-        tab(C2 + 198, 168, 'moe', 'MoE FFN', `×${DSV3.layers - (DSV3.denseLayers ?? 3)} · ${fmtP(PARAMS.moeFfnBlk)}`));
+      if (!this.cumulative) {   // cumulative mode: the plan selector alone carries the kind
+        P.push(tab(C2 + 42, 148, 'dense', 'dense FFN', `×${DSV3.denseLayers ?? 3} · ${fmtP(PARAMS.denseFfnBlk)}`) +
+          tab(C2 + 198, 168, 'moe', 'MoE FFN', `×${DSV3.layers - (DSV3.denseLayers ?? 3)} · ${fmtP(PARAMS.moeFfnBlk)}`));
+      }
     };
     const norm2Top = z;
     if (ONLY === 'ffn') {
@@ -1421,7 +1451,7 @@ export class Dsv3Layer extends HTMLElement {
       P.push(`<text class="oplabel" x="${SX2 + 14}" y="${TABS ? 46 : 12}">x1 (7168) — from the block wiring</text>`);
       wire(SX2, TABS ? 40 : 6, z);
     }
-    z = opNode('norm2', 'RMSNorm', C2, z, 'op', `(${fmtP(DSV3.hidden)})`);
+    z = opNode('norm2', 'RMSNorm', C2, z, 'op', pk(DSV3.hidden).trim());
     if (this.kind === 'dense') {
       // dense block: same spine, a single wide FFN — no router, no a2a, no
       // shared column. The column advances through the MoE rows' positions
@@ -1513,7 +1543,7 @@ export class Dsv3Layer extends HTMLElement {
         `<text class="grplabel" x="${SHX}" y="${rowG - 6}">shared expert (every token)</text>`);
       shBox('shared gate/up', '7168 → 2×2048',
         'one plain GEMM per token — follows the ffn gate/up mark and dtype (its FLOPs are counted in the grouped strip)', rowG,
-        ` (${fmtP(DSV3.hidden * 2 * DSV3.moeInter)})`);
+        pk(DSV3.hidden * 2 * DSV3.moeInter));
       tensorChip(['gate_up'], shMid + 14, z + 4, { name: 'gate, up (sh)', tdims: '2×2048', frac: 1 / nExp });
     }
     z = wireOut(['gate_up'], SX2, z, DET ? { name: 'gate, up (routed)', tdims: `${DSV3.topk}×2×2048`, frac: DSV3.topk / nExp } : undefined);
@@ -1536,11 +1566,17 @@ export class Dsv3Layer extends HTMLElement {
     if (DET) {
       shBox('shared down', '2048 → 7168',
         'one plain GEMM per token — follows the ffn down mark and dtype; its output joins the routed sum', rowD,
-        ` (${fmtP(DSV3.moeInter * DSV3.hidden)})`);
+        pk(DSV3.moeInter * DSV3.hidden));
       tensorChip(['ffn_down'], shMid + 14, z + 4, { name: 'shared out', tdims: '7168', frac: 1 / nExp });
       shBot = rowD + 34;
     }
-    grp(C2, g2, z + 5, DET ? 'routed experts: top-8 of 256 — grouped GEMMs' : 'experts: top-8 of 256 routed + 1 shared');
+    // group tally like the MLA label/tabs; the routing description (top-8 of
+    // 256) lives on the router/dispatch boxes, not here
+    grp(C2, g2, z + 5, DET
+      ? (CUM ? `routed experts · ${fmtP(PARAMS.expert * DSV3.routedExperts * KMUL)}`
+             : `routed experts ×${DSV3.routedExperts} · ${fmtP(PARAMS.expert)}`)
+      : (CUM ? `experts · ${fmtP(PARAMS.expert * (DSV3.routedExperts + DSV3.sharedExperts) * KMUL)}`
+             : `experts ×${DSV3.routedExperts + DSV3.sharedExperts} · ${fmtP(PARAMS.expert)}`));
     z = wireOut(['ffn_down'], SX2, z + 5);
     z = opNode('combine', DET ? 'a2a combine (comm + unpermute · sum)' : 'a2a combine (weighted by router)', C2, z, 'comm');
     // combine's output wire runs all the way into the x2 add; the add itself
@@ -1598,8 +1634,10 @@ export class Dsv3Layer extends HTMLElement {
     if (TABS) {
       // the enclosure the active tab fuses into — scoped to the kind-dependent
       // region (past norm2, before the residual add), fixed extent regardless
-      // of kind (the MoE footprint) so it doesn't move across flips
-      P[P.indexOf('__ENC__')] =
+      // of kind (the MoE footprint) so it doesn't move across flips. In
+      // cumulative mode the tabs are hidden, so the border goes too (the
+      // reserved space stays — flip stability).
+      P[P.indexOf('__ENC__')] = this.cumulative ? '' :
         `<rect x="${C2 - 14}" y="${encTop}" width="${(DET ? 500 : 385) + 14}" height="${encBot - encTop}" rx="8" fill="#fcfcfb" stroke="#c3c2b7"/>`;
     }
     }  // end FFN column (skipped in only="mla" mode)
