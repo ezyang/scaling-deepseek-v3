@@ -205,22 +205,26 @@ const T = {
   router: A.hidden * A.routedExperts,
   expert: 3 * A.hidden * A.moeInter,
 };
+// named sub-quantities, so the formulas read as concepts rather than dims
+const Q = {
+  attnQkv: T.qkvDown + T.qUp + T.kvUp,       // q/kv down- and up-projections
+  attnOut: T.oProj,
+  expert: T.expert,                          // one expert (routed and shared are the same shape)
+  denseFfn: 3 * A.hidden * A.denseInter,
+  normsBlk: MLA_NORMS + A.hidden,            // norm1 + latent norms + norm2
+};
+const MLA_OPS = ['qkv_down', 'q_up', 'kv_up', 'o_proj', 'norm1', 'q_norm', 'kv_norm'];
 const TALLY_ROWS = [
-  { label: 'MLA (attention)', kind: null,
-    ops: ['qkv_down', 'q_up', 'kv_up', 'o_proj', 'norm1', 'q_norm', 'kv_norm'],
-    plan: ['block-dense', 'block-moe'],
-    formula: `${fmtP(T.qkvDown)} + ${fmtP(T.qUp)} + ${fmtP(T.kvUp)} + ${fmtP(T.oProj)} + ${fmtP(MLA_NORMS)} norms`,
-    per: MLA, count: A.layers, mult: `× ${A.layers} blocks` },
-  { label: 'dense FFN', kind: 'dense',
-    ops: ['ffn_gate_up', 'ffn_down', 'norm2'], plan: ['block-dense'],
-    formula: `${fmtP(2 * A.hidden * A.denseInter)} + ${fmtP(A.denseInter * A.hidden)} + ${fmtP(A.hidden)} norm`,
-    per: DENSE_FFN, count: A.denseLayers, mult: `× ${A.denseLayers} blocks` },
-  { label: 'MoE FFN', kind: 'moe',
-    ops: ['router', 'ffn_gate_up', 'ffn_down', 'shared', 'norm2'], plan: ['block-moe'],
-    formula: `${fmtP(T.router)} + (${fmtP(2 * A.hidden * A.moeInter)} + ${fmtP(A.moeInter * A.hidden)}) × ${A.routedExperts} + ${fmtP(T.expert)} shared + ${fmtP(A.hidden)} norm`,
-    per: MOE_FFN, count: A.layers - A.denseLayers, mult: `× ${A.layers - A.denseLayers} blocks` },
   { label: 'embedding', kind: null, ops: [], plan: ['embed'],
     formula: `${A.hidden} × ${A.vocab}`, per: E, count: 1, mult: '× 1' },
+  { label: 'dense block', kind: 'dense',
+    ops: [...MLA_OPS, 'ffn_gate_up', 'ffn_down', 'norm2'], plan: ['block-dense'],
+    formula: `attn qkv ${fmtP(Q.attnQkv)} + attn out ${fmtP(Q.attnOut)} + ffn ${fmtP(Q.denseFfn)} + norms ${fmtP(Q.normsBlk)}`,
+    per: DENSE, count: A.denseLayers, mult: `× ${A.denseLayers}` },
+  { label: 'MoE block', kind: 'moe',
+    ops: [...MLA_OPS, 'router', 'ffn_gate_up', 'ffn_down', 'shared', 'norm2'], plan: ['block-moe'],
+    formula: `attn qkv ${fmtP(Q.attnQkv)} + attn out ${fmtP(Q.attnOut)} + experts ${fmtP(Q.expert)} × (${A.routedExperts} routed + ${A.sharedExperts} shared) + router ${fmtP(T.router)} + norms ${fmtP(Q.normsBlk)}`,
+    per: MOE, count: A.layers - A.denseLayers, mult: `× ${A.layers - A.denseLayers}` },
   { label: 'final RMSNorm', kind: null, ops: [], plan: ['final_norm'],
     formula: `${A.hidden}`, per: A.hidden, count: 1, mult: '× 1' },
   { label: 'lm head', kind: null, ops: ['lm_head'], plan: ['lm_head'],
@@ -247,6 +251,8 @@ dsv3-param-tally { display: block; margin: 14px 0; }
 .ptal.compact td { padding: 3px 6px 3px 7px; }
 .ptal.compact .formula { font-size: 10px; display: block; }
 .ptal.compact .note { font-size: 10px; font-style: italic; }
+.ptal.compact .fx { display: none; }
+.ptal.compact tr.sel .fx { display: block; color: #52514e; }
 `;
 export class Dsv3ParamTally extends HTMLElement {
   connectedCallback() {
@@ -261,7 +267,8 @@ export class Dsv3ParamTally extends HTMLElement {
         `<th>copies</th><th style="text-align:right">total</th></tr></thead>`) +
       `<tbody>` +
       TALLY_ROWS.map((r, i) => compact
-        ? `<tr data-row="${i}"><td>${r.label}<span class="formula">${fmtP(r.per)} ${r.mult.replace(' blocks', '')}</span></td>` +
+        ? `<tr data-row="${i}"><td>${r.label}<span class="formula">${fmtP(r.per)} ${r.mult}</span>` +
+          `<span class="formula fx">= ${r.formula}</span></td>` +
           `<td class="num">${fmtP(r.per * r.count)}</td></tr>`
         : `<tr data-row="${i}"><td>${r.label}</td>` +
           `<td><span class="formula">${r.formula} =</span> ${fmtP(r.per)}</td>` +
