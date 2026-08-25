@@ -76,7 +76,8 @@ export function layerOps(kind, a, seqLen) {
     ops.push({ name: 'mlp (gate/up/down)', cat: 'gemm', ftok: 2 * 3 * h * a.denseInter, wparams: 3 * h * a.denseInter, abytes: 8 * h });
   } else {
     const ex = 3 * h * a.moeInter;
-    ops.push({ name: 'router', cat: 'vector', ftok: 2 * h * a.routedExperts, wparams: h * a.routedExperts, abytes: 2 * h });
+    ops.push({ name: 'router', cat: 'vector', ftok: 2 * h * a.routedExperts,
+      wparams: (h + 1) * a.routedExperts, abytes: 2 * h });
     ops.push({ name: 'shared_expert', cat: 'gemm', ftok: 2 * ex * a.sharedExperts, wparams: ex * a.sharedExperts, abytes: 6 * h });
     // grouped GEMM over ~topk*tokens/ep tokens per local expert: lower efficiency
     ops.push({ name: 'routed_experts', cat: 'gemm', ftok: 2 * ex * a.topk, wparams: 0, localExpertParams: ex, effMult: 0.75, abytes: 6 * h * a.topk });
@@ -106,6 +107,7 @@ export function attnLayerParams(a) {
   return h(a) * a.qRank + a.qRank * a.heads * qk + h(a) * (a.kvRank + a.qkRope)
     + a.kvRank * a.heads * (a.qkNope + a.vHead) + a.heads * a.vHead * h(a);
 }
+export function layerNormParams(a) { return 2 * h(a) + a.qRank + a.kvRank; }
 const h = (a) => a.hidden;
 
 // Non-expert params on a stage (FSDP-sharded over full dp) and expert params
@@ -113,15 +115,15 @@ const h = (a) => a.hidden;
 export function stageParams(a, pp, ep, stage) {
   let dense = 0, expert = 0;
   for (const l of stageLayerKinds(a, pp, stage)) {
-    dense += attnLayerParams(a);
+    dense += attnLayerParams(a) + layerNormParams(a);
     if (l.kind === 'dense') dense += 3 * a.hidden * a.denseInter;
     else {
-      dense += a.hidden * a.routedExperts + a.sharedExperts * 3 * a.hidden * a.moeInter;
+      dense += (a.hidden + 1) * a.routedExperts + a.sharedExperts * 3 * a.hidden * a.moeInter;
       expert += (a.routedExperts / ep) * 3 * a.hidden * a.moeInter;
     }
   }
   if (stage === 0) dense += a.hidden * a.vocab;
-  if (stage === pp - 1) dense += a.hidden * a.vocab;
+  if (stage === pp - 1) dense += a.hidden * a.vocab + a.hidden; // final RMSNorm + head
   return { dense, expert };
 }
 

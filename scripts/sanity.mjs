@@ -4,6 +4,7 @@ import { simulate, LEVELS, defaultConfig } from '../src/sim.js';
 import { toChromeTrace } from '../src/trace.js';
 import { summarize } from '../src/compare.js';
 import { fmtUs, modelFlopsPerToken, DSV3, HARDWARE, peakFlops } from '../src/model.js';
+import { PARAMS } from '../src/params.js';
 
 const base = {}; // default config: H800, bf16, pp16/ep64/dp128, m=24, seq 4096
 let prev = null;
@@ -29,6 +30,10 @@ const flops = modelFlopsPerToken(DSV3, cfg.seqLen) * cfg.dp * cfg.microbatches *
 const roofUs = flops / (cfg.pp * cfg.dp) / peakFlops(hw, cfg.dtype) * 1e6;
 const l0 = simulate({ ...base, level: 0 }).stats.stepUs;
 check('L0 == analytic roofline', Math.abs(l0 - roofUs) / roofUs < 1e-9, `${fmtUs(l0)} vs ${fmtUs(roofUs)}`);
+
+// Exact checkpoint-header audit (model tensors only; FP8 scale metadata excluded).
+check('DSv3 exact main-model parameter count', PARAMS.total === 671026419200,
+  PARAMS.total.toLocaleString('en-US'));
 
 // 1F1B bubble fraction ≈ (p-1)/(m+p-1) (approximate: stages are not uniform)
 const l2 = simulate({ ...base, level: 2 }).stats;
@@ -63,7 +68,10 @@ console.log(`anchor NeMo/GB300 (mxfp8 m=32 pp2 ep32): ${Math.round(nemo.tokPerSe
   `gemmEff/comm assumptions unvalidated; VP8 interleave unmodeled)`);
 
 // ---- memory model (GB300 focus) ----------------------------------------------
-const { memoryUsage, actBreakdownPerToken, resolveMatmuls } = await import('../src/memory.js');
+const { memoryUsage, actBreakdownPerToken, resolveMatmuls, totalParams } = await import('../src/memory.js');
+check('memory inventory matches exact main-model parameter count',
+  totalParams(DSV3, 1, 1) === PARAMS.total,
+  totalParams(DSV3, 1, 1).toLocaleString('en-US'));
 const mem = (o) => memoryUsage(defaultConfig({ hardware: 'gb300', ...o }));
 const ddp = mem({ pp: 1, ep: 1, zero: 0, recompute: 'none' }); // dp = gpus/pp = 256
 check('DDP replication never fits', !ddp.fits && ddp.worst.total > 4000, `${(ddp.worst.total / 1024).toFixed(1)} TiB`);

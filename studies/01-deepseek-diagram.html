@@ -81,7 +81,7 @@ i don't need perfect, i need done
     still quite helpful, especially for visualizing data dependencies.</p>
 
     <p>So, below is a diagram (created with assistance from Fable) which
-    lays out the entire architecture of DeepSeek-V3 in one page.  Later,
+    lays out the entire main-model architecture of DeepSeek-V3 in one page.  Later,
     we'll make variations of this diagram as we compute rooflines, but for now,
     use it as reasonably complete birds-eye view of DeepSeek-V3.  For space reasons,
     the schematic of the dense block is hidden by default (you can toggle it
@@ -133,7 +133,21 @@ i don't need perfect, i need done
     parameter count.  In the copy of the diagram
     below, in the bottom left I've added a tally of all the parameters; you can hover
     over rows to see specifically which boxes contribute parameters.  You can see the
-    inactive parameter count is dominated the FFN expert weights!</p>
+    inactive parameter count is dominated by the FFN expert weights!</p>
+
+    <p>The exact figures below are audited against the tensor shapes in the published
+    <a href="https://huggingface.co/deepseek-ai/DeepSeek-V3/blob/main/model.safetensors.index.json">checkpoint index</a>
+    and all 163 safetensors headers.  Restricting the inventory to the embedding,
+    layers 0–60, final norm, and LM head, the main model has exactly
+    <strong>671,026,419,200</strong> parameters.  FP8
+    <code>weight_scale_inv</code> tensors are quantization metadata rather than model
+    parameters.  The published checkpoint also contains an auxiliary MTP module
+    with <strong>11,610,061,056</strong> unique parameters; it is outside the scope of
+    this main-model diagram and tally.  This follows DeepSeek's
+    <a href="https://huggingface.co/deepseek-ai/DeepSeek-V3/blob/main/README_WEIGHTS.md">weight-structure documentation</a>.
+    The tally's active view is the main-model inference path: eight routed experts,
+    one shared expert, the full router and output head, and one selected embedding
+    row, totaling <strong>36,625,625,600</strong> parameters per token.</p>
 
     <dsv3-anatomy style="min-height:723px" tally layer-id="params-diagram" detail controls="static" nocaption></dsv3-anatomy>
 

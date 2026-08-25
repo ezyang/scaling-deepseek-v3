@@ -310,10 +310,11 @@ function wrapExtra(label, single, tokens, cfg, hw, list) {
 // FSDP bucket sizes: split stage params evenly by layer bucket (embed/head
 // buckets carry their own vocab-sized matrices via stageParams already).
 function bucketParams(a, cfg, s, l, li, nBuckets) {
-  if (l.kind === 'embed' || l.kind === 'head') return { dense: a.hidden * a.vocab, expert: 0 };
-  const dense = M.attnLayerParams(a) + (l.kind === 'dense'
+  if (l.kind === 'embed') return { dense: a.hidden * a.vocab, expert: 0 };
+  if (l.kind === 'head') return { dense: a.hidden * a.vocab + a.hidden, expert: 0 };
+  const dense = M.attnLayerParams(a) + M.layerNormParams(a) + (l.kind === 'dense'
     ? 3 * a.hidden * a.denseInter
-    : a.hidden * a.routedExperts + a.sharedExperts * 3 * a.hidden * a.moeInter);
+    : (a.hidden + 1) * a.routedExperts + a.sharedExperts * 3 * a.hidden * a.moeInter);
   const expert = l.kind === 'moe' ? (a.routedExperts / cfg.ep) * 3 * a.hidden * a.moeInter : 0;
   return { dense, expert };
 }

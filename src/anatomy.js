@@ -182,7 +182,8 @@ customElements.define('dsv3-anatomy', Dsv3Anatomy);
 // carrying its multiplier. Rows over the hidden FFN kind flip the diagram to
 // that kind first, so the cells are always visible. compact = the narrow
 // two-column form that <dsv3-anatomy tally> mounts in the margin below the
-// plan. RMSNorm weights are counted; only the MTP module is omitted.
+// plan. RMSNorm weights and the router correction biases are counted. The
+// auxiliary MTP module is outside this main-model diagram and tally.
 const T = PARAMS, Q = PARAMS;
 
 // each formula TERM carries the diagram cells it covers, so hovering a
@@ -193,7 +194,9 @@ const NORM_OPS = ['norm1', 'q_norm', 'kv_norm', 'norm2'];
 const TALLY_ROWS = [
   { label: 'embedding', kind: null, plan: ['embed'],
     terms: [{ t: `${A.hidden} × ${A.vocab}`, ops: [] }],
-    per: E, count: 1, mult: '× 1' },
+    per: E, count: 1, mult: '× 1',
+    active: { per: PARAMS.activeEmbed,
+      terms: [{ t: `1 row × ${A.hidden}`, ops: [] }] } },
   { label: 'dense block', kind: 'dense', plan: ['block-dense'],
     terms: [
       { t: `attn qkv ${fmtP(Q.attnQkv)}`, ops: ATTN_QKV_OPS },
@@ -207,7 +210,8 @@ const TALLY_ROWS = [
       { t: `attn qkv ${fmtP(Q.attnQkv)}`, ops: ATTN_QKV_OPS },
       { t: `attn out ${fmtP(Q.attnOut)}`, ops: ['o_proj'] },
       { t: `experts ${fmtP(Q.expert)} × (${A.routedExperts} routed + ${A.sharedExperts} shared)`, ops: ['ffn_gate_up', 'ffn_down', 'shared'] },
-      { t: `router ${fmtP(T.router)}`, ops: ['router'] },
+      { t: `router ${fmtP(T.routerWeight)}`, ops: ['router'] },
+      { t: `correction bias ${T.routerBias}`, ops: ['router'] },
       { t: `norms ${fmtP(Q.normsBlk)}`, ops: NORM_OPS },
     ],
     per: MOE, count: A.layers - A.denseLayers, mult: `× ${A.layers - A.denseLayers} blocks`,
@@ -216,7 +220,8 @@ const TALLY_ROWS = [
         { t: `attn qkv ${fmtP(Q.attnQkv)}`, ops: ATTN_QKV_OPS },
         { t: `attn out ${fmtP(Q.attnOut)}`, ops: ['o_proj'] },
         { t: `experts ${fmtP(Q.expert)} × (${A.topk} active + ${A.sharedExperts} shared)`, ops: ['ffn_gate_up', 'ffn_down', 'shared'] },
-        { t: `router ${fmtP(T.router)}`, ops: ['router'] },
+        { t: `router ${fmtP(T.routerWeight)}`, ops: ['router'] },
+        { t: `correction bias ${T.routerBias}`, ops: ['router'] },
         { t: `norms ${fmtP(Q.normsBlk)}`, ops: NORM_OPS },
       ] } },
   { label: 'final RMSNorm', kind: null, plan: ['final_norm'],

@@ -1020,10 +1020,11 @@ export class Dsv3Layer extends HTMLElement {
       }).join(' \u2192 ');
     };
     const PCNT = {
+      qkv_down: PARAMS.qkvDown,
       q_up: DSV3.qRank * DSV3.heads * (DSV3.qkNope + DSV3.qkRope),
       kv_up: DSV3.kvRank * DSV3.heads * (DSV3.qkNope + DSV3.vHead),
       o_proj: DSV3.heads * DSV3.vHead * DSV3.hidden,
-      router: DSV3.hidden * DSV3.routedExperts,
+      router: PARAMS.routerWeight,
       ...(this.kind === 'dense' ? {
         ffn_gate_up: DSV3.hidden * 2 * DSV3.denseInter,
         ffn_down: DSV3.denseInter * DSV3.hidden,
@@ -1032,6 +1033,13 @@ export class Dsv3Layer extends HTMLElement {
         ffn_down: [DSV3.moeInter * DSV3.hidden, DSV3.routedExperts],
       }),
       lm_head: DSV3.hidden * DSV3.vocab,
+    };
+    const exactParam = (id) => {
+      if (id === 'norm1' || id === 'norm2') return DSV3.hidden;
+      if (id === 'q_norm') return DSV3.qRank;
+      if (id === 'kv_norm') return DSV3.kvRank;
+      const p = PCNT[id];
+      return Array.isArray(p) ? p[0] * p[1] : p;
     };
     // cumulative: block params carry ×K (the selected kind's block count);
     // the sizes toggle collapses the whole product. The lm head is not a
@@ -1118,10 +1126,11 @@ export class Dsv3Layer extends HTMLElement {
       dispatch: 'a2a communication — no FLOPs', combine: 'a2a communication — no FLOPs',
     };
     const escAttr = (s) => esc(s).replace(/"/g, '&quot;').replace(/\n/g, '&#10;');
-    const boxTip = (id, dimsNote) => {
+    const boxTip = (id, dimsNote, paramId = id) => {
       const n = ana.byId[id];
       const f = n?.flopsTok ? `${fmtNum(n.flopsTok)} FLOP/token = ${FLOP_EXPR[id] ?? ''}` : (FLOP_EXPR[id] ?? '');
-      return ` data-tip="${escAttr(f + (dimsNote ? '\n' + dimsNote : ''))}"`;
+      const pc = exactParam(paramId);
+      return ` data-tip="${escAttr([f, dimsNote, pc == null ? '' : `parameters: ${pc.toLocaleString('en-US')}`].filter(Boolean).join('\n'))}"`;
     };
     // dtype the sim ascribes to a stashed tensor (the dtype of the matmul whose
     // backward reads it — a real degree of freedom, so we surface it)
@@ -1226,9 +1235,11 @@ export class Dsv3Layer extends HTMLElement {
     const DET = this.detail;
     let MLAGW = 0;   // MLA group width — attention's lse label starts past its right edge
     const micro = (label, x, y, w = W, tip, pc = '', opId = null) => {
+      const pcTip = opId == null || tip?.includes('parameters:') ? null : exactParam(opId);
+      const tip2 = [tip, pcTip == null ? '' : `parameters: ${pcTip.toLocaleString('en-US')}`].filter(Boolean).join('\n');
       const body = `<rect class="micro" x="${x}" y="${y}" width="${w}" height="18" rx="9"/>` +
         `<text class="microlabel" x="${x + 9}" y="${y + 13}">${label}${pc ? `<tspan class="dims"> ${pc}</tspan>` : ''}</text>`;
-      P.push(tip || opId ? `<g${opId ? ` data-op="${opId}"` : ''}${tip ? ` data-tip="${escAttr(tip)}"` : ''}>${body}</g>` : body);
+      P.push(tip2 || opId ? `<g${opId ? ` data-op="${opId}"` : ''}${tip2 ? ` data-tip="${escAttr(tip2)}"` : ''}>${body}</g>` : body);
       return y + 18;
     };
     const plus = (cx, y) => P.push(`<circle cx="${cx}" cy="${y}" r="9" class="box"/>` +
@@ -1242,7 +1253,7 @@ export class Dsv3Layer extends HTMLElement {
       `<text class="grplabel" x="${x - 2}" y="${y0 + 11}">${label}</text>`);
     const mmBox = (ids, x, y, markIds, label, dims) => {
       const spec = MATMULS.find(m => m.id === ids[0]);
-      P.push(`<g data-op="${ids[0]}"${boxTip((markIds ?? ids)[0], dims ? undefined : spec.dimsNote)}>` +
+      P.push(`<g data-op="${ids[0]}"${boxTip((markIds ?? ids)[0], dims ? undefined : spec.dimsNote, ids[0])}>` +
         `<rect class="box" x="${x}" y="${y}" width="${W}" height="38" rx="4"/>` +
         `<text class="name" x="${x + 8}" y="${y + 13}">${label ?? spec.label}</text>` +
         `<text class="dims" x="${x + 8}" y="${y + 26}">${flatten(dims ?? spec.dims)}${pstr(ids[0])}</text></g>`);
@@ -1292,9 +1303,9 @@ export class Dsv3Layer extends HTMLElement {
       };
       const pQ = pk(DSV3.hidden * DSV3.qRank), pKV = pk(DSV3.hidden * (DSV3.kvRank + DSV3.qkRope));
       dhalf(C1, 'q down-proj', '7168 → 1536',
-        '2 · 7168 · 1536 FLOP/token — wq_a; a separate GEMM from kv down-proj in production stacks', qFrac, true, pQ);
+        `2 · 7168 · 1536 FLOP/token — wq_a; a separate GEMM from kv down-proj in production stacks\nparameters: ${(DSV3.hidden * DSV3.qRank).toLocaleString('en-US')}`, qFrac, true, pQ);
       dhalf(C1 + 150, 'kv down-proj', '7168 → 512 + 64',
-        '2 · 7168 · (512 + 64) FLOP/token — wkv_a; shares q down-proj’s mark and dtype (one graph node)', 1 - qFrac, false, pKV);
+        `2 · 7168 · (512 + 64) FLOP/token — wkv_a; shares q down-proj’s mark and dtype (one graph node)\nparameters: ${(DSV3.hidden * (DSV3.kvRank + DSV3.qkRope)).toLocaleString('en-US')}`, 1 - qFrac, false, pKV);
       y += 60;
       // display-split of the one latents stash. What backward keeps is the
       // POST-norm latent (the up-proj's input), so in detail the chips sit
@@ -1492,10 +1503,13 @@ export class Dsv3Layer extends HTMLElement {
     } else {
     let shBot = 0, shTop = 0;
     const SHX = C2 + 320, shMid = SHX + 22;        // shared-expert mini column; spine down its LEFT, like every column
-    const shBox = (name, dims, tip, yy, pc = '') => P.push(`<g data-op="shared" data-tip="${escAttr(tip)}">` +
+    const shBox = (name, dims, tip, yy, pc = '') => {
+      const n = name.includes('gate/up') ? 2 * DSV3.hidden * DSV3.moeInter : DSV3.hidden * DSV3.moeInter;
+      P.push(`<g data-op="shared" data-tip="${escAttr(`${tip}\nparameters: ${n.toLocaleString('en-US')}`)}">` +
       `<rect class="box" x="${SHX}" y="${yy}" width="140" height="34" rx="4"/>` +
       `<text class="name" x="${SHX + 6}" y="${yy + 14}">${name}</text>` +
       `<text class="dims" x="${SHX + 6}" y="${yy + 27}">${flatten(dims)}${pc}</text></g>`);
+    };
     if (!DET) {
       const g0 = Math.max(22, chipSpace(['norm2']) + 10) + (TABS ? 36 : 0);
       tensorChip(['norm2'], SX2 + 14, z + 4);
@@ -1521,7 +1535,9 @@ export class Dsv3Layer extends HTMLElement {
       // the top-k weights are a DEDICATED second output of the top-k block
       // (right edge) — not a duplicated tensor like the residual/shared forks
       gateTop = z + 9;
-      z = micro('sigmoid · group-limited top-k · scale', C2, z);
+      z = micro('sigmoid · +bias · group top-k · scale', C2, z, W,
+        `the learned e_score_correction_bias affects expert selection but not the gating weights\nparameters: ${PARAMS.routerBias.toLocaleString('en-US')}`,
+        pk(PARAMS.routerBias).trim(), 'router');
       P.push(`<path class="wire" d="M ${C2 + W} ${gateTop} L ${gateX} ${gateTop}"/>` +
         `<text class="tensor tidle" x="${C2 + 198}" y="${z + 11}">top-k weights · 8</text>`);
     }
@@ -1659,7 +1675,7 @@ export class Dsv3Layer extends HTMLElement {
       const lmRows = this._ctl.quant
         ? Math.ceil(Math.max(1, Math.round(flopEq(lmFlops, dt('lm_head')) / FLOP_UNIT)) / FLOP_ROW) : 0;
       lmH = 38 + lmRows * 6;
-      P.push(`<g data-op="lm_head" data-tip="${escAttr(`${fmtNum(lmFlops)} FLOP/token = ${FLOP_EXPR.lm_head}\n${lm.dimsNote}`)}">` +
+      P.push(`<g data-op="lm_head" data-tip="${escAttr(`${fmtNum(lmFlops)} FLOP/token = ${FLOP_EXPR.lm_head}\n${lm.dimsNote}\nparameters: ${PARAMS.embed.toLocaleString('en-US')}`)}">` +
         `<rect class="box" x="${C1 + 184}" y="${h}" width="240" height="${lmH}" rx="4"/>` +
         `<text class="name" x="${C1 + 192}" y="${h + 14}">${lm.label}</text>` +
         `<text class="dims" x="${C1 + 192}" y="${h + 28}">${flatten(lm.dims)}${pstr('lm_head')}</text></g>` + dtBtn('lm_head', C1 + 184 + 240 - 58, h + 7));

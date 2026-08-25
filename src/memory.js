@@ -8,7 +8,7 @@
 // ignored — this is a roofline: it is assumed you didn't get it completely
 // correct. Pure module (no DOM) so Node can use it.
 
-import { DSV3, HARDWARE, stageLayerKinds, stageParams, attnLayerParams } from './model.js';
+import { DSV3, HARDWARE, stageLayerKinds, stageParams, attnLayerParams, layerNormParams } from './model.js';
 import { blockGraph, analyze, resolveMarks, DTYPE_BYTES } from './blockgraph.js';
 
 const GB = 2 ** 30;
@@ -29,7 +29,7 @@ export const MATMULS = [
   { id: 'o_proj', label: 'attn out-proj', dims: '128×128 → 7168',
     dimsNote: '128 heads × 128 v-dim = 16384 → hidden 7168' },
   { id: 'router', label: 'router', dims: '7168 → 256',
-    dimsNote: 'hidden 7168 → 256 expert logits (top-8 kept, fp32 gating)' },
+    dimsNote: 'hidden 7168 → 256 expert logits + 256-element score-correction bias (top-8 kept, fp32 gating)' },
   { id: 'ffn_gate_up', label: 'ffn gate/up', dims: '7168 → 2×2048',
     dimsNote: 'hidden 7168 → gate 2048 + up 2048, per expert (8 routed + 1 shared)' },
   { id: 'ffn_down', label: 'ffn down', dims: '2048 → 7168',
@@ -147,9 +147,9 @@ export function memoryUsage(cfg) {
     // a2a send+recv buffers, FSDP's gathered layer (current + prefetch),
     // and one layer of unsharded gradients awaiting reduce-scatter.
     const maxLayer = Math.max(...layers.map(kind =>
-      kind === 'embed' || kind === 'head' ? a.hidden * a.vocab :
-        attnLayerParams(a) + (kind === 'dense' ? 3 * a.hidden * a.denseInter
-          : a.hidden * a.routedExperts + a.sharedExperts * expertLayerParams + (a.routedExperts / cfg.ep) * expertLayerParams)));
+      kind === 'embed' ? a.hidden * a.vocab : kind === 'head' ? a.hidden * a.vocab + a.hidden :
+        attnLayerParams(a) + layerNormParams(a) + (kind === 'dense' ? 3 * a.hidden * a.denseInter
+          : (a.hidden + 1) * a.routedExperts + a.sharedExperts * expertLayerParams + (a.routedExperts / cfg.ep) * expertLayerParams)));
     const buffers = (layers.includes('moe') ? tokens * a.topk * a.hidden * (DTYPE_BYTES[mm.ffn_gate_up] + 2) : 0)
       + (zero >= 3 ? 3 * maxLayer * 2 : 0);                 // 2 gathered weight buffers + 1 grad bucket
 

@@ -1,6 +1,12 @@
 // Named parameter quantities, derived once from the architecture and shared
 // by every surface that displays a count (the tally, the plan strip, the
-// kindtabs) — so they can't drift apart. EXACT: RMSNorm weights included.
+// kindtabs) — so they can't drift apart.
+//
+// Audited against every main-model non-`weight_scale_inv` tensor in the
+// published deepseek-ai/DeepSeek-V3 safetensors headers (embedding, layers
+// 0–60, final norm, and lm head). In particular, the router's learned
+// e_score_correction_bias is a real 256-element parameter tensor. The
+// auxiliary MTP module is deliberately outside this inventory.
 import { DSV3 as A } from './model.js';
 
 const qkvDown = A.hidden * (A.qRank + A.kvRank + A.qkRope);
@@ -9,7 +15,9 @@ const kvUp = A.kvRank * A.heads * (A.qkNope + A.vHead);
 const oProj = A.heads * A.vHead * A.hidden;
 const mlaNorms = A.hidden + A.qRank + A.kvRank;      // norm1 + the two latent norms
 const expert = 3 * A.hidden * A.moeInter;            // routed and shared are the same shape
-const router = A.hidden * A.routedExperts;
+const routerWeight = A.hidden * A.routedExperts;
+const routerBias = A.routedExperts;
+const router = routerWeight + routerBias;
 const denseFfn = 3 * A.hidden * A.denseInter;
 
 export const PARAMS = {
@@ -19,7 +27,7 @@ export const PARAMS = {
   attnOut: oProj,
   mlaNorms,
   mla: qkvDown + qUp + kvUp + oProj + mlaNorms,
-  router, expert, denseFfn,
+  router, routerWeight, routerBias, expert, denseFfn,
   normsBlk: mlaNorms + A.hidden,                      // + norm2
   denseFfnBlk: denseFfn + A.hidden,                   // FFN half incl. norm2
   moeFfnBlk: (A.routedExperts + A.sharedExperts) * expert + router + A.hidden,
@@ -30,8 +38,10 @@ PARAMS.moeBlock = PARAMS.mla + PARAMS.moeFfnBlk;
 PARAMS.total = 2 * PARAMS.embed + PARAMS.finalNorm
   + A.denseLayers * PARAMS.denseBlock + (A.layers - A.denseLayers) * PARAMS.moeBlock;
 // ACTIVE per token: ONLY the MoE FFN shrinks (top-k routed + the shared
-// expert fire); everything else — embedding included — is dense per token
+// expert fire). An embedding lookup touches one hidden-width row; the untied
+// output head touches its full matrix.
 PARAMS.activeMoeFfnBlk = (A.topk + A.sharedExperts) * expert + router + A.hidden;
 PARAMS.activeMoeBlock = PARAMS.mla + PARAMS.activeMoeFfnBlk;
-PARAMS.activeTotal = 2 * PARAMS.embed + PARAMS.finalNorm
+PARAMS.activeEmbed = A.hidden;
+PARAMS.activeTotal = PARAMS.activeEmbed + PARAMS.embed + PARAMS.finalNorm
   + A.denseLayers * PARAMS.denseBlock + (A.layers - A.denseLayers) * PARAMS.activeMoeBlock;
