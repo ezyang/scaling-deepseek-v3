@@ -1006,7 +1006,9 @@ export class Dsv3Layer extends HTMLElement {
     // pages that show each component once); default draws the full block
     const SCOPE = this.getAttribute('scope') ?? 'model';
     const ONLY = SCOPE === 'mla' || SCOPE === 'ffn' ? SCOPE : null;   // single-column scopes
-    const PONLY = this.getAttribute('lens') === 'params';   // parameter-count focus view
+    const LENS = this.getAttribute('lens');
+    const PBYTES = LENS === 'param-bytes';   // parameter MEMORY at bf16 (2 B/param)
+    const PONLY = LENS === 'params' || PBYTES;   // parameter focus: intermediates/dims/aux hidden
     // quant tiers carry byte-quantity labels (e.g. attention's lse) that need
     // more room between the columns; the static tier keeps its published width
     const W = 290, C1 = 60,
@@ -1056,18 +1058,26 @@ export class Dsv3Layer extends HTMLElement {
     const CUM = !!this.cumulative;
     // cumulative is always shown multiplied out — factored ×256 ×58 chains
     // are noise; the sizes toggle keeps governing dims and per-block factoring
+    // param-bytes lens: two bytes per parameter (the section's stated bf16
+    // assumption), formatted as binary bytes
+    const fmtPB = (nParams) => {
+      const b = nParams * 2;
+      return b >= 2 ** 30 ? (b / 2 ** 30).toFixed(1) + ' GiB'
+        : b >= 2 ** 20 ? (b / 2 ** 20).toFixed(1) + ' MiB' : (b / 1024).toFixed(1) + ' KiB';
+    };
+    const fmtPV = (n) => PBYTES ? fmtPB(n) : fmtP(n);
     const pk = (n, noK = false) => {
-      const v = CUM && !noK ? fmtP(n * KMUL) : fmtP(n);
-      return PONLY ? ` ${v}` : ` (${v})`;   // lens=params: no parens — params are the only numbers left
+      const v = CUM && !noK ? fmtPV(n * KMUL) : fmtPV(n);
+      return PONLY ? ` ${v}` : ` (${v})`;   // params lenses: no parens — params are the only numbers left
     };
     const pstr = (id) => {
       const p = PCNT[id];
       if (!p) return '';
       const tot = (Array.isArray(p) ? p[0] * p[1] : p);
       const wrap = (str) => PONLY ? ` ${str}` : ` (${str})`;
-      if (CUM && id !== 'lm_head') return wrap(fmtP(tot * KMUL));
-      if (Array.isArray(p)) return this.flatDims ? wrap(fmtP(tot)) : wrap(`${fmtP(p[0])} \u00d7${p[1]}`);
-      return wrap(fmtP(p));
+      if (CUM && id !== 'lm_head') return wrap(fmtPV(tot * KMUL));
+      if (Array.isArray(p)) return this.flatDims ? wrap(fmtPV(tot)) : wrap(`${fmtPV(p[0])} \u00d7${p[1]}`);
+      return wrap(fmtPV(p));
     };
     const dt = (id) => this.matmuls[id];
     const marks = this._ctl.quant ? this.marks : {};   // static: save everything
@@ -1153,6 +1163,17 @@ export class Dsv3Layer extends HTMLElement {
     const FLOP_UNIT = Math.max(...['qkv_down', 'q_up', 'kv_up', 'attn', 'o_proj', 'router', 'gate_up', 'swiglu', 'ffn_down']
       .filter(id => ana.byId[id])            // dense blocks have no router
       .map(id => flopEq(ana.byId[id].flopsTok, opDt(id)))) / FLOP_ROW;
+    const PB_UNIT = PBYTES ? Math.max(...['qkv_down', 'q_up', 'kv_up', 'o_proj', 'router', 'ffn_gate_up', 'ffn_down']
+      .map(id => (this.kind === 'dense' && (id === 'router')) ? 0 : (exactParam(id) ?? 0))) / FLOP_ROW : 1;
+    const paramBlocks = (x, y, nParams) => {
+      if (!PBYTES || !nParams) return;
+      const n = Math.round(nParams / PB_UNIT);
+      if (!n) return;
+      let g = '';
+      for (let i = 0; i < n; i++)
+        g += `<rect x="${x + (i % FLOP_ROW) * 6}" y="${y + Math.floor(i / FLOP_ROW) * 6}" width="5" height="4" fill="#2a78d6"/>`;
+      P.push(g);
+    };
     const flopBlocks = (x, y, flopsTok, dt2) => {
       if (!flopsTok || !this._ctl.quant) return 0;
       const n = Math.max(1, Math.round(flopEq(flopsTok, dt2) / FLOP_UNIT));
@@ -1274,6 +1295,7 @@ export class Dsv3Layer extends HTMLElement {
       P.push(dtBtn(ids[0], x + W - 58, y + 6));
       auxOut((markIds ?? ids)[0], x, y + 19);
       flopBlocks(x + 8, y + 30, ana.byId[(markIds ?? ids)[0]]?.flopsTok, dt(ids[0]));
+      paramBlocks(x + 8, y + 30, exactParam(ids[0]));
       return y + 38;
     };
     const opNode = (id, label, x, y, cls = 'op', pc = '') => {
@@ -1283,7 +1305,7 @@ export class Dsv3Layer extends HTMLElement {
         `<text class="oplabel" x="${x + 10}" y="${y + 15}">${label}${pc ? `<tspan class="dims"> ${pc}</tspan>` : ''}</text></g>` +
         modeBtn([id], x + W - 30, y + 1));
       auxOut(id, x, y + Math.round(h2 / 2));
-      if (cls !== 'comm') flopBlocks(x + 10, y + 19, ana.byId[id]?.flopsTok, 'vector');
+      if (cls !== 'comm') { flopBlocks(x + 10, y + 19, ana.byId[id]?.flopsTok, 'vector'); paramBlocks(x + 10, y + 19, exactParam(id)); }
       return y + h2;
     };
 
@@ -1306,19 +1328,20 @@ export class Dsv3Layer extends HTMLElement {
       P.push(`<circle cx="${SX1}" cy="${y - 10}" r="2.5" fill="#898781"/>` +
         `<path class="wire" d="M ${SX1} ${y - 10} L ${RX} ${y - 10} L ${RX} ${y}" marker-end="url(#arr)"/>`);
       const qFrac = DSV3.qRank / (DSV3.qRank + DSV3.kvRank + DSV3.qkRope);
-      const dhalf = (x, name, dims, tip, frac, withBtns, pc = '') => {
+      const dhalf = (x, name, dims, tip, frac, withBtns, pc = '', nP = 0) => {
         P.push(`<g data-op="qkv_down" data-tip="${escAttr(tip)}">` +
           `<rect class="box" x="${x}" y="${y}" width="140" height="60" rx="4"/>` +
           `<text class="name" x="${x + 6}" y="${y + 13}">${name}</text>` +
           `<text class="dims" x="${x + 6}" y="${y + 25}">${PONLY ? pc.trim() : flatten(dims) + pc}</text></g>` +
           (withBtns ? modeBtn(['qkv_down'], x + 140 - 86, y + 29) + dtBtn('qkv_down', x + 140 - 58, y + 29) : ''));
         flopBlocks(x + 6, y + 52, ana.byId.qkv_down.flopsTok * frac, dt('qkv_down'));
+        paramBlocks(x + 6, y + 52, nP);
       };
       const pQ = pk(DSV3.hidden * DSV3.qRank), pKV = pk(DSV3.hidden * (DSV3.kvRank + DSV3.qkRope));
       dhalf(C1, 'q down-proj', '7168 → 1536',
-        `2 · 7168 · 1536 FLOP/token — wq_a; a separate GEMM from kv down-proj in production stacks\nparameters: ${(DSV3.hidden * DSV3.qRank).toLocaleString('en-US')}`, qFrac, true, pQ);
+        `2 · 7168 · 1536 FLOP/token — wq_a; a separate GEMM from kv down-proj in production stacks\nparameters: ${(DSV3.hidden * DSV3.qRank).toLocaleString('en-US')}`, qFrac, true, pQ, DSV3.hidden * DSV3.qRank);
       dhalf(C1 + 150, 'kv down-proj', '7168 → 512 + 64',
-        `2 · 7168 · (512 + 64) FLOP/token — wkv_a; shares q down-proj’s mark and dtype (one graph node)\nparameters: ${(DSV3.hidden * (DSV3.kvRank + DSV3.qkRope)).toLocaleString('en-US')}`, 1 - qFrac, false, pKV);
+        `2 · 7168 · (512 + 64) FLOP/token — wkv_a; shares q down-proj’s mark and dtype (one graph node)\nparameters: ${(DSV3.hidden * (DSV3.kvRank + DSV3.qkRope)).toLocaleString('en-US')}`, 1 - qFrac, false, pKV, DSV3.hidden * (DSV3.kvRank + DSV3.qkRope));
       y += 60;
       // display-split of the one latents stash. What backward keeps is the
       // POST-norm latent (the up-proj's input), so in detail the chips sit
@@ -1381,6 +1404,7 @@ export class Dsv3Layer extends HTMLElement {
           `<text class="dims" x="${x + 6}" y="${y + 25}">${PONLY ? pstr(id).trim() : flatten(m.dims) + pstr(id)}</text></g>` +
           modeBtn([id], x + 140 - 86, y + 29) + dtBtn(id, x + 140 - 58, y + 29));
         flopBlocks(x + 6, y + 52, ana.byId[id]?.flopsTok, dt(id));
+        paramBlocks(x + 6, y + 52, exactParam(id));
       };
       halfBox('q_up', C1); halfBox('kv_up', C1 + 150); y += 60;
       if (DET) {
