@@ -1352,11 +1352,28 @@ export class Dsv3Layer extends HTMLElement {
     // ov (optional): display-split override for a chip that shows part of one
     // graph node — { name, tdims, frac } (bytes and grid scale by frac)
     const tensorChip = (ids, x, y, ov) => {
-      if (PONLY) return 12;   // intermediates hidden; gaps (chipSpace) unchanged
       const id = ids[0], st = state(id), n = ana.byId[id];
       const bytes = ids.reduce((t, i) => t + ana.byId[i].outBytes * (ana.dual.has(i) ? 2 : 1), 0) * (ov?.frac ?? 1);
       const dualTag = ids.some(i => ana.dual.has(i)) ? ' ᵀ×2' : '';
       const name0 = ov?.name ?? n.tensor;
+      if (PONLY) {
+        // consolidated: the saved activations live ON THE WIRES, like the AC
+        // diagram — amber chips (name + bytes for one 4096-token microbatch)
+        // with squares at the same global unit (mostly hollow: individually
+        // sub-square is the honest picture). Gaps (chipSpace) unchanged.
+        const m = CONS ? cmult('showActs') : 0;
+        if (!m || (st !== 'save' && st !== 'pin')) return 12;
+        const b4096 = bytes * 4096;
+        const full = Math.round(b4096 / (PB_UNIT * 2));
+        const nsq = Math.round(full * m), hollow = !nsq && m >= 0.5;
+        let g = `<text class="tensor tsave" x="${x}" y="${y + 8}">${needDir(ids)} ` +
+          `${esc(name0.replace(' (checkpoint anchor)', ''))} · ${fmtBytes(b4096)}${st === 'pin' ? ' 🔒' : ''}</text>`;
+        if (hollow) g += `<rect x="${x}" y="${y + 12}" width="5" height="4" fill="none" stroke="#eda100" stroke-width="0.8"/>`;
+        else for (let i = 0; i < nsq; i++)
+          g += `<rect x="${x + (i % FLOP_ROW) * 6}" y="${y + 12}" width="5" height="4" fill="#eda100"/>`;
+        P.push(`<g opacity="${m.toFixed(3)}">${g}</g>`);
+        return 12;
+      }
 
       let h = 12;
       if (!this._ctl.quant) {
@@ -1879,25 +1896,15 @@ export class Dsv3Layer extends HTMLElement {
     // column alone, making no claims about the surrounding stack) ----
     let h = Math.max(col1End, col2End) + 10;
     let lmH = -20;
-    // consolidated: the saved-activations band — one aggregate amber strip for
-    // the whole block (activations live on wires, not in weight matrices, so
-    // they don't get per-op squares; ana.savedBytes already totals the block's
-    // save-everything stashes). Same unit; pours in/out like the others.
+    // consolidated: the saved activations are the amber chips ON THE WIRES
+    // (drawn by tensorChip) — here just a text-only total for the block, no
+    // squares (those live at the chips; a second set would double-count)
     if (CONS) {
       const m = cmult('showActs');
       if (m) {
-        const actBytes = ana.savedBytes * 4096;           // per block, one 4096-token microbatch
-        const full = Math.round(actBytes / (PB_UNIT * 2));
-        const n = Math.round(full * m), hollow = !n && m >= 0.5;
-        const rows = Math.max(1, Math.ceil(Math.max(n, 1) / FLOP_ROW));
-        P.push(`<text class="grplabel" x="${C1 - 20}" y="${h + 10}">saved for backward · ×4096 tokens · ` +
-          `<tspan class="dims">${fmtBytes(actBytes)}</tspan></text>`);
-        let g = '';
-        for (let i = 0; i < n; i++)
-          g += `<rect x="${C1 - 20 + (i % FLOP_ROW) * 6}" y="${h + 16 + Math.floor(i / FLOP_ROW) * 6}" width="5" height="4" fill="#eda100"/>`;
-        if (hollow) g += `<rect x="${C1 - 20}" y="${h + 16}" width="5" height="4" fill="none" stroke="#eda100" stroke-width="0.8"/>`;
-        P.push(g);
-        h += Math.round((16 + rows * 6 + 6) * m);         // the band grows/shrinks with the tween
+        P.push(`<g opacity="${m.toFixed(3)}"><text class="tensor tsave" x="${C1 - 20}" y="${h + 8}">` +
+          `saved for backward · ×4096 tokens · ${fmtBytes(ana.savedBytes * 4096)} total</text></g>`);
+        h += Math.round(18 * m);                          // the line grows/shrinks with the tween
       }
     }
     if (SCOPE === 'model') {   // the surrounding stack: ×61 rule, final norm, lm head, loss

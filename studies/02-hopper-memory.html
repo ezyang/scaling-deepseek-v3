@@ -81,14 +81,14 @@
 
     <p><strong>Gradients.</strong></p>
 
-    <dsv3-anatomy style="min-height:797px" lens="param-bytes" consolidated recipe="bf16" layer="all-diagram" detail controls="static" nocaption></dsv3-anatomy>
+    <dsv3-anatomy style="min-height:787px" lens="param-bytes" consolidated recipe="bf16" layer="all-diagram" detail controls="static" nocaption></dsv3-anatomy>
 
     <p class="note">The consolidated per-block memory picture: weights (blue),
     fp32 gradient accumulators (orange), optimizer states (green), and the
-    saved-for-backward activations of one 4096-token microbatch (amber band at
-    the bottom — activations live on the wires, not in the weight matrices, so
-    they get one aggregate strip). Colors match the memory-bar segments. Toggle
-    components in the legend.</p>
+    saved-for-backward activations of one 4096-token microbatch (amber, on the
+    wires where they live — like the activation-checkpointing diagram; the
+    line at the bottom totals them). Colors match the memory-bar segments.
+    Toggle components in the legend.</p>
 
     <strong>Full tally</strong>
     show the tally bar
