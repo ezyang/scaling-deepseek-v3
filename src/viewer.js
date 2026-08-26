@@ -942,15 +942,17 @@ export class Dsv3Layer extends HTMLElement {
     if (cmode !== 'static') root.append(head);
     else {
       const mini = el('div', 'lv-head');
+      // param-bytes always shows sizes multiplied out — no toggle to offer
+      const sizeCtl = this.getAttribute('lens') === 'param-bytes' ? [] : ['sizes:', mkDimsBtn()];
       // no kind select when MLA-only (kind-independent) or when the tabs carry the flip
-      if (SCOPE === 'mla' || this.hasAttribute('tabs')) mini.append('sizes:', mkDimsBtn(), mkCumBtn());
-      else mini.append('block: ', mkKindSel(), ' · sizes:', mkDimsBtn(), mkCumBtn());
+      if (SCOPE === 'mla' || this.hasAttribute('tabs')) mini.append(...sizeCtl, mkCumBtn());
+      else mini.append('block: ', mkKindSel(), ...(sizeCtl.length ? [' · '] : []), ...sizeCtl, mkCumBtn());
       if (this.getAttribute('lens') === 'param-bytes') {
         // the strip unit rescales with the ×N toggle — label it so the jump
         // reads as a unit change, not a glitch (▫ = nonzero but sub-square)
         const KM2 = this.kind === 'dense' ? (DSV3.denseLayers ?? 3) : DSV3.layers - (DSV3.denseLayers ?? 3);
         const absP = this.getAttribute('strips') === 'absolute';   // fixed unit: strips grow instead
-        const unit = PARAMS.largestOp.moe * (this.cumulative && !absP ? KM2 : 1) / 30 * 2;
+        const unit = PARAMS.largestOp.moe * (this.cumulative && !absP ? KM2 : 1) / 32 * 2;
         const leg = el('span');
         leg.style.cssText = 'color:#52514e;margin-left:10px;font-size:11px;';
         leg.innerHTML = `<span style="color:#2a78d6">▪</span> = ${fmtBytes(unit)}`;
@@ -1043,6 +1045,15 @@ export class Dsv3Layer extends HTMLElement {
     const LENS = this.getAttribute('lens');
     const PBYTES = LENS === 'param-bytes';   // parameter MEMORY at bf16 (2 B/param)
     const PONLY = LENS === 'params' || PBYTES;   // parameter focus: intermediates/dims/aux hidden
+    // param-bytes always shows sizes multiplied out (factored ×256 byte chains
+    // pull no weight there; the sizes toggle is hidden in that lens)
+    const FLAT = this.flatDims || PBYTES;
+    // static/params tiers can never fill the in-box strip band (FLOP strips
+    // need a dtype tier, param strips need the bytes lens) — compact boxes
+    // instead of reserving space for strips that can't appear
+    const BQ = this._ctl.quant || PBYTES;
+    const BH = BQ ? 38 : 32;      // bold matmul box height
+    const HBH = BQ ? 60 : 32;     // narrow half-column box (buttons + strip sit below the text)
     // quant tiers carry byte-quantity labels (e.g. attention's lse) that need
     // more room between the columns; the static tier keeps its published width
     const W = 290, C1 = 60,
@@ -1053,7 +1064,7 @@ export class Dsv3Layer extends HTMLElement {
       : C2 + W + (this.detail ? (this._ctl.quant ? 264 : 224) : 180); // right margin fits aux labels (+ shared column in detail; quant byte tags are wider)
     // dims display: factored (128\u00d7192) or multiplied out (24576)
     const flatten = (s) => {
-      if (!this.flatDims || !s) return s;
+      if (!FLAT || !s) return s;
       return String(s).split('\u2192').map(part => {
         const t = part.trim().replace(/\u00d7/g, '*');
         if (!/^[\d\s+*()]+$/.test(t)) return part.trim();
@@ -1106,7 +1117,7 @@ export class Dsv3Layer extends HTMLElement {
       const tot = (Array.isArray(p) ? p[0] * p[1] : p);
       const wrap = (str) => PONLY ? ` ${str}` : ` (${str})`;
       if (CUM && id !== 'lm_head') return wrap(fmtPV(tot * KMUL));
-      if (Array.isArray(p)) return this.flatDims ? wrap(fmtPV(tot)) : wrap(`${fmtPV(p[0])} \u00d7${p[1]}`);
+      if (Array.isArray(p)) return FLAT ? wrap(fmtPV(tot)) : wrap(`${fmtPV(p[0])} \u00d7${p[1]}`);
       return wrap(fmtPV(p));
     };
     const dt = (id) => this.matmuls[id];
@@ -1189,7 +1200,10 @@ export class Dsv3Layer extends HTMLElement {
       const b = n.outBytes / n.elems;
       return b >= 3.5 ? 'fp32' : b >= 1.7 ? 'bf16' : 'mxfp8';
     };
-    const FLOP_ROW = 30;
+    // 32/row: a power of two, so parallelism shards divide the strips cleanly
+    // (EP64 on the ×58 MoE gate/up strip = 32·58/64 = 29 whole squares/rank),
+    // and the byte unit lands exact: largestOp.moe/32 · 2 B = 448 MiB/square
+    const FLOP_ROW = 32;
     const FLOP_UNIT = Math.max(...['qkv_down', 'q_up', 'kv_up', 'attn', 'o_proj', 'router', 'gate_up', 'swiglu', 'ffn_down']
       .filter(id => ana.byId[id])            // dense blocks have no router
       .map(id => flopEq(ana.byId[id].flopsTok, opDt(id)))) / FLOP_ROW;
@@ -1338,7 +1352,7 @@ export class Dsv3Layer extends HTMLElement {
       const spec = MATMULS.find(m => m.id === ids[0]);
       const extra = stripExtra(exactParam(ids[0]));
       P.push(`<g data-op="${ids[0]}"${boxTip((markIds ?? ids)[0], dims ? undefined : spec.dimsNote, ids[0])}>` +
-        `<rect class="box" x="${x}" y="${y}" width="${W}" height="${38 + extra}" rx="4"/>` +
+        `<rect class="box" x="${x}" y="${y}" width="${W}" height="${BH + extra}" rx="4"/>` +
         (PBYTES && exactParam(ids[0]) != null ? `<text class="dims" x="${x + W - 8}" y="${y + 13}" text-anchor="end">bf16</text>` : '') +
         `<text class="name" x="${x + 8}" y="${y + 13}">${label ?? spec.label}</text>` +
         `<text class="dims" x="${x + 8}" y="${y + 26}">${PONLY ? pstr(ids[0]).trim() : flatten(dims ?? spec.dims) + pstr(ids[0])}</text></g>`);
@@ -1347,10 +1361,10 @@ export class Dsv3Layer extends HTMLElement {
       auxOut((markIds ?? ids)[0], x, y + 19);
       flopBlocks(x + 8, y + 30, ana.byId[(markIds ?? ids)[0]]?.flopsTok, dt(ids[0]));
       paramBlocks(x + 8, y + 30, exactParam(ids[0]));
-      return y + 38 + stripExtra(exactParam(ids[0]));
+      return y + BH + stripExtra(exactParam(ids[0]));
     };
     const opNode = (id, label, x, y, cls = 'op', pc = '') => {
-      const h2 = cls === 'comm' ? 22 : 27;
+      const h2 = cls === 'comm' || !BQ ? 22 : 27;   // the extra 5px hold the fig-leaf strip
       P.push(`<g data-op="${id}"${boxTip(id)}>` +
         `<rect class="${cls}" x="${x}" y="${y}" width="${W}" height="${h2}" rx="6"/>` +
         `<text class="oplabel" x="${x + 10}" y="${y + 15}">${label}${pc ? `<tspan class="dims"> ${pc}</tspan>` : ''}</text></g>` +
@@ -1381,7 +1395,7 @@ export class Dsv3Layer extends HTMLElement {
       const qFrac = DSV3.qRank / (DSV3.qRank + DSV3.kvRank + DSV3.qkRope);
       const dhalf = (x, name, dims, tip, frac, withBtns, pc = '', nP = 0) => {
         P.push(`<g data-op="qkv_down" data-tip="${escAttr(tip)}">` +
-          `<rect class="box" x="${x}" y="${y}" width="140" height="60" rx="4"/>` +
+          `<rect class="box" x="${x}" y="${y}" width="140" height="${HBH}" rx="4"/>` +
           (PBYTES ? `<text class="dims" x="${x + 134}" y="${y + 13}" text-anchor="end">bf16</text>` : '') +
           `<text class="name" x="${x + 6}" y="${y + 13}">${name}</text>` +
           `<text class="dims" x="${x + 6}" y="${y + 25}">${PONLY ? pc.trim() : flatten(dims) + pc}</text></g>` +
@@ -1394,7 +1408,7 @@ export class Dsv3Layer extends HTMLElement {
         `2 · 7168 · 1536 FLOP/token — wq_a; a separate GEMM from kv down-proj in production stacks\nparameters: ${(DSV3.hidden * DSV3.qRank).toLocaleString('en-US')}`, qFrac, true, pQ, DSV3.hidden * DSV3.qRank);
       dhalf(C1 + 150, 'kv down-proj', '7168 → 512 + 64',
         `2 · 7168 · (512 + 64) FLOP/token — wkv_a; shares q down-proj’s mark and dtype (one graph node)\nparameters: ${(DSV3.hidden * (DSV3.kvRank + DSV3.qkRope)).toLocaleString('en-US')}`, 1 - qFrac, false, pKV, DSV3.hidden * (DSV3.kvRank + DSV3.qkRope));
-      y += 60;
+      y += HBH;
       // display-split of the one latents stash. What backward keeps is the
       // POST-norm latent (the up-proj's input), so in detail the chips sit
       // below the RMSNorm row. The kv down-proj box has TWO outputs: k_rope
@@ -1451,7 +1465,7 @@ export class Dsv3Layer extends HTMLElement {
       const halfBox = (id, x) => {
         const m = MATMULS.find(mm2 => mm2.id === id);
         P.push(`<g data-op="${id}"${boxTip(id, m.dimsNote)}>` +
-          `<rect class="box" x="${x}" y="${y}" width="140" height="60" rx="4"/>` +
+          `<rect class="box" x="${x}" y="${y}" width="140" height="${HBH}" rx="4"/>` +
           (PBYTES ? `<text class="dims" x="${x + 134}" y="${y + 13}" text-anchor="end">bf16</text>` : '') +
           `<text class="name" x="${x + 6}" y="${y + 13}">${m.label}</text>` +
           `<text class="dims" x="${x + 6}" y="${y + 25}">${PONLY ? pstr(id).trim() : flatten(m.dims) + pstr(id)}</text></g>` +
@@ -1459,7 +1473,7 @@ export class Dsv3Layer extends HTMLElement {
         flopBlocks(x + 6, y + 52, ana.byId[id]?.flopsTok, dt(id));
         paramBlocks(x + 6, y + 52, exactParam(id));
       };
-      halfBox('q_up', C1); halfBox('kv_up', C1 + 150); y += 60;
+      halfBox('q_up', C1); halfBox('kv_up', C1 + 150); y += HBH;
       if (DET) {
         // the up-proj outputs get names before RoPE; then two separate RoPE
         // kernels (Megatron: apply_mla_rope_for_q / _for_kv) — the kv one is
@@ -1567,7 +1581,7 @@ export class Dsv3Layer extends HTMLElement {
       const g0 = (DET ? Math.max(38, chipSpace(['norm2']) + 20) : Math.max(22, chipSpace(['norm2']) + 10))
         + (TABS ? 36 : 0);
       if (TABS) { drawTabs(z + g0 - 46); encTop = z + g0 - 20; }
-      z += g0 + 38 + (DET ? 18 : 0) + gapM(['router']) + 22 + gapM(['dispatch']);
+      z += g0 + BH + (DET ? 18 : 0) + gapM(['router']) + 22 + gapM(['dispatch']);
       const gTop = z + 3; z += 21;
       wire(SX2, spineFrom, gTop - 3);   // arrow stops above the group, like the MoE rows
       z = mmBox(['ffn_gate_up'], C2, z, ['gate_up'], 'ffn gate/up', `7168 → 2×${DSV3.denseInter}`);
@@ -1681,11 +1695,15 @@ export class Dsv3Layer extends HTMLElement {
     // 256) lives on the router/dispatch boxes, not here
     {
       const nR = this.activeView ? DSV3.topk : DSV3.routedExperts;   // fired vs resident
+      // multiplied sizes fold ×N into the box numbers, so the ×N leaves the
+      // label too — showing both would read as "multiply again" (overcount)
       grp(C2, g2, z + 5, DET
         ? (CUM ? `routed experts · ${fmtPV(PARAMS.expert * nR * KMUL)}`
-               : `routed experts ×${nR} · ${fmtPV(PARAMS.expert)}`)
+          : FLAT ? `routed experts · ${fmtPV(PARAMS.expert * nR)}`
+                 : `routed experts ×${nR} · ${fmtPV(PARAMS.expert)}`)
         : (CUM ? `experts · ${fmtPV(PARAMS.expert * (nR + DSV3.sharedExperts) * KMUL)}`
-               : `experts ×${nR + DSV3.sharedExperts} · ${fmtPV(PARAMS.expert)}`));
+          : FLAT ? `experts · ${fmtPV(PARAMS.expert * (nR + DSV3.sharedExperts))}`
+                 : `experts ×${nR + DSV3.sharedExperts} · ${fmtPV(PARAMS.expert)}`));
     }
     z = wireOut(['ffn_down'], SX2, z + 5);
     z = opNode('combine', DET ? 'a2a combine (comm + unpermute · sum)' : 'a2a combine (weighted by router)', C2, z, 'comm');
@@ -1778,7 +1796,7 @@ export class Dsv3Layer extends HTMLElement {
       const lmFlops = 2 * DSV3.hidden * DSV3.vocab / (this.view === 'combined' ? this.dispLayers : 1);
       const lmRows = this._ctl.quant
         ? Math.ceil(Math.max(1, Math.round(flopEq(lmFlops, dt('lm_head')) / FLOP_UNIT)) / FLOP_ROW) : 0;
-      lmH = 38 + lmRows * 6;
+      lmH = (BQ ? 38 : 34) + lmRows * 6;   // lm-head text sits 2px lower than mmBox text
       P.push(`<g data-op="lm_head" data-tip="${escAttr(`${fmtNum(lmFlops)} FLOP/token = ${FLOP_EXPR.lm_head}\n${lm.dimsNote}\nparameters: ${PARAMS.embed.toLocaleString('en-US')}`)}">` +
         `<rect class="box" x="${C1 + 184}" y="${h}" width="240" height="${lmH}" rx="4"/>` +
         `<text class="name" x="${C1 + 192}" y="${h + 14}">${lm.label}</text>` +

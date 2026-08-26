@@ -33,7 +33,10 @@ the rest are conventions to uphold when editing the renderer.
    removed machinery sat. Same rule for detail ↔ terse: major anchors persist.
 8. **Reserved, non-reflowing space.** Chip gaps are sized for the WORST case
    (`chipSpace`: saved, bf16, dual-orientation) so toggling marks/dtypes never
-   moves the layout.
+   moves the layout. Space is reserved only for content the INSTANCE can ever
+   render: the in-box strip band exists in dtype tiers and the bytes lens, so
+   static/params boxes are compact (32px, not 38/60). A toggle that must
+   change height animates the reflow instead of jumping (the ×N strips tween).
 
 ## Text and labels
 

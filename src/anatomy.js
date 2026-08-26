@@ -88,7 +88,9 @@ export class Dsv3AnatomyPlan extends HTMLElement {
     // strips — their bytes are shown expanded on the right (never double
     // count a byte anywhere in the figure).
     const ABS = LB && l?.getAttribute('strips') === 'absolute';
-    const UNIT = PARAMS.largestOp.moe * (l?.cumulative && !ABS ? KM : 1) / 30;   // global unit: a square means the same bytes everywhere
+    const UNIT = PARAMS.largestOp.moe * (l?.cumulative && !ABS ? KM : 1) / 32;   // global unit (diagram's FLOP_ROW): a square means the same bytes everywhere
+    // (the plan's strips wrap at 30/row — the narrow box's width, unrelated to
+    // the unit — but never exceed a few squares in practice)
     const strip = (x, y, nParams) => {
       if (!LB) return '';
       const n = Math.round(nParams / UNIT);
@@ -130,9 +132,12 @@ export class Dsv3AnatomyPlan extends HTMLElement {
     };
     op('embedding', AV && !LB ? '(not counted)' : `(${pv(E)})`, 22, 'embed', E);
     wire(24, `x · ${A.hidden}`);
-    blockBox('dense', `dense block ×${A.denseLayers}`, `${pv(DENSE)} each`);
+    // cumulative: the expanded diagram already folds the ×N in, so the plan
+    // drops it — "×58" beside an already-multiplied figure reads as overcount
+    const LCUM = !!l?.cumulative;
+    blockBox('dense', LCUM ? 'dense block' : `dense block ×${A.denseLayers}`, `${pv(DENSE)} each`);
     wire(24, `x · ${A.hidden}`);
-    blockBox('moe', `MoE block ×${A.layers - A.denseLayers}`, `${pv(AV && !LB ? PARAMS.activeMoeBlock : MOE)} each`);
+    blockBox('moe', LCUM ? 'MoE block' : `MoE block ×${A.layers - A.denseLayers}`, `${pv(AV && !LB ? PARAMS.activeMoeBlock : MOE)} each`);
     wire(24, `x · ${A.hidden}`);
     op('final RMSNorm', `(${pv(A.hidden)})`, 22, 'final_norm');
     wire(24, `norm out · ${A.hidden}`);
