@@ -32,6 +32,16 @@ export const BYTE_COMPS = [
   { prop: 'showOptim', color: '#1baf7a', bpp: 8, label: 'optimizer states (8 B/param)' },
 ];
 
+// fiat parallelism for the `local` variant (what one GPU holds): 2048 GPUs,
+// PP16 over a contiguous floor split of the 61 layers, EP selectable, ZeRO-1.
+// Stage 0 = embedding + the 3 dense blocks; stage 15 = + final norm + lm head.
+export const LOCAL_PAR = { world: 2048, pp: 16 };
+export const ppStage = (s) => {
+  const lo = Math.floor(61 * s / 16), hi = Math.floor(61 * (s + 1) / 16);
+  const dense = Math.max(0, Math.min(hi, 3) - Math.min(lo, 3));
+  return { lo, hi, layers: hi - lo, dense, moe: hi - lo - dense };
+};
+
 // parameter-count formatter for the dims parentheticals ('(29M \u00d7256)' / '(7.5B)')
 export const fmtP = (n) => n >= 1e9 ? (n / 1e9).toFixed(1) + 'B'
   : n >= 9.95e6 ? Math.round(n / 1e6) + 'M' : n >= 1e6 ? (n / 1e6).toFixed(1) + 'M'
@@ -749,6 +759,9 @@ export class Dsv3Layer extends HTMLElement {
     this.showOptim = st?.showOptim ?? true;
     this.showGrads = st?.showGrads ?? true;
     this.showActs = st?.showActs ?? true;
+    // local lens: the fiat-parallelism selectors (EP width, PP stage)
+    this.ep = st?.ep ?? 64;
+    this.stage = st?.stage ?? 1;
     // cumulative: every parameter parenthetical multiplies by the selected
     // kind's block count (×3 dense / ×58 MoE); the tabs hide — the kind then
     // comes from the plan selector alone
@@ -779,6 +792,7 @@ export class Dsv3Layer extends HTMLElement {
       kind: this.kind, cumulative: this.cumulative,
       showWeights: this.showWeights, showOptim: this.showOptim,
       showGrads: this.showGrads, showActs: this.showActs,
+      ep: this.ep, stage: this.stage,
     });
   }
   applyPreset(recipe, recompute, transposed = false) {
@@ -797,6 +811,10 @@ export class Dsv3Layer extends HTMLElement {
   }
   render() {
     this.innerHTML = '';
+    // local lens: the kind follows the selected PP stage (stage 0 holds the
+    // 3 dense blocks; every other stage holds only MoE blocks)
+    if (this.hasAttribute('local') && this.getAttribute('lens') === 'param-bytes')
+      this.kind = ppStage(this.stage ?? 1).moe ? 'moe' : 'dense';
     const style = document.createElement('style'); style.textContent = LAYER_CSS;
     const root = el('div', 'lv');
     // progressive disclosure: controls="static|marks|dtype|full" gates which
@@ -963,11 +981,32 @@ export class Dsv3Layer extends HTMLElement {
       const mini = el('div', 'lv-head');
       // param-bytes always shows sizes multiplied out — no toggle to offer
       const sizeCtl = this.getAttribute('lens') === 'param-bytes' ? [] : ['sizes:', mkDimsBtn()];
-      // the optim variant is pinned per block; consolidated allows ×N (long!)
-      const cumCtl = this.hasAttribute('optim') && !this.hasAttribute('consolidated') ? [] : [mkCumBtn()];
+      // the optim variant is pinned per block; consolidated allows ×N (long!);
+      // local's multiplier is the stage's block count — no toggle
+      const cumCtl = (this.hasAttribute('optim') && !this.hasAttribute('consolidated'))
+        || this.hasAttribute('local') ? [] : [mkCumBtn()];
       // no kind select when MLA-only (kind-independent) or when the tabs carry the flip
       if (SCOPE === 'mla' || this.hasAttribute('tabs')) mini.append(...sizeCtl, ...cumCtl);
       else mini.append('block: ', mkKindSel(), ...(sizeCtl.length ? [' · '] : []), ...sizeCtl, ...cumCtl);
+      if (this.hasAttribute('local')) {
+        // the fiat parallelism: PP16 · ZeRO-1 on 2048 GPUs is fixed; EP and
+        // the PP stage are the knobs (the kind follows the stage)
+        const mkSel = (opts, val, label, set) => {
+          const s = document.createElement('select');
+          for (const o of opts) s.append(new Option(label(o), o));
+          s.value = String(val);
+          s.onchange = () => { set(+s.value); this.render(); this.changed(true); };
+          return s;
+        };
+        mini.append('EP: ', mkSel([32, 64], this.ep, (o) => `EP${o}`, (v) => { this.ep = v; }),
+          ' stage: ', mkSel([...Array(LOCAL_PAR.pp).keys()], this.stage,
+            (o) => `${o}${o === 0 ? ' (embed + dense)' : o === LOCAL_PAR.pp - 1 ? ' (+lm head)' : ''}`,
+            (v) => { this.stage = v; }));
+        const fixed = el('span');
+        fixed.style.cssText = 'color:#52514e;font-size:11px;';
+        fixed.textContent = `of PP16 · ZeRO-1 · ${LOCAL_PAR.world} GPUs`;
+        mini.append(fixed);
+      }
       if (this.getAttribute('lens') === 'param-bytes') {
         // the strip unit rescales with the ×N toggle — label it so the jump
         // reads as a unit change, not a glitch (▫ = nonzero but sub-square)
@@ -1114,15 +1153,31 @@ export class Dsv3Layer extends HTMLElement {
     // strips="absolute" the squares grow — a very long diagram). Legend checkboxes
     // toggle components: the squares pour in/out per-block-tween style and the
     // numbers always total exactly the squares shown.
-    const CONS = PBYTES && this.hasAttribute('consolidated');
+    // local: what ONE GPU holds under the fiat parallelism (LOCAL_PAR + the
+    // EP/stage selectors). Expert weights divide by EP; optimizer states are
+    // ZeRO-1-sharded over each parameter's replication group (dense params
+    // /DP, expert params /expert-DP = world/pp/EP); the kind and block
+    // multiplier follow the selected PP stage. Implies consolidated.
+    const LOCAL = PBYTES && this.hasAttribute('local');
+    const CONS = LOCAL || (PBYTES && this.hasAttribute('consolidated'));
     const OPTIM = CONS || (PBYTES && this.hasAttribute('optim'));
+    const EPn = this.ep ?? 64, STG = this.stage ?? 1;
+    const DPn = LOCAL_PAR.world / LOCAL_PAR.pp;              // 128
+    const EDP = LOCAL_PAR.world / LOCAL_PAR.pp / EPn;        // expert-DP: 2 (EP64) / 4 (EP32)
+    const stg = ppStage(STG);
     const COMPS = !OPTIM ? [BYTE_COMPS[0]]
       : CONS ? BYTE_COMPS : [BYTE_COMPS[0], BYTE_COMPS[2]];
     // tween multiplier for a component: 1 shown, 0 hidden, in between mid-pour
     const cmult = (prop) => this._ctween?.prop === prop
       ? (this[prop] ? this._ctween.t : 1 - this._ctween.t)
       : (this[prop] ? 1 : 0);
-    const BPP = COMPS.reduce((t, c) => t + (this[c.prop] ? c.bpp : 0), 0);   // visible bytes per parameter (numbers snap)
+    // visible bytes per parameter (numbers snap). Two classes under local:
+    // 'd' (dense/replicated: optimizer ZeRO-1-sharded /DP) and 'e' (expert:
+    // sharded over the smaller expert-DP group)
+    const bppOf = (c, cls) => !LOCAL || c.prop !== 'showOptim' ? c.bpp
+      : c.bpp / (cls === 'e' ? EDP : DPn);
+    const BPPT = (cls = 'd') => COMPS.reduce((t, c) => t + (this[c.prop] ? bppOf(c, cls) : 0), 0);
+    const clsOf = (id) => LOCAL && this.kind === 'moe' && (id === 'ffn_gate_up' || id === 'ffn_down') ? 'e' : 'd';
     // param-bytes always shows sizes multiplied out (factored ×256 byte chains
     // pull no weight there; the sizes toggle is hidden in that lens)
     const FLAT = this.flatDims || PBYTES;
@@ -1161,8 +1216,11 @@ export class Dsv3Layer extends HTMLElement {
       } : {
         // active view: only the fired experts count (top-k; the shared expert
         // has its own boxes)
-        ffn_gate_up: [DSV3.hidden * 2 * DSV3.moeInter, this.activeView ? DSV3.topk : DSV3.routedExperts],
-        ffn_down: [DSV3.moeInter * DSV3.hidden, this.activeView ? DSV3.topk : DSV3.routedExperts],
+        // local: this rank hosts 256/EP of the routed experts
+        ffn_gate_up: [DSV3.hidden * 2 * DSV3.moeInter,
+          LOCAL ? DSV3.routedExperts / EPn : this.activeView ? DSV3.topk : DSV3.routedExperts],
+        ffn_down: [DSV3.moeInter * DSV3.hidden,
+          LOCAL ? DSV3.routedExperts / EPn : this.activeView ? DSV3.topk : DSV3.routedExperts],
       }),
       lm_head: DSV3.hidden * DSV3.vocab,
     };
@@ -1177,28 +1235,31 @@ export class Dsv3Layer extends HTMLElement {
     // cumulative: block params carry ×K (the selected kind's block count);
     // the sizes toggle collapses the whole product. The lm head is not a
     // block parameter and never multiplies.
-    const KMUL = this.kind === 'dense' ? (DSV3.denseLayers ?? 3) : DSV3.layers - (DSV3.denseLayers ?? 3);
-    const CUM = !!this.cumulative;
+    // local: the multiplier is the selected PP stage's block count of the
+    // shown kind, and the ×N framing is always on (this rank's stage total)
+    const KMUL = LOCAL ? (this.kind === 'dense' ? stg.dense : stg.moe)
+      : this.kind === 'dense' ? (DSV3.denseLayers ?? 3) : DSV3.layers - (DSV3.denseLayers ?? 3);
+    const CUM = LOCAL || !!this.cumulative;
     // cumulative is always shown multiplied out — factored ×256 ×58 chains
     // are noise; the sizes toggle keeps governing dims and per-block factoring
     // param-bytes lens: the VISIBLE bytes per parameter (bf16 weights = 2 B,
     // + 8 B optimizer when shown), formatted as binary bytes — the number on a
     // box always totals exactly the squares drawn in it
-    const fmtPB = (nParams) => fmtBytes(nParams * BPP);
-    const fmtPV = (n) => PBYTES ? fmtPB(n) : fmtP(n);
+    const fmtPB = (nParams, cls) => fmtBytes(nParams * BPPT(cls));
+    const fmtPV = (n, cls = 'd') => PBYTES ? fmtPB(n, cls) : fmtP(n);
     const pk = (n, noK = false) => {
-      if (PBYTES && !BPP) return '';   // nothing visible, nothing to number
+      if (PBYTES && !BPPT()) return '';   // nothing visible, nothing to number
       const v = CUM && !noK ? fmtPV(n * KMUL) : fmtPV(n);
       return PONLY ? ` ${v}` : ` (${v})`;   // params lenses: no parens — params are the only numbers left
     };
     const pstr = (id) => {
       const p = PCNT[id];
-      if (!p || (PBYTES && !BPP)) return '';
+      if (!p || (PBYTES && !BPPT())) return '';
       const tot = (Array.isArray(p) ? p[0] * p[1] : p);
       const wrap = (str) => PONLY ? ` ${str}` : ` (${str})`;
-      if (CUM && id !== 'lm_head') return wrap(fmtPV(tot * KMUL));
-      if (Array.isArray(p)) return FLAT ? wrap(fmtPV(tot)) : wrap(`${fmtPV(p[0])} \u00d7${p[1]}`);
-      return wrap(fmtPV(p));
+      if (CUM && id !== 'lm_head') return wrap(fmtPV(tot * KMUL, clsOf(id)));
+      if (Array.isArray(p)) return FLAT ? wrap(fmtPV(tot, clsOf(id))) : wrap(`${fmtPV(p[0], clsOf(id))} \u00d7${p[1]}`);
+      return wrap(fmtPV(p, clsOf(id)));
     };
     const dt = (id) => this.matmuls[id];
     const marks = this._ctl.quant ? this.marks : {};   // static: save everything
@@ -1293,35 +1354,35 @@ export class Dsv3Layer extends HTMLElement {
     // flips may reflow in this profile.
     const ABS = PBYTES && this.getAttribute('strips') === 'absolute';
     const PB_BASE = PARAMS.largestOp.moe / FLOP_ROW;
-    const PB_UNIT = PB_BASE * (CUM && !ABS ? KMUL : 1);
+    const PB_UNIT = PB_BASE * (CUM && !ABS && !LOCAL ? KMUL : 1);   // local keeps the fixed 448 MiB unit
     // absolute profile: the STRIP grows, not the unit. The ×N toggle tweens
     // this._tween 0→1: squares pour in and the boxes grow with the filled
     // rows (compact at per-block, tall at cumulative).
     const CUMT = this._tween ?? (CUM ? 1 : 0);   // 0 = per block, 1 = ×N (mid-tween in between)
     const T_ = ABS ? CUMT : 0;
-    const stripMul = ABS ? 1 + (KMUL - 1) * T_ : 1;
+    const stripMul = ABS ? 1 + (KMUL - 1) * T_ : LOCAL ? KMUL : 1;
     const stripCount = (nParams) => !PBYTES || !nParams ? 0 : Math.round(nParams * stripMul / PB_UNIT);
     // per-component cells for one op, at the current tween state: a toggled
     // component's squares pour in/out (count scales with t) and everything
     // downstream reflows smoothly — the per-block-tween style, not a fade.
     // A visible run that rounds to 0 shows one hollow trace square.
-    const compCells = (nParams) => COMPS.map((c) => {
+    const compCells = (nParams, cls) => COMPS.map((c) => {
       const m = cmult(c.prop);
       if (!m) return { c, n: 0, hollow: false };
-      const full = stripCount(nParams * c.bpp / 2);       // stripCount speaks params @2 B
+      const full = stripCount(nParams * bppOf(c, cls) / 2);   // stripCount speaks params @2 B
       const n = Math.round(full * m);
       return { c, n, hollow: !n && m >= 0.5 };            // hollow pops in mid-tween like a 1-square run
     });
-    const stripCells = (nParams) =>
-      compCells(nParams).reduce((t, r) => t + r.n + (r.hollow ? 1 : 0), 0);
-    const stripExtra = (nParams) => {                     // box growth beyond the built-in strip row
+    const stripCells = (nParams, cls) =>
+      compCells(nParams, cls).reduce((t, r) => t + r.n + (r.hollow ? 1 : 0), 0);
+    const stripExtra = (nParams, cls) => {                // box growth beyond the built-in strip row
       if (!nParams || !(ABS || OPTIM)) return 0;
-      return (Math.max(1, Math.ceil(stripCells(nParams) / FLOP_ROW)) - 1) * 6;
+      return (Math.max(1, Math.ceil(stripCells(nParams, cls) / FLOP_ROW)) - 1) * 6;
     };
-    const paramBlocks = (x, y, nParams) => {
+    const paramBlocks = (x, y, nParams, cls) => {
       if (!PBYTES || !nParams) return;
       let g = '', i = 0;
-      for (const { c, n, hollow } of compCells(nParams)) {
+      for (const { c, n, hollow } of compCells(nParams, cls)) {
         if (hollow) {   // hollow, never a full square — that would overstate
           const cx = x + (i % FLOP_ROW) * 6, cy = y + Math.floor(i / FLOP_ROW) * 6;
           g += `<rect x="${cx}" y="${cy}" width="5" height="4" fill="none" stroke="${c.color}" stroke-width="0.8"/>`; i++;
@@ -1471,7 +1532,7 @@ export class Dsv3Layer extends HTMLElement {
       `<text class="grplabel" x="${x - 2}" y="${y0 + 11}">${label}</text>`);
     const mmBox = (ids, x, y, markIds, label, dims) => {
       const spec = MATMULS.find(m => m.id === ids[0]);
-      const extra = stripExtra(exactParam(ids[0]));
+      const extra = stripExtra(exactParam(ids[0]), clsOf(ids[0]));
       P.push(`<g data-op="${ids[0]}"${boxTip((markIds ?? ids)[0], dims ? undefined : spec.dimsNote, ids[0])}>` +
         `<rect class="box" x="${x}" y="${y}" width="${W}" height="${BH + extra}" rx="4"/>` +
         (PBYTES && exactParam(ids[0]) != null ? `<text class="dims" x="${x + W - 8}" y="${y + 13}" text-anchor="end">bf16</text>` : '') +
@@ -1481,8 +1542,8 @@ export class Dsv3Layer extends HTMLElement {
       P.push(dtBtn(ids[0], x + W - 58, y + 6));
       auxOut((markIds ?? ids)[0], x, y + 19);
       flopBlocks(x + 8, y + 30, ana.byId[(markIds ?? ids)[0]]?.flopsTok, dt(ids[0]));
-      paramBlocks(x + 8, y + 30, exactParam(ids[0]));
-      return y + BH + stripExtra(exactParam(ids[0]));
+      paramBlocks(x + 8, y + 30, exactParam(ids[0]), clsOf(ids[0]));
+      return y + BH + stripExtra(exactParam(ids[0]), clsOf(ids[0]));
     };
     const opNode = (id, label, x, y, cls = 'op', pc = '') => {
       const h2 = cls === 'comm' || !BQ ? 22 : 27;   // the extra 5px hold the fig-leaf strip
@@ -1820,16 +1881,18 @@ export class Dsv3Layer extends HTMLElement {
     // group tally like the MLA label/tabs; the routing description (top-8 of
     // 256) lives on the router/dispatch boxes, not here
     {
-      const nR = this.activeView ? DSV3.topk : DSV3.routedExperts;   // fired vs resident
+      // local: this rank hosts 256/EP experts
+      const nR = LOCAL ? DSV3.routedExperts / EPn
+        : this.activeView ? DSV3.topk : DSV3.routedExperts;   // fired vs resident
       // multiplied sizes fold ×N into the box numbers, so the ×N leaves the
       // label too — showing both would read as "multiply again" (overcount)
       grp(C2, g2, z + 5, DET
-        ? (CUM ? `routed experts · ${fmtPV(PARAMS.expert * nR * KMUL)}`
-          : FLAT ? `routed experts · ${fmtPV(PARAMS.expert * nR)}`
-                 : `routed experts ×${nR} · ${fmtPV(PARAMS.expert)}`)
-        : (CUM ? `experts · ${fmtPV(PARAMS.expert * (nR + DSV3.sharedExperts) * KMUL)}`
-          : FLAT ? `experts · ${fmtPV(PARAMS.expert * (nR + DSV3.sharedExperts))}`
-                 : `experts ×${nR + DSV3.sharedExperts} · ${fmtPV(PARAMS.expert)}`));
+        ? (CUM ? `routed experts${LOCAL ? ` (${nR}/rank)` : ''} · ${fmtPV(PARAMS.expert * nR * KMUL, 'e')}`
+          : FLAT ? `routed experts · ${fmtPV(PARAMS.expert * nR, 'e')}`
+                 : `routed experts ×${nR} · ${fmtPV(PARAMS.expert, 'e')}`)
+        : (CUM ? `experts · ${fmtPV(PARAMS.expert * (nR + DSV3.sharedExperts) * KMUL, 'e')}`
+          : FLAT ? `experts · ${fmtPV(PARAMS.expert * (nR + DSV3.sharedExperts), 'e')}`
+                 : `experts ×${nR + DSV3.sharedExperts} · ${fmtPV(PARAMS.expert, 'e')}`));
     }
     z = wireOut(['ffn_down'], SX2, z + 5);
     z = opNode('combine', DET ? 'a2a combine (comm + unpermute · sum)' : 'a2a combine (weighted by router)', C2, z, 'comm');

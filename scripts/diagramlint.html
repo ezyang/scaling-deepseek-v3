@@ -24,6 +24,8 @@
   <div data-widget="parambytes-static"><dsv3-layer id="w15" detail controls="static" tabs lens="param-bytes" scope="block" nocaption></dsv3-layer></div>
   <div data-widget="consolidated-perblock"><dsv3-layer id="w16" detail controls="static" tabs lens="param-bytes" consolidated strips="absolute" recipe="bf16" scope="block" nocaption></dsv3-layer></div>
   <div data-widget="consolidated-x58"><dsv3-layer id="w17" detail controls="static" tabs lens="param-bytes" consolidated strips="absolute" recipe="bf16" cumulative scope="block" nocaption></dsv3-layer></div>
+  <div data-widget="local-moe-stage"><dsv3-layer id="w18" detail controls="static" tabs lens="param-bytes" local recipe="bf16" scope="block" nocaption></dsv3-layer></div>
+  <div data-widget="local-dense-stage0"><dsv3-layer id="w19" detail controls="static" tabs lens="param-bytes" local recipe="bf16" kind="dense" scope="block" nocaption></dsv3-layer></div>
   <div data-widget="anatomy-wrapper"><dsv3-anatomy layer="w13" detail controls="static" nocaption></dsv3-anatomy></div>
   <div data-widget="anatomy-plan"><dsv3-anatomy-plan id="wp"></dsv3-anatomy-plan></div>
   <pre id="lint-out"></pre>
@@ -162,6 +164,8 @@ async function lintPlaceholders() {
 requestAnimationFrame(() => setTimeout(async () => {
   const w11 = document.getElementById('w11');
   if (w11?.render) { w11.flatDims = true; w11.render(); }
+  const w19 = document.getElementById('w19');
+  if (w19?.render) { w19.stage = 0; w19.render(); }   // the dense (embedding) stage
   for (const host of document.querySelectorAll('[data-widget]'))
     lintWidget(host.dataset.widget, host);
   await lintPlaceholders();

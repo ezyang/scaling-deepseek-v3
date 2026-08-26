@@ -8,7 +8,7 @@
 // internals (that's the block diagram's job).
 
 import { DSV3 } from './model.js';
-import { fmtP, fmtBytes, tokensCss, applyHighlight, BYTE_COMPS } from './viewer.js';
+import { fmtP, fmtBytes, tokensCss, applyHighlight, BYTE_COMPS, LOCAL_PAR, ppStage } from './viewer.js';
 import { PARAMS } from './params.js';
 
 // named parameter quantities, shared with the diagram's tabs (src/params.js)
@@ -94,20 +94,28 @@ export class Dsv3AnatomyPlan extends HTMLElement {
     // the unit — but never exceed a few squares in practice)
     // byte components mirror the layer's legend checkboxes exactly: same
     // colors, same tween (squares pour in/out), numbers snap to what's shown
-    const CONS = LB && l?.hasAttribute('consolidated');
+    const LOC = LB && l?.hasAttribute('local');
+    const CONS = LOC || (LB && l?.hasAttribute('consolidated'));
     const OPT = CONS || (LB && l?.hasAttribute('optim'));
     const COMPS = !OPT ? [BYTE_COMPS[0]] : CONS ? BYTE_COMPS : [BYTE_COMPS[0], BYTE_COMPS[2]];
     const cmult = (prop) => l?._ctween?.prop === prop
       ? (l[prop] ? l._ctween.t : 1 - l._ctween.t)
       : ((l?.[prop] ?? true) ? 1 : 0);
-    const BPP = COMPS.reduce((t, c) => t + ((l?.[c.prop] ?? true) ? c.bpp : 0), 0);
+    // local: the plan's ops (embedding / final norm / lm head) are all
+    // dense-class — ZeRO-1 shards their optimizer states over the full DP group
+    const EPn = l?.ep ?? 64, Sg = l?.stage ?? 1, DPn = LOCAL_PAR.world / LOCAL_PAR.pp;
+    const stg = LOC ? ppStage(Sg) : null;
+    const cbpp = (c, cls) => !LOC || c.prop !== 'showOptim' ? c.bpp
+      : c.bpp / (cls === 'e' ? LOCAL_PAR.world / LOCAL_PAR.pp / EPn : DPn);
+    const BPP = COMPS.reduce((t, c) => t + ((l?.[c.prop] ?? true) ? cbpp(c, 'd') : 0), 0);
+    const BPPe = COMPS.reduce((t, c) => t + ((l?.[c.prop] ?? true) ? cbpp(c, 'e') : 0), 0);
     const strip = (x, y, nParams) => {
       if (!LB || !nParams) return '';
       let g = '', i = 0;
       for (const c of COMPS) {
         const m = cmult(c.prop);
         if (!m) continue;
-        const n = Math.round(Math.round(nParams * c.bpp / 2 / UNIT) * m);
+        const n = Math.round(Math.round(nParams * cbpp(c, 'd') / 2 / UNIT) * m);
         if (!n) {   // nonzero but sub-square (e.g. the embedding under ×58): hollow trace
           if (m < 0.5) continue;
           const cx = x + (i % 30) * 5, cy = y + Math.floor(i / 30) * 5;
@@ -149,24 +157,38 @@ export class Dsv3AnatomyPlan extends HTMLElement {
         `<text class="dims" x="${BX + 8}" y="${y + 27}">${dims}</text></g>`);
       y += 34;
     };
-    op('embedding', AV && !LB ? '(not counted)' : pw(E), 22, 'embed', E);
+    // local: the plan doubles as the stage map — embedding lives on stage 0
+    // only, final norm + lm head on the last stage, blocks per the layer split
+    const onEmb = !LOC || Sg === 0, onHead = !LOC || Sg === LOCAL_PAR.pp - 1;
+    op('embedding', !onEmb ? '(stage 0 only)' : AV && !LB ? '(not counted)' : pw(E), 22, 'embed', onEmb ? E : 0);
     wire(24, `x · ${A.hidden}`);
     // cumulative: the expanded diagram already folds the ×N in, so the plan
     // drops it — "×58" beside an already-multiplied figure reads as overcount
     const LCUM = !!l?.cumulative;
     const each = (n) => { const v = pv(n); return v ? `${v} each` : ''; };
-    blockBox('dense', LCUM ? 'dense block' : `dense block ×${A.denseLayers}`, each(DENSE));
+    // local per-rank block bytes: expert params divide by EP and shard their
+    // optimizer over expert-DP; everything else is dense-class
+    const moeNonExp = MOE - PARAMS.expert * A.routedExperts;
+    const rankBlock = (kind) => kind === 'dense' ? PARAMS.denseBlock * BPP
+      : moeNonExp * BPP + PARAMS.expert * (A.routedExperts / EPn) * BPPe;
+    const stageDims = (kind, count) => !count ? 'not on this stage'
+      : BPP || BPPe ? `${fmtBytes(rankBlock(kind) * count)} on this rank` : '';
+    blockBox('dense',
+      LOC ? `dense block ×${stg.dense}` : LCUM ? 'dense block' : `dense block ×${A.denseLayers}`,
+      LOC ? stageDims('dense', stg.dense) : each(DENSE));
     wire(24, `x · ${A.hidden}`);
-    blockBox('moe', LCUM ? 'MoE block' : `MoE block ×${A.layers - A.denseLayers}`, each(AV && !LB ? PARAMS.activeMoeBlock : MOE));
+    blockBox('moe',
+      LOC ? `MoE block ×${stg.moe}` : LCUM ? 'MoE block' : `MoE block ×${A.layers - A.denseLayers}`,
+      LOC ? stageDims('moe', stg.moe) : each(AV && !LB ? PARAMS.activeMoeBlock : MOE));
     wire(24, `x · ${A.hidden}`);
-    op('final RMSNorm', pw(A.hidden), 22, 'final_norm');
+    op('final RMSNorm', !onHead ? '(stage 15 only)' : pw(A.hidden), 22, 'final_norm');
     wire(24, `norm out · ${A.hidden}`);
     // param lenses hide op dims uniformly — the lm head's 7168 → 129280 goes too
     const PL = LB || l?.getAttribute('lens') === 'params';
     S.push(`<g data-op="lm_head"><rect class="box" x="${BX}" y="${y}" width="${W}" height="${LB ? 42 : 34}" rx="4"/>` +
       `<text class="name" x="${BX + 8}" y="${y + 14}">lm head</text>` +
-      `<text class="dims" x="${BX + 8}" y="${y + 27}">${PL ? pw(E) : `${A.hidden} → ${A.vocab} ${pw(E)}`}</text>` +
-      (LB ? strip(BX + 8, y + 31, E) : '') + `</g>`);
+      `<text class="dims" x="${BX + 8}" y="${y + 27}">${!onHead ? '(stage 15 only)' : PL ? pw(E) : `${A.hidden} → ${A.vocab} ${pw(E)}`}</text>` +
+      (LB && onHead ? strip(BX + 8, y + 31, E) : '') + `</g>`);
     y += LB ? 42 : 34;
     wire(24, `logits · ${A.vocab}`);
     op('softmax / loss', null);
@@ -211,7 +233,7 @@ dsv3-anatomy dsv3-anatomy-plan { margin-top: 46px; }
 }
 `;
 const FWD = ['controls', 'recipe', 'recompute', 'detail', 'transposed', 'for',
-  'nocaption', 'kind', 'xlayers', 'xinflight', 'lens', 'strips', 'optim', 'consolidated'];
+  'nocaption', 'kind', 'xlayers', 'xinflight', 'lens', 'strips', 'optim', 'consolidated', 'local'];
 export class Dsv3Anatomy extends HTMLElement {
   connectedCallback() {
     const lid = this.getAttribute('layer') ?? ((this.id || 'anatomy') + '-layer');
