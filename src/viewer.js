@@ -686,6 +686,12 @@ dsv3-layer { display: block; margin: 14px 0 26px; }
 .lv-head { display: flex; align-items: center; gap: 8px; padding-bottom: 6px; color: #52514e; flex-wrap: wrap; }
 .lv-head select { font: 12px system-ui; padding: 2px 6px; border: 1px solid #c3c2b7; border-radius: 4px; background: #fff; }
 .lv svg { display: block; margin: 0 auto; max-width: 100%; height: auto; }
+/* narrow viewports: scaling the diagram down further makes it unreadable —
+   render at natural size and let it scroll horizontally instead */
+@media (max-width: 860px) {
+  .lv { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .lv svg { max-width: none; }
+}
 ${tokensCss('.lv')}
 .lv select.dt { font: 600 10px system-ui; width: 100%; height: 20px; border: 1px solid #c3c2b7;
   border-radius: 3px; background: #fff; }
@@ -1868,7 +1874,9 @@ export class Dsv3Layer extends HTMLElement {
     const svgEl = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svgEl.setAttribute('width', WIDTH); svgEl.setAttribute('height', H);
     svgEl.setAttribute('viewBox', `0 0 ${WIDTH} ${H}`);
-    svgEl.style.maxWidth = '100%'; svgEl.style.height = 'auto';
+    // scaling lives in the .lv svg CSS (with a narrow-viewport override that
+    // disables it in favor of horizontal scroll) — no inline style, it would win
+    // the cascade over the media rule
     svgEl.innerHTML = `<defs><marker id="arr" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto-start-reverse">` +
       `<path d="M 0 0 L 8 4 L 0 8 z" fill="#898781"/></marker></defs>` + P.join('');
     for (const b of svgEl.querySelectorAll('button[data-dt]')) {

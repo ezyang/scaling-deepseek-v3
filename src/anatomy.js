@@ -41,6 +41,7 @@ export class Dsv3AnatomyPlan extends HTMLElement {
     const host = this.parentElement;
     if (host && getComputedStyle(host).position === 'static') host.style.position = 'relative';
     this._ov = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    this._ov.setAttribute('class', 'anat-cone');   // hidden on narrow viewports (the grid stacks)
     this._ov.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible;';
     host?.append(this._ov);
     this.draw();
@@ -184,7 +185,16 @@ dsv3-anatomy { display: block; margin: 14px 0 26px; }
 dsv3-anatomy .anat-grid { display: grid; grid-template-columns: 186px minmax(0, 1fr);
   gap: 0 28px; align-items: start; position: relative; left: 50%;
   transform: translateX(-50%); width: min(1330px, calc(100vw - 32px)); }
+dsv3-anatomy .anat-grid > * { min-width: 0; }  /* items may shrink below content (the diagram scrolls instead) */
 dsv3-anatomy dsv3-anatomy-plan { margin-top: 46px; }
+/* narrow viewports: the margin plan stacks above the diagram (the expansion
+   cone makes no sense stacked, so it hides); the diagram itself stops scaling
+   and scrolls instead — see the .lv media rule */
+@media (max-width: 860px) {
+  dsv3-anatomy .anat-grid { grid-template-columns: 1fr; gap: 18px 0; }
+  dsv3-anatomy dsv3-anatomy-plan { margin-top: 0; }
+  .anat-cone { display: none; }
+}
 `;
 const FWD = ['controls', 'recipe', 'recompute', 'detail', 'transposed', 'for',
   'nocaption', 'kind', 'xlayers', 'xinflight', 'lens', 'strips', 'optim'];

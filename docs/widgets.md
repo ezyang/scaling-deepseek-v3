@@ -25,6 +25,7 @@ carry a measured `style="min-height:…px"` placeholder (scroll restoration);
 | `transposed` | state | boolean | Hopper fp8ᵀ dual-orientation stashes |
 | `cumulative` | state | boolean | parameter parentheticals ×(selected kind's block count), always multiplied out; tabs + enclosure hide. No double-multiplication cues: whenever a number is already multiplied out, the ×N leaves its label (the plan's ×3/×58 tags in cumulative; the experts group's ×256 under multiplied sizes) |
 | `xlayers`, `xinflight` | state | numbers (61, 1) | combined-view multipliers (× layers × in-flight × 4096 tokens) |
+| `optim` | view | boolean | param-bytes only: stack green optimizer-state squares (8 B/param — fp32 master + two bf16 moments; memory-bars optimizer color) under the blue weight squares, same unit, so the 4:1 ratio is the picture; pinned per block (no cumulative toggle); the plan strips follow |
 | `strips` | view | absent · `absolute` | byte-strip spacing profile (param-bytes lens): default renormalizes per view (largest op = one row, unit legend shows the rescale); `absolute` fixes ONE unit and reserves worst-case (cumulative) rows, so toggling ×N grows strips with zero rescale/reflow — costs vertical space; dense/MoE flips may reflow. Hollow square = nonzero but sub-square |
 | `for` | binding | ids | linked widgets receiving recipe/marks patches |
 
@@ -39,7 +40,12 @@ Runtime-only properties (driven by other widgets, not attributes):
 |---|---|---|
 | `layer` | binding | id given to the inner `<dsv3-layer tabs scope="block">` (URL state, `dsv3-controls layer=` links, page scripts all address it) |
 | `tally` | view | mount the compact parameter tally in the margin below the plan |
-| *(forwarded)* | | `controls recipe recompute detail transposed for nocaption kind xlayers xinflight lens strips` pass through to the inner layer |
+| *(forwarded)* | | `controls recipe recompute detail transposed for nocaption kind xlayers xinflight lens strips optim` pass through to the inner layer |
+
+Narrow viewports (≤860px): the anatomy grid stacks (plan above the diagram,
+expansion cone hidden) and diagrams stop scaling down — they render at natural
+size and scroll horizontally inside their container instead.
+`scripts/interact.mjs` takes `--width N` to test this.
 
 ## `<dsv3-anatomy-plan layer=…>` — the vertical margin plan
 Bound to a layer: clicking a block kind flips it; re-syncs via the layer's

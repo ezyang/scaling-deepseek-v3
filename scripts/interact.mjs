@@ -24,6 +24,7 @@ import { fileURLToPath } from 'node:url';
 const [page, scenarioFile, ...rest] = process.argv.slice(2);
 if (!page || !scenarioFile) { console.error('usage: interact.mjs <page> <scenario.js> [--shot out.png]'); process.exit(2); }
 const shot = rest[rest.indexOf('--shot') + 1] && rest.includes('--shot') ? rest[rest.indexOf('--shot') + 1] : null;
+const width = rest.includes('--width') ? parseInt(rest[rest.indexOf('--width') + 1], 10) : 1500;   // viewport width (mobile checks)
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png' };
@@ -68,7 +69,7 @@ const srv = createServer(async (req, res) => {
 await new Promise(r => srv.listen(0, r));
 const url = `http://localhost:${srv.address().port}/${page}`;
 
-const args = ['--headless', '--disable-gpu', '--hide-scrollbars', '--virtual-time-budget=12000', '--window-size=1500,4000'];
+const args = ['--headless', '--disable-gpu', '--hide-scrollbars', '--virtual-time-budget=12000', `--window-size=${width},4000`];
 const dom = await new Promise((res2, rej) => execFile(CHROME, [...args, '--dump-dom', url],
   { maxBuffer: 64 * 1024 * 1024 }, (err, stdout) => err ? rej(err) : res2(stdout)));
 if (shot) await new Promise((res2, rej) => execFile(CHROME, [...args, `--screenshot=${shot}`, url],
