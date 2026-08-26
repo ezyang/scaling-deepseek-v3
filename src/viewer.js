@@ -957,7 +957,9 @@ export class Dsv3Layer extends HTMLElement {
         leg.style.cssText = 'color:#52514e;margin-left:10px;font-size:11px;white-space:nowrap;';
         // the swatch is a real 5×4 rect — the same size as the strip squares
         // (a text ▪ renders at whatever the font says)
-        leg.innerHTML = `<svg width="5" height="4" style="vertical-align:baseline"><rect width="5" height="4" fill="#2a78d6"/></svg> = ${fmtBytes(unit)}`;
+        // inline-block + zero margin: the .lv svg{display:block;margin:0 auto}
+        // rule for the main diagram would otherwise stack the swatch on its own line
+        leg.innerHTML = `<svg width="5" height="4" style="display:inline-block;margin:0;vertical-align:baseline"><rect width="5" height="4" fill="#2a78d6"/></svg> = ${fmtBytes(unit)}`;
         mini.append(leg);
       }
       root.append(mini);
