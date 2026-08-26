@@ -928,6 +928,17 @@ export class Dsv3Layer extends HTMLElement {
       // no kind select when MLA-only (kind-independent) or when the tabs carry the flip
       if (SCOPE === 'mla' || this.hasAttribute('tabs')) mini.append('sizes:', mkDimsBtn(), mkCumBtn());
       else mini.append('block: ', mkKindSel(), ' · sizes:', mkDimsBtn(), mkCumBtn());
+      if (this.getAttribute('lens') === 'param-bytes') {
+        // the strip unit rescales with the ×N toggle — label it so the jump
+        // reads as a unit change, not a glitch (▫ = nonzero but sub-square)
+        const KM2 = this.kind === 'dense' ? (DSV3.denseLayers ?? 3) : DSV3.layers - (DSV3.denseLayers ?? 3);
+        const absP = this.getAttribute('strips') === 'absolute';   // fixed unit: strips grow instead
+        const unit = PARAMS.largestOp[this.kind] * (this.cumulative && !absP ? KM2 : 1) / 30 * 2;
+        const leg = el('span');
+        leg.style.cssText = 'color:#52514e;margin-left:10px;font-size:11px;';
+        leg.innerHTML = `<span style="color:#2a78d6">▪</span> = ${fmtBytes(unit)}`;
+        mini.append(leg);
+      }
       root.append(mini);
     }
     // dense mode also analyzes the MoE graph, purely for LAYOUT: the dense
@@ -1165,12 +1176,24 @@ export class Dsv3Layer extends HTMLElement {
     const FLOP_UNIT = Math.max(...['qkv_down', 'q_up', 'kv_up', 'attn', 'o_proj', 'router', 'gate_up', 'swiglu', 'ffn_down']
       .filter(id => ana.byId[id])            // dense blocks have no router
       .map(id => flopEq(ana.byId[id].flopsTok, opDt(id)))) / FLOP_ROW;
-    const PB_UNIT = PBYTES ? Math.max(...['qkv_down', 'q_up', 'kv_up', 'o_proj', 'router', 'ffn_gate_up', 'ffn_down']
-      .map(id => (this.kind === 'dense' && (id === 'router')) ? 0 : (exactParam(id) ?? 0))) / FLOP_ROW : 1;
+    // strips="absolute": one FIXED unit (the per-block largest op fills a
+    // row); cumulative strips GROW into space reserved for them, so the
+    // toggle neither rescales nor reflows. Costs vertical space; dense/MoE
+    // flips may reflow in this profile.
+    const ABS = PBYTES && this.getAttribute('strips') === 'absolute';
+    const PB_BASE = PBYTES ? Math.max(...['qkv_down', 'q_up', 'kv_up', 'o_proj', 'router', 'ffn_gate_up', 'ffn_down']
+      .map(id => exactParam(id) ?? 0)) / FLOP_ROW : 1;
+    const PB_UNIT = PB_BASE * (CUM && !ABS ? KMUL : 1);
+    const stripMul = ABS && CUM ? KMUL : 1;               // absolute: the STRIP scales, not the unit
+    const stripRows = (nParams) =>                        // reserved: the cumulative worst case
+      !ABS || !nParams ? 0 : Math.max(1, Math.ceil(Math.round(nParams * KMUL / PB_BASE) / FLOP_ROW));
     const paramBlocks = (x, y, nParams) => {
       if (!PBYTES || !nParams) return;
-      const n = Math.round(nParams / PB_UNIT);
-      if (!n) return;
+      const n = Math.round(nParams * stripMul / PB_UNIT);
+      if (!n) {   // nonzero but sub-square: a hollow trace square (never a full one — that would overstate)
+        P.push(`<rect x="${x}" y="${y}" width="5" height="4" fill="none" stroke="#2a78d6" stroke-width="0.8"/>`);
+        return;
+      }
       let g = '';
       for (let i = 0; i < n; i++)
         g += `<rect x="${x + (i % FLOP_ROW) * 6}" y="${y + Math.floor(i / FLOP_ROW) * 6}" width="5" height="4" fill="#2a78d6"/>`;
@@ -1289,8 +1312,9 @@ export class Dsv3Layer extends HTMLElement {
       `<text class="grplabel" x="${x - 2}" y="${y0 + 11}">${label}</text>`);
     const mmBox = (ids, x, y, markIds, label, dims) => {
       const spec = MATMULS.find(m => m.id === ids[0]);
+      const extra = Math.max(0, stripRows(exactParam(ids[0])) - 1) * 6;
       P.push(`<g data-op="${ids[0]}"${boxTip((markIds ?? ids)[0], dims ? undefined : spec.dimsNote, ids[0])}>` +
-        `<rect class="box" x="${x}" y="${y}" width="${W}" height="38" rx="4"/>` +
+        `<rect class="box" x="${x}" y="${y}" width="${W}" height="${38 + extra}" rx="4"/>` +
         (PBYTES && exactParam(ids[0]) != null ? `<text class="dims" x="${x + W - 8}" y="${y + 13}" text-anchor="end">bf16</text>` : '') +
         `<text class="name" x="${x + 8}" y="${y + 13}">${label ?? spec.label}</text>` +
         `<text class="dims" x="${x + 8}" y="${y + 26}">${PONLY ? pstr(ids[0]).trim() : flatten(dims ?? spec.dims) + pstr(ids[0])}</text></g>`);
@@ -1299,7 +1323,7 @@ export class Dsv3Layer extends HTMLElement {
       auxOut((markIds ?? ids)[0], x, y + 19);
       flopBlocks(x + 8, y + 30, ana.byId[(markIds ?? ids)[0]]?.flopsTok, dt(ids[0]));
       paramBlocks(x + 8, y + 30, exactParam(ids[0]));
-      return y + 38;
+      return y + 38 + Math.max(0, stripRows(exactParam(ids[0])) - 1) * 6;
     };
     const opNode = (id, label, x, y, cls = 'op', pc = '') => {
       const h2 = cls === 'comm' ? 22 : 27;

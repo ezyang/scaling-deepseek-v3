@@ -83,10 +83,13 @@ export class Dsv3AnatomyPlan extends HTMLElement {
     // fills one row (× block count under cumulative). Block boxes get NO
     // strips — their bytes are shown expanded on the right (never double
     // count a byte anywhere in the figure).
-    const UNIT = PARAMS.largestOp[kind] * (l?.cumulative ? KM : 1) / 30;
+    const ABS = LB && l?.getAttribute('strips') === 'absolute';
+    const UNIT = PARAMS.largestOp[kind] * (l?.cumulative && !ABS ? KM : 1) / 30;
     const strip = (x, y, nParams) => {
       if (!LB) return '';
       const n = Math.round(nParams / UNIT);
+      if (!n)   // nonzero but sub-square (e.g. the embedding under ×58): hollow trace
+        return nParams ? `<rect x="${x}" y="${y}" width="4" height="3.5" fill="none" stroke="#2a78d6" stroke-width="0.8"/>` : '';
       let g = '';
       for (let i = 0; i < n; i++)
         g += `<rect x="${x + (i % 30) * 5}" y="${y + Math.floor(i / 30) * 5}" width="4" height="3.5" fill="#2a78d6"/>`;
@@ -168,7 +171,7 @@ dsv3-anatomy .anat-grid { display: grid; grid-template-columns: 186px minmax(0, 
 dsv3-anatomy dsv3-anatomy-plan { margin-top: 46px; }
 `;
 const FWD = ['controls', 'recipe', 'recompute', 'detail', 'transposed', 'for',
-  'nocaption', 'kind', 'xlayers', 'xinflight', 'lens'];
+  'nocaption', 'kind', 'xlayers', 'xinflight', 'lens', 'strips'];
 export class Dsv3Anatomy extends HTMLElement {
   connectedCallback() {
     const lid = this.getAttribute('layer') ?? ((this.id || 'anatomy') + '-layer');
