@@ -898,7 +898,24 @@ export class Dsv3Layer extends HTMLElement {
       b.textContent = this.cumulative ? `\u00d7${KBLK} blocks` : 'per block';
       b.title = 'toggle parameter counts: one block vs cumulative over all blocks of this kind ' +
         '(the tabs hide in cumulative mode \u2014 the multiplier follows the selected block kind)';
-      b.onclick = () => { this.cumulative = !this.cumulative; this.render(); this.changed(true); };
+      b.onclick = () => {
+        this.cumulative = !this.cumulative;
+        this.changed(true);
+        if (this.getAttribute('strips') === 'absolute' && this.getAttribute('lens') === 'param-bytes') {
+          const from = this._tween ?? (this.cumulative ? 0 : 1);
+          const to = this.cumulative ? 1 : 0, FRAMES = 12;   // ~200 ms at 60 fps
+          let f = 0;
+          const step = () => {
+            f++;
+            const p = Math.min(1, f / FRAMES);
+            this._tween = from + (to - from) * (1 - (1 - p) * (1 - p));   // ease-out
+            this.render();
+            if (p < 1) setTimeout(step, 16);   // timer-driven: steady under headless/virtual time too
+            else { this._tween = undefined; this.render(); }
+          };
+          setTimeout(step, 16);
+        } else this.render();
+      };
       return b;
     };
     const mkDimsBtn = () => {
@@ -933,7 +950,7 @@ export class Dsv3Layer extends HTMLElement {
         // reads as a unit change, not a glitch (▫ = nonzero but sub-square)
         const KM2 = this.kind === 'dense' ? (DSV3.denseLayers ?? 3) : DSV3.layers - (DSV3.denseLayers ?? 3);
         const absP = this.getAttribute('strips') === 'absolute';   // fixed unit: strips grow instead
-        const unit = PARAMS.largestOp[this.kind] * (this.cumulative && !absP ? KM2 : 1) / 30 * 2;
+        const unit = PARAMS.largestOp.moe * (this.cumulative && !absP ? KM2 : 1) / 30 * 2;
         const leg = el('span');
         leg.style.cssText = 'color:#52514e;margin-left:10px;font-size:11px;';
         leg.innerHTML = `<span style="color:#2a78d6">▪</span> = ${fmtBytes(unit)}`;
@@ -1181,15 +1198,22 @@ export class Dsv3Layer extends HTMLElement {
     // toggle neither rescales nor reflows. Costs vertical space; dense/MoE
     // flips may reflow in this profile.
     const ABS = PBYTES && this.getAttribute('strips') === 'absolute';
-    const PB_BASE = PBYTES ? Math.max(...['qkv_down', 'q_up', 'kv_up', 'o_proj', 'router', 'ffn_gate_up', 'ffn_down']
-      .map(id => exactParam(id) ?? 0)) / FLOP_ROW : 1;
+    const PB_BASE = PARAMS.largestOp.moe / FLOP_ROW;
     const PB_UNIT = PB_BASE * (CUM && !ABS ? KMUL : 1);
-    const stripMul = ABS && CUM ? KMUL : 1;               // absolute: the STRIP scales, not the unit
-    const stripRows = (nParams) =>                        // reserved: the cumulative worst case
-      !ABS || !nParams ? 0 : Math.max(1, Math.ceil(Math.round(nParams * KMUL / PB_BASE) / FLOP_ROW));
+    // absolute profile: the STRIP grows, not the unit. The ×N toggle tweens
+    // this._tween 0→1: squares pour in and the boxes grow with the filled
+    // rows (compact at per-block, tall at cumulative).
+    const CUMT = this._tween ?? (CUM ? 1 : 0);   // 0 = per block, 1 = ×N (mid-tween in between)
+    const T_ = ABS ? CUMT : 0;
+    const stripMul = ABS ? 1 + (KMUL - 1) * T_ : 1;
+    const stripCount = (nParams) => !PBYTES || !nParams ? 0 : Math.round(nParams * stripMul / PB_UNIT);
+    const stripExtra = (nParams) => {                     // box growth beyond the built-in strip row
+      const n = stripCount(nParams);
+      return ABS && n > FLOP_ROW ? (Math.ceil(n / FLOP_ROW) - 1) * 6 : 0;
+    };
     const paramBlocks = (x, y, nParams) => {
       if (!PBYTES || !nParams) return;
-      const n = Math.round(nParams * stripMul / PB_UNIT);
+      const n = stripCount(nParams);
       if (!n) {   // nonzero but sub-square: a hollow trace square (never a full one — that would overstate)
         P.push(`<rect x="${x}" y="${y}" width="5" height="4" fill="none" stroke="#2a78d6" stroke-width="0.8"/>`);
         return;
@@ -1312,7 +1336,7 @@ export class Dsv3Layer extends HTMLElement {
       `<text class="grplabel" x="${x - 2}" y="${y0 + 11}">${label}</text>`);
     const mmBox = (ids, x, y, markIds, label, dims) => {
       const spec = MATMULS.find(m => m.id === ids[0]);
-      const extra = Math.max(0, stripRows(exactParam(ids[0])) - 1) * 6;
+      const extra = stripExtra(exactParam(ids[0]));
       P.push(`<g data-op="${ids[0]}"${boxTip((markIds ?? ids)[0], dims ? undefined : spec.dimsNote, ids[0])}>` +
         `<rect class="box" x="${x}" y="${y}" width="${W}" height="${38 + extra}" rx="4"/>` +
         (PBYTES && exactParam(ids[0]) != null ? `<text class="dims" x="${x + W - 8}" y="${y + 13}" text-anchor="end">bf16</text>` : '') +
@@ -1323,7 +1347,7 @@ export class Dsv3Layer extends HTMLElement {
       auxOut((markIds ?? ids)[0], x, y + 19);
       flopBlocks(x + 8, y + 30, ana.byId[(markIds ?? ids)[0]]?.flopsTok, dt(ids[0]));
       paramBlocks(x + 8, y + 30, exactParam(ids[0]));
-      return y + 38 + Math.max(0, stripRows(exactParam(ids[0])) - 1) * 6;
+      return y + 38 + stripExtra(exactParam(ids[0]));
     };
     const opNode = (id, label, x, y, cls = 'op', pc = '') => {
       const h2 = cls === 'comm' ? 22 : 27;
@@ -1515,9 +1539,11 @@ export class Dsv3Layer extends HTMLElement {
           `<text x="${x + 10}" y="${y0 + 17}" style="font:600 11px system-ui" fill="${on ? '#0b0b0b' : '#898781'}">${label}` +
           `<tspan style="font:10px system-ui" fill="${on ? '#898781' : '#a8a69e'}"> ${sub}</tspan></text></g>`;
       };
-      if (!this.cumulative) {   // cumulative mode: the plan selector alone carries the kind
-        P.push(tab(C2 + 42, 148, 'dense', 'dense FFN', `×${DSV3.denseLayers ?? 3} · ${fmtPV(PARAMS.denseFfnBlk)}`) +
-          tab(C2 + 198, 168, 'moe', 'MoE FFN', `×${DSV3.layers - (DSV3.denseLayers ?? 3)} · ${fmtPV(this.activeView ? PARAMS.activeMoeFfnBlk : PARAMS.moeFfnBlk)}`));
+      if (CUMT < 1) {   // cumulative mode: the plan selector alone carries the kind (tabs fade with the tween)
+        P.push(`<g opacity="${(1 - CUMT).toFixed(3)}">` +
+          tab(C2 + 42, 148, 'dense', 'dense FFN', `×${DSV3.denseLayers ?? 3} · ${fmtPV(PARAMS.denseFfnBlk)}`) +
+          tab(C2 + 198, 168, 'moe', 'MoE FFN', `×${DSV3.layers - (DSV3.denseLayers ?? 3)} · ${fmtPV(this.activeView ? PARAMS.activeMoeFfnBlk : PARAMS.moeFfnBlk)}`) +
+          `</g>`);
       }
     };
     const norm2Top = z;
@@ -1726,11 +1752,12 @@ export class Dsv3Layer extends HTMLElement {
         // active tab footprint: the outline leaves a gap there instead of an
         // opaque eraser (which bleeds the border through when the tab fades)
         const [tx, tw] = this.kind === 'dense' ? [C2 + 42, 148] : [C2 + 198, 168];
-        P[P.indexOf('__ENC__')] = this.cumulative ? '' :
+        P[P.indexOf('__ENC__')] = CUMT >= 1 ? '' :
+          `<g opacity="${(1 - CUMT).toFixed(3)}">` +
           `<rect x="${x0}" y="${y0}" width="${x1 - x0}" height="${y1 - y0}" rx="${r}" fill="#fcfcfb" stroke="none"/>` +
           `<path d="M ${tx + tw} ${y0} L ${x1 - r} ${y0} Q ${x1} ${y0} ${x1} ${y0 + r} L ${x1} ${y1 - r} ` +
           `Q ${x1} ${y1} ${x1 - r} ${y1} L ${x0 + r} ${y1} Q ${x0} ${y1} ${x0} ${y1 - r} ` +
-          `L ${x0} ${y0 + r} Q ${x0} ${y0} ${x0 + r} ${y0} L ${tx} ${y0}" fill="none" stroke="#c3c2b7"/>`;
+          `L ${x0} ${y0 + r} Q ${x0} ${y0} ${x0 + r} ${y0} L ${tx} ${y0}" fill="none" stroke="#c3c2b7"/></g>`;
       }
     }
     }  // end FFN column (skipped in only="mla" mode)

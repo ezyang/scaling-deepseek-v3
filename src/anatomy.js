@@ -46,7 +46,11 @@ export class Dsv3AnatomyPlan extends HTMLElement {
     this.draw();
     // re-sync the highlight when the layer flips from its own tabs
     queueMicrotask(() => {
-      this.layerEl()?.addEventListener('recipe', () => this.draw());
+      const le = this.layerEl();
+      le?.addEventListener('recipe', () => this.draw());
+      // the expansion cone follows ANY height change of the diagram
+      // (the strips tween, kind flips, …)
+      if (le && 'ResizeObserver' in window) new ResizeObserver(() => this.expansion()).observe(le);
       this.draw();
     });
     const up = () => this.expansion();
@@ -84,7 +88,7 @@ export class Dsv3AnatomyPlan extends HTMLElement {
     // strips — their bytes are shown expanded on the right (never double
     // count a byte anywhere in the figure).
     const ABS = LB && l?.getAttribute('strips') === 'absolute';
-    const UNIT = PARAMS.largestOp[kind] * (l?.cumulative && !ABS ? KM : 1) / 30;
+    const UNIT = PARAMS.largestOp.moe * (l?.cumulative && !ABS ? KM : 1) / 30;   // global unit: a square means the same bytes everywhere
     const strip = (x, y, nParams) => {
       if (!LB) return '';
       const n = Math.round(nParams / UNIT);
