@@ -706,6 +706,15 @@ dsv3-layer { display: block; margin: 14px 0 26px; }
 .lv-tip.pinned { border-color: #eda100; box-shadow: 0 2px 10px rgba(237,161,0,0.3); }
 .lv-head { display: flex; align-items: center; gap: 8px; padding-bottom: 6px; color: #52514e; flex-wrap: wrap; }
 .lv-head select { font: 12px system-ui; padding: 2px 6px; border: 1px solid #c3c2b7; border-radius: 4px; background: #fff; }
+.lv-head .stp { display: inline-flex; align-items: stretch; }
+.lv-head .stp button { font: 12px ui-monospace, monospace; width: 20px; padding: 0 0 1px; border: 1px solid #c3c2b7; background: #fff; color: #52514e; cursor: pointer; }
+.lv-head .stp button:hover:not(:disabled) { background: #f3f2ee; }
+.lv-head .stp button:disabled { color: #dedcd3; cursor: default; }
+.lv-head .stp button:first-child { border-radius: 4px 0 0 4px; }
+.lv-head .stp button:last-child { border-radius: 0 4px 4px 0; }
+.lv-head .stp .v { font: 11px ui-monospace, monospace; min-width: 4ch; padding: 2px 5px;
+  border-top: 1px solid #c3c2b7; border-bottom: 1px solid #c3c2b7; background: #fff;
+  display: inline-flex; align-items: center; justify-content: center; }
 .lv svg { display: block; margin: 0 auto; }
 /* no scaling, ever: a diagram wider than its container scrolls horizontally */
 .lv-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
@@ -813,6 +822,28 @@ export class Dsv3Layer extends HTMLElement {
     const to = this.marks[ids[0]] === false ? true : false;
     for (const id of ids) { if (to) delete this.marks[id]; else this.marks[id] = false; }
     this.render(); this.changed();
+  }
+  // ---- local-lens knob tween: EVERY knob change (EP/PP/stage/ZeRO/×N) pours
+  // squares between the old and new configuration, per-block-tween style.
+  // Numbers snap; a change that flips the kind snaps (different layout).
+  _snapLocal() {
+    return { ep: this.ep, pp: this.pp, stage: this.stage,
+      zero1: this.zero1 !== false, cum: !!this.cumulative };
+  }
+  _tweenLocal(prev) {
+    this.changed(true);
+    const kindOf = (S) => ppStage(Math.min(S.stage, S.pp - 1), S.pp).moe ? 'moe' : 'dense';
+    if (kindOf(prev) !== kindOf(this._snapLocal())) { this.render(); return; }
+    const FRAMES = 12; let f = 0;             // ~200 ms, deterministic
+    this._vtween = { t: 0, prev };
+    const step = () => {
+      f++; const p = Math.min(1, f / FRAMES);
+      this._vtween = { t: 1 - (1 - p) * (1 - p), prev };   // ease-out
+      this.render(); this.changed(false);     // plan strips tween along
+      if (p < 1) setTimeout(step, 16);
+      else { this._vtween = undefined; this.render(); }
+    };
+    setTimeout(step, 16);
   }
   render() {
     this.innerHTML = '';
@@ -934,7 +965,7 @@ export class Dsv3Layer extends HTMLElement {
     if (this._ctl.dtype) head.append(tl);
     // local: the multiplier is the stage's block count, not the whole model's
     const KBLK = this.hasAttribute('local') && this.getAttribute('lens') === 'param-bytes'
-      ? (this.kind === 'dense' ? ppStage(this.stage ?? 1).dense : ppStage(this.stage ?? 1).moe)
+      ? (this.kind === 'dense' ? ppStage(this.stage ?? 1, this.pp).dense : ppStage(this.stage ?? 1, this.pp).moe)
       : this.kind === 'dense' ? (DSV3.denseLayers ?? 3) : DSV3.layers - (DSV3.denseLayers ?? 3);
     const mkCumBtn = () => {
       const b = document.createElement('button');
@@ -944,10 +975,15 @@ export class Dsv3Layer extends HTMLElement {
       b.title = 'toggle parameter counts: one block vs cumulative over all blocks of this kind ' +
         '(the tabs hide in cumulative mode \u2014 the multiplier follows the selected block kind)';
       b.onclick = () => {
+        if (this.hasAttribute('local') && this.getAttribute('lens') === 'param-bytes') {
+          const prev = this._snapLocal();
+          this.cumulative = !this.cumulative;
+          this._tweenLocal(prev);
+          return;
+        }
         this.cumulative = !this.cumulative;
         this.changed(true);
-        if ((this.getAttribute('strips') === 'absolute' || this.hasAttribute('local'))
-          && this.getAttribute('lens') === 'param-bytes') {
+        if (this.getAttribute('strips') === 'absolute' && this.getAttribute('lens') === 'param-bytes') {
           const from = this._tween ?? (this.cumulative ? 0 : 1);
           const to = this.cumulative ? 1 : 0, FRAMES = 12;   // ~200 ms at 60 fps
           let f = 0;
@@ -1004,7 +1040,7 @@ export class Dsv3Layer extends HTMLElement {
           const s = document.createElement('select');
           for (const o of opts) s.append(new Option(label(o), o));
           s.value = String(val);
-          s.onchange = () => { set(+s.value); this.render(); this.changed(true); };
+          s.onchange = () => { const prev = this._snapLocal(); set(+s.value); this._tweenLocal(prev); };
           return s;
         };
         const pp = this.pp ?? LOCAL_PAR.pp;
@@ -1016,15 +1052,32 @@ export class Dsv3Layer extends HTMLElement {
             o === pp - 1 ? 'lm head' : ''].filter(Boolean).join(', ');
           return `${o}: ${range}${tags ? ` (${tags})` : ''}`;
         };
-        mini.append('EP: ', mkSel([1, 32, 64], this.ep, (o) => o === 1 ? 'off' : `EP${o}`, (v) => { this.ep = v; }),
-          ' PP: ', mkSel([1, 2, 4, 8, 16, 32, 64], pp, (o) => `PP${o}`,
-            (v) => { this.pp = v; this.stage = Math.min(this.stage, v - 1); }),
+        // EP/PP step by powers of two: a segmented − value + control
+        const mkStep = (get, set, fmt) => {
+          const wrap = el('span', 'stp');
+          const val = el('span', 'v'); val.textContent = fmt(get());
+          const btn = (txt, dir) => {
+            const b = document.createElement('button');
+            b.textContent = txt; b.type = 'button';
+            b.disabled = dir < 0 ? get() <= 1 : get() >= 64;
+            b.onclick = () => {
+              const prev = this._snapLocal();
+              set(dir < 0 ? get() / 2 : get() * 2);
+              this._tweenLocal(prev);
+            };
+            return b;
+          };
+          wrap.append(btn('−', -1), val, btn('+', 1));
+          return wrap;
+        };
+        mini.append('EP: ', mkStep(() => this.ep, (v) => { this.ep = v; }, (v) => v === 1 ? 'off' : String(v)),
+          ' PP: ', mkStep(() => this.pp, (v) => { this.pp = v; this.stage = Math.min(this.stage, v - 1); }, String),
           ' stage: ', mkSel([...Array(pp).keys()], this.stage, stageLabel, (v) => { this.stage = v; }));
         const zl = document.createElement('label');
         zl.style.cssText = 'display:inline-flex;align-items:center;gap:3px;color:#52514e;font-size:11px;cursor:pointer;';
         const zc = document.createElement('input');
         zc.type = 'checkbox'; zc.checked = this.zero1 !== false;
-        zc.onchange = () => { this.zero1 = zc.checked; this.render(); this.changed(true); };
+        zc.onchange = () => { const prev = this._snapLocal(); this.zero1 = zc.checked; this._tweenLocal(prev); };
         zl.append(zc, 'ZeRO-1');
         const fixed = el('span');
         fixed.style.cssText = 'color:#52514e;font-size:11px;';
@@ -1192,6 +1245,29 @@ export class Dsv3Layer extends HTMLElement {
     const DPn = LOCAL_PAR.world / PPn;
     const EDP = LOCAL_PAR.world / PPn / EPn;                 // expert-DP (EP=1: = DP — no expert parallelism)
     const stg = ppStage(STG, PPn);
+    // knob tween (local): squares pour between the OLD and NEW configuration —
+    // each component's effective factor (bytes/param × EP share × stage ×N)
+    // lerps with this._vtween.t; numbers snap to the new config
+    const Snow = { ep: EPn, pp: PPn, stage: STG, zero1: Z1, cum: !!this.cumulative };
+    const dLoc = (S) => {
+      const g = ppStage(Math.min(S.stage, S.pp - 1), S.pp);
+      const kmul = this.kind === 'dense' ? g.dense : g.moe;
+      const dp = LOCAL_PAR.world / S.pp;
+      return { mult: S.cum ? kmul : 1, eFrac: 1 / S.ep,
+        ob: (cls) => S.zero1 === false ? 8 : 8 / (cls === 'e' ? dp / S.ep : dp) };
+    };
+    const fEff = (c, cls, S) => {
+      const d = dLoc(S);
+      return (c.prop === 'showOptim' ? d.ob(cls) : c.bpp) * d.mult * (cls === 'e' ? d.eFrac : 1);
+    };
+    const fT = (c, cls) => {
+      const fN = fEff(c, cls, Snow), V = this._vtween;
+      return V ? fEff(c, cls, V.prev) + (fN - fEff(c, cls, V.prev)) * V.t : fN;
+    };
+    const multT = (() => {
+      const mN = dLoc(Snow).mult, V = this._vtween;
+      return V ? dLoc(V.prev).mult + (mN - dLoc(V.prev).mult) * V.t : mN;
+    })();
     const COMPS = !OPTIM ? [BYTE_COMPS[0]]
       : CONS ? BYTE_COMPS : [BYTE_COMPS[0], BYTE_COMPS[2]];
     // tween multiplier for a component: 1 shown, 0 hidden, in between mid-pour
@@ -1372,6 +1448,7 @@ export class Dsv3Layer extends HTMLElement {
     // (EP64 on the ×58 MoE gate/up strip = 32·58/64 = 29 whole squares/rank),
     // and the byte unit lands exact: largestOp.moe/32 · 2 B = 448 MiB/square
     const FLOP_ROW = 32;
+    const CHIP_ROW = 16;   // amber wire-chip squares wrap sooner (chips sit between columns)
     const FLOP_UNIT = Math.max(...['qkv_down', 'q_up', 'kv_up', 'attn', 'o_proj', 'router', 'gate_up', 'swiglu', 'ffn_down']
       .filter(id => ana.byId[id])            // dense blocks have no router
       .map(id => flopEq(ana.byId[id].flopsTok, opDt(id)))) / FLOP_ROW;
@@ -1388,19 +1465,27 @@ export class Dsv3Layer extends HTMLElement {
     const CUMT = this._tween ?? (CUM ? 1 : 0);   // 0 = per block, 1 = ×N (mid-tween in between)
     // local hides the tabs in BOTH views (the kind follows the stage)
     const HIDT = LOCAL ? 1 : CUMT;
-    const T_ = ABS || LOCAL ? CUMT : 0;
-    const stripMul = ABS || LOCAL ? 1 + (KMUL - 1) * T_ : 1;
+    const T_ = ABS ? CUMT : 0;
+    const stripMul = ABS ? 1 + (KMUL - 1) * T_ : 1;
     const stripCount = (nParams) => !PBYTES || !nParams ? 0 : Math.round(nParams * stripMul / PB_UNIT);
     // per-component cells for one op, at the current tween state: a toggled
     // component's squares pour in/out (count scales with t) and everything
     // downstream reflows smoothly — the per-block-tween style, not a fade.
     // A visible run that rounds to 0 shows one hollow trace square.
+    // squares in local speak FULL (EP-independent) params: the EP share, the
+    // stage ×N, and the ZeRO divisor all live in the tweened factor fT
+    const sqParam = (id) => {
+      const p = PCNT[id];
+      if (LOCAL && clsOf(id) === 'e' && Array.isArray(p)) return p[0] * DSV3.routedExperts;
+      return exactParam(id);
+    };
     const compCells = (nParams, cls) => COMPS.map((c) => {
       const m = cmult(c.prop);
       if (!m) return { c, n: 0, hollow: false };
-      const full = stripCount(nParams * bppOf(c, cls) / 2);   // stripCount speaks params @2 B
+      const eff = LOCAL ? nParams * fT(c, cls) : nParams * bppOf(c, cls) * stripMul;
+      const full = Math.round(eff / 2 / PB_UNIT);
       const n = Math.round(full * m);
-      return { c, n, hollow: !n && m >= 0.5 && nParams * stripMul > 0 };   // hollow pops in mid-tween like a 1-square run (never for a true zero)
+      return { c, n, hollow: !n && m >= 0.5 && eff > 0 };   // hollow pops in mid-tween like a 1-square run (never for a true zero)
     });
     const stripCells = (nParams, cls) =>
       compCells(nParams, cls).reduce((t, r) => t + r.n + (r.hollow ? 1 : 0), 0);
@@ -1457,13 +1542,16 @@ export class Dsv3Layer extends HTMLElement {
         // cumulative: every block's stash is resident — chips follow the ×N
         // convention (labels snap, squares grow with the tween like the strips)
         const b4096 = bytes * 4096 * (CUM ? KMUL : 1);
-        const chipF = ABS || LOCAL ? stripMul : CUM ? KMUL : 1;
+        const chipF = LOCAL ? multT : ABS ? stripMul : CUM ? KMUL : 1;
         const full = Math.round(bytes * 4096 * chipF / (PB_UNIT * 2));
         const nsq = Math.round(full * m), hollow = !nsq && m >= 0.5 && chipF > 0;
         const name = esc(name0.replace(' (checkpoint anchor)', ''));
         const lock = st === 'pin' ? ' 🔒' : '';
         // narrow fork columns (ov.short) get two lines — one line would run
         // into the neighbouring column's spine at ×58 byte widths
+        // squares wrap well before the strip width (chips sit between
+        // columns); the wire gaps grow with the rows (chipSpaceA prices them)
+        const CROW = ov?.short ? 8 : CHIP_ROW;
         const [sqX, sqY] = ov?.short ? [x + 60, y + 17] : [x, y + 12];
         let g = ov?.short
           ? `<text class="tensor tsave" x="${x}" y="${y + 8}">${needDir(ids)} ${name}${lock}</text>` +
@@ -1471,7 +1559,7 @@ export class Dsv3Layer extends HTMLElement {
           : `<text class="tensor tsave" x="${x}" y="${y + 8}">${needDir(ids)} ${name} · ${fmtBytes(b4096)}${lock}</text>`;
         if (hollow) g += `<rect x="${sqX}" y="${sqY}" width="5" height="4" fill="none" stroke="#eda100" stroke-width="0.8"/>`;
         else for (let i = 0; i < nsq; i++)
-          g += `<rect x="${sqX + (i % FLOP_ROW) * 6}" y="${sqY + Math.floor(i / FLOP_ROW) * 6}" width="5" height="4" fill="#eda100"/>`;
+          g += `<rect x="${sqX + (i % CROW) * 6}" y="${sqY + Math.floor(i / CROW) * 6}" width="5" height="4" fill="#eda100"/>`;
         P.push(`<g opacity="${m.toFixed(3)}">${g}</g>`);
         return 12;
       }
@@ -1506,7 +1594,19 @@ export class Dsv3Layer extends HTMLElement {
     // reserve chip space for the WORST case (saved, bf16) so toggling
     // save/recompute or precision never reflows the layout
     const chipSpaceA = (anaX, ids) => {
-      if (!this._ctl.quant) return 18;                 // one text line, no grid
+      if (!this._ctl.quant) {
+        const mA = CONS ? cmult('showActs') : 0;
+        if (!mA) return 18;                            // one text line
+        // amber chip squares below the text: reserve their rows (worst case
+        // over the knob tween: the larger of the old and new configuration),
+        // easing with the acts checkbox tween so the gap never pops
+        const chipF = LOCAL
+          ? Math.max(dLoc(Snow).mult, this._vtween ? dLoc(this._vtween.prev).mult : 0)
+          : CUM ? KMUL : 1;
+        const b = ids.reduce((t, i) => t + anaX.byId[i].outBytes, 0) * 4096 * chipF;
+        const rows = Math.max(1, Math.ceil(Math.round(b / (PB_UNIT * 2)) / CHIP_ROW));
+        return Math.round(18 + (rows * 6 - 2) * mA);
+      }
       // worst case per element: bf16 (2 B), or dual fp8 orientations (2 × 1.03 B)
       const perElem = this.transposed ? 2 * (1 + 1 / 32) : 2;
       const worst = ids.reduce((t, i) => t + anaX.byId[i].elems * perElem, 0);
@@ -1562,7 +1662,7 @@ export class Dsv3Layer extends HTMLElement {
       `<text class="grplabel" x="${x - 2}" y="${y0 + 11}">${label}</text>`);
     const mmBox = (ids, x, y, markIds, label, dims) => {
       const spec = MATMULS.find(m => m.id === ids[0]);
-      const extra = stripExtra(exactParam(ids[0]), clsOf(ids[0]));
+      const extra = stripExtra(sqParam(ids[0]), clsOf(ids[0]));
       P.push(`<g data-op="${ids[0]}"${boxTip((markIds ?? ids)[0], dims ? undefined : spec.dimsNote, ids[0])}>` +
         `<rect class="box" x="${x}" y="${y}" width="${W}" height="${BH + extra}" rx="4"/>` +
         (PBYTES && exactParam(ids[0]) != null ? `<text class="dims" x="${x + W - 8}" y="${y + 13}" text-anchor="end">bf16</text>` : '') +
@@ -1572,8 +1672,8 @@ export class Dsv3Layer extends HTMLElement {
       P.push(dtBtn(ids[0], x + W - 58, y + 6));
       auxOut((markIds ?? ids)[0], x, y + 19);
       flopBlocks(x + 8, y + 30, ana.byId[(markIds ?? ids)[0]]?.flopsTok, dt(ids[0]));
-      paramBlocks(x + 8, y + 30, exactParam(ids[0]), clsOf(ids[0]));
-      return y + BH + stripExtra(exactParam(ids[0]), clsOf(ids[0]));
+      paramBlocks(x + 8, y + 30, sqParam(ids[0]), clsOf(ids[0]));
+      return y + BH + stripExtra(sqParam(ids[0]), clsOf(ids[0]));
     };
     const opNode = (id, label, x, y, cls = 'op', pc = '') => {
       const h2 = cls === 'comm' || !BQ ? 22 : 27;   // the extra 5px hold the fig-leaf strip
@@ -1582,7 +1682,7 @@ export class Dsv3Layer extends HTMLElement {
         `<text class="oplabel" x="${x + 10}" y="${y + 15}">${label}${pc ? `<tspan class="dims"> ${pc}</tspan>` : ''}</text></g>` +
         modeBtn([id], x + W - 30, y + 1));
       auxOut(id, x, y + Math.round(h2 / 2));
-      if (cls !== 'comm') { flopBlocks(x + 10, y + 19, ana.byId[id]?.flopsTok, 'vector'); paramBlocks(x + 10, y + 19, exactParam(id)); }
+      if (cls !== 'comm') { flopBlocks(x + 10, y + 19, ana.byId[id]?.flopsTok, 'vector'); paramBlocks(x + 10, y + 19, sqParam(id)); }
       return y + h2;
     };
 
@@ -1679,7 +1779,7 @@ export class Dsv3Layer extends HTMLElement {
       y += latGap;
       const halfBox = (id, x) => {
         const m = MATMULS.find(mm2 => mm2.id === id);
-        const ex = stripExtra(exactParam(id));   // strip rows can outgrow the box (×N)
+        const ex = stripExtra(sqParam(id));   // strip rows can outgrow the box (×N)
         P.push(`<g data-op="${id}"${boxTip(id, m.dimsNote)}>` +
           `<rect class="box" x="${x}" y="${y}" width="140" height="${HBH + ex}" rx="4"/>` +
           (PBYTES ? `<text class="dims" x="${x + 134}" y="${y + 13}" text-anchor="end">bf16</text>` : '') +
@@ -1687,7 +1787,7 @@ export class Dsv3Layer extends HTMLElement {
           `<text class="dims" x="${x + 6}" y="${y + 25}">${PONLY ? pstr(id).trim() : flatten(m.dims) + pstr(id)}</text></g>` +
           modeBtn([id], x + 140 - 86, y + 29) + dtBtn(id, x + 140 - 58, y + 29));
         flopBlocks(x + 6, y + 52, ana.byId[id]?.flopsTok, dt(id));
-        paramBlocks(x + 6, y + 52, exactParam(id));
+        paramBlocks(x + 6, y + 52, sqParam(id));
         return ex;
       };
       y += HBH + Math.max(halfBox('q_up', C1), halfBox('kv_up', C1 + 150));   // the pair advances together

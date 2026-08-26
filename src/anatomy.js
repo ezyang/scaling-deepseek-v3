@@ -110,13 +110,22 @@ export class Dsv3AnatomyPlan extends HTMLElement {
       : c.bpp / (cls === 'e' ? DPn / EPn : DPn);
     const BPP = COMPS.reduce((t, c) => t + ((l?.[c.prop] ?? true) ? cbpp(c, 'd') : 0), 0);
     const BPPe = COMPS.reduce((t, c) => t + ((l?.[c.prop] ?? true) ? cbpp(c, 'e') : 0), 0);
+    // knob tween mirror: the plan's strips lerp their optimizer factor with
+    // the layer's _vtween (plan ops are dense-class; PP/ZeRO affect them)
+    const pf = (c) => {
+      if (!LOC) return cbpp(c, 'd');
+      const eff = (S) => c.prop !== 'showOptim' ? c.bpp
+        : (S.zero1 === false ? 8 : 8 / (LOCAL_PAR.world / S.pp));
+      const N = { pp: PPl, zero1: Z1 }, V = l?._vtween;
+      return V ? eff(V.prev) + (eff(N) - eff(V.prev)) * V.t : eff(N);
+    };
     const strip = (x, y, nParams) => {
       if (!LB || !nParams) return '';
       let g = '', i = 0;
       for (const c of COMPS) {
         const m = cmult(c.prop);
         if (!m) continue;
-        const n = Math.round(Math.round(nParams * cbpp(c, 'd') / 2 / UNIT) * m);
+        const n = Math.round(Math.round(nParams * pf(c) / 2 / UNIT) * m);
         if (!n) {   // nonzero but sub-square (e.g. the embedding under ×58): hollow trace
           if (m < 0.5) continue;
           const cx = x + (i % 30) * 5, cy = y + Math.floor(i / 30) * 5;
