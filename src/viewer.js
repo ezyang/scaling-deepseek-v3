@@ -685,13 +685,9 @@ dsv3-layer { display: block; margin: 14px 0 26px; }
 .lv-tip.pinned { border-color: #eda100; box-shadow: 0 2px 10px rgba(237,161,0,0.3); }
 .lv-head { display: flex; align-items: center; gap: 8px; padding-bottom: 6px; color: #52514e; flex-wrap: wrap; }
 .lv-head select { font: 12px system-ui; padding: 2px 6px; border: 1px solid #c3c2b7; border-radius: 4px; background: #fff; }
-.lv svg { display: block; margin: 0 auto; max-width: 100%; height: auto; }
-/* narrow viewports: scaling the diagram down further makes it unreadable —
-   render at natural size and let it scroll horizontally instead */
-@media (max-width: 860px) {
-  .lv { overflow-x: auto; -webkit-overflow-scrolling: touch; }
-  .lv svg { max-width: none; }
-}
+.lv svg { display: block; margin: 0 auto; }
+/* no scaling, ever: a diagram wider than its container scrolls horizontally */
+.lv-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 ${tokensCss('.lv')}
 .lv select.dt { font: 600 10px system-ui; width: 100%; height: 20px; border: 1px solid #c3c2b7;
   border-radius: 3px; background: #fff; }
@@ -980,7 +976,11 @@ export class Dsv3Layer extends HTMLElement {
     const anaM = this.kind === 'dense'
       ? analyze(blockGraph('moe', DSV3, this.matmuls, 4096), this._ctl.quant ? this.marks : {}, this.transposed)
       : null;
-    root.append(this.buildSvg(ana, anaM));
+    // never scale the diagram: it renders at natural size inside its own
+    // scroll container (tooltips stay outside it, so they aren't clipped)
+    const scroller = el('div', 'lv-scroll');
+    scroller.append(this.buildSvg(ana, anaM));
+    root.append(scroller);
     const note = el('div', 'lv-note');
     const M2 = this.view === 'combined' ? this.dispLayers * this.dispInflight * 4096 : 1;
     const parts = [
