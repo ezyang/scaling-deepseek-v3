@@ -8,7 +8,7 @@
 // internals (that's the block diagram's job).
 
 import { DSV3 } from './model.js';
-import { fmtP, fmtBytes, tokensCss, applyHighlight } from './viewer.js';
+import { fmtP, fmtBytes, tokensCss, applyHighlight, BYTE_COMPS } from './viewer.js';
 import { PARAMS } from './params.js';
 
 // named parameter quantities, shared with the diagram's tabs (src/params.js)
@@ -92,27 +92,31 @@ export class Dsv3AnatomyPlan extends HTMLElement {
     const UNIT = PARAMS.largestOp.moe * (l?.cumulative && !ABS ? KM : 1) / 32;   // global unit (diagram's FLOP_ROW): a square means the same bytes everywhere
     // (the plan's strips wrap at 30/row — the narrow box's width, unrelated to
     // the unit — but never exceed a few squares in practice)
-    const OPT = LB && l?.hasAttribute('optim');                  // green optimizer squares, 4 per blue (8 B vs 2 B/param)
-    // component visibility follows the layer's legend checkboxes: numbers and
-    // squares move together, and a hidden run keeps its blank cells (no shift)
-    const SW = !OPT || (l?.showWeights ?? true);
-    const SO = OPT && (l?.showOptim ?? true);
-    const BPP = (SW ? 2 : 0) + (SO ? 8 : 0);
+    // byte components mirror the layer's legend checkboxes exactly: same
+    // colors, same tween (squares pour in/out), numbers snap to what's shown
+    const CONS = LB && l?.hasAttribute('consolidated');
+    const OPT = CONS || (LB && l?.hasAttribute('optim'));
+    const COMPS = !OPT ? [BYTE_COMPS[0]] : CONS ? BYTE_COMPS : [BYTE_COMPS[0], BYTE_COMPS[2]];
+    const cmult = (prop) => l?._ctween?.prop === prop
+      ? (l[prop] ? l._ctween.t : 1 - l._ctween.t)
+      : ((l?.[prop] ?? true) ? 1 : 0);
+    const BPP = COMPS.reduce((t, c) => t + ((l?.[c.prop] ?? true) ? c.bpp : 0), 0);
     const strip = (x, y, nParams) => {
       if (!LB || !nParams) return '';
       let g = '', i = 0;
-      const run = (fill, n, show) => {
-        if (!show) { i += Math.max(1, n); return; }
+      for (const c of COMPS) {
+        const m = cmult(c.prop);
+        if (!m) continue;
+        const n = Math.round(Math.round(nParams * c.bpp / 2 / UNIT) * m);
         if (!n) {   // nonzero but sub-square (e.g. the embedding under ×58): hollow trace
+          if (m < 0.5) continue;
           const cx = x + (i % 30) * 5, cy = y + Math.floor(i / 30) * 5;
-          g += `<rect x="${cx}" y="${cy}" width="4" height="3.5" fill="none" stroke="${fill}" stroke-width="0.8"/>`; i++;
-          return;
+          g += `<rect x="${cx}" y="${cy}" width="4" height="3.5" fill="none" stroke="${c.color}" stroke-width="0.8"/>`; i++;
+          continue;
         }
         for (let k = 0; k < n; k++, i++)
-          g += `<rect x="${x + (i % 30) * 5}" y="${y + Math.floor(i / 30) * 5}" width="4" height="3.5" fill="${fill}"/>`;
-      };
-      run('#2a78d6', Math.round(nParams / UNIT), SW);
-      if (OPT) run('#008300', Math.round(nParams * 4 / UNIT), SO);
+          g += `<rect x="${x + (i % 30) * 5}" y="${y + Math.floor(i / 30) * 5}" width="4" height="3.5" fill="${c.color}"/>`;
+      }
       return g;
     };
     const pv = (n) => LB ? (BPP ? fmtBytes(n * BPP) : '') : fmtP(n);
@@ -207,7 +211,7 @@ dsv3-anatomy dsv3-anatomy-plan { margin-top: 46px; }
 }
 `;
 const FWD = ['controls', 'recipe', 'recompute', 'detail', 'transposed', 'for',
-  'nocaption', 'kind', 'xlayers', 'xinflight', 'lens', 'strips', 'optim'];
+  'nocaption', 'kind', 'xlayers', 'xinflight', 'lens', 'strips', 'optim', 'consolidated'];
 export class Dsv3Anatomy extends HTMLElement {
   connectedCallback() {
     const lid = this.getAttribute('layer') ?? ((this.id || 'anatomy') + '-layer');

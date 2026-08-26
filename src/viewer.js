@@ -23,6 +23,15 @@ export const fmtBytes = (b) =>
     : b >= 2 ** 30 ? (b / 2 ** 30).toFixed(1) + ' GiB'
       : b >= 2 ** 20 ? (b / 2 ** 20).toFixed(1) + ' MiB' : (b / 1024).toFixed(1) + ' KiB';
 
+// byte components of the per-op strips (optim / consolidated variants), in the
+// memory-bars stacked order with the memory-bars segment colors \u2014 the strips
+// pre-teach the bar. bpp = bytes per parameter.
+export const BYTE_COMPS = [
+  { prop: 'showWeights', color: '#2a78d6', bpp: 2, label: 'weights (2 B/param)' },
+  { prop: 'showGrads', color: '#eb6834', bpp: 4, label: 'gradients (fp32, 4 B/param)' },
+  { prop: 'showOptim', color: '#1baf7a', bpp: 8, label: 'optimizer states (8 B/param)' },
+];
+
 // parameter-count formatter for the dims parentheticals ('(29M \u00d7256)' / '(7.5B)')
 export const fmtP = (n) => n >= 1e9 ? (n / 1e9).toFixed(1) + 'B'
   : n >= 9.95e6 ? Math.round(n / 1e6) + 'M' : n >= 1e6 ? (n / 1e6).toFixed(1) + 'M'
@@ -734,10 +743,12 @@ export class Dsv3Layer extends HTMLElement {
     this.transposed = st?.transposed ?? this.hasAttribute('transposed');
     this.detail = st?.detail ?? this.hasAttribute('detail');
     this.flatDims = st?.flatDims ?? false;
-    // optim lens: which byte components are visible (strips AND numbers follow —
-    // the numbers always total exactly what the squares show)
+    // optim/consolidated lenses: which byte components are visible (strips AND
+    // numbers follow — the numbers always total exactly what the squares show)
     this.showWeights = st?.showWeights ?? true;
     this.showOptim = st?.showOptim ?? true;
+    this.showGrads = st?.showGrads ?? true;
+    this.showActs = st?.showActs ?? true;
     // cumulative: every parameter parenthetical multiplies by the selected
     // kind's block count (×3 dense / ×58 MoE); the tabs hide — the kind then
     // comes from the plan selector alone
@@ -767,6 +778,7 @@ export class Dsv3Layer extends HTMLElement {
       transposed: this.transposed, detail: this.detail, flatDims: this.flatDims,
       kind: this.kind, cumulative: this.cumulative,
       showWeights: this.showWeights, showOptim: this.showOptim,
+      showGrads: this.showGrads, showActs: this.showActs,
     });
   }
   applyPreset(recipe, recompute, transposed = false) {
@@ -969,21 +981,36 @@ export class Dsv3Layer extends HTMLElement {
         // inline-block + zero margin: the .lv svg{display:block;margin:0 auto}
         // rule for the main diagram would otherwise stack the swatch on its own line
         const sw = (c) => `<svg width="5" height="4" style="display:inline-block;margin:0;vertical-align:baseline"><rect width="5" height="4" fill="${c}"/></svg>`;
-        if (this.hasAttribute('optim')) {
-          // the legend entries ARE the visibility toggles: numbers and squares
-          // follow together (a hidden run keeps its blank cells — no reflow)
+        const cons2 = this.hasAttribute('consolidated');
+        if (this.hasAttribute('optim') || cons2) {
+          // the legend entries ARE the visibility toggles: the squares pour
+          // in/out (per-block-tween style, boxes reflow with the filled rows)
+          // and the numbers snap to exactly what's shown
           const cb = (label, color, prop) => {
             const lab = document.createElement('label');
             lab.style.cssText = 'display:inline-flex;align-items:center;gap:3px;margin-right:10px;cursor:pointer;';
             const c = document.createElement('input');
             c.type = 'checkbox'; c.checked = this[prop];
-            c.onchange = () => { this[prop] = c.checked; this.render(); this.changed(true); };
+            c.onchange = () => {
+              this[prop] = c.checked;
+              const FRAMES = 12; let f = 0;             // ~200 ms, deterministic
+              this._ctween = { prop, t: 0 };
+              const step = () => {
+                f++; const p = Math.min(1, f / FRAMES);
+                this._ctween = { prop, t: 1 - (1 - p) * (1 - p) };   // ease-out
+                this.render(); this.changed(false);     // plan strips tween along
+                if (p < 1) setTimeout(step, 16);
+                else { this._ctween = undefined; this.render(); this.changed(true); }
+              };
+              setTimeout(step, 16);
+            };
             const t = el('span'); t.innerHTML = `${sw(color)} ${label}`;
             lab.append(c, t);
             return lab;
           };
-          leg.append(cb('weights (2 B/param)', '#2a78d6', 'showWeights'),
-            cb('optimizer states (8 B/param)', '#008300', 'showOptim'));
+          const comps2 = cons2 ? BYTE_COMPS : [BYTE_COMPS[0], BYTE_COMPS[2]];
+          leg.append(...comps2.map((c) => cb(c.label, c.color, c.prop)));
+          if (cons2) leg.append(cb('saved activations (bf16, ×4096 tokens)', '#eda100', 'showActs'));
           const u = el('span'); u.innerHTML = `· 1 square = ${fmtBytes(unit)}`;
           leg.append(u);
         } else leg.innerHTML = `${sw('#2a78d6')} = ${fmtBytes(unit)}`;
@@ -1080,14 +1107,21 @@ export class Dsv3Layer extends HTMLElement {
     const LENS = this.getAttribute('lens');
     const PBYTES = LENS === 'param-bytes';   // parameter MEMORY at bf16 (2 B/param)
     const PONLY = LENS === 'params' || PBYTES;   // parameter focus: intermediates/dims/aux hidden
-    // optim: stack green optimizer-state squares (8 B/param: fp32 master + two
-    // bf16 moments) under the blue weight squares — same unit, so the 4:1 ratio
-    // IS the picture. Pinned per block (cumulative would be a poster).
-    const OPTIM = PBYTES && this.hasAttribute('optim');
-    // component visibility (optim only): numbers and strips move together
-    const SHOW_W = !OPTIM || this.showWeights;
-    const SHOW_O = OPTIM && this.showOptim;
-    const BPP = (SHOW_W ? 2 : 0) + (SHOW_O ? 8 : 0);   // visible bytes per parameter
+    // byte components stacked under each op, colored to match the memory-bars
+    // segments, ONE global unit — the ratios ARE the picture. optim = weights +
+    // optimizer states; consolidated = + fp32 gradients + a saved-activations
+    // band. Pinned per block (cumulative would be a poster). Legend checkboxes
+    // toggle components: the squares pour in/out per-block-tween style and the
+    // numbers always total exactly the squares shown.
+    const CONS = PBYTES && this.hasAttribute('consolidated');
+    const OPTIM = CONS || (PBYTES && this.hasAttribute('optim'));
+    const COMPS = !OPTIM ? [BYTE_COMPS[0]]
+      : CONS ? BYTE_COMPS : [BYTE_COMPS[0], BYTE_COMPS[2]];
+    // tween multiplier for a component: 1 shown, 0 hidden, in between mid-pour
+    const cmult = (prop) => this._ctween?.prop === prop
+      ? (this[prop] ? this._ctween.t : 1 - this._ctween.t)
+      : (this[prop] ? 1 : 0);
+    const BPP = COMPS.reduce((t, c) => t + (this[c.prop] ? c.bpp : 0), 0);   // visible bytes per parameter (numbers snap)
     // param-bytes always shows sizes multiplied out (factored ×256 byte chains
     // pull no weight there; the sizes toggle is hidden in that lens)
     const FLAT = this.flatDims || PBYTES;
@@ -1266,30 +1300,35 @@ export class Dsv3Layer extends HTMLElement {
     const T_ = ABS ? CUMT : 0;
     const stripMul = ABS ? 1 + (KMUL - 1) * T_ : 1;
     const stripCount = (nParams) => !PBYTES || !nParams ? 0 : Math.round(nParams * stripMul / PB_UNIT);
-    // strip cells: a run per color (weights, + optimizer when optim). A run
-    // that rounds to 0 draws one hollow trace square (nonzero but sub-square)
+    // per-component cells for one op, at the current tween state: a toggled
+    // component's squares pour in/out (count scales with t) and everything
+    // downstream reflows smoothly — the per-block-tween style, not a fade.
+    // A visible run that rounds to 0 shows one hollow trace square.
+    const compCells = (nParams) => COMPS.map((c) => {
+      const m = cmult(c.prop);
+      if (!m) return { c, n: 0, hollow: false };
+      const full = stripCount(nParams * c.bpp / 2);       // stripCount speaks params @2 B
+      const n = Math.round(full * m);
+      return { c, n, hollow: !n && m >= 0.5 };            // hollow pops in mid-tween like a 1-square run
+    });
     const stripCells = (nParams) =>
-      Math.max(1, stripCount(nParams)) + (OPTIM ? Math.max(1, stripCount(nParams * 4)) : 0);
+      compCells(nParams).reduce((t, r) => t + r.n + (r.hollow ? 1 : 0), 0);
     const stripExtra = (nParams) => {                     // box growth beyond the built-in strip row
       if (!nParams || !(ABS || OPTIM)) return 0;
-      return (Math.ceil(stripCells(nParams) / FLOP_ROW) - 1) * 6;
+      return (Math.max(1, Math.ceil(stripCells(nParams) / FLOP_ROW)) - 1) * 6;
     };
     const paramBlocks = (x, y, nParams) => {
       if (!PBYTES || !nParams) return;
       let g = '', i = 0;
-      // a hidden run still advances its cells, so the other color never moves
-      const run = (fill, n, show) => {
-        if (!show) { i += Math.max(1, n); return; }
-        if (!n) {   // hollow, never a full square — that would overstate
+      for (const { c, n, hollow } of compCells(nParams)) {
+        if (hollow) {   // hollow, never a full square — that would overstate
           const cx = x + (i % FLOP_ROW) * 6, cy = y + Math.floor(i / FLOP_ROW) * 6;
-          g += `<rect x="${cx}" y="${cy}" width="5" height="4" fill="none" stroke="${fill}" stroke-width="0.8"/>`; i++;
-          return;
+          g += `<rect x="${cx}" y="${cy}" width="5" height="4" fill="none" stroke="${c.color}" stroke-width="0.8"/>`; i++;
+          continue;
         }
         for (let k = 0; k < n; k++, i++)
-          g += `<rect x="${x + (i % FLOP_ROW) * 6}" y="${y + Math.floor(i / FLOP_ROW) * 6}" width="5" height="4" fill="${fill}"/>`;
-      };
-      run('#2a78d6', stripCount(nParams), SHOW_W);
-      if (OPTIM) run('#008300', stripCount(nParams * 4), SHOW_O);   // CATS.optimizer green, in the same grid flow
+          g += `<rect x="${x + (i % FLOP_ROW) * 6}" y="${y + Math.floor(i / FLOP_ROW) * 6}" width="5" height="4" fill="${c.color}"/>`;
+      }
       P.push(g);
     };
     const flopBlocks = (x, y, flopsTok, dt2) => {
@@ -1840,6 +1879,27 @@ export class Dsv3Layer extends HTMLElement {
     // column alone, making no claims about the surrounding stack) ----
     let h = Math.max(col1End, col2End) + 10;
     let lmH = -20;
+    // consolidated: the saved-activations band — one aggregate amber strip for
+    // the whole block (activations live on wires, not in weight matrices, so
+    // they don't get per-op squares; ana.savedBytes already totals the block's
+    // save-everything stashes). Same unit; pours in/out like the others.
+    if (CONS) {
+      const m = cmult('showActs');
+      if (m) {
+        const actBytes = ana.savedBytes * 4096;           // per block, one 4096-token microbatch
+        const full = Math.round(actBytes / (PB_UNIT * 2));
+        const n = Math.round(full * m), hollow = !n && m >= 0.5;
+        const rows = Math.max(1, Math.ceil(Math.max(n, 1) / FLOP_ROW));
+        P.push(`<text class="grplabel" x="${C1 - 20}" y="${h + 10}">saved for backward · ×4096 tokens · ` +
+          `<tspan class="dims">${fmtBytes(actBytes)}</tspan></text>`);
+        let g = '';
+        for (let i = 0; i < n; i++)
+          g += `<rect x="${C1 - 20 + (i % FLOP_ROW) * 6}" y="${h + 16 + Math.floor(i / FLOP_ROW) * 6}" width="5" height="4" fill="#eda100"/>`;
+        if (hollow) g += `<rect x="${C1 - 20}" y="${h + 16}" width="5" height="4" fill="none" stroke="#eda100" stroke-width="0.8"/>`;
+        P.push(g);
+        h += Math.round((16 + rows * 6 + 6) * m);         // the band grows/shrinks with the tween
+      }
+    }
     if (SCOPE === 'model') {   // the surrounding stack: ×61 rule, final norm, lm head, loss
       P.push(`<line class="wire" x1="${C1 - 20}" y1="${h}" x2="${C2 + W + 20}" y2="${h}" stroke-dasharray="3 3"/>`);
       P.push(`<text class="grplabel" x="${C1 - 20}" y="${h - 5}">× 61 blocks, then:</text>`);
