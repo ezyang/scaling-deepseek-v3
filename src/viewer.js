@@ -963,8 +963,8 @@ export class Dsv3Layer extends HTMLElement {
       const mini = el('div', 'lv-head');
       // param-bytes always shows sizes multiplied out — no toggle to offer
       const sizeCtl = this.getAttribute('lens') === 'param-bytes' ? [] : ['sizes:', mkDimsBtn()];
-      // optim is pinned per block — no cumulative toggle either
-      const cumCtl = this.hasAttribute('optim') ? [] : [mkCumBtn()];
+      // the optim variant is pinned per block; consolidated allows ×N (long!)
+      const cumCtl = this.hasAttribute('optim') && !this.hasAttribute('consolidated') ? [] : [mkCumBtn()];
       // no kind select when MLA-only (kind-independent) or when the tabs carry the flip
       if (SCOPE === 'mla' || this.hasAttribute('tabs')) mini.append(...sizeCtl, ...cumCtl);
       else mini.append('block: ', mkKindSel(), ...(sizeCtl.length ? [' · '] : []), ...sizeCtl, ...cumCtl);
@@ -1110,7 +1110,8 @@ export class Dsv3Layer extends HTMLElement {
     // byte components stacked under each op, colored to match the memory-bars
     // segments, ONE global unit — the ratios ARE the picture. optim = weights +
     // optimizer states; consolidated = + fp32 gradients + a saved-activations
-    // band. Pinned per block (cumulative would be a poster). Legend checkboxes
+    // band. optim is pinned per block; consolidated allows ×N (with
+    // strips="absolute" the squares grow — a very long diagram). Legend checkboxes
     // toggle components: the squares pour in/out per-block-tween style and the
     // numbers always total exactly the squares shown.
     const CONS = PBYTES && this.hasAttribute('consolidated');
@@ -1177,7 +1178,7 @@ export class Dsv3Layer extends HTMLElement {
     // the sizes toggle collapses the whole product. The lm head is not a
     // block parameter and never multiplies.
     const KMUL = this.kind === 'dense' ? (DSV3.denseLayers ?? 3) : DSV3.layers - (DSV3.denseLayers ?? 3);
-    const CUM = !!this.cumulative && !OPTIM;   // optim is per-block only
+    const CUM = !!this.cumulative;
     // cumulative is always shown multiplied out — factored ×256 ×58 chains
     // are noise; the sizes toggle keeps governing dims and per-block factoring
     // param-bytes lens: the VISIBLE bytes per parameter (bf16 weights = 2 B,
@@ -1363,14 +1364,23 @@ export class Dsv3Layer extends HTMLElement {
         // sub-square is the honest picture). Gaps (chipSpace) unchanged.
         const m = CONS ? cmult('showActs') : 0;
         if (!m || (st !== 'save' && st !== 'pin')) return 12;
-        const b4096 = bytes * 4096;
-        const full = Math.round(b4096 / (PB_UNIT * 2));
+        // cumulative: every block's stash is resident — chips follow the ×N
+        // convention (labels snap, squares grow with the tween like the strips)
+        const b4096 = bytes * 4096 * (CUM ? KMUL : 1);
+        const full = Math.round(bytes * 4096 * (ABS ? stripMul : CUM ? KMUL : 1) / (PB_UNIT * 2));
         const nsq = Math.round(full * m), hollow = !nsq && m >= 0.5;
-        let g = `<text class="tensor tsave" x="${x}" y="${y + 8}">${needDir(ids)} ` +
-          `${esc(name0.replace(' (checkpoint anchor)', ''))} · ${fmtBytes(b4096)}${st === 'pin' ? ' 🔒' : ''}</text>`;
-        if (hollow) g += `<rect x="${x}" y="${y + 12}" width="5" height="4" fill="none" stroke="#eda100" stroke-width="0.8"/>`;
+        const name = esc(name0.replace(' (checkpoint anchor)', ''));
+        const lock = st === 'pin' ? ' 🔒' : '';
+        // narrow fork columns (ov.short) get two lines — one line would run
+        // into the neighbouring column's spine at ×58 byte widths
+        const [sqX, sqY] = ov?.short ? [x + 60, y + 17] : [x, y + 12];
+        let g = ov?.short
+          ? `<text class="tensor tsave" x="${x}" y="${y + 8}">${needDir(ids)} ${name}${lock}</text>` +
+            `<text class="tensor tsave" x="${x}" y="${y + 21}">${fmtBytes(b4096)}</text>`
+          : `<text class="tensor tsave" x="${x}" y="${y + 8}">${needDir(ids)} ${name} · ${fmtBytes(b4096)}${lock}</text>`;
+        if (hollow) g += `<rect x="${sqX}" y="${sqY}" width="5" height="4" fill="none" stroke="#eda100" stroke-width="0.8"/>`;
         else for (let i = 0; i < nsq; i++)
-          g += `<rect x="${x + (i % FLOP_ROW) * 6}" y="${y + 12}" width="5" height="4" fill="#eda100"/>`;
+          g += `<rect x="${sqX + (i % FLOP_ROW) * 6}" y="${sqY + Math.floor(i / FLOP_ROW) * 6}" width="5" height="4" fill="#eda100"/>`;
         P.push(`<g opacity="${m.toFixed(3)}">${g}</g>`);
         return 12;
       }
@@ -1505,21 +1515,23 @@ export class Dsv3Layer extends HTMLElement {
         `<path class="wire" d="M ${SX1} ${y - 10} L ${RX} ${y - 10} L ${RX} ${y}" marker-end="url(#arr)"/>`);
       const qFrac = DSV3.qRank / (DSV3.qRank + DSV3.kvRank + DSV3.qkRope);
       const dhalf = (x, name, dims, tip, frac, withBtns, pc = '', nP = 0) => {
+        const ex = stripExtra(nP);   // strip rows can outgrow the box (×N)
         P.push(`<g data-op="qkv_down" data-tip="${escAttr(tip)}">` +
-          `<rect class="box" x="${x}" y="${y}" width="140" height="${HBH}" rx="4"/>` +
+          `<rect class="box" x="${x}" y="${y}" width="140" height="${HBH + ex}" rx="4"/>` +
           (PBYTES ? `<text class="dims" x="${x + 134}" y="${y + 13}" text-anchor="end">bf16</text>` : '') +
           `<text class="name" x="${x + 6}" y="${y + 13}">${name}</text>` +
           `<text class="dims" x="${x + 6}" y="${y + 25}">${PONLY ? pc.trim() : flatten(dims) + pc}</text></g>` +
           (withBtns ? modeBtn(['qkv_down'], x + 140 - 86, y + 29) + dtBtn('qkv_down', x + 140 - 58, y + 29) : ''));
         flopBlocks(x + 6, y + 52, ana.byId.qkv_down.flopsTok * frac, dt('qkv_down'));
         paramBlocks(x + 6, y + 52, nP);
+        return ex;
       };
       const pQ = pk(DSV3.hidden * DSV3.qRank), pKV = pk(DSV3.hidden * (DSV3.kvRank + DSV3.qkRope));
-      dhalf(C1, 'q down-proj', '7168 → 1536',
+      const exQ = dhalf(C1, 'q down-proj', '7168 → 1536',
         `2 · 7168 · 1536 FLOP/token — wq_a; a separate GEMM from kv down-proj in production stacks\nparameters: ${(DSV3.hidden * DSV3.qRank).toLocaleString('en-US')}`, qFrac, true, pQ, DSV3.hidden * DSV3.qRank);
-      dhalf(C1 + 150, 'kv down-proj', '7168 → 512 + 64',
+      const exKV = dhalf(C1 + 150, 'kv down-proj', '7168 → 512 + 64',
         `2 · 7168 · (512 + 64) FLOP/token — wkv_a; shares q down-proj’s mark and dtype (one graph node)\nparameters: ${(DSV3.hidden * (DSV3.kvRank + DSV3.qkRope)).toLocaleString('en-US')}`, 1 - qFrac, false, pKV, DSV3.hidden * (DSV3.kvRank + DSV3.qkRope));
-      y += HBH;
+      y += HBH + Math.max(exQ, exKV);   // the pair advances together
       // display-split of the one latents stash. What backward keeps is the
       // POST-norm latent (the up-proj's input), so in detail the chips sit
       // below the RMSNorm row. The kv down-proj box has TWO outputs: k_rope
@@ -1568,23 +1580,26 @@ export class Dsv3Layer extends HTMLElement {
         tensorChip(['qkv_down'], RX + 14, y + 4,
           { name: 'kv latent', tdims: String(DSV3.kvRank), frac: DSV3.kvRank / latTot, short: true });
       }
-      const latGap = Math.max(26, chipSpace(['qkv_down']) + 8);
+      // consolidated: the narrow fork chips are two lines tall (name / bytes)
+      const latGap = Math.max(CONS ? 36 : 26, chipSpace(['qkv_down']) + 8);
       const wireTop = DET ? y - 14 : y;          // span the rstd band too — no spine gap
       wire(SX1, wireTop, y + latGap);
       P.push(`<path class="wire" d="M ${RX} ${wireTop} L ${RX} ${y + latGap}" marker-end="url(#arr)"/>`);
       y += latGap;
       const halfBox = (id, x) => {
         const m = MATMULS.find(mm2 => mm2.id === id);
+        const ex = stripExtra(exactParam(id));   // strip rows can outgrow the box (×N)
         P.push(`<g data-op="${id}"${boxTip(id, m.dimsNote)}>` +
-          `<rect class="box" x="${x}" y="${y}" width="140" height="${HBH}" rx="4"/>` +
+          `<rect class="box" x="${x}" y="${y}" width="140" height="${HBH + ex}" rx="4"/>` +
           (PBYTES ? `<text class="dims" x="${x + 134}" y="${y + 13}" text-anchor="end">bf16</text>` : '') +
           `<text class="name" x="${x + 6}" y="${y + 13}">${m.label}</text>` +
           `<text class="dims" x="${x + 6}" y="${y + 25}">${PONLY ? pstr(id).trim() : flatten(m.dims) + pstr(id)}</text></g>` +
           modeBtn([id], x + 140 - 86, y + 29) + dtBtn(id, x + 140 - 58, y + 29));
         flopBlocks(x + 6, y + 52, ana.byId[id]?.flopsTok, dt(id));
         paramBlocks(x + 6, y + 52, exactParam(id));
+        return ex;
       };
-      halfBox('q_up', C1); halfBox('kv_up', C1 + 150); y += HBH;
+      y += HBH + Math.max(halfBox('q_up', C1), halfBox('kv_up', C1 + 150));   // the pair advances together
       if (DET) {
         // the up-proj outputs get names before RoPE; then two separate RoPE
         // kernels (Megatron: apply_mla_rope_for_q / _for_kv) — the kv one is
@@ -1903,7 +1918,7 @@ export class Dsv3Layer extends HTMLElement {
       const m = cmult('showActs');
       if (m) {
         P.push(`<g opacity="${m.toFixed(3)}"><text class="tensor tsave" x="${C1 - 20}" y="${h + 8}">` +
-          `saved for backward · ×4096 tokens · ${fmtBytes(ana.savedBytes * 4096)} total</text></g>`);
+          `saved for backward · ×4096 tokens${CUM ? ` × ${KMUL} blocks` : ''} · ${fmtBytes(ana.savedBytes * 4096 * (CUM ? KMUL : 1))} total</text></g>`);
         h += Math.round(18 * m);                          // the line grows/shrinks with the tween
       }
     }
