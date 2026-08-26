@@ -1070,7 +1070,7 @@ export class Dsv3Layer extends HTMLElement {
           wrap.append(btn('−', -1), val, btn('+', 1));
           return wrap;
         };
-        mini.append('EP: ', mkStep(() => this.ep, (v) => { this.ep = v; }, (v) => v === 1 ? 'off' : String(v)),
+        mini.append('EP: ', mkStep(() => this.ep, (v) => { this.ep = v; }, String),
           ' PP: ', mkStep(() => this.pp, (v) => { this.pp = v; this.stage = Math.min(this.stage, v - 1); }, String),
           ' stage: ', mkSel([...Array(pp).keys()], this.stage, stageLabel, (v) => { this.stage = v; }));
         const zl = document.createElement('label');
