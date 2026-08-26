@@ -61,7 +61,7 @@
     we want to start somewhere), we can tally up the overall memory usage of
     the entire model.</p>
 
-    <dsv3-anatomy style="min-height:723px" tally lens="param-bytes" strips="absolute" layer="diagram" detail controls="static" nocaption></dsv3-anatomy>
+    <dsv3-anatomy style="min-height:752px" tally lens="param-bytes" strips="absolute" layer="diagram" detail controls="static" nocaption></dsv3-anatomy>
 
     <p class="note">This is the parameter-count diagram from the last post, restated
     in bytes: every number is a bf16 weight size, and the blue strips inside the
@@ -69,14 +69,16 @@
     fills one row).  Use the "per block" toggle to see totals over all blocks of
     a kind.</p>
 
-    <p>One thing to note is that the amount of memory needed here is quite
-    large: 671B parameters at two bytes each is <strong>1.34&nbsp;TB
-    (1.22&nbsp;TiB)</strong> of weights alone — about sixteen H100s' worth of
-    HBM before we have stored a single activation, gradient, or optimizer
-    state.</p>
-
     <p><strong>Optimizer states.</strong>  DeepSeek-V3 was trained with AdamW
-    with float32 master weights.<sup><a id="fnref1" href="#fn1">1</a></sup></p>
+    with bfloat16 first and second moment and float32 master weights.  This means
+    we additionally need another eight bytes for every parameter.</p>
+
+    <dsv3-anatomy style="min-height:745px" lens="param-bytes" optim layer="opt-diagram" detail controls="static" nocaption></dsv3-anatomy>
+
+    <p class="note">The same diagram, with the optimizer states stacked under the
+    weights: every blue square of bf16 weights carries four green squares of
+    optimizer state (the fp32 master copy plus the two bf16 moments). The view is
+    fixed per block.</p>
 
     <p><strong>Activations.</strong></p>
 
@@ -251,15 +253,6 @@
       values='{"hardware":"h100","pp":8,"ep":64,"dp":256,"zero":1,"seqLen":4096,"globalBatch":16384}'></dsv3-controls>
     <dsv3-memory id="mem-widget" style="min-height:200px"></dsv3-memory>
     <div class="fnotes">
-      <p class="note" id="fn1"><sup>1</sup> Strictly speaking, fp32 master
-      weights are not <em>required</em>: with stochastic rounding you can
-      accumulate updates directly into bf16 weights with comparable training
-      quality (see e.g. <a href="https://arxiv.org/abs/2010.06192">Zamirai et
-      al., Revisiting BFloat16 Training</a>).  Master weights in fp32 are
-      nevertheless the standard production choice, and it's what DeepSeek-V3
-      used, so that's what we count.
-      <em>(This footnote was written by Fable.)</em>
-      <a href="#fnref1">↩</a></p>
     </div>
   </main>
   <script type="module">

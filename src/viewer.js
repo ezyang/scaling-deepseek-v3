@@ -944,9 +944,11 @@ export class Dsv3Layer extends HTMLElement {
       const mini = el('div', 'lv-head');
       // param-bytes always shows sizes multiplied out — no toggle to offer
       const sizeCtl = this.getAttribute('lens') === 'param-bytes' ? [] : ['sizes:', mkDimsBtn()];
+      // optim is pinned per block — no cumulative toggle either
+      const cumCtl = this.hasAttribute('optim') ? [] : [mkCumBtn()];
       // no kind select when MLA-only (kind-independent) or when the tabs carry the flip
-      if (SCOPE === 'mla' || this.hasAttribute('tabs')) mini.append(...sizeCtl, mkCumBtn());
-      else mini.append('block: ', mkKindSel(), ...(sizeCtl.length ? [' · '] : []), ...sizeCtl, mkCumBtn());
+      if (SCOPE === 'mla' || this.hasAttribute('tabs')) mini.append(...sizeCtl, ...cumCtl);
+      else mini.append('block: ', mkKindSel(), ...(sizeCtl.length ? [' · '] : []), ...sizeCtl, ...cumCtl);
       if (this.getAttribute('lens') === 'param-bytes') {
         // the strip unit rescales with the ×N toggle — label it so the jump
         // reads as a unit change, not a glitch (▫ = nonzero but sub-square)
@@ -959,7 +961,9 @@ export class Dsv3Layer extends HTMLElement {
         // (a text ▪ renders at whatever the font says)
         // inline-block + zero margin: the .lv svg{display:block;margin:0 auto}
         // rule for the main diagram would otherwise stack the swatch on its own line
-        leg.innerHTML = `<svg width="5" height="4" style="display:inline-block;margin:0;vertical-align:baseline"><rect width="5" height="4" fill="#2a78d6"/></svg> = ${fmtBytes(unit)}`;
+        const sw = (c) => `<svg width="5" height="4" style="display:inline-block;margin:0;vertical-align:baseline"><rect width="5" height="4" fill="${c}"/></svg>`;
+        leg.innerHTML = `${sw('#2a78d6')} = ${fmtBytes(unit)}` +
+          (this.hasAttribute('optim') ? ` weights · ${sw('#008300')} optimizer states (8 B/param)` : '');
         mini.append(leg);
       }
       root.append(mini);
@@ -1049,6 +1053,10 @@ export class Dsv3Layer extends HTMLElement {
     const LENS = this.getAttribute('lens');
     const PBYTES = LENS === 'param-bytes';   // parameter MEMORY at bf16 (2 B/param)
     const PONLY = LENS === 'params' || PBYTES;   // parameter focus: intermediates/dims/aux hidden
+    // optim: stack green optimizer-state squares (8 B/param: fp32 master + two
+    // bf16 moments) under the blue weight squares — same unit, so the 4:1 ratio
+    // IS the picture. Pinned per block (cumulative would be a poster).
+    const OPTIM = PBYTES && this.hasAttribute('optim');
     // param-bytes always shows sizes multiplied out (factored ×256 byte chains
     // pull no weight there; the sizes toggle is hidden in that lens)
     const FLAT = this.flatDims || PBYTES;
@@ -1104,7 +1112,7 @@ export class Dsv3Layer extends HTMLElement {
     // the sizes toggle collapses the whole product. The lm head is not a
     // block parameter and never multiplies.
     const KMUL = this.kind === 'dense' ? (DSV3.denseLayers ?? 3) : DSV3.layers - (DSV3.denseLayers ?? 3);
-    const CUM = !!this.cumulative;
+    const CUM = !!this.cumulative && !OPTIM;   // optim is per-block only
     // cumulative is always shown multiplied out — factored ×256 ×58 chains
     // are noise; the sizes toggle keeps governing dims and per-block factoring
     // param-bytes lens: two bytes per parameter (the section's stated bf16
@@ -1225,20 +1233,28 @@ export class Dsv3Layer extends HTMLElement {
     const T_ = ABS ? CUMT : 0;
     const stripMul = ABS ? 1 + (KMUL - 1) * T_ : 1;
     const stripCount = (nParams) => !PBYTES || !nParams ? 0 : Math.round(nParams * stripMul / PB_UNIT);
+    // strip cells: a run per color (weights, + optimizer when optim). A run
+    // that rounds to 0 draws one hollow trace square (nonzero but sub-square)
+    const stripCells = (nParams) =>
+      Math.max(1, stripCount(nParams)) + (OPTIM ? Math.max(1, stripCount(nParams * 4)) : 0);
     const stripExtra = (nParams) => {                     // box growth beyond the built-in strip row
-      const n = stripCount(nParams);
-      return ABS && n > FLOP_ROW ? (Math.ceil(n / FLOP_ROW) - 1) * 6 : 0;
+      if (!nParams || !(ABS || OPTIM)) return 0;
+      return (Math.ceil(stripCells(nParams) / FLOP_ROW) - 1) * 6;
     };
     const paramBlocks = (x, y, nParams) => {
       if (!PBYTES || !nParams) return;
-      const n = stripCount(nParams);
-      if (!n) {   // nonzero but sub-square: a hollow trace square (never a full one — that would overstate)
-        P.push(`<rect x="${x}" y="${y}" width="5" height="4" fill="none" stroke="#2a78d6" stroke-width="0.8"/>`);
-        return;
-      }
-      let g = '';
-      for (let i = 0; i < n; i++)
-        g += `<rect x="${x + (i % FLOP_ROW) * 6}" y="${y + Math.floor(i / FLOP_ROW) * 6}" width="5" height="4" fill="#2a78d6"/>`;
+      let g = '', i = 0;
+      const run = (fill, n) => {
+        if (!n) {   // hollow, never a full square — that would overstate
+          const cx = x + (i % FLOP_ROW) * 6, cy = y + Math.floor(i / FLOP_ROW) * 6;
+          g += `<rect x="${cx}" y="${cy}" width="5" height="4" fill="none" stroke="${fill}" stroke-width="0.8"/>`; i++;
+          return;
+        }
+        for (let k = 0; k < n; k++, i++)
+          g += `<rect x="${x + (i % FLOP_ROW) * 6}" y="${y + Math.floor(i / FLOP_ROW) * 6}" width="5" height="4" fill="${fill}"/>`;
+      };
+      run('#2a78d6', stripCount(nParams));
+      if (OPTIM) run('#008300', stripCount(nParams * 4));   // CATS.optimizer green, in the same grid flow
       P.push(g);
     };
     const flopBlocks = (x, y, flopsTok, dt2) => {

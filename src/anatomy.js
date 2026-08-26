@@ -91,14 +91,21 @@ export class Dsv3AnatomyPlan extends HTMLElement {
     const UNIT = PARAMS.largestOp.moe * (l?.cumulative && !ABS ? KM : 1) / 32;   // global unit (diagram's FLOP_ROW): a square means the same bytes everywhere
     // (the plan's strips wrap at 30/row — the narrow box's width, unrelated to
     // the unit — but never exceed a few squares in practice)
+    const OPT = LB && l?.hasAttribute('optim');                  // green optimizer squares, 4 per blue (8 B vs 2 B/param)
     const strip = (x, y, nParams) => {
-      if (!LB) return '';
-      const n = Math.round(nParams / UNIT);
-      if (!n)   // nonzero but sub-square (e.g. the embedding under ×58): hollow trace
-        return nParams ? `<rect x="${x}" y="${y}" width="4" height="3.5" fill="none" stroke="#2a78d6" stroke-width="0.8"/>` : '';
-      let g = '';
-      for (let i = 0; i < n; i++)
-        g += `<rect x="${x + (i % 30) * 5}" y="${y + Math.floor(i / 30) * 5}" width="4" height="3.5" fill="#2a78d6"/>`;
+      if (!LB || !nParams) return '';
+      let g = '', i = 0;
+      const run = (fill, n) => {
+        if (!n) {   // nonzero but sub-square (e.g. the embedding under ×58): hollow trace
+          const cx = x + (i % 30) * 5, cy = y + Math.floor(i / 30) * 5;
+          g += `<rect x="${cx}" y="${cy}" width="4" height="3.5" fill="none" stroke="${fill}" stroke-width="0.8"/>`; i++;
+          return;
+        }
+        for (let k = 0; k < n; k++, i++)
+          g += `<rect x="${x + (i % 30) * 5}" y="${y + Math.floor(i / 30) * 5}" width="4" height="3.5" fill="${fill}"/>`;
+      };
+      run('#2a78d6', Math.round(nParams / UNIT));
+      if (OPT) run('#008300', Math.round(nParams * 4 / UNIT));
       return g;
     };
     const pv = (n) => LB ? fmtBytes(n * 2) : fmtP(n);
@@ -180,7 +187,7 @@ dsv3-anatomy .anat-grid { display: grid; grid-template-columns: 186px minmax(0, 
 dsv3-anatomy dsv3-anatomy-plan { margin-top: 46px; }
 `;
 const FWD = ['controls', 'recipe', 'recompute', 'detail', 'transposed', 'for',
-  'nocaption', 'kind', 'xlayers', 'xinflight', 'lens', 'strips'];
+  'nocaption', 'kind', 'xlayers', 'xinflight', 'lens', 'strips', 'optim'];
 export class Dsv3Anatomy extends HTMLElement {
   connectedCallback() {
     const lid = this.getAttribute('layer') ?? ((this.id || 'anatomy') + '-layer');
