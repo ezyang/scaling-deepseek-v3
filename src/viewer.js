@@ -955,7 +955,9 @@ export class Dsv3Layer extends HTMLElement {
         const unit = PARAMS.largestOp.moe * (this.cumulative && !absP ? KM2 : 1) / 32 * 2;
         const leg = el('span');
         leg.style.cssText = 'color:#52514e;margin-left:10px;font-size:11px;';
-        leg.innerHTML = `<span style="color:#2a78d6">▪</span> = ${fmtBytes(unit)}`;
+        // the swatch is a real 5×4 rect — the same size as the strip squares
+        // (a text ▪ renders at whatever the font says)
+        leg.innerHTML = `<svg width="5" height="4" style="vertical-align:baseline"><rect width="5" height="4" fill="#2a78d6"/></svg> = ${fmtBytes(unit)}`;
         mini.append(leg);
       }
       root.append(mini);
