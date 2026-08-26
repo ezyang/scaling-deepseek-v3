@@ -103,10 +103,11 @@ export class Dsv3AnatomyPlan extends HTMLElement {
       : ((l?.[prop] ?? true) ? 1 : 0);
     // local: the plan's ops (embedding / final norm / lm head) are all
     // dense-class — ZeRO-1 shards their optimizer states over the full DP group
-    const EPn = l?.ep ?? 64, Sg = l?.stage ?? 1, DPn = LOCAL_PAR.world / LOCAL_PAR.pp;
-    const stg = LOC ? ppStage(Sg) : null;
-    const cbpp = (c, cls) => !LOC || c.prop !== 'showOptim' ? c.bpp
-      : c.bpp / (cls === 'e' ? LOCAL_PAR.world / LOCAL_PAR.pp / EPn : DPn);
+    const EPn = l?.ep ?? 64, PPl = l?.pp ?? LOCAL_PAR.pp, Sg = l?.stage ?? 1;
+    const DPn = LOCAL_PAR.world / PPl, Z1 = l?.zero1 !== false;
+    const stg = LOC ? ppStage(Sg, PPl) : null;
+    const cbpp = (c, cls) => !LOC || c.prop !== 'showOptim' || !Z1 ? c.bpp
+      : c.bpp / (cls === 'e' ? DPn / EPn : DPn);
     const BPP = COMPS.reduce((t, c) => t + ((l?.[c.prop] ?? true) ? cbpp(c, 'd') : 0), 0);
     const BPPe = COMPS.reduce((t, c) => t + ((l?.[c.prop] ?? true) ? cbpp(c, 'e') : 0), 0);
     const strip = (x, y, nParams) => {
@@ -159,7 +160,7 @@ export class Dsv3AnatomyPlan extends HTMLElement {
     };
     // local: the plan doubles as the stage map — embedding lives on stage 0
     // only, final norm + lm head on the last stage, blocks per the layer split
-    const onEmb = !LOC || Sg === 0, onHead = !LOC || Sg === LOCAL_PAR.pp - 1;
+    const onEmb = !LOC || Sg === 0, onHead = !LOC || Sg === PPl - 1;
     op('embedding', !onEmb ? '(stage 0 only)' : AV && !LB ? '(not counted)' : pw(E), 22, 'embed', onEmb ? E : 0);
     wire(24, `x · ${A.hidden}`);
     // cumulative: the expanded diagram already folds the ×N in, so the plan
@@ -181,13 +182,13 @@ export class Dsv3AnatomyPlan extends HTMLElement {
       LOC ? `MoE block ×${stg.moe}` : LCUM ? 'MoE block' : `MoE block ×${A.layers - A.denseLayers}`,
       LOC ? stageDims('moe', stg.moe) : each(AV && !LB ? PARAMS.activeMoeBlock : MOE));
     wire(24, `x · ${A.hidden}`);
-    op('final RMSNorm', !onHead ? '(stage 15 only)' : pw(A.hidden), 22, 'final_norm');
+    op('final RMSNorm', !onHead ? '(last stage only)' : pw(A.hidden), 22, 'final_norm');
     wire(24, `norm out · ${A.hidden}`);
     // param lenses hide op dims uniformly — the lm head's 7168 → 129280 goes too
     const PL = LB || l?.getAttribute('lens') === 'params';
     S.push(`<g data-op="lm_head"><rect class="box" x="${BX}" y="${y}" width="${W}" height="${LB ? 42 : 34}" rx="4"/>` +
       `<text class="name" x="${BX + 8}" y="${y + 14}">lm head</text>` +
-      `<text class="dims" x="${BX + 8}" y="${y + 27}">${!onHead ? '(stage 15 only)' : PL ? pw(E) : `${A.hidden} → ${A.vocab} ${pw(E)}`}</text>` +
+      `<text class="dims" x="${BX + 8}" y="${y + 27}">${!onHead ? '(last stage only)' : PL ? pw(E) : `${A.hidden} → ${A.vocab} ${pw(E)}`}</text>` +
       (LB && onHead ? strip(BX + 8, y + 31, E) : '') + `</g>`);
     y += LB ? 42 : 34;
     wire(24, `logits · ${A.vocab}`);
@@ -233,7 +234,7 @@ dsv3-anatomy dsv3-anatomy-plan { margin-top: 46px; }
 }
 `;
 const FWD = ['controls', 'recipe', 'recompute', 'detail', 'transposed', 'for',
-  'nocaption', 'kind', 'xlayers', 'xinflight', 'lens', 'strips', 'optim', 'consolidated', 'local'];
+  'nocaption', 'kind', 'xlayers', 'xinflight', 'lens', 'strips', 'optim', 'consolidated', 'local', 'cumulative'];
 export class Dsv3Anatomy extends HTMLElement {
   connectedCallback() {
     const lid = this.getAttribute('layer') ?? ((this.id || 'anatomy') + '-layer');

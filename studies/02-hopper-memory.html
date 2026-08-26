@@ -90,16 +90,18 @@
     line at the bottom totals them). Colors match the memory-bar segments.
     Toggle components in the legend.</p>
 
-    <dsv3-anatomy style="min-height:761px" lens="param-bytes" local recipe="bf16" layer="local-diagram" detail controls="static" nocaption></dsv3-anatomy>
+    <dsv3-anatomy style="min-height:788px" lens="param-bytes" local cumulative recipe="bf16" layer="local-diagram" detail controls="static" nocaption></dsv3-anatomy>
 
     <p class="note">The same picture per GPU, under a fiat parallelism (we
     can't justify it without talking about comms — later chapters): 2048 GPUs,
     PP16 over a contiguous split of the 61 layers, EP32/EP64 selectable, and
     ZeRO-1 (optimizer states shard over each parameter's replication group:
-    dense params over DP=128, expert params over the much smaller expert-DP,
-    which is why the green squares don't vanish on the experts). The stage
-    selector shows every PP rank: stage 0 holds the embedding and the three
-    dense blocks; stage 15 adds the final norm and lm head. Saved activations
+    dense params over the DP group, expert params over the much smaller
+    expert-DP, which is why the green squares don't vanish on the experts).
+    EP, the PP degree, and ZeRO-1 can each be turned off or varied; the stage
+    selector names every PP rank's layer assignment — stage 0 holds the
+    embedding (and the dense blocks while they last); the last stage adds the
+    final norm and lm head. Saved activations
     are one microbatch per layer on the stage — the pipeline schedule's
     in-flight multiplier is deliberately deferred.</p>
 

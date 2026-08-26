@@ -19,9 +19,10 @@ export const applyHighlight = (root, hl) => {
 
 // binary byte formatter (the param-bytes lens and the bytes tally)
 export const fmtBytes = (b) =>
-  b >= 2 ** 40 ? (b / 2 ** 40).toFixed(2) + ' TiB'
-    : b >= 2 ** 30 ? (b / 2 ** 30).toFixed(1) + ' GiB'
-      : b >= 2 ** 20 ? (b / 2 ** 20).toFixed(1) + ' MiB' : (b / 1024).toFixed(1) + ' KiB';
+  !b ? '0'   // empty PP stages: a true zero, not a rounded one
+    : b >= 2 ** 40 ? (b / 2 ** 40).toFixed(2) + ' TiB'
+      : b >= 2 ** 30 ? (b / 2 ** 30).toFixed(1) + ' GiB'
+        : b >= 2 ** 20 ? (b / 2 ** 20).toFixed(1) + ' MiB' : (b / 1024).toFixed(1) + ' KiB';
 
 // byte components of the per-op strips (optim / consolidated variants), in the
 // memory-bars stacked order with the memory-bars segment colors \u2014 the strips
@@ -32,12 +33,13 @@ export const BYTE_COMPS = [
   { prop: 'showOptim', color: '#1baf7a', bpp: 8, label: 'optimizer states (8 B/param)' },
 ];
 
-// fiat parallelism for the `local` variant (what one GPU holds): 2048 GPUs,
-// PP16 over a contiguous floor split of the 61 layers, EP selectable, ZeRO-1.
-// Stage 0 = embedding + the 3 dense blocks; stage 15 = + final norm + lm head.
-export const LOCAL_PAR = { world: 2048, pp: 16 };
-export const ppStage = (s) => {
-  const lo = Math.floor(61 * s / 16), hi = Math.floor(61 * (s + 1) / 16);
+// fiat parallelism for the `local` variant (what one GPU holds): 2048 GPUs;
+// PP degree, EP width, and ZeRO-1 are the layer's knobs. Layers split over
+// the PP stages by a contiguous floor split: stage 0 gets the embedding (+
+// the dense blocks while they last), the last stage gets final norm + lm head.
+export const LOCAL_PAR = { world: 2048, pp: 16 };   // .pp = the default degree
+export const ppStage = (s, pp = LOCAL_PAR.pp) => {
+  const lo = Math.floor(61 * s / pp), hi = Math.floor(61 * (s + 1) / pp);
   const dense = Math.max(0, Math.min(hi, 3) - Math.min(lo, 3));
   return { lo, hi, layers: hi - lo, dense, moe: hi - lo - dense };
 };
@@ -759,9 +761,12 @@ export class Dsv3Layer extends HTMLElement {
     this.showOptim = st?.showOptim ?? true;
     this.showGrads = st?.showGrads ?? true;
     this.showActs = st?.showActs ?? true;
-    // local lens: the fiat-parallelism selectors (EP width, PP stage)
+    // local lens: the fiat-parallelism selectors (EP width or 1 = off, PP
+    // degree, PP stage, ZeRO-1 on/off)
     this.ep = st?.ep ?? 64;
-    this.stage = st?.stage ?? 1;
+    this.pp = st?.pp ?? LOCAL_PAR.pp;
+    this.stage = Math.min(st?.stage ?? 1, this.pp - 1);
+    this.zero1 = st?.zero1 ?? true;
     // cumulative: every parameter parenthetical multiplies by the selected
     // kind's block count (×3 dense / ×58 MoE); the tabs hide — the kind then
     // comes from the plan selector alone
@@ -792,7 +797,7 @@ export class Dsv3Layer extends HTMLElement {
       kind: this.kind, cumulative: this.cumulative,
       showWeights: this.showWeights, showOptim: this.showOptim,
       showGrads: this.showGrads, showActs: this.showActs,
-      ep: this.ep, stage: this.stage,
+      ep: this.ep, stage: this.stage, pp: this.pp, zero1: this.zero1,
     });
   }
   applyPreset(recipe, recompute, transposed = false) {
@@ -814,7 +819,7 @@ export class Dsv3Layer extends HTMLElement {
     // local lens: the kind follows the selected PP stage (stage 0 holds the
     // 3 dense blocks; every other stage holds only MoE blocks)
     if (this.hasAttribute('local') && this.getAttribute('lens') === 'param-bytes')
-      this.kind = ppStage(this.stage ?? 1).moe ? 'moe' : 'dense';
+      this.kind = ppStage(this.stage ?? 1, this.pp).moe ? 'moe' : 'dense';
     const style = document.createElement('style'); style.textContent = LAYER_CSS;
     const root = el('div', 'lv');
     // progressive disclosure: controls="static|marks|dtype|full" gates which
@@ -927,7 +932,10 @@ export class Dsv3Layer extends HTMLElement {
     tcb.onchange = () => { this.transposed = tcb.checked; this.render(); this.changed(); };
     tl.append(tcb, 'fp8ᵀ dual stash');
     if (this._ctl.dtype) head.append(tl);
-    const KBLK = this.kind === 'dense' ? (DSV3.denseLayers ?? 3) : DSV3.layers - (DSV3.denseLayers ?? 3);
+    // local: the multiplier is the stage's block count, not the whole model's
+    const KBLK = this.hasAttribute('local') && this.getAttribute('lens') === 'param-bytes'
+      ? (this.kind === 'dense' ? ppStage(this.stage ?? 1).dense : ppStage(this.stage ?? 1).moe)
+      : this.kind === 'dense' ? (DSV3.denseLayers ?? 3) : DSV3.layers - (DSV3.denseLayers ?? 3);
     const mkCumBtn = () => {
       const b = document.createElement('button');
       b.style.cssText = 'font:11px ui-monospace,monospace;padding:2px 8px;border:1px solid #c3c2b7;' +
@@ -938,7 +946,8 @@ export class Dsv3Layer extends HTMLElement {
       b.onclick = () => {
         this.cumulative = !this.cumulative;
         this.changed(true);
-        if (this.getAttribute('strips') === 'absolute' && this.getAttribute('lens') === 'param-bytes') {
+        if ((this.getAttribute('strips') === 'absolute' || this.hasAttribute('local'))
+          && this.getAttribute('lens') === 'param-bytes') {
           const from = this._tween ?? (this.cumulative ? 0 : 1);
           const to = this.cumulative ? 1 : 0, FRAMES = 12;   // ~200 ms at 60 fps
           let f = 0;
@@ -982,15 +991,15 @@ export class Dsv3Layer extends HTMLElement {
       // param-bytes always shows sizes multiplied out — no toggle to offer
       const sizeCtl = this.getAttribute('lens') === 'param-bytes' ? [] : ['sizes:', mkDimsBtn()];
       // the optim variant is pinned per block; consolidated allows ×N (long!);
-      // local's multiplier is the stage's block count — no toggle
-      const cumCtl = (this.hasAttribute('optim') && !this.hasAttribute('consolidated'))
-        || this.hasAttribute('local') ? [] : [mkCumBtn()];
+      // local toggles between one block and the stage total
+      const cumCtl = this.hasAttribute('optim') && !this.hasAttribute('consolidated') ? [] : [mkCumBtn()];
       // no kind select when MLA-only (kind-independent) or when the tabs carry the flip
       if (SCOPE === 'mla' || this.hasAttribute('tabs')) mini.append(...sizeCtl, ...cumCtl);
       else mini.append('block: ', mkKindSel(), ...(sizeCtl.length ? [' · '] : []), ...sizeCtl, ...cumCtl);
       if (this.hasAttribute('local')) {
-        // the fiat parallelism: PP16 · ZeRO-1 on 2048 GPUs is fixed; EP and
-        // the PP stage are the knobs (the kind follows the stage)
+        // the fiat parallelism: 2048 GPUs fixed; EP width (or off), PP degree
+        // (powers of two), the PP stage, and ZeRO-1 are the knobs. The kind
+        // follows the stage; each stage option names its layer assignment.
         const mkSel = (opts, val, label, set) => {
           const s = document.createElement('select');
           for (const o of opts) s.append(new Option(label(o), o));
@@ -998,20 +1007,37 @@ export class Dsv3Layer extends HTMLElement {
           s.onchange = () => { set(+s.value); this.render(); this.changed(true); };
           return s;
         };
-        mini.append('EP: ', mkSel([32, 64], this.ep, (o) => `EP${o}`, (v) => { this.ep = v; }),
-          ' stage: ', mkSel([...Array(LOCAL_PAR.pp).keys()], this.stage,
-            (o) => `${o}${o === 0 ? ' (embed + dense)' : o === LOCAL_PAR.pp - 1 ? ' (+lm head)' : ''}`,
-            (v) => { this.stage = v; }));
+        const pp = this.pp ?? LOCAL_PAR.pp;
+        const stageLabel = (o) => {
+          const g = ppStage(o, pp);
+          const range = !g.layers ? 'no layers'
+            : g.lo === g.hi - 1 ? `layer ${g.lo}` : `layers ${g.lo}–${g.hi - 1}`;
+          const tags = [g.dense ? `${g.dense} dense` : '', o === 0 ? 'embed' : '',
+            o === pp - 1 ? 'lm head' : ''].filter(Boolean).join(', ');
+          return `${o}: ${range}${tags ? ` (${tags})` : ''}`;
+        };
+        mini.append('EP: ', mkSel([1, 32, 64], this.ep, (o) => o === 1 ? 'off' : `EP${o}`, (v) => { this.ep = v; }),
+          ' PP: ', mkSel([1, 2, 4, 8, 16, 32, 64], pp, (o) => `PP${o}`,
+            (v) => { this.pp = v; this.stage = Math.min(this.stage, v - 1); }),
+          ' stage: ', mkSel([...Array(pp).keys()], this.stage, stageLabel, (v) => { this.stage = v; }));
+        const zl = document.createElement('label');
+        zl.style.cssText = 'display:inline-flex;align-items:center;gap:3px;color:#52514e;font-size:11px;cursor:pointer;';
+        const zc = document.createElement('input');
+        zc.type = 'checkbox'; zc.checked = this.zero1 !== false;
+        zc.onchange = () => { this.zero1 = zc.checked; this.render(); this.changed(true); };
+        zl.append(zc, 'ZeRO-1');
         const fixed = el('span');
         fixed.style.cssText = 'color:#52514e;font-size:11px;';
-        fixed.textContent = `of PP16 · ZeRO-1 · ${LOCAL_PAR.world} GPUs`;
-        mini.append(fixed);
+        fixed.textContent = `· DP ${LOCAL_PAR.world / pp} · ${LOCAL_PAR.world} GPUs ·`;
+        mini.append(fixed, zl);
       }
       if (this.getAttribute('lens') === 'param-bytes') {
         // the strip unit rescales with the ×N toggle — label it so the jump
         // reads as a unit change, not a glitch (▫ = nonzero but sub-square)
         const KM2 = this.kind === 'dense' ? (DSV3.denseLayers ?? 3) : DSV3.layers - (DSV3.denseLayers ?? 3);
-        const absP = this.getAttribute('strips') === 'absolute';   // fixed unit: strips grow instead
+        // fixed unit whenever the strips GROW instead of renormalizing
+        // (strips=absolute and the local variant)
+        const absP = this.getAttribute('strips') === 'absolute' || this.hasAttribute('local');
         const unit = PARAMS.largestOp.moe * (this.cumulative && !absP ? KM2 : 1) / 32 * 2;
         const leg = el('span');
         leg.style.cssText = 'color:#52514e;margin-left:10px;font-size:11px;white-space:nowrap;';
@@ -1020,7 +1046,7 @@ export class Dsv3Layer extends HTMLElement {
         // inline-block + zero margin: the .lv svg{display:block;margin:0 auto}
         // rule for the main diagram would otherwise stack the swatch on its own line
         const sw = (c) => `<svg width="5" height="4" style="display:inline-block;margin:0;vertical-align:baseline"><rect width="5" height="4" fill="${c}"/></svg>`;
-        const cons2 = this.hasAttribute('consolidated');
+        const cons2 = this.hasAttribute('consolidated') || this.hasAttribute('local');
         if (this.hasAttribute('optim') || cons2) {
           // the legend entries ARE the visibility toggles: the squares pour
           // in/out (per-block-tween style, boxes reflow with the filled rows)
@@ -1161,10 +1187,11 @@ export class Dsv3Layer extends HTMLElement {
     const LOCAL = PBYTES && this.hasAttribute('local');
     const CONS = LOCAL || (PBYTES && this.hasAttribute('consolidated'));
     const OPTIM = CONS || (PBYTES && this.hasAttribute('optim'));
-    const EPn = this.ep ?? 64, STG = this.stage ?? 1;
-    const DPn = LOCAL_PAR.world / LOCAL_PAR.pp;              // 128
-    const EDP = LOCAL_PAR.world / LOCAL_PAR.pp / EPn;        // expert-DP: 2 (EP64) / 4 (EP32)
-    const stg = ppStage(STG);
+    const EPn = this.ep ?? 64, PPn = this.pp ?? LOCAL_PAR.pp, STG = this.stage ?? 1;
+    const Z1 = this.zero1 !== false;                         // ZeRO-1 optimizer sharding on/off
+    const DPn = LOCAL_PAR.world / PPn;
+    const EDP = LOCAL_PAR.world / PPn / EPn;                 // expert-DP (EP=1: = DP — no expert parallelism)
+    const stg = ppStage(STG, PPn);
     const COMPS = !OPTIM ? [BYTE_COMPS[0]]
       : CONS ? BYTE_COMPS : [BYTE_COMPS[0], BYTE_COMPS[2]];
     // tween multiplier for a component: 1 shown, 0 hidden, in between mid-pour
@@ -1174,7 +1201,7 @@ export class Dsv3Layer extends HTMLElement {
     // visible bytes per parameter (numbers snap). Two classes under local:
     // 'd' (dense/replicated: optimizer ZeRO-1-sharded /DP) and 'e' (expert:
     // sharded over the smaller expert-DP group)
-    const bppOf = (c, cls) => !LOCAL || c.prop !== 'showOptim' ? c.bpp
+    const bppOf = (c, cls) => !LOCAL || c.prop !== 'showOptim' || !Z1 ? c.bpp
       : c.bpp / (cls === 'e' ? EDP : DPn);
     const BPPT = (cls = 'd') => COMPS.reduce((t, c) => t + (this[c.prop] ? bppOf(c, cls) : 0), 0);
     const clsOf = (id) => LOCAL && this.kind === 'moe' && (id === 'ffn_gate_up' || id === 'ffn_down') ? 'e' : 'd';
@@ -1236,10 +1263,10 @@ export class Dsv3Layer extends HTMLElement {
     // the sizes toggle collapses the whole product. The lm head is not a
     // block parameter and never multiplies.
     // local: the multiplier is the selected PP stage's block count of the
-    // shown kind, and the ×N framing is always on (this rank's stage total)
+    // shown kind; cumulative toggles between one block and the stage total
     const KMUL = LOCAL ? (this.kind === 'dense' ? stg.dense : stg.moe)
       : this.kind === 'dense' ? (DSV3.denseLayers ?? 3) : DSV3.layers - (DSV3.denseLayers ?? 3);
-    const CUM = LOCAL || !!this.cumulative;
+    const CUM = !!this.cumulative;
     // cumulative is always shown multiplied out — factored ×256 ×58 chains
     // are noise; the sizes toggle keeps governing dims and per-block factoring
     // param-bytes lens: the VISIBLE bytes per parameter (bf16 weights = 2 B,
@@ -1359,8 +1386,10 @@ export class Dsv3Layer extends HTMLElement {
     // this._tween 0→1: squares pour in and the boxes grow with the filled
     // rows (compact at per-block, tall at cumulative).
     const CUMT = this._tween ?? (CUM ? 1 : 0);   // 0 = per block, 1 = ×N (mid-tween in between)
-    const T_ = ABS ? CUMT : 0;
-    const stripMul = ABS ? 1 + (KMUL - 1) * T_ : LOCAL ? KMUL : 1;
+    // local hides the tabs in BOTH views (the kind follows the stage)
+    const HIDT = LOCAL ? 1 : CUMT;
+    const T_ = ABS || LOCAL ? CUMT : 0;
+    const stripMul = ABS || LOCAL ? 1 + (KMUL - 1) * T_ : 1;
     const stripCount = (nParams) => !PBYTES || !nParams ? 0 : Math.round(nParams * stripMul / PB_UNIT);
     // per-component cells for one op, at the current tween state: a toggled
     // component's squares pour in/out (count scales with t) and everything
@@ -1371,7 +1400,7 @@ export class Dsv3Layer extends HTMLElement {
       if (!m) return { c, n: 0, hollow: false };
       const full = stripCount(nParams * bppOf(c, cls) / 2);   // stripCount speaks params @2 B
       const n = Math.round(full * m);
-      return { c, n, hollow: !n && m >= 0.5 };            // hollow pops in mid-tween like a 1-square run
+      return { c, n, hollow: !n && m >= 0.5 && nParams * stripMul > 0 };   // hollow pops in mid-tween like a 1-square run (never for a true zero)
     });
     const stripCells = (nParams, cls) =>
       compCells(nParams, cls).reduce((t, r) => t + r.n + (r.hollow ? 1 : 0), 0);
@@ -1428,8 +1457,9 @@ export class Dsv3Layer extends HTMLElement {
         // cumulative: every block's stash is resident — chips follow the ×N
         // convention (labels snap, squares grow with the tween like the strips)
         const b4096 = bytes * 4096 * (CUM ? KMUL : 1);
-        const full = Math.round(bytes * 4096 * (ABS ? stripMul : CUM ? KMUL : 1) / (PB_UNIT * 2));
-        const nsq = Math.round(full * m), hollow = !nsq && m >= 0.5;
+        const chipF = ABS || LOCAL ? stripMul : CUM ? KMUL : 1;
+        const full = Math.round(bytes * 4096 * chipF / (PB_UNIT * 2));
+        const nsq = Math.round(full * m), hollow = !nsq && m >= 0.5 && chipF > 0;
         const name = esc(name0.replace(' (checkpoint anchor)', ''));
         const lock = st === 'pin' ? ' 🔒' : '';
         // narrow fork columns (ov.short) get two lines — one line would run
@@ -1740,8 +1770,8 @@ export class Dsv3Layer extends HTMLElement {
           `<text x="${x + 10}" y="${y0 + 17}" style="font:600 11px system-ui" fill="${on ? '#0b0b0b' : '#898781'}">${label}` +
           `<tspan style="font:10px system-ui" fill="${on ? '#898781' : '#a8a69e'}"> ${sub}</tspan></text></g>`;
       };
-      if (CUMT < 1) {   // cumulative mode: the plan selector alone carries the kind (tabs fade with the tween)
-        P.push(`<g opacity="${(1 - CUMT).toFixed(3)}">` +
+      if (HIDT < 1) {   // cumulative mode: the plan selector alone carries the kind (tabs fade with the tween)
+        P.push(`<g opacity="${(1 - HIDT).toFixed(3)}">` +
           tab(C2 + 42, 148, 'dense', 'dense FFN', `×${DSV3.denseLayers ?? 3} · ${fmtPV(PARAMS.denseFfnBlk)}`) +
           tab(C2 + 198, 168, 'moe', 'MoE FFN', `×${DSV3.layers - (DSV3.denseLayers ?? 3)} · ${fmtPV(this.activeView ? PARAMS.activeMoeFfnBlk : PARAMS.moeFfnBlk)}`) +
           `</g>`);
@@ -1888,7 +1918,7 @@ export class Dsv3Layer extends HTMLElement {
       // label too — showing both would read as "multiply again" (overcount)
       grp(C2, g2, z + 5, DET
         ? (CUM ? `routed experts${LOCAL ? ` (${nR}/rank)` : ''} · ${fmtPV(PARAMS.expert * nR * KMUL, 'e')}`
-          : FLAT ? `routed experts · ${fmtPV(PARAMS.expert * nR, 'e')}`
+          : FLAT ? `routed experts${LOCAL ? ` (${nR}/rank)` : ''} · ${fmtPV(PARAMS.expert * nR, 'e')}`
                  : `routed experts ×${nR} · ${fmtPV(PARAMS.expert, 'e')}`)
         : (CUM ? `experts · ${fmtPV(PARAMS.expert * (nR + DSV3.sharedExperts) * KMUL, 'e')}`
           : FLAT ? `experts · ${fmtPV(PARAMS.expert * (nR + DSV3.sharedExperts), 'e')}`
@@ -1959,8 +1989,8 @@ export class Dsv3Layer extends HTMLElement {
         // active tab footprint: the outline leaves a gap there instead of an
         // opaque eraser (which bleeds the border through when the tab fades)
         const [tx, tw] = this.kind === 'dense' ? [C2 + 42, 148] : [C2 + 198, 168];
-        P[P.indexOf('__ENC__')] = CUMT >= 1 ? '' :
-          `<g opacity="${(1 - CUMT).toFixed(3)}">` +
+        P[P.indexOf('__ENC__')] = HIDT >= 1 ? '' :
+          `<g opacity="${(1 - HIDT).toFixed(3)}">` +
           `<rect x="${x0}" y="${y0}" width="${x1 - x0}" height="${y1 - y0}" rx="${r}" fill="#fcfcfb" stroke="none"/>` +
           `<path d="M ${tx + tw} ${y0} L ${x1 - r} ${y0} Q ${x1} ${y0} ${x1} ${y0 + r} L ${x1} ${y1 - r} ` +
           `Q ${x1} ${y1} ${x1 - r} ${y1} L ${x0 + r} ${y1} Q ${x0} ${y1} ${x0} ${y1 - r} ` +
