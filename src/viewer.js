@@ -734,6 +734,10 @@ export class Dsv3Layer extends HTMLElement {
     this.transposed = st?.transposed ?? this.hasAttribute('transposed');
     this.detail = st?.detail ?? this.hasAttribute('detail');
     this.flatDims = st?.flatDims ?? false;
+    // optim lens: which byte components are visible (strips AND numbers follow —
+    // the numbers always total exactly what the squares show)
+    this.showWeights = st?.showWeights ?? true;
+    this.showOptim = st?.showOptim ?? true;
     // cumulative: every parameter parenthetical multiplies by the selected
     // kind's block count (×3 dense / ×58 MoE); the tabs hide — the kind then
     // comes from the plan selector alone
@@ -762,6 +766,7 @@ export class Dsv3Layer extends HTMLElement {
       view: this.view, dispLayers: this.dispLayers, dispInflight: this.dispInflight,
       transposed: this.transposed, detail: this.detail, flatDims: this.flatDims,
       kind: this.kind, cumulative: this.cumulative,
+      showWeights: this.showWeights, showOptim: this.showOptim,
     });
   }
   applyPreset(recipe, recompute, transposed = false) {
@@ -964,8 +969,24 @@ export class Dsv3Layer extends HTMLElement {
         // inline-block + zero margin: the .lv svg{display:block;margin:0 auto}
         // rule for the main diagram would otherwise stack the swatch on its own line
         const sw = (c) => `<svg width="5" height="4" style="display:inline-block;margin:0;vertical-align:baseline"><rect width="5" height="4" fill="${c}"/></svg>`;
-        leg.innerHTML = `${sw('#2a78d6')} = ${fmtBytes(unit)}` +
-          (this.hasAttribute('optim') ? ` weights · ${sw('#008300')} optimizer states (8 B/param)` : '');
+        if (this.hasAttribute('optim')) {
+          // the legend entries ARE the visibility toggles: numbers and squares
+          // follow together (a hidden run keeps its blank cells — no reflow)
+          const cb = (label, color, prop) => {
+            const lab = document.createElement('label');
+            lab.style.cssText = 'display:inline-flex;align-items:center;gap:3px;margin-right:10px;cursor:pointer;';
+            const c = document.createElement('input');
+            c.type = 'checkbox'; c.checked = this[prop];
+            c.onchange = () => { this[prop] = c.checked; this.render(); this.changed(true); };
+            const t = el('span'); t.innerHTML = `${sw(color)} ${label}`;
+            lab.append(c, t);
+            return lab;
+          };
+          leg.append(cb('weights (2 B/param)', '#2a78d6', 'showWeights'),
+            cb('optimizer states (8 B/param)', '#008300', 'showOptim'));
+          const u = el('span'); u.innerHTML = `· 1 square = ${fmtBytes(unit)}`;
+          leg.append(u);
+        } else leg.innerHTML = `${sw('#2a78d6')} = ${fmtBytes(unit)}`;
         mini.append(leg);
       }
       root.append(mini);
@@ -1063,6 +1084,10 @@ export class Dsv3Layer extends HTMLElement {
     // bf16 moments) under the blue weight squares — same unit, so the 4:1 ratio
     // IS the picture. Pinned per block (cumulative would be a poster).
     const OPTIM = PBYTES && this.hasAttribute('optim');
+    // component visibility (optim only): numbers and strips move together
+    const SHOW_W = !OPTIM || this.showWeights;
+    const SHOW_O = OPTIM && this.showOptim;
+    const BPP = (SHOW_W ? 2 : 0) + (SHOW_O ? 8 : 0);   // visible bytes per parameter
     // param-bytes always shows sizes multiplied out (factored ×256 byte chains
     // pull no weight there; the sizes toggle is hidden in that lens)
     const FLAT = this.flatDims || PBYTES;
@@ -1121,17 +1146,19 @@ export class Dsv3Layer extends HTMLElement {
     const CUM = !!this.cumulative && !OPTIM;   // optim is per-block only
     // cumulative is always shown multiplied out — factored ×256 ×58 chains
     // are noise; the sizes toggle keeps governing dims and per-block factoring
-    // param-bytes lens: two bytes per parameter (the section's stated bf16
-    // assumption), formatted as binary bytes
-    const fmtPB = (nParams) => fmtBytes(nParams * 2);
+    // param-bytes lens: the VISIBLE bytes per parameter (bf16 weights = 2 B,
+    // + 8 B optimizer when shown), formatted as binary bytes — the number on a
+    // box always totals exactly the squares drawn in it
+    const fmtPB = (nParams) => fmtBytes(nParams * BPP);
     const fmtPV = (n) => PBYTES ? fmtPB(n) : fmtP(n);
     const pk = (n, noK = false) => {
+      if (PBYTES && !BPP) return '';   // nothing visible, nothing to number
       const v = CUM && !noK ? fmtPV(n * KMUL) : fmtPV(n);
       return PONLY ? ` ${v}` : ` (${v})`;   // params lenses: no parens — params are the only numbers left
     };
     const pstr = (id) => {
       const p = PCNT[id];
-      if (!p) return '';
+      if (!p || (PBYTES && !BPP)) return '';
       const tot = (Array.isArray(p) ? p[0] * p[1] : p);
       const wrap = (str) => PONLY ? ` ${str}` : ` (${str})`;
       if (CUM && id !== 'lm_head') return wrap(fmtPV(tot * KMUL));
@@ -1250,7 +1277,9 @@ export class Dsv3Layer extends HTMLElement {
     const paramBlocks = (x, y, nParams) => {
       if (!PBYTES || !nParams) return;
       let g = '', i = 0;
-      const run = (fill, n) => {
+      // a hidden run still advances its cells, so the other color never moves
+      const run = (fill, n, show) => {
+        if (!show) { i += Math.max(1, n); return; }
         if (!n) {   // hollow, never a full square — that would overstate
           const cx = x + (i % FLOP_ROW) * 6, cy = y + Math.floor(i / FLOP_ROW) * 6;
           g += `<rect x="${cx}" y="${cy}" width="5" height="4" fill="none" stroke="${fill}" stroke-width="0.8"/>`; i++;
@@ -1259,8 +1288,8 @@ export class Dsv3Layer extends HTMLElement {
         for (let k = 0; k < n; k++, i++)
           g += `<rect x="${x + (i % FLOP_ROW) * 6}" y="${y + Math.floor(i / FLOP_ROW) * 6}" width="5" height="4" fill="${fill}"/>`;
       };
-      run('#2a78d6', stripCount(nParams));
-      if (OPTIM) run('#008300', stripCount(nParams * 4));   // CATS.optimizer green, in the same grid flow
+      run('#2a78d6', stripCount(nParams), SHOW_W);
+      if (OPTIM) run('#008300', stripCount(nParams * 4), SHOW_O);   // CATS.optimizer green, in the same grid flow
       P.push(g);
     };
     const flopBlocks = (x, y, flopsTok, dt2) => {

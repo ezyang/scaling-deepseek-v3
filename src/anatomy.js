@@ -93,10 +93,16 @@ export class Dsv3AnatomyPlan extends HTMLElement {
     // (the plan's strips wrap at 30/row — the narrow box's width, unrelated to
     // the unit — but never exceed a few squares in practice)
     const OPT = LB && l?.hasAttribute('optim');                  // green optimizer squares, 4 per blue (8 B vs 2 B/param)
+    // component visibility follows the layer's legend checkboxes: numbers and
+    // squares move together, and a hidden run keeps its blank cells (no shift)
+    const SW = !OPT || (l?.showWeights ?? true);
+    const SO = OPT && (l?.showOptim ?? true);
+    const BPP = (SW ? 2 : 0) + (SO ? 8 : 0);
     const strip = (x, y, nParams) => {
       if (!LB || !nParams) return '';
       let g = '', i = 0;
-      const run = (fill, n) => {
+      const run = (fill, n, show) => {
+        if (!show) { i += Math.max(1, n); return; }
         if (!n) {   // nonzero but sub-square (e.g. the embedding under ×58): hollow trace
           const cx = x + (i % 30) * 5, cy = y + Math.floor(i / 30) * 5;
           g += `<rect x="${cx}" y="${cy}" width="4" height="3.5" fill="none" stroke="${fill}" stroke-width="0.8"/>`; i++;
@@ -105,11 +111,12 @@ export class Dsv3AnatomyPlan extends HTMLElement {
         for (let k = 0; k < n; k++, i++)
           g += `<rect x="${x + (i % 30) * 5}" y="${y + Math.floor(i / 30) * 5}" width="4" height="3.5" fill="${fill}"/>`;
       };
-      run('#2a78d6', Math.round(nParams / UNIT));
-      if (OPT) run('#008300', Math.round(nParams * 4 / UNIT));
+      run('#2a78d6', Math.round(nParams / UNIT), SW);
+      if (OPT) run('#008300', Math.round(nParams * 4 / UNIT), SO);
       return g;
     };
-    const pv = (n) => LB ? fmtBytes(n * 2) : fmtP(n);
+    const pv = (n) => LB ? (BPP ? fmtBytes(n * BPP) : '') : fmtP(n);
+    const pw = (n) => { const v = pv(n); return v ? `(${v})` : ''; };   // parenthesized, or nothing at all
     const S = [];
     S.push(`<defs><marker id="planarr" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto-start-reverse">` +
       `<path d="M 0 0 L 8 4 L 0 8 z" fill="#898781"/></marker></defs>`);
@@ -138,20 +145,23 @@ export class Dsv3AnatomyPlan extends HTMLElement {
         `<text class="dims" x="${BX + 8}" y="${y + 27}">${dims}</text></g>`);
       y += 34;
     };
-    op('embedding', AV && !LB ? '(not counted)' : `(${pv(E)})`, 22, 'embed', E);
+    op('embedding', AV && !LB ? '(not counted)' : pw(E), 22, 'embed', E);
     wire(24, `x · ${A.hidden}`);
     // cumulative: the expanded diagram already folds the ×N in, so the plan
     // drops it — "×58" beside an already-multiplied figure reads as overcount
     const LCUM = !!l?.cumulative;
-    blockBox('dense', LCUM ? 'dense block' : `dense block ×${A.denseLayers}`, `${pv(DENSE)} each`);
+    const each = (n) => { const v = pv(n); return v ? `${v} each` : ''; };
+    blockBox('dense', LCUM ? 'dense block' : `dense block ×${A.denseLayers}`, each(DENSE));
     wire(24, `x · ${A.hidden}`);
-    blockBox('moe', LCUM ? 'MoE block' : `MoE block ×${A.layers - A.denseLayers}`, `${pv(AV && !LB ? PARAMS.activeMoeBlock : MOE)} each`);
+    blockBox('moe', LCUM ? 'MoE block' : `MoE block ×${A.layers - A.denseLayers}`, each(AV && !LB ? PARAMS.activeMoeBlock : MOE));
     wire(24, `x · ${A.hidden}`);
-    op('final RMSNorm', `(${pv(A.hidden)})`, 22, 'final_norm');
+    op('final RMSNorm', pw(A.hidden), 22, 'final_norm');
     wire(24, `norm out · ${A.hidden}`);
+    // param lenses hide op dims uniformly — the lm head's 7168 → 129280 goes too
+    const PL = LB || l?.getAttribute('lens') === 'params';
     S.push(`<g data-op="lm_head"><rect class="box" x="${BX}" y="${y}" width="${W}" height="${LB ? 42 : 34}" rx="4"/>` +
       `<text class="name" x="${BX + 8}" y="${y + 14}">lm head</text>` +
-      `<text class="dims" x="${BX + 8}" y="${y + 27}">${A.hidden} → ${A.vocab} (${pv(E)})</text>` +
+      `<text class="dims" x="${BX + 8}" y="${y + 27}">${PL ? pw(E) : `${A.hidden} → ${A.vocab} ${pw(E)}`}</text>` +
       (LB ? strip(BX + 8, y + 31, E) : '') + `</g>`);
     y += LB ? 42 : 34;
     wire(24, `logits · ${A.vocab}`);
