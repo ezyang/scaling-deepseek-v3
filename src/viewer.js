@@ -741,6 +741,11 @@ dsv3-layer { display: block; margin: 14px 0 26px; }
 .lv-tip.pinned { border-color: #eda100; box-shadow: 0 2px 10px rgba(237,161,0,0.3); }
 .lv-head { display: flex; align-items: center; gap: 8px; padding-bottom: 6px; color: #52514e; flex-wrap: wrap; }
 .lv-head select { font: 12px system-ui; padding: 2px 6px; border: 1px solid #c3c2b7; border-radius: 4px; background: #fff; }
+.lv-head .pargrp { display: inline-flex; flex-direction: column; gap: 2px;
+  border: 1px solid #e1e0d9; border-radius: 6px; padding: 3px 8px 5px; align-self: stretch; }
+.lv-head .pargrp.center { justify-content: center; }
+.lv-head .parlab { font: italic 10px system-ui; color: #898781; }
+.lv-head .parrow { display: flex; align-items: center; gap: 5px; min-height: 20px; }
 .lv-head .stp { display: inline-flex; align-items: stretch; }
 .lv-head .stp button { font: 12px ui-monospace, monospace; width: 20px; padding: 0 0 1px; border: 1px solid #c3c2b7; background: #fff; color: #52514e; cursor: pointer; }
 .lv-head .stp button:hover:not(:disabled) { background: #f3f2ee; }
@@ -1188,22 +1193,38 @@ export class Dsv3Layer extends HTMLElement {
         // shrinking the cluster clamps EP)
         const world = this.world ?? LOCAL_PAR.world;
         const epMax = Math.min(64, world / (this.pp ?? LOCAL_PAR.pp));
-        mini.append('EP: ', mkStep(() => this.ep, (v) => { this.ep = v; }, String, epMax),
-          ' PP: ', mkStep(() => this.pp,
+        // grouped by MESH STRUCTURE: the cluster, the pipeline split (with its
+        // stage/schedule — independent of the SPMD mesh), and the SPMD mesh
+        // itself as two rows (non-expert = plain DP; expert = EP × derived
+        // EDP). ZeRO gets its own spanning group: it applies universally.
+        const grp2 = (label) => {
+          const g = el('span', 'pargrp');
+          const l2 = el('div', 'parlab'); l2.textContent = label;
+          g.append(l2);
+          return g;
+        };
+        const row2 = (...kids) => { const d = el('div', 'parrow'); d.append(...kids); return d; };
+        const txt2 = (t3) => { const sp = el('span'); sp.style.cssText = 'color:#52514e;font-size:11px;'; sp.textContent = t3; return sp; };
+        const gCluster = grp2('cluster');
+        gCluster.append(row2(txt2('GPUs'), mkStep(() => world,
+          (v) => { this.world = v; this.ep = Math.min(this.ep, v / this.pp); },
+          String, 16384, [128, 256, 512, 1024, 2048, 4096, 8192, 16384], 128)));
+        const gPipe = grp2('pipeline');
+        gPipe.append(
+          row2(txt2('PP'), mkStep(() => this.pp,
             (v) => {
               this.pp = v;
               this.ep = Math.min(this.ep, world / v);
               this.stage = peakStage(v, this.ep, this.zero ?? 1, world, this.sched);   // stage indices don't survive a resplit — jump to the new peak
-            }, String, 64),
-          ' stage: ', mkSel([...Array(pp).keys()], this.stage, stageLabel, (v) => { this.stage = v; }),
-          ' GPUs: ', mkStep(() => world,
-            (v) => { this.world = v; this.ep = Math.min(this.ep, v / this.pp); },
-            String, 16384, [128, 256, 512, 1024, 2048, 4096, 8192, 16384], 128));
+            }, String, 64), txt2('stage'), mkSel([...Array(pp).keys()], this.stage, stageLabel, (v) => { this.stage = v; })));
+        const gMesh = grp2('SPMD mesh');
+        gMesh.append(
+          row2(txt2('non-expert:'), txt2(`DP ${world / pp}`)),
+          row2(txt2('expert: EP'), mkStep(() => this.ep, (v) => { this.ep = v; }, String, epMax),
+            txt2(`× EDP ${world / pp / this.ep}`)));
         // ZeRO-(off|1|2|3): a segmented level picker (1 shards optimizer,
         // 2 + gradients, 3 + weights — each over its replication group)
         const zw = el('span', 'stp');
-        const zlab = el('span'); zlab.style.cssText = 'color:#52514e;font-size:11px;margin-right:2px;';
-        zlab.textContent = 'ZeRO-';
         for (const [i, lv] of [[0, 'off'], [1, '1'], [2, '2'], [3, '3']]) {
           const b = document.createElement('button');
           b.textContent = lv; b.type = 'button';
@@ -1214,9 +1235,6 @@ export class Dsv3Layer extends HTMLElement {
           };
           zw.append(b);
         }
-        const fixed = el('span');
-        fixed.style.cssText = 'color:#52514e;font-size:11px;';
-        fixed.textContent = `· DP ${world / pp} ·`;
         // pipeline schedule for activations in flight: 1F1B steady state
         // (stage s holds PP−s microbatches) vs a single microbatch — the
         // schedule is an assumption worth breaking open, so it's a knob
@@ -1231,9 +1249,11 @@ export class Dsv3Layer extends HTMLElement {
           };
           sw2.append(b);
         }
-        const slab = el('span'); slab.style.cssText = 'color:#52514e;font-size:11px;margin:0 2px 0 6px;';
-        slab.textContent = 'sched:';
-        mini.append(fixed, zlab, zw, slab, sw2);
+        gPipe.append(row2(txt2('sched'), sw2));
+        const gZ = grp2('ZeRO');
+        gZ.classList.add('center');   // spans the mesh rows, like PP: it applies universally
+        gZ.append(row2(zw));
+        mini.append(gCluster, gPipe, gMesh, gZ);
       }
       if (this.getAttribute('lens') === 'param-bytes') {
         // the strip unit rescales with the ×N toggle — label it so the jump
