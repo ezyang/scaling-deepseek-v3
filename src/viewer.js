@@ -1331,7 +1331,8 @@ export class Dsv3Layer extends HTMLElement {
       const fmtF = (f) => f >= 100 || Math.abs(f - Math.round(f)) < 0.02 * f ? String(Math.round(f)) : f.toFixed(1);
       const drawR = () => {
         const C = this._cursor;
-        if (!C) { rul.style.display = 'none'; return; }
+        // Perfetto behavior: nothing shows without an actual drag
+        if (!C || Math.abs(C.a - C.b) < 3) { rul.style.display = 'none'; return; }
         // rect math, not offsetLeft: SVG elements have no offsetLeft, which
         // left this at NaNpx (the line never met the cursor)
         const r2 = svgEl2.getBoundingClientRect(), host = barSlot.getBoundingClientRect();
@@ -1342,35 +1343,36 @@ export class Dsv3Layer extends HTMLElement {
         rul.style.width = `${((u2 - u1) * k).toFixed(1)}px`;
         rul.style.top = '10px';
         rul.style.height = `${r2.height - 22}px`;
-        if (u2 - u1 < 3) {   // point: the value there, sized against capacity
-          const b = bytesAt(u1), r3 = b / (80 * 2 ** 30);
-          rlab.textContent = `${fmtBytes(b)} · ${r3 >= 1 ? '×' : '÷'}${fmtF(r3 >= 1 ? r3 : 1 / r3)} vs 80 GiB`;
-        } else {             // span: on a log axis, any span IS a factor
-          const f = 2 ** ((u2 - u1) / BAR_GEO.bw * (BAR_GEO.hi - BAR_GEO.lo));
-          rlab.textContent = `×${fmtF(f)} (${fmtBytes(bytesAt(u1))} → ${fmtBytes(bytesAt(u2))})`;
-        }
+        // a span on a log axis IS a factor
+        const f = 2 ** ((u2 - u1) / BAR_GEO.bw * (BAR_GEO.hi - BAR_GEO.lo));
+        rlab.textContent = `×${fmtF(f)} (${fmtBytes(bytesAt(u1))} → ${fmtBytes(bytesAt(u2))})`;
       };
       barSlot.onmousedown = (ev) => {
         const tog = ev.target.closest?.('[data-prop]');
-        if (tog) { this.soloComp(tog.dataset.prop); return; }
-        // the cursor arms only on the scrub overlay (the bars band itself)
+        if (tog) { this._cursor = null; drawR(); this.soloComp(tog.dataset.prop); return; }
+        // the ruler arms only on the scrub overlay (the bars band itself)
         if (!ev.target.classList?.contains('scrub')) return;
         const u0 = toU(ev);
-        const C = this._cursor;
-        if (C && u0 >= Math.min(C.a, C.b) - 4 && u0 <= Math.max(C.a, C.b) + 4) {   // click it to clear
-          this._cursor = null; drawR(); return;
-        }
         this._cursor = { a: u0, b: u0 };
         const move = (e2) => { this._cursor.b = toU(e2); drawR(); };
         const up = () => {
           document.removeEventListener('mousemove', move);
           document.removeEventListener('mouseup', up);
+          if (this._cursor && Math.abs(this._cursor.a - this._cursor.b) < 3) { this._cursor = null; drawR(); }
         };
         document.addEventListener('mousemove', move);
         document.addEventListener('mouseup', up);
         drawR();
         ev.preventDefault();
       };
+      // ANY mousedown outside the bars band dismisses the ruler (legend
+      // clicks, captions, the rest of the page) — deduped across renders
+      if (this._rulDismiss) document.removeEventListener('mousedown', this._rulDismiss);
+      this._rulDismiss = (ev) => {
+        if (ev.target.classList?.contains('scrub')) return;
+        if (this._cursor) { this._cursor = null; drawR(); }
+      };
+      document.addEventListener('mousedown', this._rulDismiss);
       drawR();
     }
     root.append(scroller);
@@ -1509,7 +1511,7 @@ export class Dsv3Layer extends HTMLElement {
       const r = cur / base;
       if (!always && Math.abs(Math.log2(r)) < 0.05) return '';
       const f = (v) => v >= 100 || Math.abs(v - Math.round(v)) < 0.02 * v ? String(Math.round(v)) : v.toFixed(1);
-      return r > 1 ? `×${f(r)}` : `÷${f(1 / r)}`;
+      return r > 1 ? `×${f(r)}` : `×1/${f(1 / r)}`;   // ×1/N beats ÷N for scan-ability
     };
     const facTxt = (cls) => {
       const pin2 = this._pinCfg;
@@ -2464,10 +2466,11 @@ export class Dsv3Layer extends HTMLElement {
       B.push(`<rect class="scrub" x="${x0}" y="${topY - 2}" width="${bw}" height="${axisY - topY + 1}" ` +
         `fill="transparent" style="cursor:col-resize"/>`);
       // the capacity label sits ON TOP, leaving the bottom axis to the
-      // power-of-two labels
+      // power-of-two labels; the infeasible region is SHADED, not a line
       const cx2 = px(cap);
-      B.push(`<line x1="${cx2.toFixed(1)}" y1="${topY - 3}" x2="${cx2.toFixed(1)}" y2="${axisY - 3}" stroke="#0b0b0b" stroke-width="1.2"/>` +
-        `<text class="dims" x="${cx2.toFixed(1)}" y="9" text-anchor="middle">80 GiB (H100)</text>`);
+      B.splice(1, 0, `<rect x="${cx2.toFixed(1)}" y="${topY - 2}" width="${(x0 + bw - cx2).toFixed(1)}" ` +
+        `height="${axisY - topY - 1}" fill="#0b0b0b" opacity="0.07"/>`);
+      B.push(`<text class="dims" x="${cx2.toFixed(1)}" y="9" text-anchor="middle">80 GiB (H100)</text>`);
       const HB = axisY + 22;   // the pinned-label line is always reserved (no reflow on pin)
       this._barHtml = `<svg width="${BAR_GEO.w}" height="${HB}" viewBox="0 0 ${BAR_GEO.w} ${HB}">${B.join('')}</svg>`;
     }
