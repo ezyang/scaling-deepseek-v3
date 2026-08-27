@@ -4,9 +4,9 @@
 //
 //   node scripts/battery.mjs [name-substring …]   # filter scenarios by name
 //
-// Chrome startup dominates a scenario's wall time and the runs are fully
-// independent (each interact.mjs spawns its own server + browser), so the
-// battery runs them concurrently and reports one line per job.
+// The runs are fully independent (each interact.mjs spawns its own server +
+// browser), so the battery runs them concurrently, longest scenario first,
+// and reports one line per job.
 import { readdir, readFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { availableParallelism } from 'node:os';
@@ -27,10 +27,11 @@ for (const f of (await readdir(join(root, 'tests'))).filter(f => f.endsWith('.js
   const page = src.match(/^\/\/ @page (\S+)/m)?.[1];
   if (!page) { console.error(`SKIP ${name}: no "// @page" header`); process.exitCode = 1; continue; }
   const extra = src.match(/^\/\/ @args (.+)$/m)?.[1].trim().split(/\s+/) ?? [];
-  jobs.push({ name, args: ['scripts/interact.mjs', page, join('tests', f), ...extra] });
+  jobs.push({ name, args: ['scripts/interact.mjs', page, join('tests', f), ...extra], size: src.length });
 }
+jobs.sort((a, b) => (b.size ?? Infinity) - (a.size ?? Infinity));   // longest scenarios first: they set the critical path
 
-const limit = Math.max(2, Math.min(8, availableParallelism() - 2));
+const limit = Math.max(2, availableParallelism() - 2);
 const t0 = performance.now();
 let next = 0, failed = 0;
 const run = (job) => new Promise((res) => {

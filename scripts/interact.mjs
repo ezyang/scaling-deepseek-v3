@@ -20,6 +20,7 @@ import { readFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { chromePath } from './chromepath.mjs';
 
 const [page, scenarioFile, ...rest] = process.argv.slice(2);
 if (!page || !scenarioFile) { console.error('usage: interact.mjs <page> <scenario.js> [--shot out.png]'); process.exit(2); }
@@ -28,7 +29,7 @@ const width = rest.includes('--width') ? parseInt(rest[rest.indexOf('--width') +
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png' };
-const CHROME = process.env.CHROME ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+const CHROME = chromePath();
 
 const HARNESS = `
 const T = {

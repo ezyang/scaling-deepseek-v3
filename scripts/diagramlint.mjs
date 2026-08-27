@@ -9,10 +9,11 @@ import { readFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { chromePath } from './chromepath.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png' };
-const CHROME = process.env.CHROME ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+const CHROME = chromePath();
 
 const srv = createServer(async (req, res) => {
   try {

@@ -27,7 +27,9 @@ generality.
 - `node scripts/diagramlint.mjs` — geometric grammar (arrowheads/text/wires)
   plus placeholder-height drift across a widget matrix.
 - `node scripts/battery.mjs [filter…]` — the whole battery (sanity +
-  diagramlint + every scenario in tests/) in parallel, ~20 s. Run this one.
+  diagramlint + every scenario in tests/) in parallel, ~3 s. Run this one.
+  Browser drivers prefer Playwright's chrome-headless-shell (~10× faster
+  startup, never touches the real Chrome profile); `CHROME=<path>` overrides.
 - `node scripts/interact.mjs <page> <scenario.js>` — sequenced
   click/hover/assert scenarios in headless Chrome. Prefer interaction tests
   over static screenshots; invest in test affordances freely. Durable
