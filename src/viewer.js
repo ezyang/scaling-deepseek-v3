@@ -950,6 +950,11 @@ export class Dsv3Layer extends HTMLElement {
       dtype: cmode === 'full' || cmode === 'dtype',
       quant: cmode !== 'static',
     };
+    // the local variant carries the AC + precision knobs too (all the memory
+    // levers in one place) — but quant stays FALSE: the bytes lens has no
+    // visual language for FLOPs, so no FLOP strips/tallies/replay notes
+    const LOCALKNOBS = this.hasAttribute('local') && this.getAttribute('lens') === 'param-bytes';
+    if (LOCALKNOBS) this._ctl = { marks: true, dtype: true, quant: false };
     const head = el('div', 'lv-head');
     // block-variant select: the MLA column is shared; only the FFN column swaps
     const mkKindSel = () => {
@@ -1105,17 +1110,17 @@ export class Dsv3Layer extends HTMLElement {
     head.append(dl, mkDimsBtn(), mkCumBtn(), reset);
     // memoized: tween frames re-render 12× with identical analysis inputs —
     // recomputing the graph walk each frame is what made toggles sluggish
-    const anaKey = `${this.kind}|${cmode}|${JSON.stringify(this.matmuls)}|` +
+    const marksEff2 = this._ctl.quant || this._ctl.marks ? this.marks : {};
+    const anaKey = `${this.kind}|${cmode}|${this._ctl.marks}|${JSON.stringify(this.matmuls)}|` +
       `${JSON.stringify(this.marks)}|${this.transposed}`;
     if (this._anaMemo?.key !== anaKey) {
       this._anaMemo = {
         key: anaKey,
-        ana: analyze(blockGraph(this.kind, DSV3, this.matmuls, 4096),
-          this._ctl.quant ? this.marks : {}, this.transposed),
+        ana: analyze(blockGraph(this.kind, DSV3, this.matmuls, 4096), marksEff2, this.transposed),
         // dense mode also analyzes the MoE graph, purely for LAYOUT (row
         // alignment across kind flips)
         anaM: this.kind === 'dense'
-          ? analyze(blockGraph('moe', DSV3, this.matmuls, 4096), this._ctl.quant ? this.marks : {}, this.transposed)
+          ? analyze(blockGraph('moe', DSV3, this.matmuls, 4096), marksEff2, this.transposed)
           : null,
       };
     }
@@ -1298,6 +1303,10 @@ export class Dsv3Layer extends HTMLElement {
           this.render();
         }));
         if (this._pinCfg) mini2.append(mkBtn('×', 'unpin the baseline', () => { this._pinCfg = null; this.render(); }));
+        // the preexisting AC + precision knobs (built above for the full
+        // head; the static head never displays it, so they move here)
+        const plab = (t2) => { const sp = el('span'); sp.style.cssText = 'color:#52514e;font-size:11px;margin-left:8px;'; sp.textContent = t2; return sp; };
+        mini2.append(plab('precision:'), preset, plab('recompute:'), rsel, tl);
       }
       root.append(mini);
       if (this.hasAttribute('local')) { barSlot = el('div', 'lv-bar'); root.append(barSlot); }
@@ -1625,7 +1634,7 @@ export class Dsv3Layer extends HTMLElement {
       return wrap(fmtPV(p, clsOf(id)) + fx);
     };
     const dt = (id) => this.matmuls[id];
-    const marks = this._ctl.quant ? this.marks : {};   // static: save everything
+    const marks = this._ctl.quant || this._ctl.marks ? this.marks : {};   // static: save everything
     const state = (id) => {
       const n = ana.byId[id];
       if (n.always) return 'pin';
@@ -1803,6 +1812,10 @@ export class Dsv3Layer extends HTMLElement {
         // with squares at the same global unit (mostly hollow: individually
         // sub-square is the honest picture). Gaps (chipSpace) unchanged.
         const m = CONS ? cmult('showActs') : 0;
+        if (m && st === 'redo') {   // recomputed: named, no bytes — the AC feedback
+          P.push(`<g opacity="${m.toFixed(3)}"><text class="tensor tredo" x="${x}" y="${y + 8}">↻ ${esc(name0.replace(' (checkpoint anchor)', ''))}</text></g>`);
+          return 12;
+        }
         if (!m || (st !== 'save' && st !== 'pin')) return 12;
         // cumulative: every block's stash is resident — chips follow the ×N
         // convention (labels snap, squares grow with the tween like the strips)
@@ -1930,7 +1943,7 @@ export class Dsv3Layer extends HTMLElement {
       const extra = stripExtra(sqParam(ids[0]), clsOf(ids[0]));
       P.push(`<g data-op="${ids[0]}"${boxTip((markIds ?? ids)[0], dims ? undefined : spec.dimsNote, ids[0])}>` +
         `<rect class="box" x="${x}" y="${y}" width="${W}" height="${BH + extra}" rx="4"/>` +
-        (PBYTES && exactParam(ids[0]) != null ? `<text class="dims" x="${x + W - 8}" y="${y + 13}" text-anchor="end">bf16</text>` : '') +
+        (PBYTES && !this._ctl.dtype && exactParam(ids[0]) != null ? `<text class="dims" x="${x + W - 8}" y="${y + 13}" text-anchor="end">bf16</text>` : '') +
         `<text class="name" x="${x + 8}" y="${y + 13}">${label ?? spec.label}</text>` +
         `<text class="dims" x="${x + 8}" y="${y + 26}">${PONLY ? pstr(ids[0]).trim() : flatten(dims ?? spec.dims) + pstr(ids[0])}</text></g>`);
       P.push(modeBtn(markIds ?? ids, x + W - 86, y + 6));
@@ -1975,7 +1988,7 @@ export class Dsv3Layer extends HTMLElement {
         const ex = stripExtra(nP, 'd', HALF_ROW);   // strip rows can outgrow the box (×N)
         P.push(`<g data-op="qkv_down" data-tip="${escAttr(tip)}">` +
           `<rect class="box" x="${x}" y="${y}" width="140" height="${HBH + ex}" rx="4"/>` +
-          (PBYTES ? `<text class="dims" x="${x + 134}" y="${y + 13}" text-anchor="end">bf16</text>` : '') +
+          (PBYTES && !this._ctl.dtype ? `<text class="dims" x="${x + 134}" y="${y + 13}" text-anchor="end">bf16</text>` : '') +
           `<text class="name" x="${x + 6}" y="${y + 13}">${name}</text>` +
           `<text class="dims" x="${x + 6}" y="${y + 25}">${PONLY ? pc.trim() : flatten(dims) + pc}</text></g>` +
           (withBtns ? modeBtn(['qkv_down'], x + 140 - 86, y + 29) + dtBtn('qkv_down', x + 140 - 58, y + 29) : ''));
@@ -2049,7 +2062,7 @@ export class Dsv3Layer extends HTMLElement {
         const ex = stripExtra(sqParam(id), 'd', 21);   // strip rows can outgrow the box (×N; 140px box row)
         P.push(`<g data-op="${id}"${boxTip(id, m.dimsNote)}>` +
           `<rect class="box" x="${x}" y="${y}" width="140" height="${HBH + ex}" rx="4"/>` +
-          (PBYTES ? `<text class="dims" x="${x + 134}" y="${y + 13}" text-anchor="end">bf16</text>` : '') +
+          (PBYTES && !this._ctl.dtype ? `<text class="dims" x="${x + 134}" y="${y + 13}" text-anchor="end">bf16</text>` : '') +
           `<text class="name" x="${x + 6}" y="${y + 13}">${m.label}</text>` +
           `<text class="dims" x="${x + 6}" y="${y + 25}">${PONLY ? pstr(id).trim() : flatten(m.dims) + pstr(id)}</text></g>` +
           modeBtn([id], x + 140 - 86, y + 29) + dtBtn(id, x + 140 - 58, y + 29));
@@ -2454,13 +2467,17 @@ export class Dsv3Layer extends HTMLElement {
           (r.prop ? `<rect x="0" y="${y2 - 2}" width="${x0 - 4}" height="${rowH}" fill="transparent"/>` : '') +
           `<text class="dims" x="2" y="${y2 + 7}" fill="${r.color}" font-weight="600">${r.name}</text>` +
           `<text class="dims" x="${x0 - 8}" y="${y2 + 7}" text-anchor="end">${fmtBytes(r.abs)}</text></g>`);
-        if (i === nR - 1 && otherT > totalT * 0.001) {
-          // stacked total: grey "other" base, then the visible components —
-          // the colored width is the gain available from optimizing them
-          B.push(`<rect x="${x0}" y="${y2}" width="${Math.max(0.5, px(otherT) - x0).toFixed(1)}" height="${barH}" fill="#c3c2b7"/>`);
-          let acc = otherT;
+        const topSum = allB.reduce((a2, b2, j) => a2 + (onB[j] ? b2 * vis[j] : 0), 0);
+        if (i === nR - 1 && totalT - topSum > totalT * 0.001) {
+          // stacked total: grey "other" base, then ONLY the target-on
+          // components (a departing component's share folds into the grey
+          // mid-tween — no four-color flash); the colored width is the gain
+          // available from optimizing what's highlighted
+          const grey = totalT - topSum;
+          B.push(`<rect x="${x0}" y="${y2}" width="${Math.max(0.5, px(grey) - x0).toFixed(1)}" height="${barH}" fill="#c3c2b7"/>`);
+          let acc = grey;
           for (let j = 0; j < allB.length; j++) {
-            const w2 = allB[j] * vis[j];
+            const w2 = onB[j] ? allB[j] * vis[j] : 0;
             if (w2 <= 0) continue;
             const a1 = px(acc); acc += w2;
             B.push(`<rect x="${(a1 + 1).toFixed(1)}" y="${y2}" width="${Math.max(0.5, px(acc) - a1 - 1).toFixed(1)}" height="${barH}" fill="${colors[j]}"/>`);
