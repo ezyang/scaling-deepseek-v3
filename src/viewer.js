@@ -2378,11 +2378,8 @@ export class Dsv3Layer extends HTMLElement {
       // unit swatch legend floats right in the header
       B.push(`<rect x="${x0 + bw - 96}" y="3" width="5" height="4" fill="#898781"/>` +
         `<text class="dims" x="${x0 + bw - 87}" y="9">= ${fmtBytes(PB_UNIT * 2)} / square</text>`);
-      for (let e = LO; e <= HI; e += 1) {   // the ×2 grid + unlabeled linear minors
+      for (let e = LO; e <= HI; e += 1)   // the ×2 grid
         B.push(`<line x1="${px(2 ** e).toFixed(1)}" y1="${topY - 2}" x2="${px(2 ** e).toFixed(1)}" y2="${axisY - 3}" stroke="#e1e0d9" stroke-width="1"/>`);
-        if (e < HI) for (const m2 of [1.25, 1.5, 1.75])
-          B.push(`<line x1="${px(2 ** e * m2).toFixed(1)}" y1="${topY - 2}" x2="${px(2 ** e * m2).toFixed(1)}" y2="${axisY - 3}" stroke="#f0efe9" stroke-width="1"/>`);
-      }
       for (const [e, lab] of [[30, '1 GiB'], [33, '8 GiB'], [40, '1 TiB'], [43, '8 TiB']])
         B.push(`<text class="dims" x="${(px(2 ** e) + 3).toFixed(1)}" y="${axisY + 8}">${lab}</text>`);
       const pin = this._pinCfg;
@@ -2411,9 +2408,11 @@ export class Dsv3Layer extends HTMLElement {
           `${fac}${pin && fac ? ' vs pin' : ''}</text>`);
       }
       if (pin) B.push(`<text class="dims" x="${x0 + bw}" y="${axisY + 18}" text-anchor="end">pinned: ${pin.label}</text>`);
+      // the capacity label sits ON TOP, leaving the bottom axis to the
+      // power-of-two labels
       const cx2 = px(cap);
       B.push(`<line x1="${cx2.toFixed(1)}" y1="${topY - 3}" x2="${cx2.toFixed(1)}" y2="${axisY - 3}" stroke="#0b0b0b" stroke-width="1.2"/>` +
-        `<text class="dims" x="${cx2.toFixed(1)}" y="${axisY + 8}" text-anchor="middle">80 GiB (H100)</text>`);
+        `<text class="dims" x="${cx2.toFixed(1)}" y="9" text-anchor="middle">80 GiB (H100)</text>`);
       const HB = axisY + 22;   // the pinned-label line is always reserved (no reflow on pin)
       this._barHtml = `<svg width="${BAR_GEO.w}" height="${HB}" viewBox="0 0 ${BAR_GEO.w} ${HB}">${B.join('')}</svg>`;
     }
