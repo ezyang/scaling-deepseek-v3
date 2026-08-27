@@ -4,7 +4,8 @@ const layer = () => document.getElementById('local-diagram');
 T.check('exists', !!layer(), '');
 const dia = () => layer().querySelector('.lv-scroll svg');
 const dims = () => layer().querySelector('g[data-op="ffn_gate_up"] text.dims:not([text-anchor])')?.textContent.trim();
-const stps = () => [...layer().parentElement.querySelectorAll('.stp')];
+const stps = () => ['gpus', 'pp', 'sched', 'ep', 'zero']
+  .map(k => layer().parentElement.querySelector(`.stp[data-knob="${k}"]`));
 const stepBtn = (i, dir) => stps()[i].querySelectorAll('button')[dir < 0 ? 0 : 1];
 const stpVal = (i) => stps()[i].querySelector('select.v').value;
 const sels = () => [...layer().parentElement.querySelectorAll('select:not(.v)')];

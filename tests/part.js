@@ -18,7 +18,8 @@ const blue = [...layer().querySelectorAll('.lv-scroll rect[fill="#2a78d6"]')].le
 T.check('diagram squares only on expert ops', blue > 0 && blue < 8, blue);
 // save -> ghost is a dashed rect, not a tick line
 [...layer().querySelector('.savebox').querySelectorAll('button')].find(b => b.textContent === 'save').click(); await T.tick();
-const stps = () => [...layer().parentElement.querySelectorAll('.stp')];
+const stps = () => ['gpus', 'pp', 'sched', 'ep', 'zero']
+  .map(k => layer().parentElement.querySelector(`.stp[data-knob="${k}"]`));
 stps()[3].querySelectorAll('button')[0].click(); await T.tick(700);   // EP -
 T.check('dashed ghost bars render', [...chart().querySelectorAll('rect[stroke-dasharray="2 2"]')].length >= 2, [...chart().querySelectorAll('rect[stroke-dasharray="2 2"]')].length);
 T.check('no tick lines remain', ![...chart().querySelectorAll('line')].some(l2 => l2.getAttribute('stroke') === '#0b0b0b' && +l2.getAttribute('stroke-width') >= 1.4), '');

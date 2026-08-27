@@ -3,7 +3,8 @@
 // save; reset all is factory. Save box lives top right.
 const layer = () => document.getElementById('local-diagram');
 const barTxt = () => layer().querySelector('.lv-bar')?.textContent ?? '';
-const stps = () => [...layer().parentElement.querySelectorAll('.stp')];
+const stps = () => ['gpus', 'pp', 'sched', 'ep', 'zero']
+  .map(k => layer().parentElement.querySelector(`.stp[data-knob="${k}"]`));
 const stepBtn = (i, dir) => stps()[i].querySelectorAll('button')[dir < 0 ? 0 : 1];
 const box = () => layer().querySelector('.savebox');
 const btn = (t2) => [...box().querySelectorAll('button')].find(b => b.textContent === t2);

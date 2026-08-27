@@ -115,7 +115,7 @@ export class Dsv3AnatomyPlan extends HTMLElement {
     // dense-class — ZeRO-1 shards their optimizer states over the full DP group
     const EPn = l?.ep ?? 64, PPl = l?.pp ?? LOCAL_PAR.pp, Sg = l?.stage ?? 1;
     const DPn = (l?.world ?? LOCAL_PAR.world) / PPl, ZL = l?.zero ?? 1;
-    const stg = LOC ? ppStage(Sg, PPl, l?.sched) : null;
+    const stg = LOC ? ppStage(Sg, PPl, l?.vpp ?? 1, l?.fold) : null;
     const cbpp = (c, cls) => !LOC || ZL < c.zthresh ? c.bpp
       : c.bpp / (cls === 'e' ? DPn / EPn : DPn);
     const BPP = COMPS.reduce((t, c) => t + ((l?.[c.prop] ?? true) ? cbpp(c, 'd') : 0), 0);
@@ -186,7 +186,10 @@ export class Dsv3AnatomyPlan extends HTMLElement {
     // only, final norm + lm head on the last stage (or stage 0 too under
     // DualPipeV's fold), blocks per the layer split
     const onEmb = !LOC || !!stg.emb, onHead = !LOC || !!stg.head;
-    const headWhere = l?.sched === 'dpv' ? '(stage 0 only)' : '(last stage only)';
+    // where the head actually lives (chunk D−1's rank) — reflect with even
+    // VPP folds it back onto stage 0
+    const headWhere = LOC && (l?.fold ?? 'reflect') === 'reflect' && (l?.vpp ?? 1) % 2 === 0
+      ? '(stage 0 only)' : '(last stage only)';
     op('embedding', !onEmb ? '(stage 0 only)' : AV && !LB ? '(not counted)' : pw(E), 22, 'embed', onEmb ? E : 0);
     wire(24, `x · ${A.hidden}`);
     // cumulative: the expanded diagram already folds the ×N in, so the plan
@@ -237,7 +240,7 @@ export class Dsv3AnatomyPlan extends HTMLElement {
       };
       const rows = COMPS.map((c) => ({ prop: c.prop, color: c.color, name: META[c.prop][0], title: META[c.prop][1] }));
       if (CONS) rows.push({ prop: 'showActs', color: '#eda100',
-        name: LOC ? `activations (× ${inflightOf(l.sched ?? '1f1b', Sg, PPl)} mb)` : 'activations (×4096 tok)',
+        name: LOC ? `activations (× ${inflightOf(l.sched ?? '1f1b', Sg, PPl, l.vpp, l.fold)} mb)` : 'activations (×4096 tok)',
         title: 'saved for backward, bf16, 4096-token microbatches' });
       const vals = l._segTotals ?? [];
       lg = `<div class="anp-leg">` + rows.map((r, i) =>

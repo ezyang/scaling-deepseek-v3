@@ -40,21 +40,26 @@ export const BYTE_COMPS = [
 // the PP stages by a contiguous floor split: stage 0 gets the embedding (+
 // the dense blocks while they last), the last stage gets final norm + lm head.
 export const LOCAL_PAR = { world: 2048, pp: 16 };   // .pp = the default degree
-export const ppStage = (s, pp = LOCAL_PAR.pp, sched = '1f1b') => {
-  const seg = (i, n) => {
-    const lo = Math.floor(61 * i / n), hi = Math.floor(61 * (i + 1) / n);
+// virtual-stage placement: with VPP = vpp chunks per rank the chain is
+// vpp·pp virtual stages deep; 'wrap' places stage v on rank v mod pp
+// (Megatron interleaving), 'reflect' bounces each pass (ZB-V / DualPipeV:
+// rank 0 → pp−1 → 0 → …), so with even vpp the chain both starts AND ends
+// on rank 0. DualPipeV ≡ vpp 2 + reflect.
+export const vstagesOf = (r, pp, vpp = 1, fold = 'reflect') =>
+  Array.from({ length: vpp }, (_, c) =>
+    c * pp + (fold === 'reflect' && c % 2 ? pp - 1 - r : r));
+export const ppStage = (s, pp = LOCAL_PAR.pp, vpp = 1, fold = 'reflect') => {
+  const D = vpp * pp;
+  const seg = (i) => {
+    const lo = Math.floor(61 * i / D), hi = Math.floor(61 * (i + 1) / D);
     const dense = Math.max(0, Math.min(hi, 3) - Math.min(lo, 3));
     return { lo, hi, layers: hi - lo, dense, moe: hi - lo - dense };
   };
-  if (sched === 'dpv' && pp > 1) {
-    // DualPipeV: the V fold — rank s hosts chunks s and 2pp−1−s of a 2pp-chunk
-    // split (forward runs down the ranks then back up), so the embedding AND
-    // the lm head both live on rank 0 and the second segment is the tail chunk
-    const a = seg(s, 2 * pp), b = seg(2 * pp - 1 - s, 2 * pp);
-    return { lo: a.lo, hi: a.hi, lo2: b.lo, hi2: b.hi, layers: a.layers + b.layers,
-      dense: a.dense + b.dense, moe: a.moe + b.moe, emb: s === 0, head: s === 0 };
-  }
-  return { ...seg(s, pp), emb: s === 0, head: s === pp - 1 };
+  const vs = vstagesOf(s, pp, vpp, fold);
+  const segs = vs.map(seg);
+  const sum = (k) => segs.reduce((t, g) => t + g[k], 0);
+  return { segs, layers: sum('layers'), dense: sum('dense'), moe: sum('moe'),
+    emb: vs.includes(0), head: vs.includes(D - 1) };
 };
 
 // save-everything bf16 activation bytes for ONE layer × one 4096-token
@@ -62,16 +67,20 @@ export const ppStage = (s, pp = LOCAL_PAR.pp, sched = '1f1b') => {
 let ACT_LAYER_B = 0;
 export const actLayerBytes = () => ACT_LAYER_B ||=
   analyze(blockGraph('moe', DSV3, resolveMatmuls({ recipe: 'bf16' }), 4096), {}, false).savedBytes * 4096;
-// 1F1B steady state: stage s holds (pp − s) forward microbatches (warmup
-// depth, assuming ≥ pp microbatches per step); 'one' = a single microbatch.
-// DualPipeV: every rank holds a uniform 2pp+1 resident half-rank chunks
-// (its two hosted chunks sit at virtual depths that always sum to 2pp+1)
-// = pp + ½ microbatch-equivalents — 8.5 at PP8, between plain 1F1B's peak
-// (pp) and the DSv3 paper's coarse PP+1 bound.
-export const inflightOf = (sched, s, pp) =>
-  sched === 'one' ? 1
-    : sched === 'dpv' ? (pp === 1 ? 1 : pp + 0.5)
-      : pp - Math.min(s, pp - 1);
+// 1F1B admission per virtual stage: stage v of a D-deep chain holds D − v
+// forward chunk-stashes at steady state (warmup depth; assumes ≥ D
+// microbatches per step). A rank's residency in microbatch-equivalents is
+// the sum over its hosted virtual stages, ÷ vpp (each chunk is 1/vpp of the
+// rank's layers). vpp 1 → the plain 1F1B staircase pp − s; vpp 2 + reflect
+// (DualPipeV) → a UNIFORM pp + ½ on every rank (the two depths always sum
+// to 2pp+1 — 8.5 at PP8, vs the DSv3 paper's coarse PP+1 bound); wrap
+// (Megatron interleaving) concentrates at rank 0: pp(vpp+1)/2 − s.
+// 'one' = a single microbatch in flight.
+export const inflightOf = (sched, s, pp, vpp = 1, fold = 'reflect') => {
+  if (sched === 'one') return 1;
+  const D = vpp * pp, s2 = Math.min(s, pp - 1);
+  return vstagesOf(s2, pp, vpp, fold).reduce((t, v) => t + (D - v), 0) / vpp;
+};
 
 // fit-chart geometry (svg units): the log₂ axis spans 2^lo…2^hi over bw px
 const BAR_GEO = { w: 800, x0: 110, bw: 650, lo: 28, hi: 44 };   // 110px name gutter (values live at bar ends)
@@ -79,7 +88,7 @@ const BAR_GEO = { w: 800, x0: 110, bw: 650, lo: 28, hi: 44 };   // 110px name gu
 // the PP stage holding the most resident bytes under the local model (all
 // components on, vocab counted on the end stages, activations under the
 // schedule) — the default stage to show: the fully loaded rank.
-export const peakStage = (pp, ep, zero, world = LOCAL_PAR.world, sched = '1f1b') => {
+export const peakStage = (pp, ep, zero, world = LOCAL_PAR.world, sched = '1f1b', vpp = 1, fold = 'reflect') => {
   const dp = world / pp;
   const bpp = (cls) => BYTE_COMPS.reduce((t, c) =>
     t + (zero >= c.zthresh ? c.bpp / (cls === 'e' ? dp / ep : dp) : c.bpp), 0);
@@ -88,27 +97,26 @@ export const peakStage = (pp, ep, zero, world = LOCAL_PAR.world, sched = '1f1b')
   const mB = (PARAMS.moeBlock - moeExp) * bpp('d') + (moeExp / ep) * bpp('e');
   let best = 0, bestV = -1;
   for (let s2 = 0; s2 < pp; s2++) {
-    const g = ppStage(s2, pp, sched);
+    const g = ppStage(s2, pp, vpp, fold);
     const v = g.dense * dB + g.moe * mB
       + (((g.emb ? 1 : 0) + (g.head ? 1 : 0)) * PARAMS.embed * bpp('d'))
-      + g.layers * actLayerBytes() * inflightOf(sched, s2, pp);
+      + g.layers * actLayerBytes() * inflightOf(sched, s2, pp, vpp, fold);
     if (v > bestV) { bestV = v; best = s2; }
   }
   return best;
 };
 
 // compact stage-option label: '0: L0\u20132 \u00b7 3d+emb', '15: L57\u201360 \u00b7 head \u00b7 peak',
-// DualPipeV's two hosted chunks joined: '0: L0\u20132+L58\u201360 \u00b7 3d+emb+head \u00b7 peak'
+// a rank's hosted chunks joined: '0: L0\u20132+L58\u201360 \u00b7 3d+emb+head \u00b7 peak'
 // (l = the local-lens layer whose knobs pick the split)
 export const stageLabelOf = (o, l) => {
   const pp = l.pp ?? LOCAL_PAR.pp, world = l.world ?? LOCAL_PAR.world;
-  const g = ppStage(o, pp, l.sched);
-  const rng = (lo, hi) => lo >= hi ? '' : lo === hi - 1 ? `L${lo}` : `L${lo}\u2013${hi - 1}`;
-  const range = [rng(g.lo, g.hi), g.lo2 != null ? rng(g.lo2, g.hi2) : '']
-    .filter(Boolean).join('+') || '\u2014';
+  const g = ppStage(o, pp, l.vpp ?? 1, l.fold);
+  const rng = (s) => s.lo >= s.hi ? '' : s.lo === s.hi - 1 ? `L${s.lo}` : `L${s.lo}\u2013${s.hi - 1}`;
+  const range = g.segs.map(rng).filter(Boolean).join('+') || '\u2014';
   const tags = [g.dense ? `${g.dense}d` : '', g.emb ? 'emb' : '',
     g.head ? 'head' : ''].filter(Boolean).join('+');
-  const pk = o === peakStage(pp, l.ep, l.zero ?? 1, world, l.sched) ? ' \u00b7 peak' : '';
+  const pk = o === peakStage(pp, l.ep, l.zero ?? 1, world, l.sched, l.vpp ?? 1, l.fold) ? ' \u00b7 peak' : '';
   return `${o}: ${range}${tags ? ` \u00b7 ${tags}` : ''}${pk}`;
 };
 
@@ -715,10 +723,12 @@ export class Dsv3Layer extends HTMLElement {
     this.pp = st?.pp ?? LOCAL_PAR.pp;
     this.zero = st?.zero ?? (st?.zero1 === false ? 0 : 1);   // ZeRO level 0–3 (1 = DSv3)
     this.world = st?.world ?? LOCAL_PAR.world;               // cluster size (GPUs)
-    this.sched = st?.sched ?? '1f1b';                        // pipeline schedule for acts in flight ('1f1b' | 'one')
+    this.sched = st?.sched === 'dpv' ? '1f1b' : st?.sched ?? '1f1b';   // admission: '1f1b' | 'one' (a single microbatch)
+    this.vpp = st?.sched === 'dpv' ? 2 : st?.vpp ?? 1;       // virtual-pipeline degree (chunks per rank)
+    this.fold = st?.fold ?? 'reflect';                       // chunk placement: 'reflect' (V/DualPipeV) | 'wrap' (Megatron)
     // default to the PEAK stage — the fully loaded rank is the story; the
     // selector is there to peek at the lighter ones
-    this.stage = Math.min(st?.stage ?? peakStage(this.pp, this.ep, this.zero, this.world, this.sched), this.pp - 1);
+    this.stage = Math.min(st?.stage ?? peakStage(this.pp, this.ep, this.zero, this.world, this.sched, this.vpp, this.fold), this.pp - 1);
     // cumulative: every parameter parenthetical multiplies by the selected
     // kind's block count (×3 dense / ×58 MoE); the tabs hide — the kind then
     // comes from the plan selector alone
@@ -750,6 +760,7 @@ export class Dsv3Layer extends HTMLElement {
       showWeights: this.showWeights, showOptim: this.showOptim,
       showGrads: this.showGrads, showActs: this.showActs,
       ep: this.ep, stage: this.stage, pp: this.pp, zero: this.zero, world: this.world, sched: this.sched,
+      vpp: this.vpp, fold: this.fold,
     });
   }
   applyPreset(recipe, recompute, transposed = false) {
@@ -777,7 +788,7 @@ export class Dsv3Layer extends HTMLElement {
     const world = this.world ?? LOCAL_PAR.world;
     this.pp = v;
     this.ep = Math.min(this.ep, world / v);
-    this.stage = peakStage(v, this.ep, this.zero ?? 1, world, this.sched);   // stage indices don't survive a resplit — jump to the new peak
+    this.stage = peakStage(v, this.ep, this.zero ?? 1, world, this.sched, this.vpp, this.fold);   // stage indices don't survive a resplit — jump to the new peak
   }
   // ---- local-lens knob tween: EVERY knob change (EP/PP/stage/ZeRO/×N) pours
   // squares between the old and new configuration, per-block-tween style.
@@ -833,14 +844,14 @@ export class Dsv3Layer extends HTMLElement {
   _snapLocal() {
     return { ep: this.ep, pp: this.pp, stage: this.stage,
       zero: this.zero ?? 1, world: this.world ?? LOCAL_PAR.world,
-      sched: this.sched ?? '1f1b', cum: !!this.cumulative,
+      sched: this.sched ?? '1f1b', vpp: this.vpp ?? 1, fold: this.fold ?? 'reflect', cum: !!this.cumulative,
       // the pre-change analysis: stash-affecting knobs (precision, marks,
       // fp8ᵀ) lerp chip squares and the acts bar between old and new bytes
       saved: this._anaMemo?.ana?.savedBytes, anaPrev: this._anaMemo?.ana };
   }
   _tweenLocal(prev) {
     this.changed(true);
-    const kindOf = (S) => ppStage(Math.min(S.stage, S.pp - 1), S.pp, S.sched).moe ? 'moe' : 'dense';
+    const kindOf = (S) => ppStage(Math.min(S.stage, S.pp - 1), S.pp, S.vpp, S.fold).moe ? 'moe' : 'dense';
     if (kindOf(prev) !== kindOf(this._snapLocal())) { this.render(); return; }
     this._frames((t) => { this._vtween = { t, prev }; }, () => { this._vtween = undefined; });
   }
@@ -849,7 +860,7 @@ export class Dsv3Layer extends HTMLElement {
     // local lens: the kind follows the selected PP stage (stage 0 holds the
     // 3 dense blocks; every other stage holds only MoE blocks)
     if (this.hasAttribute('local') && this.getAttribute('lens') === 'param-bytes')
-      this.kind = ppStage(this.stage ?? 1, this.pp, this.sched).moe ? 'moe' : 'dense';
+      this.kind = ppStage(this.stage ?? 1, this.pp, this.vpp, this.fold).moe ? 'moe' : 'dense';
     const style = document.createElement('style'); style.textContent = LAYER_CSS;
     const root = el('div', 'lv');
     // progressive disclosure: controls="static|marks|dtype|full" gates which
@@ -965,7 +976,7 @@ export class Dsv3Layer extends HTMLElement {
       // one GPU" view: PP1, EP1, ZeRO off (recipe/recompute reset to the
       // instance attrs above: bf16, none)
       this.ep = 1; this.pp = 1; this.world = LOCAL_PAR.world;
-      this.zero = 0; this.sched = '1f1b';
+      this.zero = 0; this.sched = '1f1b'; this.vpp = 1; this.fold = 'reflect';
       this.stage = 0;
       this.showWeights = this.showGrads = this.showOptim = this.showActs = true;
       this.partSel = null;
@@ -985,8 +996,8 @@ export class Dsv3Layer extends HTMLElement {
     if (this._ctl.dtype) head.append(tl);
     // local: the multiplier is the stage's block count, not the whole model's
     const KBLK = this.hasAttribute('local') && this.getAttribute('lens') === 'param-bytes'
-      ? (this.kind === 'dense' ? ppStage(this.stage ?? 1, this.pp, this.sched).dense
-        : ppStage(this.stage ?? 1, this.pp, this.sched).moe)
+      ? (this.kind === 'dense' ? ppStage(this.stage ?? 1, this.pp, this.vpp, this.fold).dense
+        : ppStage(this.stage ?? 1, this.pp, this.vpp, this.fold).moe)
       : this.kind === 'dense' ? (DSV3.denseLayers ?? 3) : DSV3.layers - (DSV3.denseLayers ?? 3);
     const mkCumBtn = () => {
       const b = document.createElement('button');
@@ -1115,14 +1126,15 @@ export class Dsv3Layer extends HTMLElement {
         };
         const row2 = (...kids) => { const d = el('div', 'parrow'); d.append(...kids); return d; };
         const txt2 = (t3) => { const sp = el('span'); sp.style.cssText = 'color:#52514e;font-size:11px;'; sp.textContent = t3; return sp; };
+        const knob = (n, e2) => { e2.dataset.knob = n; return e2; };
         const gCluster = grp2('cluster');
-        gCluster.append(row2(txt2('GPUs'), mkStep(() => world,
+        gCluster.append(row2(txt2('GPUs'), knob('gpus', mkStep(() => world,
           (v) => { this.world = v; this.ep = Math.min(this.ep, v / this.pp); },
-          String, 16384, [128, 256, 512, 1024, 2048, 4096, 8192, 16384], 128)));
+          String, 16384, [128, 256, 512, 1024, 2048, 4096, 8192, 16384], 128))));
         const gPipe = grp2('pipeline');
         gPipe.append(
-          row2(txt2('PP'), mkStep(() => this.pp, (v) => this._setPP(v), String, 64),
-            txt2('stage'), mkSel([...Array(pp).keys()], this.stage, stageLabel, (v) => { this.stage = v; })));
+          row2(txt2('PP'), knob('pp', mkStep(() => this.pp, (v) => this._setPP(v), String, 64)),
+            txt2('stage'), knob('stage', mkSel([...Array(pp).keys()], this.stage, stageLabel, (v) => { this.stage = v; }))));
         const gMesh = grp2('SPMD mesh');
         const txtR = (t3) => {   // right-aligned row labels, so the mesh rows line up
           const sp = txt2(t3);
@@ -1131,11 +1143,11 @@ export class Dsv3Layer extends HTMLElement {
         };
         gMesh.append(
           row2(txtR('non-expert:'), txt2(`DP ${world / pp}`)),
-          row2(txtR('expert:'), txt2('EP'), mkStep(() => this.ep, (v) => { this.ep = v; }, String, epMax),
+          row2(txtR('expert:'), txt2('EP'), knob('ep', mkStep(() => this.ep, (v) => { this.ep = v; }, String, epMax)),
             txt2(`× EDP ${world / pp / this.ep}`)));
         // ZeRO-(off|1|2|3): a segmented level picker (1 shards optimizer,
         // 2 + gradients, 3 + weights — each over its replication group)
-        const zw = el('span', 'stp');
+        const zw = el('span', 'stp'); zw.dataset.knob = 'zero';
         for (const [i, lv] of [[0, 'off'], [1, '1'], [2, '2'], [3, '3']]) {
           const b = document.createElement('button');
           b.textContent = lv; b.type = 'button';
@@ -1146,22 +1158,31 @@ export class Dsv3Layer extends HTMLElement {
           };
           zw.append(b);
         }
-        // pipeline schedule for activations in flight: 1F1B steady state
-        // (stage s holds PP−s microbatches), DualPipeV (uniform PP+½, the V
-        // fold — embed AND head on rank 0), or a single microbatch — the
-        // schedule is an assumption worth breaking open, so it's a knob
-        const sw2 = el('span', 'stp');
-        for (const [k, lab] of [['1f1b', '1F1B'], ['dpv', 'DPV'], ['one', '×1 mb']]) {
-          const b = document.createElement('button');
-          b.textContent = lab; b.type = 'button';
-          if ((this.sched ?? '1f1b') === k) b.classList.add('on');
-          b.onclick = () => {
-            if ((this.sched ?? '1f1b') === k) return;
-            const prev = this._snapLocal(); this.sched = k; this._tweenLocal(prev);
-          };
-          sw2.append(b);
-        }
-        gPipe.append(row2(txt2('sched'), sw2));
+        // the schedule, decomposed: admission (1F1B steady state vs a single
+        // microbatch), VPP degree (chunks per rank), and chunk placement —
+        // reflect (the V: ZB-V/DualPipeV) vs wrap (Megatron interleaving).
+        // DualPipeV ≡ VPP2 + reflect: uniform PP+½ in flight, emb+head on
+        // rank 0. The schedule is an assumption worth breaking open.
+        const seg2 = (opts, get, set) => {
+          const w2 = el('span', 'stp');
+          for (const [k, lab] of opts) {
+            const b = document.createElement('button');
+            b.textContent = lab; b.type = 'button';
+            if (get() === k) b.classList.add('on');
+            else b.onclick = () => { const prev = this._snapLocal(); set(k); this._tweenLocal(prev); };
+            w2.append(b);
+          }
+          return w2;
+        };
+        const sw2 = knob('sched', seg2([['1f1b', '1F1B'], ['one', '×1 mb']],
+          () => this.sched ?? '1f1b', (k) => { this.sched = k; }));
+        const vw2 = knob('vpp', mkStep(() => this.vpp ?? 1,
+          (v) => { this.vpp = v; this.stage = peakStage(this.pp, this.ep, this.zero ?? 1, world, this.sched, v, this.fold); },
+          String, 4, [1, 2, 4]));
+        const fw2 = knob('fold', seg2([['wrap', 'wrap'], ['reflect', 'V']],
+          () => this.fold ?? 'reflect',
+          (k) => { this.fold = k; this.stage = peakStage(this.pp, this.ep, this.zero ?? 1, world, this.sched, this.vpp ?? 1, k); }));
+        gPipe.append(row2(txt2('sched'), sw2, txt2('VPP'), vw2, fw2));
         const gZ = grp2('ZeRO');
         gZ.classList.add('center');   // spans the mesh rows, like PP: it applies universally
         gZ.append(row2(zw));
@@ -1203,7 +1224,7 @@ export class Dsv3Layer extends HTMLElement {
           const comps2 = cons2 ? BYTE_COMPS : [BYTE_COMPS[0], BYTE_COMPS[2]];
           leg.append(...comps2.map((c) => cb(c.label, c.color, c.prop)));
           if (cons2) leg.append(cb(this.hasAttribute('local')
-            ? `saved activations (bf16, ×4096 tok × ${inflightOf(this.sched ?? '1f1b', this.stage ?? 1, this.pp ?? LOCAL_PAR.pp)} in flight)`
+            ? `saved activations (bf16, ×4096 tok × ${inflightOf(this.sched ?? '1f1b', this.stage ?? 1, this.pp ?? LOCAL_PAR.pp, this.vpp, this.fold)} in flight)`
             : 'saved activations (bf16, ×4096 tokens)', '#eda100', 'showActs'));
           const u = el('span');
           u.style.cssText = 'display:inline-flex;align-items:center;gap:3px;';   // swatch centers regardless of baseline
@@ -1235,11 +1256,12 @@ export class Dsv3Layer extends HTMLElement {
             parts: (this._segParts ?? []).map((p2) => [...p2]),
             scalars: { ...(this._scalars ?? {}) },
             state: { ep: this.ep, pp: this.pp, stage: this.stage, world: this.world,
-              zero: this.zero, sched: this.sched, cumulative: this.cumulative, partSel: this.partSel ?? null,
+              zero: this.zero, sched: this.sched, vpp: this.vpp, fold: this.fold,
+              cumulative: this.cumulative, partSel: this.partSel ?? null,
               showWeights: this.showWeights, showGrads: this.showGrads,
               showOptim: this.showOptim, showActs: this.showActs,
               transposed: this.transposed, marks: { ...this.marks }, matmuls: { ...this.matmuls } },
-            label: `EP${this.ep}·PP${this.pp}·stage ${this.stage}·ZeRO-${this.zero ? this.zero : 'off'}·${this.sched === 'one' ? '×1mb' : '1F1B'}·${this.world} GPUs`,
+            label: `EP${this.ep}·PP${this.pp}${(this.vpp ?? 1) > 1 ? `·VPP${this.vpp}${this.fold === 'wrap' ? 'w' : 'V'}` : ''}·stage ${this.stage}·ZeRO-${this.zero ? this.zero : 'off'}·${this.sched === 'one' ? '×1mb' : '1F1B'}·${this.world} GPUs`,
           };
           this.render();
         }));
@@ -1439,18 +1461,19 @@ export class Dsv3Layer extends HTMLElement {
     const DPn = WORLD / PPn;
     const EDP = WORLD / PPn / EPn;                           // expert-DP (EP=1: = DP — no expert parallelism)
     const SCHED = this.sched ?? '1f1b';
-    const stg = ppStage(STG, PPn, SCHED);
+    const VPPn = this.vpp ?? 1, FOLD = this.fold ?? 'reflect';
+    const stg = ppStage(STG, PPn, VPPn, FOLD);
     // knob tween (local): squares pour between the OLD and NEW configuration —
     // each component's effective factor (bytes/param × EP share × stage ×N)
     // lerps with this._vtween.t; numbers snap to the new config
-    const IFN = inflightOf(SCHED, STG, PPn);                 // microbatches in flight on this stage
-    const Snow = { ep: EPn, pp: PPn, stage: STG, zero: ZL, world: WORLD, sched: SCHED, cum: !!this.cumulative };
+    const IFN = inflightOf(SCHED, STG, PPn, VPPn, FOLD);     // microbatches in flight on this stage
+    const Snow = { ep: EPn, pp: PPn, stage: STG, zero: ZL, world: WORLD, sched: SCHED, vpp: VPPn, fold: FOLD, cum: !!this.cumulative };
     const dLoc = (S) => {
-      const g = ppStage(Math.min(S.stage, S.pp - 1), S.pp, S.sched);
+      const g = ppStage(Math.min(S.stage, S.pp - 1), S.pp, S.vpp, S.fold);
       const kmul = this.kind === 'dense' ? g.dense : g.moe;
       const dp = (S.world ?? LOCAL_PAR.world) / S.pp;
       return { mult: S.cum ? kmul : 1, eFrac: 1 / S.ep,
-        acts: (S.cum ? kmul : 1) * inflightOf(S.sched ?? '1f1b', S.stage, S.pp),
+        acts: (S.cum ? kmul : 1) * inflightOf(S.sched ?? '1f1b', S.stage, S.pp, S.vpp, S.fold),
         bpp: (c, cls) => (S.zero ?? 1) >= c.zthresh ? c.bpp / (cls === 'e' ? dp / S.ep : dp) : c.bpp };
     };
     const fEff = (c, cls, S) => {
@@ -2390,7 +2413,7 @@ export class Dsv3Layer extends HTMLElement {
       const cap = 80 * 2 ** 30;
       const moeExp = PARAMS.expert * DSV3.routedExperts;
       const stageParts = (S) => {   // this rank's params by class: experts / non-expert blocks / vocab
-        const g = ppStage(Math.min(S.stage, S.pp - 1), S.pp, S.sched);
+        const g = ppStage(Math.min(S.stage, S.pp - 1), S.pp, S.vpp, S.fold);
         return {
           e: g.moe * moeExp / S.ep,
           d: g.dense * PARAMS.denseBlock + g.moe * (PARAMS.moeBlock - moeExp),
@@ -2410,7 +2433,7 @@ export class Dsv3Layer extends HTMLElement {
       const segB = (S) => {
         const q = stageParts(S);
         return COMPS.map((c) => (q.d + q.v) * shardOf(S, c, 'd') + q.e * shardOf(S, c, 'e'))
-          .concat([(S.saved ?? ana.savedBytes) * 4096 * q.layers * inflightOf(S.sched ?? '1f1b', S.stage, S.pp)]);
+          .concat([(S.saved ?? ana.savedBytes) * 4096 * q.layers * inflightOf(S.sched ?? '1f1b', S.stage, S.pp, S.vpp, S.fold)]);
       };
       this._segParts = partsFor(Snow);
       const V = this._vtween;
@@ -2439,7 +2462,7 @@ export class Dsv3Layer extends HTMLElement {
       const { x0, bw, lo: LO, hi: HI } = BAR_GEO;   // 256 MiB … 16 TiB, 16 doublings
       const rowH = 12, barH = 8, topY = 14;
       const px = (b) => x0 + Math.max(0, Math.min(1, (Math.log2(Math.max(b, 1)) - LO) / (HI - LO))) * bw;
-      const IF2 = inflightOf(SCHED, STG, PPn);
+      const IF2 = inflightOf(SCHED, STG, PPn, VPPn, FOLD);
       const names = ['weights', 'gradients (fp32)', 'optimizer states', `activations ×${IF2}mb`];
       const rowsB = [
         ...segs.map((b, i) => ({ b, color: colors[i], on: onB[i], name: names[i],
@@ -2730,7 +2753,7 @@ class Dsv3PpSchedule extends HTMLElement {
   // powers of two, stage select with layer-assignment labels, 1F1B/×1 mb
   // segments) — changes drive the LAYER (l.setLocal), and the layer's
   // 'recipe' event circles back to redraw both widgets in sync.
-  controls(pp, sched, stage) {
+  controls(pp, sched, stage, vpp, fold) {
     const l = this._layer;
     this._ctl.innerHTML = '';
     if (!l) return;
@@ -2738,30 +2761,47 @@ class Dsv3PpSchedule extends HTMLElement {
     const lab = el('div', 'parlab'); lab.textContent = 'pipeline'; g.append(lab);
     const row = (...kids) => { const d = el('div', 'parrow'); d.append(...kids); return d; };
     const txt = (t) => { const sp = el('span'); sp.style.cssText = 'color:#52514e;font-size:11px;'; sp.textContent = t; return sp; };
-    const stp = el('span', 'stp');
-    const val = document.createElement('select'); val.className = 'v';
-    for (const o of [1, 2, 4, 8, 16, 32, 64]) val.append(new Option(o, o));
-    val.value = String(pp);
-    val.onchange = () => l.setLocal(() => l._setPP(+val.value));
-    const btn = (t, v, dis) => {
-      const b = document.createElement('button');
-      b.textContent = t; b.type = 'button'; b.disabled = dis;
-      b.onclick = () => l.setLocal(() => l._setPP(v));
-      return b;
+    const mkstp = (opts, cur, set, max = Infinity) => {
+      const w2 = el('span', 'stp');
+      const val = document.createElement('select'); val.className = 'v';
+      for (const o of opts.filter((o) => o <= max)) val.append(new Option(o, o));
+      val.value = String(cur);
+      val.onchange = () => set(+val.value);
+      const i = opts.indexOf(cur);
+      const btn = (t, j) => {
+        const b = document.createElement('button');
+        b.textContent = t; b.type = 'button';
+        b.disabled = j < 0 || j >= opts.length || opts[j] > max;
+        if (!b.disabled) b.onclick = () => set(opts[j]);
+        return b;
+      };
+      w2.append(btn('−', i - 1), val, btn('+', i + 1));
+      return w2;
     };
-    stp.append(btn('−', pp / 2, pp <= 1), val, btn('+', pp * 2, pp >= 64));
+    const stp = mkstp([1, 2, 4, 8, 16, 32, 64], pp, (v) => l.setLocal(() => l._setPP(v)));
     const ssel = document.createElement('select');
     for (const o of [...Array(pp).keys()]) ssel.append(new Option(stageLabelOf(o, l), o));
     ssel.value = String(stage);
     ssel.onchange = () => l.setLocal(() => { l.stage = +ssel.value; });
-    const sw = el('span', 'stp');
-    for (const [k, t] of [['1f1b', '1F1B'], ['dpv', 'DPV'], ['one', '×1 mb']]) {
-      const b = document.createElement('button');
-      b.textContent = t; b.type = 'button';
-      if (sched === k) b.classList.add('on');
-      else b.onclick = () => l.setLocal(() => { l.sched = k; });
-      sw.append(b);
-    }
+    const seg = (opts, cur, set) => {
+      const w2 = el('span', 'stp');
+      for (const [k, t] of opts) {
+        const b = document.createElement('button');
+        b.textContent = t; b.type = 'button';
+        if (cur === k) b.classList.add('on');
+        else b.onclick = () => set(k);
+        w2.append(b);
+      }
+      return w2;
+    };
+    const world = l.world ?? LOCAL_PAR.world;
+    const sw = seg([['1f1b', '1F1B'], ['one', '×1 mb']], sched, (k) => l.setLocal(() => { l.sched = k; }));
+    const vw = mkstp([1, 2, 4], vpp, (v) => l.setLocal(() => {
+      l.vpp = v; l.stage = peakStage(l.pp, l.ep, l.zero ?? 1, world, l.sched, v, l.fold);
+    }));
+    const fw = seg([['wrap', 'wrap'], ['reflect', 'V']], fold, (k) => l.setLocal(() => {
+      l.fold = k; l.stage = peakStage(l.pp, l.ep, l.zero ?? 1, world, l.sched, l.vpp ?? 1, k);
+    }));
     // microbatches DRAWN — a strip-local knob (the memory model needs no m;
     // its 1F1B law assumes m ≥ pp): a real step's worth by default, 'auto'
     // = just enough to reach steady state (depth + 4)
@@ -2771,7 +2811,10 @@ class Dsv3PpSchedule extends HTMLElement {
     for (const o of ['auto', 4, 8, 16, 32, 64, 128]) msel.append(new Option(o, o));
     msel.value = String(this._m);
     msel.onchange = () => { this._m = msel.value === 'auto' ? 'auto' : +msel.value; this._sig = ''; this.sync(); };
-    g.append(row(txt('PP'), stp, txt('stage'), ssel), row(txt('sched'), sw, txt('mb'), msel));
+    for (const [n, e2] of [['pp', stp], ['stage', ssel], ['sched', sw], ['vpp', vw], ['fold', fw], ['mb', msel]])
+      e2.dataset.knob = n;
+    g.append(row(txt('PP'), stp, txt('stage'), ssel),
+      row(txt('sched'), sw, txt('VPP'), vw, fw, txt('mb'), msel));
     this._ctl.append(g);
   }
   cfg() {
@@ -2780,17 +2823,19 @@ class Dsv3PpSchedule extends HTMLElement {
       pp: l?.pp ?? +(this.getAttribute('pp') ?? LOCAL_PAR.pp),
       sched: l?.sched ?? (this.getAttribute('sched') ?? '1f1b'),
       stage: l?.stage ?? +(this.getAttribute('stage') ?? 0),
+      vpp: l?.vpp ?? +(this.getAttribute('vpp') ?? 1),
+      fold: l?.fold ?? (this.getAttribute('fold') ?? 'reflect'),
     };
   }
   sync() {
-    const { pp, sched, stage } = this.cfg();
-    const sig = `${pp}|${sched}|${stage}|${this._m}`;
+    const { pp, sched, stage, vpp, fold } = this.cfg();
+    const sig = `${pp}|${sched}|${stage}|${vpp}|${fold}|${this._m}`;
     if (sig === this._sig) return;   // the layer's tween fires 'recipe' every frame
     const grew = this._sig.split('|').slice(0, 2).join('|') !== `${pp}|${sched}`;
     const prevH = this._sig && grew ? this._scr.getBoundingClientRect().height : 0;
     this._sig = sig;
-    this.controls(pp, sched, stage);
-    this.draw(pp, sched, stage);
+    this.controls(pp, sched, stage, vpp, fold);
+    this.draw(pp, sched, stage, vpp, fold);
     if (prevH) {   // animate the reflow: same deterministic 12-frame ease-out
       const target = this._scr.scrollHeight;
       const FR = 12; let f = 0;
@@ -2805,17 +2850,15 @@ class Dsv3PpSchedule extends HTMLElement {
       setTimeout(step, 16);
     }
   }
-  draw(pp, sched, stage) {
-    // one chain of VIRTUAL stages with 1F1B admission per stage: depth pp
-    // (plain 1F1B / ×1 mb), or 2pp for DualPipeV's V fold, where virtual
-    // stage v lives on physical rank min(v, 2pp−1−v) — each rank hosts a
-    // down-pass chunk and an up-pass chunk and runs one op at a time (the
-    // official DualPipeV overlaps F+B blocks; this greedy interleave doesn't,
-    // but the residency it draws is the modeled 2pp+1 half-rank chunks).
+  draw(pp, sched, stage, vpp = 1, fold = 'reflect') {
+    // one chain of VIRTUAL stages with 1F1B admission per stage, vpp·pp deep;
+    // placement per vstagesOf (wrap = Megatron interleaving, reflect = the
+    // V/DualPipeV zigzag). Each rank interleaves its chunk queues greedily,
+    // one op at a time (the official DualPipeV also overlaps F+B blocks;
+    // this doesn't — but the residency it draws IS the modeled law).
     // F_mb@v waits on F_mb@(v−1); B_mb@v on B_mb@(v+1), or its own forward
     // on the deepest stage. Durations: F = 1 slot, B = 2 (~2× the FLOPs).
-    const DPV = sched === 'dpv' && pp > 1;
-    const D = DPV ? 2 * pp : pp;
+    const D = vpp * pp;
     const m = sched === 'one' ? 1 : this._m === 'auto' ? D + 4 : this._m;
     const qs = Array.from({ length: D }, (_, v) => {
       const wu = Math.min(D - 1 - v, m); const items = [];
@@ -2826,7 +2869,7 @@ class Dsv3PpSchedule extends HTMLElement {
     });
     const done = new Map(); const cells = [];
     const rankT = Array(pp).fill(0);
-    const stagesOf = Array.from({ length: pp }, (_, r) => DPV ? [r, 2 * pp - 1 - r] : [r]);
+    const stagesOf = Array.from({ length: pp }, (_, r) => vstagesOf(r, pp, vpp, fold));
     let progress = true;
     while (progress) {
       progress = false;
@@ -2849,7 +2892,7 @@ class Dsv3PpSchedule extends HTMLElement {
         }
         if (!best) continue;
         const t0 = best.ready, t1 = t0 + (best.ph === 'F' ? 1 : 2);
-        cells.push({ s: r, v: best.v, mb: best.mb, ph: best.ph, chunk: best.v >= pp && DPV ? 1 : 0, t0, t1 });
+        cells.push({ s: r, v: best.v, mb: best.mb, ph: best.ph, chunk: Math.floor(best.v / pp), t0, t1 });
         done.set(`${best.ph}${best.mb}@${best.v}`, t1);
         rankT[r] = t1; best.q.i++; progress = true;
       }
@@ -2862,10 +2905,13 @@ class Dsv3PpSchedule extends HTMLElement {
     if (pp > 1) P.push(`<rect class="stghl" x="0" y="${rowY(stage)}" width="${W}" height="${RH}" fill="#fff3d1"/>`);
     for (let s = 0; s < pp; s++)
       P.push(`<text x="${GUT - 6}" y="${rowY(s) + RH - 4}" text-anchor="end" font-size="9.5" fill="${s === stage ? '#0b0b0b' : '#898781'}">s${s}</text>`);
-    // chunk 1 (DualPipeV's up pass) wears deeper shades of the same hues
+    // later chunks wear progressively deeper shades of the same hues
+    // (VPP2 reflect: light down pass, dark up pass)
     const STY = {
-      F: [['#fdeab5', '#eda100', '#7a5200'], ['#f6cd74', '#c98800', '#5c3d00']],
-      B: [['#fbd4c0', '#eb6834', '#7a2f12'], ['#f3ac8b', '#c74e1d', '#5c2410']],
+      F: [['#fdeab5', '#eda100', '#7a5200'], ['#f6cd74', '#c98800', '#5c3d00'],
+        ['#eab04a', '#a86e00', '#4a3000'], ['#d69432', '#875600', '#3a2500']],
+      B: [['#fbd4c0', '#eb6834', '#7a2f12'], ['#f3ac8b', '#c74e1d', '#5c2410'],
+        ['#e58a63', '#a63c12', '#471b09'], ['#d16b42', '#88300c', '#361406']],
     };
     for (const c of cells) {
       const [fill, stroke, ink] = STY[c.ph][c.chunk];
@@ -2876,11 +2922,15 @@ class Dsv3PpSchedule extends HTMLElement {
     }
     P.push('</svg>');
     const ppTag = this._layer ? '' : `PP${pp} · `;   // the knob group already names PP
+    const vppTag = vpp > 1
+      ? `VPP${vpp} ${fold === 'wrap' ? 'wrap (Megatron interleaving)' : `reflect${vpp === 2 ? ' — DualPipeV' : ''}`}`
+        + ` · each rank runs ${vpp} chunks, later passes darker`
+        + (fold === 'reflect' ? '. Chunks scheduled 1F1B (DualPipeV proper also overlaps F+B)' : '')
+      : '';
     this._hd.textContent = sched === 'one'
       ? `${ppTag}one microbatch at a time — an F wave down the stages, then a B wave back up`
-      : DPV
-        ? `${ppTag}DualPipeV · ${m} microbatches shown — each rank runs its down-pass chunk (light) and `
-          + `up-pass chunk (dark); F = one slot, B = two. Chunks scheduled 1F1B (the real schedule also overlaps F+B)`
+      : vpp > 1
+        ? `${ppTag}${m} microbatches shown · ${vppTag}`
         : `${ppTag}1F1B · ${m} microbatches shown — F = forward (one slot), B = backward (two: ~2× the FLOPs)`;
     this._scr.innerHTML = P.join('');
   }

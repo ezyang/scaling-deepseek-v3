@@ -12,7 +12,8 @@ T.check('no vocab sub-bar on a mid stage', !txt().includes('· vocab'), '');
 // pin, then EP 64->32: ONLY the experts sub-bar gets a red x2 badge
 const saveBtn = [...layer().querySelector('.savebox').querySelectorAll('button')].find(b => b.textContent === 'save');
 saveBtn.click(); await T.tick();
-const stps = () => [...layer().parentElement.querySelectorAll('.stp')];
+const stps = () => ['gpus', 'pp', 'sched', 'ep', 'zero']
+  .map(k => layer().parentElement.querySelector(`.stp[data-knob="${k}"]`));
 stps()[3].querySelectorAll('button')[0].click(); await T.tick(700);   // EP -
 const badges = [...chart().querySelectorAll('tspan[fill="#d03b3b"]')].map(t => t.textContent.trim());
 T.log('red badges', JSON.stringify(badges));

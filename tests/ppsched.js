@@ -3,7 +3,8 @@
 const w = () => document.querySelector('dsv3-pp-schedule');
 const l = () => document.getElementById('local-diagram');
 const cells = (ph) => [...w().querySelectorAll(`rect[data-cell^="${ph}"]`)];
-const stps = () => [...l().parentElement.querySelectorAll('.stp')];
+const stps = () => ['gpus', 'pp', 'sched', 'ep', 'zero']
+  .map(k => l().parentElement.querySelector(`.stp[data-knob="${k}"]`));
 
 // pin the drawn-microbatch knob to 'auto' (= depth+4, steady state reached)
 {
