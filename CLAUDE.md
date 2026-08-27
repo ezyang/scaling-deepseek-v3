@@ -26,9 +26,13 @@ generality.
   exact-asserted against the published checkpoint.
 - `node scripts/diagramlint.mjs` — geometric grammar (arrowheads/text/wires)
   plus placeholder-height drift across a widget matrix.
+- `node scripts/battery.mjs [filter…]` — the whole battery (sanity +
+  diagramlint + every scenario in tests/) in parallel, ~20 s. Run this one.
 - `node scripts/interact.mjs <page> <scenario.js>` — sequenced
   click/hover/assert scenarios in headless Chrome. Prefer interaction tests
-  over static screenshots; invest in test affordances freely.
+  over static screenshots; invest in test affordances freely. Durable
+  scenarios live in tests/ with a `// @page <path>` header (optional
+  `// @args --width N`); one-off debug probes stay in /tmp.
 - Verify pages in headless Chrome (`node --check` misses browser-only
   errors). Every widget instance on a real page carries a measured
   `min-height` placeholder; the linter reports the value to paste.
