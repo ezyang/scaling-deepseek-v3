@@ -876,19 +876,38 @@ export class Dsv3Layer extends HTMLElement {
   // ---- local-lens knob tween: EVERY knob change (EP/PP/stage/ZeRO/×N) pours
   // squares between the old and new configuration, per-block-tween style.
   // Numbers snap; a change that flips the kind snaps (different layout).
-  // toggle a byte component (either legend): squares pour in/out
-  toggleComp(prop, on) {
-    this[prop] = on;
+  // tween a set of byte-component visibility changes: squares pour in/out
+  _compTween(props) {
     const FRAMES = 12; let f = 0;             // ~200 ms, deterministic
-    this._ctween = { prop, t: 0 };
+    this._ctween = { props, t: 0 };
     const step = () => {
       f++; const p = Math.min(1, f / FRAMES);
-      this._ctween = { prop, t: 1 - (1 - p) * (1 - p) };   // ease-out
+      this._ctween = { props, t: 1 - (1 - p) * (1 - p) };   // ease-out
       this.render(); this.changed(false);     // plan strips tween along
       if (p < 1) setTimeout(step, 16);
       else { this._ctween = undefined; this.render(); this.changed(true); }
     };
     setTimeout(step, 16);
+  }
+  toggleComp(prop, on) {
+    this[prop] = on;
+    this._compTween(new Set([prop]));
+  }
+  // legend clicks SOLO a component (the useful filter: "show me only the
+  // weights"); soloing the already-solo component brings everything back
+  _compProps() {
+    const cons = this.hasAttribute('consolidated') || this.hasAttribute('local');
+    return cons ? ['showWeights', 'showGrads', 'showOptim', 'showActs'] : ['showWeights', 'showOptim'];
+  }
+  soloComp(prop) {
+    const props = this._compProps();
+    const already = this[prop] && props.every((p2) => p2 === prop || !this[p2]);
+    const changed = new Set();
+    for (const p2 of props) {
+      const want = already ? true : p2 === prop;
+      if (this[p2] !== want) { this[p2] = want; changed.add(p2); }
+    }
+    if (changed.size) this._compTween(changed);
   }
   _snapLocal() {
     return { ep: this.ep, pp: this.pp, stage: this.stage,
@@ -1273,6 +1292,7 @@ export class Dsv3Layer extends HTMLElement {
         mini2.append(mkBtn('pin baseline', 'snapshot this config: the chart gains ticks and ×N/÷N factors vs it', () => {
           this._pinCfg = {
             segs: [...(this._segTotals ?? [])],
+            scalars: { ...(this._scalars ?? {}) },
             label: `EP${this.ep}·PP${this.pp}·stage ${this.stage}·ZeRO-${this.zero ? this.zero : 'off'}·${this.sched === 'one' ? '×1mb' : '1F1B'}·${this.world} GPUs`,
           };
           this.render();
@@ -1332,7 +1352,12 @@ export class Dsv3Layer extends HTMLElement {
       };
       barSlot.onmousedown = (ev) => {
         const tog = ev.target.closest?.('[data-prop]');
-        if (tog) { this.toggleComp(tog.dataset.prop, !this[tog.dataset.prop]); return; }
+        if (tog) { this.soloComp(tog.dataset.prop); return; }
+        {   // the cursor arms only inside the bars, not the label gutter
+          const r0 = svgEl2.getBoundingClientRect();
+          const raw = (ev.clientX - r0.left) / r0.width * BAR_GEO.w;
+          if (raw < BAR_GEO.x0 || raw > BAR_GEO.x0 + BAR_GEO.bw) return;
+        }
         const u0 = toU(ev);
         const C = this._cursor;
         if (C && u0 >= Math.min(C.a, C.b) - 4 && u0 <= Math.max(C.a, C.b) + 4) {   // click it to clear
@@ -1482,10 +1507,23 @@ export class Dsv3Layer extends HTMLElement {
       const aN = dLoc(Snow).acts, V = this._vtween;
       return V ? dLoc(V.prev).acts + (aN - dLoc(V.prev).acts) * V.t : aN;
     })();
+    const facStr = (cur, base, always = false) => {
+      if (!base || !cur) return '';
+      const r = cur / base;
+      if (!always && Math.abs(Math.log2(r)) < 0.05) return '';
+      const f = (v) => v >= 100 || Math.abs(v - Math.round(v)) < 0.02 * v ? String(Math.round(v)) : v.toFixed(1);
+      return r > 1 ? `×${f(r)}` : `÷${f(1 / r)}`;
+    };
+    const facTxt = (cls) => {
+      const pin2 = this._pinCfg;
+      if (!LOCAL || !pin2?.scalars) return '';
+      const fx = facStr(this._scalars[cls], pin2.scalars[cls]);
+      return fx ? ` ${fx}` : '';
+    };
     const COMPS = !OPTIM ? [BYTE_COMPS[0]]
       : CONS ? BYTE_COMPS : [BYTE_COMPS[0], BYTE_COMPS[2]];
     // tween multiplier for a component: 1 shown, 0 hidden, in between mid-pour
-    const cmult = (prop) => this._ctween?.prop === prop
+    const cmult = (prop) => this._ctween?.props?.has(prop)
       ? (this[prop] ? this._ctween.t : 1 - this._ctween.t)
       : (this[prop] ? 1 : 0);
     // visible bytes per parameter (numbers snap). Two classes under local:
@@ -1557,6 +1595,14 @@ export class Dsv3Layer extends HTMLElement {
     const KMUL = LOCAL ? (this.kind === 'dense' ? stg.dense : stg.moe)
       : this.kind === 'dense' ? (DSV3.denseLayers ?? 3) : DSV3.layers - (DSV3.denseLayers ?? 3);
     const CUM = !!this.cumulative;
+    // per-class scale scalars: every number of a sharding class moves by the
+    // SAME factor under a knob change, so a pinned baseline can annotate each
+    // box with an exact ×N/÷N (visible components only — numbers match squares)
+    if (LOCAL) this._scalars = {
+      d: (CUM ? KMUL : 1) * BPPT('d'),
+      e: (CUM ? KMUL : 1) * BPPT('e') / EPn,
+      a: (CUM ? KMUL : 1) * IFN,
+    };
     // cumulative is always shown multiplied out — factored ×256 ×58 chains
     // are noise; the sizes toggle keeps governing dims and per-block factoring
     // param-bytes lens: the VISIBLE bytes per parameter (bf16 weights = 2 B,
@@ -1566,7 +1612,7 @@ export class Dsv3Layer extends HTMLElement {
     const fmtPV = (n, cls = 'd') => PBYTES ? fmtPB(n, cls) : fmtP(n);
     const pk = (n, noK = false) => {
       if (PBYTES && !BPPT()) return '';   // nothing visible, nothing to number
-      const v = CUM && !noK ? fmtPV(n * KMUL) : fmtPV(n);
+      const v = (CUM && !noK ? fmtPV(n * KMUL) : fmtPV(n)) + facTxt('d');
       return PONLY ? ` ${v}` : ` (${v})`;   // params lenses: no parens — params are the only numbers left
     };
     const pstr = (id) => {
@@ -1574,9 +1620,10 @@ export class Dsv3Layer extends HTMLElement {
       if (!p || (PBYTES && !BPPT())) return '';
       const tot = (Array.isArray(p) ? p[0] * p[1] : p);
       const wrap = (str) => PONLY ? ` ${str}` : ` (${str})`;
-      if (CUM && id !== 'lm_head') return wrap(fmtPV(tot * KMUL, clsOf(id)));
-      if (Array.isArray(p)) return FLAT ? wrap(fmtPV(tot, clsOf(id))) : wrap(`${fmtPV(p[0], clsOf(id))} \u00d7${p[1]}`);
-      return wrap(fmtPV(p, clsOf(id)));
+      const fx = facTxt(clsOf(id));
+      if (CUM && id !== 'lm_head') return wrap(fmtPV(tot * KMUL, clsOf(id)) + fx);
+      if (Array.isArray(p)) return FLAT ? wrap(fmtPV(tot, clsOf(id)) + fx) : wrap(`${fmtPV(p[0], clsOf(id))} \u00d7${p[1]}`);
+      return wrap(fmtPV(p, clsOf(id)) + fx);
     };
     const dt = (id) => this.matmuls[id];
     const marks = this._ctl.quant ? this.marks : {};   // static: save everything
@@ -1774,8 +1821,8 @@ export class Dsv3Layer extends HTMLElement {
         const [sqX, sqY] = ov?.short ? [x + 60, y + 17] : [x, y + 12];
         let g = ov?.short
           ? `<text class="tensor tsave" x="${x}" y="${y + 8}">${needDir(ids)} ${name}${lock}</text>` +
-            `<text class="tensor tsave" x="${x}" y="${y + 21}">${fmtBytes(b4096)}</text>`
-          : `<text class="tensor tsave" x="${x}" y="${y + 8}">${needDir(ids)} ${name} · ${fmtBytes(b4096)}${lock}</text>`;
+            `<text class="tensor tsave" x="${x}" y="${y + 21}">${fmtBytes(b4096)}${facTxt('a')}</text>`
+          : `<text class="tensor tsave" x="${x}" y="${y + 8}">${needDir(ids)} ${name} · ${fmtBytes(b4096)}${facTxt('a')}${lock}</text>`;
         if (hollow) g += `<rect x="${sqX + 0.4}" y="${sqY + 0.4}" width="4.2" height="3.2" fill="none" stroke="#eda100" stroke-width="0.8"/>`;
         else for (let i = 0; i < nsq; i++)
           g += `<rect x="${sqX + (i % CROW) * 6}" y="${sqY + Math.floor(i / CROW) * 6}" width="5" height="4" fill="#eda100"/>`;
@@ -2041,8 +2088,8 @@ export class Dsv3Layer extends HTMLElement {
     y = mmBox(['attn'], C1, y);
     y = wireOut(['attn'], SX1, y);
     y = mmBox(['o_proj'], C1, y);
-    grp(C1, g1, y + 5, CUM ? `MLA · ${fmtPV(PARAMS.mla * KMUL)}`
-      : `MLA ×${DSV3.layers} · ${fmtPV(PARAMS.mla)}`, MLAGW);
+    grp(C1, g1, y + 5, CUM ? `MLA · ${fmtPV(PARAMS.mla * KMUL)}${facTxt('d')}`
+      : `MLA ×${DSV3.layers} · ${fmtPV(PARAMS.mla)}${facTxt('d')}`, MLAGW);
     y = wireOut(['o_proj'], SX1, y + 5);
     if (ONLY === 'mla') {
       // component view: the residual add lives in the block wiring, not here
@@ -2238,7 +2285,7 @@ export class Dsv3Layer extends HTMLElement {
       // multiplied sizes fold ×N into the box numbers, so the ×N leaves the
       // label too — showing both would read as "multiply again" (overcount)
       grp(C2, g2, z + 5, DET
-        ? (CUM ? `routed experts${LOCAL ? ` (${nR}/rank)` : ''} · ${fmtPV(PARAMS.expert * nR * KMUL, 'e')}`
+        ? (CUM ? `routed experts${LOCAL ? ` (${nR}/rank)` : ''} · ${fmtPV(PARAMS.expert * nR * KMUL, 'e')}${facTxt('e')}`
           : FLAT ? `routed experts${LOCAL ? ` (${nR}/rank)` : ''} · ${fmtPV(PARAMS.expert * nR, 'e')}`
                  : `routed experts ×${nR} · ${fmtPV(PARAMS.expert, 'e')}`)
         : (CUM ? `experts · ${fmtPV(PARAMS.expert * (nR + DSV3.sharedExperts) * KMUL, 'e')}`
@@ -2393,18 +2440,13 @@ export class Dsv3Layer extends HTMLElement {
         B.push(`<text class="dims" x="${(px(2 ** e) + 3).toFixed(1)}" y="${axisY + 8}">${lab}</text>`);
       const pin = this._pinCfg;
       const pinTotal = pin ? pin.segs.reduce((t, b, i) => t + b * onB[i], 0) : 0;
-      const factor = (cur, base, always = false) => {
-        if (!base || !cur) return '';
-        const r = cur / base;
-        if (!always && Math.abs(Math.log2(r)) < 0.05) return '';
-        const f = (v) => v >= 100 || Math.abs(v - Math.round(v)) < 0.02 * v ? String(Math.round(v)) : v.toFixed(1);
-        return r > 1 ? `×${f(r)}` : `÷${f(1 / r)}`;
-      };
+      const factor = facStr;
       for (const [i, r] of rowsB.entries()) {
         const y2 = topY + i * rowH + (i === nR - 1 ? 4 : 0);   // the total row sits a hair apart
         const dim = r.on ? '' : ' opacity="0.35"';
         // the row label IS the legend: swatch-colored name + absolute bytes
         B.push(`<g${r.prop ? ` data-prop="${r.prop}" style="cursor:pointer"` : ''}${dim}>` +
+          (r.prop ? `<rect x="0" y="${y2 - 2}" width="${x0 - 4}" height="${rowH}" fill="transparent"/>` : '') +
           `<text class="dims" x="2" y="${y2 + 7}" fill="${r.color}" font-weight="600">${r.name}</text>` +
           `<text class="dims" x="${x0 - 8}" y="${y2 + 7}" text-anchor="end">${fmtBytes(r.abs)}</text></g>`);
         B.push(`<rect x="${x0}" y="${y2}" width="${Math.max(0.5, px(r.b) - x0).toFixed(1)}" height="${barH}" fill="${r.color}"${dim}/>`);

@@ -108,7 +108,7 @@ export class Dsv3AnatomyPlan extends HTMLElement {
     const CONS = LOC || (LB && l?.hasAttribute('consolidated'));
     const OPT = CONS || (LB && l?.hasAttribute('optim'));
     const COMPS = !OPT ? [BYTE_COMPS[0]] : CONS ? BYTE_COMPS : [BYTE_COMPS[0], BYTE_COMPS[2]];
-    const cmult = (prop) => l?._ctween?.prop === prop
+    const cmult = (prop) => l?._ctween?.props?.has(prop)
       ? (l[prop] ? l._ctween.t : 1 - l._ctween.t)
       : ((l?.[prop] ?? true) ? 1 : 0);
     // local: the plan's ops (embedding / final norm / lm head) are all
@@ -240,7 +240,7 @@ export class Dsv3AnatomyPlan extends HTMLElement {
     }
     this._root.innerHTML = `<svg viewBox="0 0 ${WD} ${H}" width="${WD}" height="${H}">${S.join('')}</svg>` + lg;
     for (const r of this._root.querySelectorAll('.anp-leg .row'))
-      r.onclick = () => l.toggleComp(r.dataset.prop, !l[r.dataset.prop]);
+      r.onclick = () => l.soloComp(r.dataset.prop);   // legend clicks SOLO the component
     for (const g of this._root.querySelectorAll('[data-kind]')) {
       g.onclick = () => {
         const l = this.layerEl();
