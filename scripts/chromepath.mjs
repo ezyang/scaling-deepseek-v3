@@ -16,5 +16,6 @@ export function chromePath() {
       if (shell) return shell;
     } catch {}
   }
+  console.error('chromepath: chrome-headless-shell not found (npx playwright install chromium --only-shell); falling back to the Google Chrome app, which is slow and uses the default profile directory');
   return '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 }
