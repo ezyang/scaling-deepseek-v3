@@ -45,6 +45,15 @@
     TODO: we need to step through the tricky parts of the model, without having
     overwhelmingly too much text
 
+    TODO: Pedagogical goals:
+    - Feel like we fully understand the model, no magic parts, everything
+      works well.  Some especially magic parts:
+      - AC
+      - Low precision
+      - PP microbatches (gradients)
+    - Some factors are very round (e.g., EP directly acts on expert weights),
+      we want to step through them
+
     <h2>What is memory used for in training?</h2>
 
     <p>While your exact memory usage depends on implementation details of your
@@ -115,12 +124,18 @@
     holds PP−<em>s</em> forward microbatches at steady state — which is why
     the peak rank is an <em>early</em> stage, not the parameter-heavy last
     one. The schedule is itself a knob (flip to ×1 mb to see the
-    single-microbatch fiction this section started with). The log₂ bars under
-    the controls put every component (and the grey total) against the
-    80&nbsp;GiB line — each gridline is exactly ×2, so you can count the
-    halvings a knob has to buy; pin a baseline and the bars grow ticks and
-    ×N/÷N factors relative to it. The margin legend rows toggle each
-    component and carry its per-rank bytes.</p>
+    single-microbatch fiction this section started with). The logarithmic bars
+    under the controls put every component (and the grey total) against the
+    shaded infeasible region past 80&nbsp;GiB — each gridline is exactly ×2,
+    so distance-to-fit reads as countable halvings (drag on the bars to
+    measure any span as a factor). Click a row name to solo a component; a
+    soloed parameter component opens its experts / non-expert / vocab
+    breakdown, and those rows filter the diagram too. The precision and
+    recompute knobs from the earlier sections also apply here (FLOPs are
+    deliberately not shown). <em>Save</em> locks in a config: ghost bars and
+    red&nbsp;▲ / bold&nbsp;▼ factor badges then show every change against it,
+    <em>reset</em> returns to the save, and <em>reset all</em> is the
+    whole-model-on-one-GPU starting point.</p>
 
     <strong>Full tally</strong>
     show the tally bar

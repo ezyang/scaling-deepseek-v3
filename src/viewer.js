@@ -887,18 +887,25 @@ export class Dsv3Layer extends HTMLElement {
   // ---- local-lens knob tween: EVERY knob change (EP/PP/stage/ZeRO/×N) pours
   // squares between the old and new configuration, per-block-tween style.
   // Numbers snap; a change that flips the kind snaps (different layout).
-  // tween a set of byte-component visibility changes: squares pour in/out
-  _compTween(props) {
-    const FRAMES = 12; let f = 0;             // ~200 ms, deterministic
-    this._ctween = { props, t: 0 };
+  // THE frame driver: every animation in this widget is the same
+  // deterministic 12-frame ease-out loop (~200 ms, timer-driven so it's
+  // steady under headless/virtual time). onFrame(t) mutates the tween state,
+  // then the widget re-renders; done() clears it.
+  _frames(onFrame, done) {
+    const FRAMES = 12; let f = 0;
+    onFrame(0);
     const step = () => {
       f++; const p = Math.min(1, f / FRAMES);
-      this._ctween = { props, t: 1 - (1 - p) * (1 - p) };   // ease-out
-      this.render(); this.changed(false);     // plan strips tween along
+      onFrame(1 - (1 - p) * (1 - p));         // ease-out
+      this.render(); this.changed(false);     // linked widgets tween along
       if (p < 1) setTimeout(step, 16);
-      else { this._ctween = undefined; this.render(); this.changed(true); }
+      else { done(); this.render(); this.changed(true); }
     };
     setTimeout(step, 16);
+  }
+  // tween a set of byte-component visibility changes: squares pour in/out
+  _compTween(props) {
+    this._frames((t) => { this._ctween = { props, t }; }, () => { this._ctween = undefined; });
   }
   toggleComp(prop, on) {
     this[prop] = on;
@@ -909,16 +916,7 @@ export class Dsv3Layer extends HTMLElement {
   togglePart(k) {
     const prev = this.partSel ?? null;
     this.partSel = prev === k ? null : k;
-    const FRAMES = 12; let f = 0;
-    this._ptween = { prev, t: 0 };
-    const step = () => {
-      f++; const p = Math.min(1, f / FRAMES);
-      this._ptween = { prev, t: 1 - (1 - p) * (1 - p) };
-      this.render(); this.changed(false);
-      if (p < 1) setTimeout(step, 16);
-      else { this._ptween = undefined; this.render(); this.changed(true); }
-    };
-    setTimeout(step, 16);
+    this._frames((t) => { this._ptween = { prev, t }; }, () => { this._ptween = undefined; });
   }
   // legend clicks SOLO a component (the useful filter: "show me only the
   // weights"); soloing the already-solo component brings everything back
@@ -949,16 +947,7 @@ export class Dsv3Layer extends HTMLElement {
     this.changed(true);
     const kindOf = (S) => ppStage(Math.min(S.stage, S.pp - 1), S.pp).moe ? 'moe' : 'dense';
     if (kindOf(prev) !== kindOf(this._snapLocal())) { this.render(); return; }
-    const FRAMES = 12; let f = 0;             // ~200 ms, deterministic
-    this._vtween = { t: 0, prev };
-    const step = () => {
-      f++; const p = Math.min(1, f / FRAMES);
-      this._vtween = { t: 1 - (1 - p) * (1 - p), prev };   // ease-out
-      this.render(); this.changed(false);     // plan strips tween along
-      if (p < 1) setTimeout(step, 16);
-      else { this._vtween = undefined; this.render(); }
-    };
-    setTimeout(step, 16);
+    this._frames((t) => { this._vtween = { t, prev }; }, () => { this._vtween = undefined; });
   }
   render() {
     this.innerHTML = '';
@@ -1121,17 +1110,8 @@ export class Dsv3Layer extends HTMLElement {
         this.changed(true);
         if (this.getAttribute('strips') === 'absolute' && this.getAttribute('lens') === 'param-bytes') {
           const from = this._tween ?? (this.cumulative ? 0 : 1);
-          const to = this.cumulative ? 1 : 0, FRAMES = 12;   // ~200 ms at 60 fps
-          let f = 0;
-          const step = () => {
-            f++;
-            const p = Math.min(1, f / FRAMES);
-            this._tween = from + (to - from) * (1 - (1 - p) * (1 - p));   // ease-out
-            this.render();
-            if (p < 1) setTimeout(step, 16);   // timer-driven: steady under headless/virtual time too
-            else { this._tween = undefined; this.render(); }
-          };
-          setTimeout(step, 16);
+          const to = this.cumulative ? 1 : 0;
+          this._frames((t) => { this._tween = from + (to - from) * t; }, () => { this._tween = undefined; });
         } else this.render();
       };
       return b;
@@ -1378,15 +1358,18 @@ export class Dsv3Layer extends HTMLElement {
           };
           this.render();
         }));
-        if (this._pinCfg?.state) saveBox.append(mkBtn('reset', 'return to the saved config', () => {
+        // always present (disabled until a save exists) so saving never reflows
+        const rst = mkBtn('reset', 'return to the saved config', () => {
           const prev = this._snapLocal();
           Object.assign(this, this._pinCfg.state,
             { marks: { ...this._pinCfg.state.marks }, matmuls: { ...this._pinCfg.state.matmuls } });
           this._tweenLocal(prev);
-        }));
-        saveBox.append(reset);   // factory reset (built above; also clears the save)
+        });
+        if (!this._pinCfg?.state) { rst.disabled = true; rst.title = 'save a config first'; rst.style.color = '#c3c2b7'; rst.style.cursor = 'default'; }
+        saveBox.append(rst, reset);   // factory reset (built above; also clears the save)
         reset.textContent = 'reset all';
-        reset.style.marginLeft = '0';
+        reset.style.cssText = 'font:11px ui-monospace,monospace;padding:2px 8px;border:1px solid #c3c2b7;' +
+          'border-radius:4px;background:#fff;cursor:pointer;';   // match the save cluster's face
         mini.append(saveBox);
         // the preexisting AC + precision knobs (built above for the full
         // head; the static head never displays it, so they move here)
@@ -2604,7 +2587,7 @@ export class Dsv3Layer extends HTMLElement {
         `<text class="dims" x="${x0 + bw - 87}" y="9">= ${fmtBytes(PB_UNIT * 2)} / square</text>`);
       for (let e = LO; e <= HI; e += 1)   // the ×2 grid
         B.push(`<line x1="${px(2 ** e).toFixed(1)}" y1="${topY - 2}" x2="${px(2 ** e).toFixed(1)}" y2="${axisY - 3}" stroke="#e1e0d9" stroke-width="1"/>`);
-      for (const [e, lab] of [[30, '1 GiB'], [33, '8 GiB'], [40, '1 TiB'], [43, '8 TiB']])
+      for (const [e, lab] of [[30, '1 GiB'], [33, '8 GiB'], [36, '64 GiB'], [40, '1 TiB'], [43, '8 TiB']])
         B.push(`<text class="dims" x="${(px(2 ** e) + 3).toFixed(1)}" y="${axisY + 8}">${lab}</text>`);
       for (const [i, r] of rowsB.entries()) {
         const y2 = yOf(i);
@@ -2652,8 +2635,9 @@ export class Dsv3Layer extends HTMLElement {
         }
         const pinB = pin ? (i === nR - 1 ? pinTotal : pin.segs[i]) : 0;
         // the save renders as a dotted GHOST bar (not a tick), so the value
-        // label can always ride the live bar's end
-        if (pinB) B.push(`<rect x="${x0}" y="${y2}" width="${Math.max(0.5, px(pinB) - x0).toFixed(1)}" height="${barH}" ` +
+        // label can always ride the live bar's end — hidden components hide
+        // their ghosts too
+        if (pinB && r.on) B.push(`<rect x="${x0}" y="${y2}" width="${Math.max(0.5, px(pinB) - x0).toFixed(1)}" height="${barH}" ` +
           `fill="none" stroke="${i === nR - 1 ? '#898781' : r.color}" stroke-width="1" stroke-dasharray="2 2" opacity="0.7"/>`);
         // bar end: the ABSOLUTE value (+ the vs-save badge when saved);
         // hidden components show none
