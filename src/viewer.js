@@ -1311,9 +1311,12 @@ export class Dsv3Layer extends HTMLElement {
       const drawR = () => {
         const u = this._cursor;
         if (u == null) { rul.style.display = 'none'; return; }
-        const r2 = svgEl2.getBoundingClientRect(), k = r2.width / BAR_GEO.w;
+        // rect math, not offsetLeft: SVG elements have no offsetLeft, which
+        // left this at NaNpx (the line never met the cursor)
+        const r2 = svgEl2.getBoundingClientRect(), host = barSlot.getBoundingClientRect();
+        const k = r2.width / BAR_GEO.w;
         rul.style.display = 'block';
-        rul.style.left = `${(svgEl2.offsetLeft + u * k).toFixed(1)}px`;
+        rul.style.left = `${(r2.left - host.left + u * k).toFixed(1)}px`;
         rul.style.width = '0px';
         rul.style.top = '10px';
         rul.style.height = `${r2.height - 22}px`;
