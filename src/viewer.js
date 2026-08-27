@@ -1317,6 +1317,7 @@ export class Dsv3Layer extends HTMLElement {
         mini2.append(mkBtn('pin baseline', 'snapshot this config: the chart gains ticks and ×N/÷N factors vs it', () => {
           this._pinCfg = {
             segs: [...(this._segTotals ?? [])],
+            parts: (this._segParts ?? []).map((p2) => [...p2]),
             scalars: { ...(this._scalars ?? {}) },
             label: `EP${this.ep}·PP${this.pp}·stage ${this.stage}·ZeRO-${this.zero ? this.zero : 'off'}·${this.sched === 'one' ? '×1mb' : '1F1B'}·${this.world} GPUs`,
           };
@@ -1542,11 +1543,22 @@ export class Dsv3Layer extends HTMLElement {
       const f = (v) => v >= 100 || Math.abs(v - Math.round(v)) < 0.02 * v ? String(Math.round(v)) : v.toFixed(1);
       return r > 1 ? `×${f(r)}` : `×1/${f(1 / r)}`;   // ×1/N beats ÷N for scan-ability
     };
+    // CHANGE factors (vs a pinned baseline) wear an alert style: direction is
+    // the arrow (magnitude always ≥ 1 — cleaner scan than ×1/N), grew = red
+    // ▲ (memory alarm; red is unused by the components), shrank = bold ▼
+    const facBadge = (cur, base) => {
+      if (!base || !cur) return '';
+      const r = cur / base;
+      if (Math.abs(Math.log2(r)) < 0.05) return '';
+      const f = (v) => v >= 100 || Math.abs(v - Math.round(v)) < 0.02 * v ? String(Math.round(v)) : v.toFixed(1);
+      return r > 1
+        ? `<tspan fill="#d03b3b" font-weight="600"> ▲×${f(r)}</tspan>`
+        : `<tspan fill="#0b0b0b" font-weight="600"> ▼×${f(1 / r)}</tspan>`;
+    };
     const facTxt = (cls) => {
       const pin2 = this._pinCfg;
       if (!LOCAL || !pin2?.scalars) return '';
-      const fx = facStr(this._scalars[cls], pin2.scalars[cls]);
-      return fx ? ` ${fx}` : '';
+      return facBadge(this._scalars[cls], pin2.scalars[cls]);
     };
     const COMPS = !OPTIM ? [BYTE_COMPS[0]]
       : CONS ? BYTE_COMPS : [BYTE_COMPS[0], BYTE_COMPS[2]];
@@ -2421,18 +2433,30 @@ export class Dsv3Layer extends HTMLElement {
     if (LOCAL) {   // the fit bar renders in its own row under the controls (this._barHtml)
       const cap = 80 * 2 ** 30;
       const moeExp = PARAMS.expert * DSV3.routedExperts;
-      const segB = (S) => {
+      const stageParts = (S) => {   // this rank's params by class: experts / non-expert blocks / vocab
         const g = ppStage(Math.min(S.stage, S.pp - 1), S.pp);
-        const dp = (S.world ?? LOCAL_PAR.world) / S.pp;
-        const dParams = g.dense * PARAMS.denseBlock + g.moe * (PARAMS.moeBlock - moeExp)
-          + ((S.stage === 0 ? 1 : 0) + (S.stage === S.pp - 1 ? 1 : 0)) * PARAMS.embed
-          + (S.stage === S.pp - 1 ? DSV3.hidden : 0);
-        const eParams = g.moe * moeExp / S.ep;
-        return COMPS.map((c) => {
-          const shard = (cls) => (S.zero ?? 1) >= c.zthresh ? c.bpp / (cls === 'e' ? dp / S.ep : dp) : c.bpp;
-          return dParams * shard('d') + eParams * shard('e');
-        }).concat([ana.savedBytes * 4096 * g.layers * inflightOf(S.sched ?? '1f1b', S.stage, S.pp)]);
+        return {
+          e: g.moe * moeExp / S.ep,
+          d: g.dense * PARAMS.denseBlock + g.moe * (PARAMS.moeBlock - moeExp),
+          v: ((S.stage === 0 ? 1 : 0) + (S.stage === S.pp - 1 ? 1 : 0)) * PARAMS.embed
+            + (S.stage === S.pp - 1 ? DSV3.hidden : 0),
+          layers: g.layers,
+        };
       };
+      const shardOf = (S, c, cls) =>
+        (S.zero ?? 1) >= c.zthresh ? c.bpp / (cls === 'e' ? (S.world ?? LOCAL_PAR.world) / S.pp / S.ep : (S.world ?? LOCAL_PAR.world) / S.pp) : c.bpp;
+      // per component: [experts, non-expert blocks, vocab] bytes — the solo
+      // breakdown and its pin factors ride these
+      const partsFor = (S) => {
+        const q = stageParts(S);
+        return COMPS.map((c) => [q.e * shardOf(S, c, 'e'), q.d * shardOf(S, c, 'd'), q.v * shardOf(S, c, 'd')]);
+      };
+      const segB = (S) => {
+        const q = stageParts(S);
+        return COMPS.map((c) => (q.d + q.v) * shardOf(S, c, 'd') + q.e * shardOf(S, c, 'e'))
+          .concat([ana.savedBytes * 4096 * q.layers * inflightOf(S.sched ?? '1f1b', S.stage, S.pp)]);
+      };
+      this._segParts = partsFor(Snow);
       const V = this._vtween;
       const nowB = segB(Snow), prevB = V ? segB(V.prev) : nowB;
       const vis = [...COMPS.map((c) => cmult(c.prop)), cmult('showActs')];
@@ -2508,12 +2532,33 @@ export class Dsv3Layer extends HTMLElement {
         const pinB = pin ? (i === nR - 1 ? pinTotal : pin.segs[i]) : 0;
         if (pinB) B.push(`<line x1="${px(pinB).toFixed(1)}" y1="${y2 - 1}" x2="${px(pinB).toFixed(1)}" y2="${y2 + barH + 1}" stroke="#0b0b0b" stroke-width="1.4"/>`);
         // bar-end factor: over/under the 80 GiB boundary — or, when pinned,
-        // ONLY the vs-pin factor (both at once was confusing). Hidden
+        // ONLY the vs-pin badge (both at once was confusing). Hidden
         // components show none (a factor parked at the zero line reads wrong)
         if (r.on) {
-          const fac = pin ? factor(r.abs, pinB) : factor(r.abs, cap, true);
-          B.push(`<text class="dims" x="${(Math.max(px(r.b), pinB ? px(pinB) : 0) + 5).toFixed(1)}" y="${y2 + 7}">` +
-            `${fac}${pin && fac ? ' vs pin' : ''}</text>`);
+          const fac = pin ? facBadge(r.abs, pinB) : factor(r.abs, cap, true);
+          B.push(`<text class="dims" x="${(Math.max(px(r.b), pinB ? px(pinB) : 0) + 5).toFixed(1)}" y="${y2 + 7}">${fac}</text>`);
+        }
+      }
+      // SOLO breakdown: when one param component is soloed, the three freed
+      // rows host its sub-parts (experts / non-expert blocks / vocab) — they
+      // ease in as the old bars fade out, so nothing reflows. Clean factors
+      // per part when pinned (e.g. only the experts sub-bar moves under EP).
+      const soloIdx = onB[3] ? -1 : onB.reduce((k, on2, j) => on2 ? (k === -1 ? j : -2) : k, -1);
+      if (soloIdx >= 0 && soloIdx < 3 && onB.reduce((t2, o2) => t2 + o2, 0) === 1) {
+        const prevParts = V ? partsFor(V.prev) : null;
+        const names2 = ['experts', 'non-expert', 'vocab'];
+        const freeRows = [0, 1, 2, 3].filter((j) => j !== soloIdx);
+        for (const [k2, jRow] of freeRows.entries()) {
+          const now2 = this._segParts[soloIdx][k2];
+          if (!now2) continue;
+          const bT = prevParts ? geo(prevParts[soloIdx][k2], now2, V.t) : now2;
+          const ease = 1 - vis[jRow];
+          if (ease < 0.03) continue;
+          const y3 = topY + jRow * rowH + 1.5;
+          const pinP = pin?.parts?.[soloIdx]?.[k2];
+          B.push(`<g opacity="${ease.toFixed(3)}">` +
+            `<rect x="${x0}" y="${y3}" width="${Math.max(0.5, px(bT) - x0).toFixed(1)}" height="5" fill="${colors[soloIdx]}" opacity="0.55"/>` +
+            `<text class="dims" x="${(px(bT) + 5).toFixed(1)}" y="${y3 + 5.5}">· ${names2[k2]} ${fmtBytes(now2)}${pin ? facBadge(now2, pinP) : ''}</text></g>`);
         }
       }
       if (pin) B.push(`<text class="dims" x="${x0 + bw}" y="${axisY + 18}" text-anchor="end">pinned: ${pin.label}</text>`);
