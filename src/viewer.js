@@ -40,10 +40,21 @@ export const BYTE_COMPS = [
 // the PP stages by a contiguous floor split: stage 0 gets the embedding (+
 // the dense blocks while they last), the last stage gets final norm + lm head.
 export const LOCAL_PAR = { world: 2048, pp: 16 };   // .pp = the default degree
-export const ppStage = (s, pp = LOCAL_PAR.pp) => {
-  const lo = Math.floor(61 * s / pp), hi = Math.floor(61 * (s + 1) / pp);
-  const dense = Math.max(0, Math.min(hi, 3) - Math.min(lo, 3));
-  return { lo, hi, layers: hi - lo, dense, moe: hi - lo - dense };
+export const ppStage = (s, pp = LOCAL_PAR.pp, sched = '1f1b') => {
+  const seg = (i, n) => {
+    const lo = Math.floor(61 * i / n), hi = Math.floor(61 * (i + 1) / n);
+    const dense = Math.max(0, Math.min(hi, 3) - Math.min(lo, 3));
+    return { lo, hi, layers: hi - lo, dense, moe: hi - lo - dense };
+  };
+  if (sched === 'dpv' && pp > 1) {
+    // DualPipeV: the V fold — rank s hosts chunks s and 2pp−1−s of a 2pp-chunk
+    // split (forward runs down the ranks then back up), so the embedding AND
+    // the lm head both live on rank 0 and the second segment is the tail chunk
+    const a = seg(s, 2 * pp), b = seg(2 * pp - 1 - s, 2 * pp);
+    return { lo: a.lo, hi: a.hi, lo2: b.lo, hi2: b.hi, layers: a.layers + b.layers,
+      dense: a.dense + b.dense, moe: a.moe + b.moe, emb: s === 0, head: s === 0 };
+  }
+  return { ...seg(s, pp), emb: s === 0, head: s === pp - 1 };
 };
 
 // save-everything bf16 activation bytes for ONE layer × one 4096-token
@@ -52,8 +63,15 @@ let ACT_LAYER_B = 0;
 export const actLayerBytes = () => ACT_LAYER_B ||=
   analyze(blockGraph('moe', DSV3, resolveMatmuls({ recipe: 'bf16' }), 4096), {}, false).savedBytes * 4096;
 // 1F1B steady state: stage s holds (pp − s) forward microbatches (warmup
-// depth, assuming ≥ pp microbatches per step); 'one' = a single microbatch
-export const inflightOf = (sched, s, pp) => sched === 'one' ? 1 : pp - Math.min(s, pp - 1);
+// depth, assuming ≥ pp microbatches per step); 'one' = a single microbatch.
+// DualPipeV: every rank holds a uniform 2pp+1 resident half-rank chunks
+// (its two hosted chunks sit at virtual depths that always sum to 2pp+1)
+// = pp + ½ microbatch-equivalents — 8.5 at PP8, between plain 1F1B's peak
+// (pp) and the DSv3 paper's coarse PP+1 bound.
+export const inflightOf = (sched, s, pp) =>
+  sched === 'one' ? 1
+    : sched === 'dpv' ? (pp === 1 ? 1 : pp + 0.5)
+      : pp - Math.min(s, pp - 1);
 
 // fit-chart geometry (svg units): the log₂ axis spans 2^lo…2^hi over bw px
 const BAR_GEO = { w: 800, x0: 110, bw: 650, lo: 28, hi: 44 };   // 110px name gutter (values live at bar ends)
@@ -70,24 +88,26 @@ export const peakStage = (pp, ep, zero, world = LOCAL_PAR.world, sched = '1f1b')
   const mB = (PARAMS.moeBlock - moeExp) * bpp('d') + (moeExp / ep) * bpp('e');
   let best = 0, bestV = -1;
   for (let s2 = 0; s2 < pp; s2++) {
-    const g = ppStage(s2, pp);
+    const g = ppStage(s2, pp, sched);
     const v = g.dense * dB + g.moe * mB
-      + (((s2 === 0 ? 1 : 0) + (s2 === pp - 1 ? 1 : 0)) * PARAMS.embed * bpp('d'))
+      + (((g.emb ? 1 : 0) + (g.head ? 1 : 0)) * PARAMS.embed * bpp('d'))
       + g.layers * actLayerBytes() * inflightOf(sched, s2, pp);
     if (v > bestV) { bestV = v; best = s2; }
   }
   return best;
 };
 
-// compact stage-option label: '0: L0\u20132 \u00b7 3d+emb', '15: L57\u201360 \u00b7 head \u00b7 peak'
+// compact stage-option label: '0: L0\u20132 \u00b7 3d+emb', '15: L57\u201360 \u00b7 head \u00b7 peak',
+// DualPipeV's two hosted chunks joined: '0: L0\u20132+L58\u201360 \u00b7 3d+emb+head \u00b7 peak'
 // (l = the local-lens layer whose knobs pick the split)
 export const stageLabelOf = (o, l) => {
   const pp = l.pp ?? LOCAL_PAR.pp, world = l.world ?? LOCAL_PAR.world;
-  const g = ppStage(o, pp);
-  const range = !g.layers ? '\u2014'
-    : g.lo === g.hi - 1 ? `L${g.lo}` : `L${g.lo}\u2013${g.hi - 1}`;
-  const tags = [g.dense ? `${g.dense}d` : '', o === 0 ? 'emb' : '',
-    o === pp - 1 ? 'head' : ''].filter(Boolean).join('+');
+  const g = ppStage(o, pp, l.sched);
+  const rng = (lo, hi) => lo >= hi ? '' : lo === hi - 1 ? `L${lo}` : `L${lo}\u2013${hi - 1}`;
+  const range = [rng(g.lo, g.hi), g.lo2 != null ? rng(g.lo2, g.hi2) : '']
+    .filter(Boolean).join('+') || '\u2014';
+  const tags = [g.dense ? `${g.dense}d` : '', g.emb ? 'emb' : '',
+    g.head ? 'head' : ''].filter(Boolean).join('+');
   const pk = o === peakStage(pp, l.ep, l.zero ?? 1, world, l.sched) ? ' \u00b7 peak' : '';
   return `${o}: ${range}${tags ? ` \u00b7 ${tags}` : ''}${pk}`;
 };
@@ -820,7 +840,7 @@ export class Dsv3Layer extends HTMLElement {
   }
   _tweenLocal(prev) {
     this.changed(true);
-    const kindOf = (S) => ppStage(Math.min(S.stage, S.pp - 1), S.pp).moe ? 'moe' : 'dense';
+    const kindOf = (S) => ppStage(Math.min(S.stage, S.pp - 1), S.pp, S.sched).moe ? 'moe' : 'dense';
     if (kindOf(prev) !== kindOf(this._snapLocal())) { this.render(); return; }
     this._frames((t) => { this._vtween = { t, prev }; }, () => { this._vtween = undefined; });
   }
@@ -829,7 +849,7 @@ export class Dsv3Layer extends HTMLElement {
     // local lens: the kind follows the selected PP stage (stage 0 holds the
     // 3 dense blocks; every other stage holds only MoE blocks)
     if (this.hasAttribute('local') && this.getAttribute('lens') === 'param-bytes')
-      this.kind = ppStage(this.stage ?? 1, this.pp).moe ? 'moe' : 'dense';
+      this.kind = ppStage(this.stage ?? 1, this.pp, this.sched).moe ? 'moe' : 'dense';
     const style = document.createElement('style'); style.textContent = LAYER_CSS;
     const root = el('div', 'lv');
     // progressive disclosure: controls="static|marks|dtype|full" gates which
@@ -965,7 +985,8 @@ export class Dsv3Layer extends HTMLElement {
     if (this._ctl.dtype) head.append(tl);
     // local: the multiplier is the stage's block count, not the whole model's
     const KBLK = this.hasAttribute('local') && this.getAttribute('lens') === 'param-bytes'
-      ? (this.kind === 'dense' ? ppStage(this.stage ?? 1, this.pp).dense : ppStage(this.stage ?? 1, this.pp).moe)
+      ? (this.kind === 'dense' ? ppStage(this.stage ?? 1, this.pp, this.sched).dense
+        : ppStage(this.stage ?? 1, this.pp, this.sched).moe)
       : this.kind === 'dense' ? (DSV3.denseLayers ?? 3) : DSV3.layers - (DSV3.denseLayers ?? 3);
     const mkCumBtn = () => {
       const b = document.createElement('button');
@@ -1126,10 +1147,11 @@ export class Dsv3Layer extends HTMLElement {
           zw.append(b);
         }
         // pipeline schedule for activations in flight: 1F1B steady state
-        // (stage s holds PP−s microbatches) vs a single microbatch — the
+        // (stage s holds PP−s microbatches), DualPipeV (uniform PP+½, the V
+        // fold — embed AND head on rank 0), or a single microbatch — the
         // schedule is an assumption worth breaking open, so it's a knob
         const sw2 = el('span', 'stp');
-        for (const [k, lab] of [['1f1b', '1F1B'], ['one', '×1 mb']]) {
+        for (const [k, lab] of [['1f1b', '1F1B'], ['dpv', 'DPV'], ['one', '×1 mb']]) {
           const b = document.createElement('button');
           b.textContent = lab; b.type = 'button';
           if ((this.sched ?? '1f1b') === k) b.classList.add('on');
@@ -1416,15 +1438,15 @@ export class Dsv3Layer extends HTMLElement {
     const WORLD = this.world ?? LOCAL_PAR.world;
     const DPn = WORLD / PPn;
     const EDP = WORLD / PPn / EPn;                           // expert-DP (EP=1: = DP — no expert parallelism)
-    const stg = ppStage(STG, PPn);
+    const SCHED = this.sched ?? '1f1b';
+    const stg = ppStage(STG, PPn, SCHED);
     // knob tween (local): squares pour between the OLD and NEW configuration —
     // each component's effective factor (bytes/param × EP share × stage ×N)
     // lerps with this._vtween.t; numbers snap to the new config
-    const SCHED = this.sched ?? '1f1b';
     const IFN = inflightOf(SCHED, STG, PPn);                 // microbatches in flight on this stage
     const Snow = { ep: EPn, pp: PPn, stage: STG, zero: ZL, world: WORLD, sched: SCHED, cum: !!this.cumulative };
     const dLoc = (S) => {
-      const g = ppStage(Math.min(S.stage, S.pp - 1), S.pp);
+      const g = ppStage(Math.min(S.stage, S.pp - 1), S.pp, S.sched);
       const kmul = this.kind === 'dense' ? g.dense : g.moe;
       const dp = (S.world ?? LOCAL_PAR.world) / S.pp;
       return { mult: S.cum ? kmul : 1, eFrac: 1 / S.ep,
@@ -2368,12 +2390,12 @@ export class Dsv3Layer extends HTMLElement {
       const cap = 80 * 2 ** 30;
       const moeExp = PARAMS.expert * DSV3.routedExperts;
       const stageParts = (S) => {   // this rank's params by class: experts / non-expert blocks / vocab
-        const g = ppStage(Math.min(S.stage, S.pp - 1), S.pp);
+        const g = ppStage(Math.min(S.stage, S.pp - 1), S.pp, S.sched);
         return {
           e: g.moe * moeExp / S.ep,
           d: g.dense * PARAMS.denseBlock + g.moe * (PARAMS.moeBlock - moeExp),
-          v: ((S.stage === 0 ? 1 : 0) + (S.stage === S.pp - 1 ? 1 : 0)) * PARAMS.embed
-            + (S.stage === S.pp - 1 ? DSV3.hidden : 0),
+          v: ((g.emb ? 1 : 0) + (g.head ? 1 : 0)) * PARAMS.embed
+            + (g.head ? DSV3.hidden : 0),
           layers: g.layers,
         };
       };
@@ -2732,7 +2754,7 @@ class Dsv3PpSchedule extends HTMLElement {
     ssel.value = String(stage);
     ssel.onchange = () => l.setLocal(() => { l.stage = +ssel.value; });
     const sw = el('span', 'stp');
-    for (const [k, t] of [['1f1b', '1F1B'], ['one', '×1 mb']]) {
+    for (const [k, t] of [['1f1b', '1F1B'], ['dpv', 'DPV'], ['one', '×1 mb']]) {
       const b = document.createElement('button');
       b.textContent = t; b.type = 'button';
       if (sched === k) b.classList.add('on');
@@ -2774,6 +2796,14 @@ class Dsv3PpSchedule extends HTMLElement {
     }
   }
   draw(pp, sched, stage) {
+    if (sched === 'dpv') {   // DualPipeV rendering is deferred; state the model
+      this._hd.textContent = 'DualPipeV — the V fold: rank r hosts chunks r and '
+        + `${2 * pp - 1}−r of a ${2 * pp}-chunk split (embed + head both on rank 0)`;
+      this._scr.innerHTML = `<div style="color:#898781;font-size:11.5px;padding:6px 2px;">`
+        + `schedule drawing TBD — modeled residency: a uniform ${2 * pp + 1} half-rank chunks `
+        + `= ${pp === 1 ? 1 : pp + 0.5} microbatch-equivalents on every rank</div>`;
+      return;
+    }
     const m = sched === 'one' ? 1 : pp + 4;
     // resolve the 1F1B item list per stage (same shape the simulator builds):
     // F_mb@s waits on F_mb@(s−1); B_mb@s waits on B_mb@(s+1), or on its own

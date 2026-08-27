@@ -133,8 +133,12 @@
     activations follow the pipeline schedule: under 1F1B, stage <em>s</em>
     holds PP−<em>s</em> forward microbatches at steady state — which is why
     the peak rank is an <em>early</em> stage, not the parameter-heavy last
-    one. The schedule is itself a knob (flip to ×1 mb to see the
-    single-microbatch fiction this section started with). The logarithmic bars
+    one. The schedule is itself a knob: flip to ×1 mb for the
+    single-microbatch fiction this section started with, or to DPV for
+    DualPipeV — the V-shaped fold DeepSeek actually trained with, where every
+    rank hosts two half-size chunks (so the embedding <em>and</em> the lm head
+    both live on rank 0) and holds a uniform 2·PP+1 resident chunk-halves
+    = PP+½ microbatches' worth of activations, on every rank. The logarithmic bars
     under the controls put every component (and the grey total) against the
     shaded infeasible region past 80&nbsp;GiB — each gridline is exactly ×2,
     so distance-to-fit reads as countable halvings (drag on the bars to
