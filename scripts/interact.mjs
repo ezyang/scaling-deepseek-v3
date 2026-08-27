@@ -69,7 +69,7 @@ const srv = createServer(async (req, res) => {
 await new Promise(r => srv.listen(0, r));
 const url = `http://localhost:${srv.address().port}/${page}`;
 
-const args = ['--headless', '--disable-gpu', '--hide-scrollbars', '--virtual-time-budget=12000', `--window-size=${width},4000`];
+const args = ['--headless', '--disable-gpu', '--hide-scrollbars', '--virtual-time-budget=40000', `--window-size=${width},4000`];
 const dom = await new Promise((res2, rej) => execFile(CHROME, [...args, '--dump-dom', url],
   { maxBuffer: 64 * 1024 * 1024 }, (err, stdout) => err ? rej(err) : res2(stdout)));
 if (shot) await new Promise((res2, rej) => execFile(CHROME, [...args, `--screenshot=${shot}`, url],

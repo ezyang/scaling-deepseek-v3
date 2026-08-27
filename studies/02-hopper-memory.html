@@ -81,7 +81,7 @@
 
     <p><strong>Gradients.</strong></p>
 
-    <dsv3-anatomy style="min-height:787px" lens="param-bytes" consolidated strips="absolute" recipe="bf16" layer="all-diagram" detail controls="static" nocaption></dsv3-anatomy>
+    <dsv3-anatomy style="min-height:797px" lens="param-bytes" consolidated strips="absolute" recipe="bf16" layer="all-diagram" detail controls="static" nocaption></dsv3-anatomy>
 
     <p class="note">The consolidated per-block memory picture: weights (blue),
     fp32 gradient accumulators (orange), optimizer states (green), and the
@@ -90,7 +90,7 @@
     line at the bottom totals them). Colors match the memory-bar segments.
     Toggle components in the legend.</p>
 
-    <dsv3-anatomy style="min-height:804px" lens="param-bytes" local cumulative recipe="bf16" layer="local-diagram" detail controls="static" nocaption></dsv3-anatomy>
+    <dsv3-anatomy style="min-height:834px" lens="param-bytes" local cumulative recipe="bf16" layer="local-diagram" detail controls="static" nocaption></dsv3-anatomy>
 
     <p class="note">The same picture per GPU, under a fiat parallelism (we
     can't justify it without talking about comms — later chapters): 2048 GPUs,
@@ -101,12 +101,15 @@
     per-rank optimizer bytes are a uniform 8&nbsp;B ÷ DP per global parameter,
     independent of EP — the green looks big on experts only because the
     weights DO divide by EP).
-    EP, the PP degree, and ZeRO-1 can each be turned off or varied; the stage
-    selector names every PP rank's layer assignment — stage 0 holds the
-    embedding (and the dense blocks while they last); the last stage adds the
-    final norm and lm head. Saved activations
-    are one microbatch per layer on the stage — the pipeline schedule's
-    in-flight multiplier is deliberately deferred.</p>
+    EP, the PP degree, the ZeRO level (1 shards optimizer states, 2 also
+    gradients, 3 also weights), and the cluster size are all knobs; the stage
+    selector names every PP rank's layer assignment and defaults to the
+    <em>peak</em> stage (the fully loaded rank — peek at the others to see
+    they carry less). Stage 0 holds the embedding (and the dense blocks while
+    they last); the last stage adds the final norm and lm head. Saved
+    activations are one microbatch per layer on the stage — the pipeline
+    schedule's in-flight multiplier is deliberately deferred. The bar at the
+    bottom totals the whole rank against an H100's 80&nbsp;GiB.</p>
 
     <strong>Full tally</strong>
     show the tally bar

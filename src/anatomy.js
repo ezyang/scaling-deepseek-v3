@@ -104,9 +104,9 @@ export class Dsv3AnatomyPlan extends HTMLElement {
     // local: the plan's ops (embedding / final norm / lm head) are all
     // dense-class — ZeRO-1 shards their optimizer states over the full DP group
     const EPn = l?.ep ?? 64, PPl = l?.pp ?? LOCAL_PAR.pp, Sg = l?.stage ?? 1;
-    const DPn = LOCAL_PAR.world / PPl, Z1 = l?.zero1 !== false;
+    const DPn = (l?.world ?? LOCAL_PAR.world) / PPl, ZL = l?.zero ?? 1;
     const stg = LOC ? ppStage(Sg, PPl) : null;
-    const cbpp = (c, cls) => !LOC || c.prop !== 'showOptim' || !Z1 ? c.bpp
+    const cbpp = (c, cls) => !LOC || ZL < c.zthresh ? c.bpp
       : c.bpp / (cls === 'e' ? DPn / EPn : DPn);
     const BPP = COMPS.reduce((t, c) => t + ((l?.[c.prop] ?? true) ? cbpp(c, 'd') : 0), 0);
     const BPPe = COMPS.reduce((t, c) => t + ((l?.[c.prop] ?? true) ? cbpp(c, 'e') : 0), 0);
@@ -114,9 +114,8 @@ export class Dsv3AnatomyPlan extends HTMLElement {
     // the layer's _vtween (plan ops are dense-class; PP/ZeRO affect them)
     const pf = (c) => {
       if (!LOC) return cbpp(c, 'd');
-      const eff = (S) => c.prop !== 'showOptim' ? c.bpp
-        : (S.zero1 === false ? 8 : 8 / (LOCAL_PAR.world / S.pp));
-      const N = { pp: PPl, zero1: Z1 }, V = l?._vtween;
+      const eff = (S) => (S.zero ?? 1) >= c.zthresh ? c.bpp / ((S.world ?? LOCAL_PAR.world) / S.pp) : c.bpp;
+      const N = { pp: PPl, zero: ZL, world: l?.world ?? LOCAL_PAR.world }, V = l?._vtween;
       return V ? eff(V.prev) + (eff(N) - eff(V.prev)) * V.t : eff(N);
     };
     const strip = (x, y, nParams) => {

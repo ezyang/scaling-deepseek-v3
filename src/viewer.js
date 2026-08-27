@@ -28,9 +28,11 @@ export const fmtBytes = (b) =>
 // memory-bars stacked order with the memory-bars segment colors \u2014 the strips
 // pre-teach the bar. bpp = bytes per parameter.
 export const BYTE_COMPS = [
-  { prop: 'showWeights', color: '#2a78d6', bpp: 2, label: 'weights (2 B/param)' },
-  { prop: 'showGrads', color: '#eb6834', bpp: 4, label: 'gradients (fp32, 4 B/param)' },
-  { prop: 'showOptim', color: '#1baf7a', bpp: 8, label: 'optimizer states (8 B/param)' },
+  // zthresh: the ZeRO level at which this component shards over its
+  // replication group (1 = optimizer, 2 = + gradients, 3 = + weights/FSDP)
+  { prop: 'showWeights', color: '#2a78d6', bpp: 2, zthresh: 3, label: 'weights (2 B/param)' },
+  { prop: 'showGrads', color: '#eb6834', bpp: 4, zthresh: 2, label: 'gradients (fp32, 4 B/param)' },
+  { prop: 'showOptim', color: '#1baf7a', bpp: 8, zthresh: 1, label: 'optimizer states (8 B/param)' },
 ];
 
 // fiat parallelism for the `local` variant (what one GPU holds): 2048 GPUs;
@@ -42,6 +44,26 @@ export const ppStage = (s, pp = LOCAL_PAR.pp) => {
   const lo = Math.floor(61 * s / pp), hi = Math.floor(61 * (s + 1) / pp);
   const dense = Math.max(0, Math.min(hi, 3) - Math.min(lo, 3));
   return { lo, hi, layers: hi - lo, dense, moe: hi - lo - dense };
+};
+
+// the PP stage holding the most resident bytes under the local model (all
+// components on, vocab counted on the end stages) — the default stage to
+// show: the fully loaded rank. Ties break toward the earlier stage.
+export const peakStage = (pp, ep, zero, world = LOCAL_PAR.world) => {
+  const dp = world / pp;
+  const bpp = (cls) => BYTE_COMPS.reduce((t, c) =>
+    t + (zero >= c.zthresh ? c.bpp / (cls === 'e' ? dp / ep : dp) : c.bpp), 0);
+  const moeExp = PARAMS.expert * DSV3.routedExperts;
+  const dB = PARAMS.denseBlock * bpp('d');
+  const mB = (PARAMS.moeBlock - moeExp) * bpp('d') + (moeExp / ep) * bpp('e');
+  let best = 0, bestV = -1;
+  for (let s2 = 0; s2 < pp; s2++) {
+    const g = ppStage(s2, pp);
+    const v = g.dense * dB + g.moe * mB
+      + (((s2 === 0 ? 1 : 0) + (s2 === pp - 1 ? 1 : 0)) * PARAMS.embed * bpp('d'));
+    if (v > bestV) { bestV = v; best = s2; }
+  }
+  return best;
 };
 
 // parameter-count formatter for the dims parentheticals ('(29M \u00d7256)' / '(7.5B)')
@@ -712,6 +734,9 @@ dsv3-layer { display: block; margin: 14px 0 26px; }
 .lv-head .stp button:disabled { color: #dedcd3; cursor: default; }
 .lv-head .stp button:first-child { border-radius: 4px 0 0 4px; }
 .lv-head .stp button:last-child { border-radius: 0 4px 4px 0; }
+.lv-head .stp button + button { border-left: none; }
+.lv-head .stp button.on { background: #f3f2ee; color: #0b0b0b; font-weight: 600; cursor: default; }
+.lv-head .stp button { width: auto; min-width: 20px; padding: 0 5px 1px; }
 .lv-head .stp select.v { font: 11px ui-monospace, monospace; min-width: 4ch; padding: 2px 5px;
   border: 1px solid #c3c2b7; border-left: none; border-right: none; border-radius: 0;
   background: #fff; appearance: none; -webkit-appearance: none; text-align: center;
@@ -775,8 +800,11 @@ export class Dsv3Layer extends HTMLElement {
     // degree, PP stage, ZeRO-1 on/off)
     this.ep = st?.ep ?? 64;
     this.pp = st?.pp ?? LOCAL_PAR.pp;
-    this.stage = Math.min(st?.stage ?? 1, this.pp - 1);
-    this.zero1 = st?.zero1 ?? true;
+    this.zero = st?.zero ?? (st?.zero1 === false ? 0 : 1);   // ZeRO level 0–3 (1 = DSv3)
+    this.world = st?.world ?? LOCAL_PAR.world;               // cluster size (GPUs)
+    // default to the PEAK stage — the fully loaded rank is the story; the
+    // selector is there to peek at the lighter ones
+    this.stage = Math.min(st?.stage ?? peakStage(this.pp, this.ep, this.zero), this.pp - 1);
     // cumulative: every parameter parenthetical multiplies by the selected
     // kind's block count (×3 dense / ×58 MoE); the tabs hide — the kind then
     // comes from the plan selector alone
@@ -807,7 +835,7 @@ export class Dsv3Layer extends HTMLElement {
       kind: this.kind, cumulative: this.cumulative,
       showWeights: this.showWeights, showOptim: this.showOptim,
       showGrads: this.showGrads, showActs: this.showActs,
-      ep: this.ep, stage: this.stage, pp: this.pp, zero1: this.zero1,
+      ep: this.ep, stage: this.stage, pp: this.pp, zero: this.zero, world: this.world,
     });
   }
   applyPreset(recipe, recompute, transposed = false) {
@@ -829,7 +857,7 @@ export class Dsv3Layer extends HTMLElement {
   // Numbers snap; a change that flips the kind snaps (different layout).
   _snapLocal() {
     return { ep: this.ep, pp: this.pp, stage: this.stage,
-      zero1: this.zero1 !== false, cum: !!this.cumulative };
+      zero: this.zero ?? 1, world: this.world ?? LOCAL_PAR.world, cum: !!this.cumulative };
   }
   _tweenLocal(prev) {
     this.changed(true);
@@ -1051,20 +1079,22 @@ export class Dsv3Layer extends HTMLElement {
             : g.lo === g.hi - 1 ? `layer ${g.lo}` : `layers ${g.lo}–${g.hi - 1}`;
           const tags = [g.dense ? `${g.dense} dense` : '', o === 0 ? 'embed' : '',
             o === pp - 1 ? 'lm head' : ''].filter(Boolean).join(', ');
-          return `${o}: ${range}${tags ? ` (${tags})` : ''}`;
+          const pk2 = o === peakStage(pp, this.ep, this.zero ?? 1, world) ? ' · peak' : '';
+          return `${o}: ${range}${tags ? ` (${tags})` : ''}${pk2}`;
         };
         // EP/PP step by powers of two: a segmented − value + control
-        const mkStep = (get, set, fmt, max = 64) => {
+        const POW2 = [1, 2, 4, 8, 16, 32, 64];
+        const mkStep = (get, set, fmt, max = 64, opts = POW2, min = 1) => {
           const wrap = el('span', 'stp');
           // the value chip is itself a dropdown: click the number to jump
           const val = document.createElement('select'); val.className = 'v';
-          for (const o of [1, 2, 4, 8, 16, 32, 64].filter((o) => o <= max)) val.append(new Option(fmt(o), o));
+          for (const o of opts.filter((o) => o <= max && o >= min)) val.append(new Option(fmt(o), o));
           val.value = String(get());
           val.onchange = () => { const prev = this._snapLocal(); set(+val.value); this._tweenLocal(prev); };
           const btn = (txt, dir, max) => {
             const b = document.createElement('button');
             b.textContent = txt; b.type = 'button';
-            b.disabled = dir < 0 ? get() <= 1 : get() >= max;
+            b.disabled = dir < 0 ? get() <= min : get() >= max;
             b.onclick = () => {
               const prev = this._snapLocal();
               set(dir < 0 ? get() / 2 : get() * 2);
@@ -1075,22 +1105,40 @@ export class Dsv3Layer extends HTMLElement {
           wrap.append(btn('−', -1, max), val, btn('+', 1, max));
           return wrap;
         };
-        // EP is a subgroup of DP, so EP ≤ DP = world/PP (raising PP clamps EP)
-        const epMax = Math.min(64, LOCAL_PAR.world / (this.pp ?? LOCAL_PAR.pp));
+        // EP is a subgroup of DP, so EP ≤ DP = world/PP (raising PP or
+        // shrinking the cluster clamps EP)
+        const world = this.world ?? LOCAL_PAR.world;
+        const epMax = Math.min(64, world / (this.pp ?? LOCAL_PAR.pp));
         mini.append('EP: ', mkStep(() => this.ep, (v) => { this.ep = v; }, String, epMax),
           ' PP: ', mkStep(() => this.pp,
-            (v) => { this.pp = v; this.stage = Math.min(this.stage, v - 1); this.ep = Math.min(this.ep, LOCAL_PAR.world / v); }, String, 64),
-          ' stage: ', mkSel([...Array(pp).keys()], this.stage, stageLabel, (v) => { this.stage = v; }));
-        const zl = document.createElement('label');
-        zl.style.cssText = 'display:inline-flex;align-items:center;gap:3px;color:#52514e;font-size:11px;cursor:pointer;';
-        const zc = document.createElement('input');
-        zc.type = 'checkbox'; zc.checked = this.zero1 !== false;
-        zc.onchange = () => { const prev = this._snapLocal(); this.zero1 = zc.checked; this._tweenLocal(prev); };
-        zl.append(zc, 'ZeRO-1');
+            (v) => {
+              this.pp = v;
+              this.ep = Math.min(this.ep, world / v);
+              this.stage = peakStage(v, this.ep, this.zero ?? 1, world);   // stage indices don't survive a resplit — jump to the new peak
+            }, String, 64),
+          ' stage: ', mkSel([...Array(pp).keys()], this.stage, stageLabel, (v) => { this.stage = v; }),
+          ' GPUs: ', mkStep(() => world,
+            (v) => { this.world = v; this.ep = Math.min(this.ep, v / this.pp); },
+            String, 16384, [128, 256, 512, 1024, 2048, 4096, 8192, 16384], 128));
+        // ZeRO-(off|1|2|3): a segmented level picker (1 shards optimizer,
+        // 2 + gradients, 3 + weights — each over its replication group)
+        const zw = el('span', 'stp');
+        const zlab = el('span'); zlab.style.cssText = 'color:#52514e;font-size:11px;margin-right:2px;';
+        zlab.textContent = 'ZeRO-';
+        for (const [i, lv] of [[0, 'off'], [1, '1'], [2, '2'], [3, '3']]) {
+          const b = document.createElement('button');
+          b.textContent = lv; b.type = 'button';
+          if ((this.zero ?? 1) === i) b.classList.add('on');
+          b.onclick = () => {
+            if ((this.zero ?? 1) === i) return;
+            const prev = this._snapLocal(); this.zero = i; this._tweenLocal(prev);
+          };
+          zw.append(b);
+        }
         const fixed = el('span');
         fixed.style.cssText = 'color:#52514e;font-size:11px;';
-        fixed.textContent = `· DP ${LOCAL_PAR.world / pp} · ${LOCAL_PAR.world} GPUs ·`;
-        mini.append(fixed, zl);
+        fixed.textContent = `· DP ${world / pp} ·`;
+        mini.append(fixed, zlab, zw);
       }
       if (this.getAttribute('lens') === 'param-bytes') {
         // the strip unit rescales with the ×N toggle — label it so the jump
@@ -1249,24 +1297,25 @@ export class Dsv3Layer extends HTMLElement {
     const CONS = LOCAL || (PBYTES && this.hasAttribute('consolidated'));
     const OPTIM = CONS || (PBYTES && this.hasAttribute('optim'));
     const EPn = this.ep ?? 64, PPn = this.pp ?? LOCAL_PAR.pp, STG = this.stage ?? 1;
-    const Z1 = this.zero1 !== false;                         // ZeRO-1 optimizer sharding on/off
-    const DPn = LOCAL_PAR.world / PPn;
-    const EDP = LOCAL_PAR.world / PPn / EPn;                 // expert-DP (EP=1: = DP — no expert parallelism)
+    const ZL = this.zero ?? 1;                               // ZeRO level (0 off · 1 optim · 2 +grads · 3 +weights)
+    const WORLD = this.world ?? LOCAL_PAR.world;
+    const DPn = WORLD / PPn;
+    const EDP = WORLD / PPn / EPn;                           // expert-DP (EP=1: = DP — no expert parallelism)
     const stg = ppStage(STG, PPn);
     // knob tween (local): squares pour between the OLD and NEW configuration —
     // each component's effective factor (bytes/param × EP share × stage ×N)
     // lerps with this._vtween.t; numbers snap to the new config
-    const Snow = { ep: EPn, pp: PPn, stage: STG, zero1: Z1, cum: !!this.cumulative };
+    const Snow = { ep: EPn, pp: PPn, stage: STG, zero: ZL, world: WORLD, cum: !!this.cumulative };
     const dLoc = (S) => {
       const g = ppStage(Math.min(S.stage, S.pp - 1), S.pp);
       const kmul = this.kind === 'dense' ? g.dense : g.moe;
-      const dp = LOCAL_PAR.world / S.pp;
+      const dp = (S.world ?? LOCAL_PAR.world) / S.pp;
       return { mult: S.cum ? kmul : 1, eFrac: 1 / S.ep,
-        ob: (cls) => S.zero1 === false ? 8 : 8 / (cls === 'e' ? dp / S.ep : dp) };
+        bpp: (c, cls) => (S.zero ?? 1) >= c.zthresh ? c.bpp / (cls === 'e' ? dp / S.ep : dp) : c.bpp };
     };
     const fEff = (c, cls, S) => {
       const d = dLoc(S);
-      return (c.prop === 'showOptim' ? d.ob(cls) : c.bpp) * d.mult * (cls === 'e' ? d.eFrac : 1);
+      return d.bpp(c, cls) * d.mult * (cls === 'e' ? d.eFrac : 1);
     };
     const fT = (c, cls) => {
       const fN = fEff(c, cls, Snow), V = this._vtween;
@@ -1285,7 +1334,7 @@ export class Dsv3Layer extends HTMLElement {
     // visible bytes per parameter (numbers snap). Two classes under local:
     // 'd' (dense/replicated: optimizer ZeRO-1-sharded /DP) and 'e' (expert:
     // sharded over the smaller expert-DP group)
-    const bppOf = (c, cls) => !LOCAL || c.prop !== 'showOptim' || !Z1 ? c.bpp
+    const bppOf = (c, cls) => !LOCAL || ZL < c.zthresh ? c.bpp
       : c.bpp / (cls === 'e' ? EDP : DPn);
     const BPPT = (cls = 'd') => COMPS.reduce((t, c) => t + (this[c.prop] ? bppOf(c, cls) : 0), 0);
     const clsOf = (id) => LOCAL && this.kind === 'moe' && (id === 'ffn_gate_up' || id === 'ffn_down') ? 'e' : 'd';
@@ -2112,16 +2161,49 @@ export class Dsv3Layer extends HTMLElement {
     // column alone, making no claims about the surrounding stack) ----
     let h = Math.max(col1End, col2End) + 10;
     let lmH = -20;
-    // consolidated: the saved activations are the amber chips ON THE WIRES
-    // (drawn by tensorChip) — here just a text-only total for the block, no
-    // squares (those live at the chips; a second set would double-count)
-    if (CONS) {
-      const m = cmult('showActs');
-      if (m) {
-        P.push(`<g opacity="${m.toFixed(3)}"><text class="tensor tsave" x="${C1 - 20}" y="${h + 8}">` +
-          `saved for backward · ×4096 tokens${CUM ? ` × ${KMUL} blocks` : ''} · ${fmtBytes(ana.savedBytes * 4096 * (CUM ? KMUL : 1))} total</text></g>`);
-        h += Math.round(18 * m);                          // the line grows/shrinks with the tween
+    // local: the fit bar — this rank's WHOLE-STAGE bytes as a flush stacked
+    // bar (memory-bar segment colors) against the 80 GiB H100 capacity tick.
+    // Segments follow the legend checkboxes and lerp with the knob tween;
+    // the total label snaps. Activations approximate mixed-kind stages with
+    // the current kind's per-layer stash.
+    if (LOCAL) {
+      const cap = 80 * 2 ** 30;
+      const moeExp = PARAMS.expert * DSV3.routedExperts;
+      const segB = (S) => {
+        const g = ppStage(Math.min(S.stage, S.pp - 1), S.pp);
+        const dp = (S.world ?? LOCAL_PAR.world) / S.pp;
+        const dParams = g.dense * PARAMS.denseBlock + g.moe * (PARAMS.moeBlock - moeExp)
+          + ((S.stage === 0 ? 1 : 0) + (S.stage === S.pp - 1 ? 1 : 0)) * PARAMS.embed
+          + (S.stage === S.pp - 1 ? DSV3.hidden : 0);
+        const eParams = g.moe * moeExp / S.ep;
+        return COMPS.map((c) => {
+          const shard = (cls) => (S.zero ?? 1) >= c.zthresh ? c.bpp / (cls === 'e' ? dp / S.ep : dp) : c.bpp;
+          return dParams * shard('d') + eParams * shard('e');
+        }).concat([ana.savedBytes * 4096 * g.layers]);
+      };
+      const V = this._vtween;
+      const nowB = segB(Snow), prevB = V ? segB(V.prev) : nowB;
+      const vis = [...COMPS.map((c) => cmult(c.prop)), cmult('showActs')];
+      const segs = nowB.map((b, i) => (prevB[i] + (b - prevB[i]) * (V ? V.t : 1)) * vis[i]);
+      const colors = [...COMPS.map((c) => c.color), '#eda100'];
+      const onB = [...COMPS.map((c) => this[c.prop] ? 1 : 0), this.showActs ? 1 : 0];
+      const totalN = nowB.reduce((t, b, i) => t + b * onB[i], 0);   // label snaps
+      const total = segs.reduce((a, b2) => a + b2, 0);
+      const x0 = C1 - 20, bw = C2 + W - x0, by = h + 14;
+      const scale = bw / Math.max(total * 1.02, cap * 1.15);
+      P.push(`<text class="grplabel" x="${x0}" y="${h + 9}">this rank, whole stage:</text>`);
+      let bx = x0;
+      for (let i = 0; i < segs.length; i++) {
+        const w2 = segs[i] * scale;
+        if (w2 < 0.5) continue;
+        P.push(`<rect x="${bx.toFixed(1)}" y="${by}" width="${Math.max(0.5, w2 - 2).toFixed(1)}" height="12" fill="${colors[i]}"/>`);
+        bx += w2;
       }
+      const cx2 = x0 + cap * scale;
+      P.push(`<line x1="${cx2.toFixed(1)}" y1="${by - 3}" x2="${cx2.toFixed(1)}" y2="${by + 15}" stroke="#0b0b0b" stroke-width="1.2"/>` +
+        `<text class="dims" x="${cx2 + 4}" y="${by + 26}">80 GiB (H100)</text>` +
+        `<text class="dims" x="${(bx + 6).toFixed(1)}" y="${by + 10}">${fmtBytes(totalN)}</text>`);
+      h += 48;
     }
     if (SCOPE === 'model') {   // the surrounding stack: ×61 rule, final norm, lm head, loss
       P.push(`<line class="wire" x1="${C1 - 20}" y1="${h}" x2="${C2 + W + 20}" y2="${h}" stroke-dasharray="3 3"/>`);
