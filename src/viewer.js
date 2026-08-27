@@ -758,7 +758,7 @@ dsv3-layer { display: block; margin: 14px 0 26px; }
 /* no scaling, ever: a diagram wider than its container scrolls horizontally */
 .lv-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 .lv-bar svg { display: block; margin: 2px 0 6px; max-width: 100%; height: auto; }
-.lv-bar { position: relative; cursor: col-resize; }
+.lv-bar { position: relative; }
 .lv-ruler { display: none; position: absolute; background: rgba(237, 161, 0, 0.12);
   border-left: 1px solid #0b0b0b; border-right: 1px solid #0b0b0b; pointer-events: none; }
 .lv-ruler-lab { position: absolute; top: -2px; left: 100%; margin-left: 5px; white-space: nowrap;
@@ -1353,11 +1353,8 @@ export class Dsv3Layer extends HTMLElement {
       barSlot.onmousedown = (ev) => {
         const tog = ev.target.closest?.('[data-prop]');
         if (tog) { this.soloComp(tog.dataset.prop); return; }
-        {   // the cursor arms only inside the bars, not the label gutter
-          const r0 = svgEl2.getBoundingClientRect();
-          const raw = (ev.clientX - r0.left) / r0.width * BAR_GEO.w;
-          if (raw < BAR_GEO.x0 || raw > BAR_GEO.x0 + BAR_GEO.bw) return;
-        }
+        // the cursor arms only on the scrub overlay (the bars band itself)
+        if (!ev.target.classList?.contains('scrub')) return;
         const u0 = toU(ev);
         const C = this._cursor;
         if (C && u0 >= Math.min(C.a, C.b) - 4 && u0 <= Math.max(C.a, C.b) + 4) {   // click it to clear
@@ -2453,12 +2450,19 @@ export class Dsv3Layer extends HTMLElement {
         const pinB = pin ? (i === nR - 1 ? pinTotal : pin.segs[i]) : 0;
         if (pinB) B.push(`<line x1="${px(pinB).toFixed(1)}" y1="${y2 - 1}" x2="${px(pinB).toFixed(1)}" y2="${y2 + barH + 1}" stroke="#0b0b0b" stroke-width="1.4"/>`);
         // bar-end factor: over/under the 80 GiB boundary — or, when pinned,
-        // ONLY the vs-pin factor (both at once was confusing)
-        const fac = pin ? factor(r.abs, pinB) : factor(r.abs, cap, true);
-        B.push(`<text class="dims" x="${(Math.max(px(r.b), pinB ? px(pinB) : 0) + 5).toFixed(1)}" y="${y2 + 7}"${dim}>` +
-          `${fac}${pin && fac ? ' vs pin' : ''}</text>`);
+        // ONLY the vs-pin factor (both at once was confusing). Hidden
+        // components show none (a factor parked at the zero line reads wrong)
+        if (r.on) {
+          const fac = pin ? factor(r.abs, pinB) : factor(r.abs, cap, true);
+          B.push(`<text class="dims" x="${(Math.max(px(r.b), pinB ? px(pinB) : 0) + 5).toFixed(1)}" y="${y2 + 7}">` +
+            `${fac}${pin && fac ? ' vs pin' : ''}</text>`);
+        }
       }
       if (pin) B.push(`<text class="dims" x="${x0 + bw}" y="${axisY + 18}" text-anchor="end">pinned: ${pin.label}</text>`);
+      // the scrub overlay: cursor affordance AND arming region live exactly
+      // on the bars band — not the captions, not below the axis
+      B.push(`<rect class="scrub" x="${x0}" y="${topY - 2}" width="${bw}" height="${axisY - topY + 1}" ` +
+        `fill="transparent" style="cursor:col-resize"/>`);
       // the capacity label sits ON TOP, leaving the bottom axis to the
       // power-of-two labels
       const cx2 = px(cap);
