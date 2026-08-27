@@ -46,10 +46,19 @@ export const ppStage = (s, pp = LOCAL_PAR.pp) => {
   return { lo, hi, layers: hi - lo, dense, moe: hi - lo - dense };
 };
 
+// save-everything bf16 activation bytes for ONE layer × one 4096-token
+// microbatch (the local model's activation quantum), computed once
+let ACT_LAYER_B = 0;
+export const actLayerBytes = () => ACT_LAYER_B ||=
+  analyze(blockGraph('moe', DSV3, resolveMatmuls({ recipe: 'bf16' }), 4096), {}, false).savedBytes * 4096;
+// 1F1B steady state: stage s holds (pp − s) forward microbatches (warmup
+// depth, assuming ≥ pp microbatches per step); 'one' = a single microbatch
+export const inflightOf = (sched, s, pp) => sched === 'one' ? 1 : pp - Math.min(s, pp - 1);
+
 // the PP stage holding the most resident bytes under the local model (all
-// components on, vocab counted on the end stages) — the default stage to
-// show: the fully loaded rank. Ties break toward the earlier stage.
-export const peakStage = (pp, ep, zero, world = LOCAL_PAR.world) => {
+// components on, vocab counted on the end stages, activations under the
+// schedule) — the default stage to show: the fully loaded rank.
+export const peakStage = (pp, ep, zero, world = LOCAL_PAR.world, sched = '1f1b') => {
   const dp = world / pp;
   const bpp = (cls) => BYTE_COMPS.reduce((t, c) =>
     t + (zero >= c.zthresh ? c.bpp / (cls === 'e' ? dp / ep : dp) : c.bpp), 0);
@@ -60,7 +69,8 @@ export const peakStage = (pp, ep, zero, world = LOCAL_PAR.world) => {
   for (let s2 = 0; s2 < pp; s2++) {
     const g = ppStage(s2, pp);
     const v = g.dense * dB + g.moe * mB
-      + (((s2 === 0 ? 1 : 0) + (s2 === pp - 1 ? 1 : 0)) * PARAMS.embed * bpp('d'));
+      + (((s2 === 0 ? 1 : 0) + (s2 === pp - 1 ? 1 : 0)) * PARAMS.embed * bpp('d'))
+      + g.layers * actLayerBytes() * inflightOf(sched, s2, pp);
     if (v > bestV) { bestV = v; best = s2; }
   }
   return best;
@@ -802,9 +812,10 @@ export class Dsv3Layer extends HTMLElement {
     this.pp = st?.pp ?? LOCAL_PAR.pp;
     this.zero = st?.zero ?? (st?.zero1 === false ? 0 : 1);   // ZeRO level 0–3 (1 = DSv3)
     this.world = st?.world ?? LOCAL_PAR.world;               // cluster size (GPUs)
+    this.sched = st?.sched ?? '1f1b';                        // pipeline schedule for acts in flight ('1f1b' | 'one')
     // default to the PEAK stage — the fully loaded rank is the story; the
     // selector is there to peek at the lighter ones
-    this.stage = Math.min(st?.stage ?? peakStage(this.pp, this.ep, this.zero), this.pp - 1);
+    this.stage = Math.min(st?.stage ?? peakStage(this.pp, this.ep, this.zero, this.world, this.sched), this.pp - 1);
     // cumulative: every parameter parenthetical multiplies by the selected
     // kind's block count (×3 dense / ×58 MoE); the tabs hide — the kind then
     // comes from the plan selector alone
@@ -835,7 +846,7 @@ export class Dsv3Layer extends HTMLElement {
       kind: this.kind, cumulative: this.cumulative,
       showWeights: this.showWeights, showOptim: this.showOptim,
       showGrads: this.showGrads, showActs: this.showActs,
-      ep: this.ep, stage: this.stage, pp: this.pp, zero: this.zero, world: this.world,
+      ep: this.ep, stage: this.stage, pp: this.pp, zero: this.zero, world: this.world, sched: this.sched,
     });
   }
   applyPreset(recipe, recompute, transposed = false) {
@@ -857,7 +868,8 @@ export class Dsv3Layer extends HTMLElement {
   // Numbers snap; a change that flips the kind snaps (different layout).
   _snapLocal() {
     return { ep: this.ep, pp: this.pp, stage: this.stage,
-      zero: this.zero ?? 1, world: this.world ?? LOCAL_PAR.world, cum: !!this.cumulative };
+      zero: this.zero ?? 1, world: this.world ?? LOCAL_PAR.world,
+      sched: this.sched ?? '1f1b', cum: !!this.cumulative };
   }
   _tweenLocal(prev) {
     this.changed(true);
@@ -1079,7 +1091,7 @@ export class Dsv3Layer extends HTMLElement {
             : g.lo === g.hi - 1 ? `layer ${g.lo}` : `layers ${g.lo}–${g.hi - 1}`;
           const tags = [g.dense ? `${g.dense} dense` : '', o === 0 ? 'embed' : '',
             o === pp - 1 ? 'lm head' : ''].filter(Boolean).join(', ');
-          const pk2 = o === peakStage(pp, this.ep, this.zero ?? 1, world) ? ' · peak' : '';
+          const pk2 = o === peakStage(pp, this.ep, this.zero ?? 1, world, this.sched) ? ' · peak' : '';
           return `${o}: ${range}${tags ? ` (${tags})` : ''}${pk2}`;
         };
         // EP/PP step by powers of two: a segmented − value + control
@@ -1114,7 +1126,7 @@ export class Dsv3Layer extends HTMLElement {
             (v) => {
               this.pp = v;
               this.ep = Math.min(this.ep, world / v);
-              this.stage = peakStage(v, this.ep, this.zero ?? 1, world);   // stage indices don't survive a resplit — jump to the new peak
+              this.stage = peakStage(v, this.ep, this.zero ?? 1, world, this.sched);   // stage indices don't survive a resplit — jump to the new peak
             }, String, 64),
           ' stage: ', mkSel([...Array(pp).keys()], this.stage, stageLabel, (v) => { this.stage = v; }),
           ' GPUs: ', mkStep(() => world,
@@ -1138,7 +1150,23 @@ export class Dsv3Layer extends HTMLElement {
         const fixed = el('span');
         fixed.style.cssText = 'color:#52514e;font-size:11px;';
         fixed.textContent = `· DP ${world / pp} ·`;
-        mini.append(fixed, zlab, zw);
+        // pipeline schedule for activations in flight: 1F1B steady state
+        // (stage s holds PP−s microbatches) vs a single microbatch — the
+        // schedule is an assumption worth breaking open, so it's a knob
+        const sw2 = el('span', 'stp');
+        for (const [k, lab] of [['1f1b', '1F1B'], ['one', '×1 mb']]) {
+          const b = document.createElement('button');
+          b.textContent = lab; b.type = 'button';
+          if ((this.sched ?? '1f1b') === k) b.classList.add('on');
+          b.onclick = () => {
+            if ((this.sched ?? '1f1b') === k) return;
+            const prev = this._snapLocal(); this.sched = k; this._tweenLocal(prev);
+          };
+          sw2.append(b);
+        }
+        const slab = el('span'); slab.style.cssText = 'color:#52514e;font-size:11px;margin:0 2px 0 6px;';
+        slab.textContent = 'sched:';
+        mini.append(fixed, zlab, zw, slab, sw2);
       }
       if (this.getAttribute('lens') === 'param-bytes') {
         // the strip unit rescales with the ×N toggle — label it so the jump
@@ -1184,7 +1212,9 @@ export class Dsv3Layer extends HTMLElement {
           };
           const comps2 = cons2 ? BYTE_COMPS : [BYTE_COMPS[0], BYTE_COMPS[2]];
           leg.append(...comps2.map((c) => cb(c.label, c.color, c.prop)));
-          if (cons2) leg.append(cb('saved activations (bf16, ×4096 tokens)', '#eda100', 'showActs'));
+          if (cons2) leg.append(cb(this.hasAttribute('local')
+            ? `saved activations (bf16, ×4096 tok × ${inflightOf(this.sched ?? '1f1b', this.stage ?? 1, this.pp ?? LOCAL_PAR.pp)} in flight)`
+            : 'saved activations (bf16, ×4096 tokens)', '#eda100', 'showActs'));
           const u = el('span'); u.innerHTML = `· ${sw('#898781')} = ${fmtBytes(unit)}`;
           leg.append(u);
         } else leg.innerHTML = `${sw('#2a78d6')} = ${fmtBytes(unit)}`;
@@ -1305,12 +1335,15 @@ export class Dsv3Layer extends HTMLElement {
     // knob tween (local): squares pour between the OLD and NEW configuration —
     // each component's effective factor (bytes/param × EP share × stage ×N)
     // lerps with this._vtween.t; numbers snap to the new config
-    const Snow = { ep: EPn, pp: PPn, stage: STG, zero: ZL, world: WORLD, cum: !!this.cumulative };
+    const SCHED = this.sched ?? '1f1b';
+    const IFN = inflightOf(SCHED, STG, PPn);                 // microbatches in flight on this stage
+    const Snow = { ep: EPn, pp: PPn, stage: STG, zero: ZL, world: WORLD, sched: SCHED, cum: !!this.cumulative };
     const dLoc = (S) => {
       const g = ppStage(Math.min(S.stage, S.pp - 1), S.pp);
       const kmul = this.kind === 'dense' ? g.dense : g.moe;
       const dp = (S.world ?? LOCAL_PAR.world) / S.pp;
       return { mult: S.cum ? kmul : 1, eFrac: 1 / S.ep,
+        acts: (S.cum ? kmul : 1) * inflightOf(S.sched ?? '1f1b', S.stage, S.pp),
         bpp: (c, cls) => (S.zero ?? 1) >= c.zthresh ? c.bpp / (cls === 'e' ? dp / S.ep : dp) : c.bpp };
     };
     const fEff = (c, cls, S) => {
@@ -1324,6 +1357,11 @@ export class Dsv3Layer extends HTMLElement {
     const multT = (() => {
       const mN = dLoc(Snow).mult, V = this._vtween;
       return V ? dLoc(V.prev).mult + (mN - dLoc(V.prev).mult) * V.t : mN;
+    })();
+    // activations multiplier (stage blocks × microbatches in flight), lerped
+    const actsT = (() => {
+      const aN = dLoc(Snow).acts, V = this._vtween;
+      return V ? dLoc(V.prev).acts + (aN - dLoc(V.prev).acts) * V.t : aN;
     })();
     const COMPS = !OPTIM ? [BYTE_COMPS[0]]
       : CONS ? BYTE_COMPS : [BYTE_COMPS[0], BYTE_COMPS[2]];
@@ -1598,8 +1636,8 @@ export class Dsv3Layer extends HTMLElement {
         if (!m || (st !== 'save' && st !== 'pin')) return 12;
         // cumulative: every block's stash is resident — chips follow the ×N
         // convention (labels snap, squares grow with the tween like the strips)
-        const b4096 = bytes * 4096 * (CUM ? KMUL : 1);
-        const chipF = LOCAL ? multT : ABS ? stripMul : CUM ? KMUL : 1;
+        const b4096 = bytes * 4096 * (LOCAL ? (CUM ? KMUL : 1) * IFN : CUM ? KMUL : 1);
+        const chipF = LOCAL ? actsT : ABS ? stripMul : CUM ? KMUL : 1;
         const full = Math.round(bytes * 4096 * chipF / (PB_UNIT * 2));
         const nsq = Math.round(full * m), hollow = !nsq && m >= 0.5 && chipF > 0;
         const name = esc(name0.replace(' (checkpoint anchor)', ''));
@@ -1658,7 +1696,7 @@ export class Dsv3Layer extends HTMLElement {
         // over the knob tween: the larger of the old and new configuration),
         // easing with the acts checkbox tween so the gap never pops
         const chipF = LOCAL
-          ? Math.max(dLoc(Snow).mult, this._vtween ? dLoc(this._vtween.prev).mult : 0)
+          ? Math.max(dLoc(Snow).acts, this._vtween ? dLoc(this._vtween.prev).acts : 0)
           : CUM ? KMUL : 1;
         const b = ids.reduce((t, i) => t + anaX.byId[i].outBytes, 0) * 4096 * chipF;
         const rows = Math.max(1, Math.ceil(Math.round(b / (PB_UNIT * 2)) / CHIP_ROW));
@@ -2179,7 +2217,7 @@ export class Dsv3Layer extends HTMLElement {
         return COMPS.map((c) => {
           const shard = (cls) => (S.zero ?? 1) >= c.zthresh ? c.bpp / (cls === 'e' ? dp / S.ep : dp) : c.bpp;
           return dParams * shard('d') + eParams * shard('e');
-        }).concat([ana.savedBytes * 4096 * g.layers]);
+        }).concat([ana.savedBytes * 4096 * g.layers * inflightOf(S.sched ?? '1f1b', S.stage, S.pp)]);
       };
       const V = this._vtween;
       const nowB = segB(Snow), prevB = V ? segB(V.prev) : nowB;

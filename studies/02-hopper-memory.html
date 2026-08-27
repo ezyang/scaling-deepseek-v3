@@ -90,7 +90,7 @@
     line at the bottom totals them). Colors match the memory-bar segments.
     Toggle components in the legend.</p>
 
-    <dsv3-anatomy style="min-height:834px" lens="param-bytes" local cumulative recipe="bf16" layer="local-diagram" detail controls="static" nocaption></dsv3-anatomy>
+    <dsv3-anatomy style="min-height:876px" lens="param-bytes" local cumulative recipe="bf16" layer="local-diagram" detail controls="static" nocaption></dsv3-anatomy>
 
     <p class="note">The same picture per GPU, under a fiat parallelism (we
     can't justify it without talking about comms — later chapters): 2048 GPUs,
@@ -107,8 +107,11 @@
     <em>peak</em> stage (the fully loaded rank — peek at the others to see
     they carry less). Stage 0 holds the embedding (and the dense blocks while
     they last); the last stage adds the final norm and lm head. Saved
-    activations are one microbatch per layer on the stage — the pipeline
-    schedule's in-flight multiplier is deliberately deferred. The bar at the
+    activations follow the pipeline schedule: under 1F1B, stage <em>s</em>
+    holds PP−<em>s</em> forward microbatches at steady state — which is why
+    the peak rank is an <em>early</em> stage, not the parameter-heavy last
+    one. The schedule is itself a knob (flip to ×1 mb to see the
+    single-microbatch fiction this section started with). The bar at the
     bottom totals the whole rank against an H100's 80&nbsp;GiB.</p>
 
     <strong>Full tally</strong>
