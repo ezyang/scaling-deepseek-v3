@@ -1308,32 +1308,38 @@ export class Dsv3Layer extends HTMLElement {
       const rlab = el('div', 'lv-ruler-lab');
       rul.append(rlab);
       barSlot.append(rul);
+      const fmtF = (f) => f >= 100 || Math.abs(f - Math.round(f)) < 0.02 * f ? String(Math.round(f)) : f.toFixed(1);
       const drawR = () => {
-        const u = this._cursor;
-        if (u == null) { rul.style.display = 'none'; return; }
+        const C = this._cursor;
+        if (!C) { rul.style.display = 'none'; return; }
         // rect math, not offsetLeft: SVG elements have no offsetLeft, which
         // left this at NaNpx (the line never met the cursor)
         const r2 = svgEl2.getBoundingClientRect(), host = barSlot.getBoundingClientRect();
         const k = r2.width / BAR_GEO.w;
+        const [u1, u2] = [Math.min(C.a, C.b), Math.max(C.a, C.b)];
         rul.style.display = 'block';
-        rul.style.left = `${(r2.left - host.left + u * k).toFixed(1)}px`;
-        rul.style.width = '0px';
+        rul.style.left = `${(r2.left - host.left + u1 * k).toFixed(1)}px`;
+        rul.style.width = `${((u2 - u1) * k).toFixed(1)}px`;
         rul.style.top = '10px';
         rul.style.height = `${r2.height - 22}px`;
-        const b = bytesAt(u), cap2 = 80 * 2 ** 30, r3 = b / cap2;
-        const f = r3 >= 1 ? r3 : 1 / r3;
-        const ff = f >= 100 || Math.abs(f - Math.round(f)) < 0.02 * f ? Math.round(f) : f.toFixed(1);
-        rlab.textContent = `${fmtBytes(b)} · ${r3 >= 1 ? '×' : '÷'}${ff} vs 80 GiB`;
+        if (u2 - u1 < 3) {   // point: the value there, sized against capacity
+          const b = bytesAt(u1), r3 = b / (80 * 2 ** 30);
+          rlab.textContent = `${fmtBytes(b)} · ${r3 >= 1 ? '×' : '÷'}${fmtF(r3 >= 1 ? r3 : 1 / r3)} vs 80 GiB`;
+        } else {             // span: on a log axis, any span IS a factor
+          const f = 2 ** ((u2 - u1) / BAR_GEO.bw * (BAR_GEO.hi - BAR_GEO.lo));
+          rlab.textContent = `×${fmtF(f)} (${fmtBytes(bytesAt(u1))} → ${fmtBytes(bytesAt(u2))})`;
+        }
       };
       barSlot.onmousedown = (ev) => {
         const tog = ev.target.closest?.('[data-prop]');
         if (tog) { this.toggleComp(tog.dataset.prop, !this[tog.dataset.prop]); return; }
         const u0 = toU(ev);
-        if (this._cursor != null && Math.abs(u0 - this._cursor) < 4) {   // click the line to clear
+        const C = this._cursor;
+        if (C && u0 >= Math.min(C.a, C.b) - 4 && u0 <= Math.max(C.a, C.b) + 4) {   // click it to clear
           this._cursor = null; drawR(); return;
         }
-        this._cursor = u0;
-        const move = (e2) => { this._cursor = toU(e2); drawR(); };
+        this._cursor = { a: u0, b: u0 };
+        const move = (e2) => { this._cursor.b = toU(e2); drawR(); };
         const up = () => {
           document.removeEventListener('mousemove', move);
           document.removeEventListener('mouseup', up);
