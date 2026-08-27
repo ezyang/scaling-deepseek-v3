@@ -2512,7 +2512,23 @@ export class Dsv3Layer extends HTMLElement {
           `<text class="dims" x="2" y="${y2 + 7}" fill="${r.color}" font-weight="600">${r.name}</text>` +
           `<text class="dims" x="${x0 - 8}" y="${y2 + 7}" text-anchor="end">${fmtBytes(r.abs)}</text></g>`);
         const topSum = allB.reduce((a2, b2, j) => a2 + (onB[j] ? b2 * vis[j] : 0), 0);
-        if (i === nR - 1 && totalT - topSum > totalT * 0.001) {
+        const chg = this._ctween?.props;
+        const allOnTarget = onB.every(Boolean);
+        const tC = this._ctween?.t ?? 1;
+        if (i === nR - 1 && allOnTarget && chg && tC < 1) {
+          // returning to all-on: arriving components never paint (they're
+          // future grey) — the full grey bar shows and the steady colored
+          // tip dissolves into it (no four-color flash on the way back)
+          B.push(`<rect x="${x0}" y="${y2}" width="${Math.max(0.5, px(totalT) - x0).toFixed(1)}" height="${barH}" fill="#c3c2b7"/>`);
+          const steadySum = allB.reduce((a2, b2, j) => a2 +
+            (onB[j] && !chg.has(j < COMPS.length ? COMPS[j].prop : 'showActs') ? b2 : 0), 0);
+          let acc = totalT - steadySum;
+          for (let j = 0; j < allB.length; j++) {
+            if (!onB[j] || chg.has(j < COMPS.length ? COMPS[j].prop : 'showActs')) continue;
+            const a1 = px(acc); acc += allB[j];
+            B.push(`<rect x="${(a1 + 1).toFixed(1)}" y="${y2}" width="${Math.max(0.5, px(acc) - a1 - 1).toFixed(1)}" height="${barH}" fill="${colors[j]}" opacity="${(1 - tC).toFixed(3)}"/>`);
+          }
+        } else if (i === nR - 1 && !allOnTarget && totalT - topSum > totalT * 0.001) {
           // stacked total: grey "other" base, then ONLY the target-on
           // components (a departing component's share folds into the grey
           // mid-tween — no four-color flash); the colored width is the gain
