@@ -1054,17 +1054,17 @@ export class Dsv3Layer extends HTMLElement {
           return `${o}: ${range}${tags ? ` (${tags})` : ''}`;
         };
         // EP/PP step by powers of two: a segmented − value + control
-        const mkStep = (get, set, fmt) => {
+        const mkStep = (get, set, fmt, max = 64) => {
           const wrap = el('span', 'stp');
           // the value chip is itself a dropdown: click the number to jump
           const val = document.createElement('select'); val.className = 'v';
-          for (const o of [1, 2, 4, 8, 16, 32, 64]) val.append(new Option(fmt(o), o));
+          for (const o of [1, 2, 4, 8, 16, 32, 64].filter((o) => o <= max)) val.append(new Option(fmt(o), o));
           val.value = String(get());
           val.onchange = () => { const prev = this._snapLocal(); set(+val.value); this._tweenLocal(prev); };
-          const btn = (txt, dir) => {
+          const btn = (txt, dir, max) => {
             const b = document.createElement('button');
             b.textContent = txt; b.type = 'button';
-            b.disabled = dir < 0 ? get() <= 1 : get() >= 64;
+            b.disabled = dir < 0 ? get() <= 1 : get() >= max;
             b.onclick = () => {
               const prev = this._snapLocal();
               set(dir < 0 ? get() / 2 : get() * 2);
@@ -1072,11 +1072,14 @@ export class Dsv3Layer extends HTMLElement {
             };
             return b;
           };
-          wrap.append(btn('−', -1), val, btn('+', 1));
+          wrap.append(btn('−', -1, max), val, btn('+', 1, max));
           return wrap;
         };
-        mini.append('EP: ', mkStep(() => this.ep, (v) => { this.ep = v; }, String),
-          ' PP: ', mkStep(() => this.pp, (v) => { this.pp = v; this.stage = Math.min(this.stage, v - 1); }, String),
+        // EP is a subgroup of DP, so EP ≤ DP = world/PP (raising PP clamps EP)
+        const epMax = Math.min(64, LOCAL_PAR.world / (this.pp ?? LOCAL_PAR.pp));
+        mini.append('EP: ', mkStep(() => this.ep, (v) => { this.ep = v; }, String, epMax),
+          ' PP: ', mkStep(() => this.pp,
+            (v) => { this.pp = v; this.stage = Math.min(this.stage, v - 1); this.ep = Math.min(this.ep, LOCAL_PAR.world / v); }, String, 64),
           ' stage: ', mkSel([...Array(pp).keys()], this.stage, stageLabel, (v) => { this.stage = v; }));
         const zl = document.createElement('label');
         zl.style.cssText = 'display:inline-flex;align-items:center;gap:3px;color:#52514e;font-size:11px;cursor:pointer;';
