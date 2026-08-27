@@ -218,7 +218,7 @@ export class Dsv3AnatomyPlan extends HTMLElement {
     // checkboxes live HERE — the sticky margin keeps them reachable while
     // the tall diagram scrolls
     let lg = '';
-    if (LB && l?.hasAttribute('marginlegend') && OPT) {
+    if (LB && l?.hasAttribute('marginlegend') && OPT && !LOC) {   // local's legend lives ON the fit chart rows
       // clickable rows (no checkboxes): swatch · name · this view's bytes.
       // A dimmed row is toggled off; values come from the layer's tallies
       // (the same math as the fit bar), so numbers and squares stay in step.

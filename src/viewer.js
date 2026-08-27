@@ -56,7 +56,7 @@ export const actLayerBytes = () => ACT_LAYER_B ||=
 export const inflightOf = (sched, s, pp) => sched === 'one' ? 1 : pp - Math.min(s, pp - 1);
 
 // fit-chart geometry (svg units): the log₂ axis spans 2^lo…2^hi over bw px
-const BAR_GEO = { w: 800, x0: 2, bw: 690, lo: 28, hi: 44 };
+const BAR_GEO = { w: 800, x0: 140, bw: 620, lo: 28, hi: 44 };   // 140px row-label gutter
 
 // the PP stage holding the most resident bytes under the local model (all
 // components on, vocab counted on the end stages, activations under the
@@ -1262,18 +1262,22 @@ export class Dsv3Layer extends HTMLElement {
       if (this.hasAttribute('local')) {
         // pin a baseline config: the log bars then carry ticks at the pinned
         // values and ×N/÷N factors — "I ×256'ed this and it /256'ed that"
-        const pb = document.createElement('button');
-        pb.style.cssText = 'font:11px ui-monospace,monospace;padding:2px 8px;border:1px solid #c3c2b7;' +
-          'border-radius:4px;background:#fff;cursor:pointer;margin-left:8px;';
-        pb.textContent = this._pinCfg ? 'unpin baseline' : 'pin baseline';
-        pb.onclick = () => {
-          this._pinCfg = this._pinCfg ? null : {
+        const mkBtn = (txt, title, fn) => {
+          const b = document.createElement('button');
+          b.style.cssText = 'font:11px ui-monospace,monospace;padding:2px 8px;border:1px solid #c3c2b7;' +
+            'border-radius:4px;background:#fff;cursor:pointer;margin-left:8px;';
+          b.textContent = txt; b.title = title; b.onclick = fn;
+          return b;
+        };
+        // always RE-pins the current config; the × next to it unpins
+        mini2.append(mkBtn('pin baseline', 'snapshot this config: the chart gains ticks and ×N/÷N factors vs it', () => {
+          this._pinCfg = {
             segs: [...(this._segTotals ?? [])],
             label: `EP${this.ep}·PP${this.pp}·stage ${this.stage}·ZeRO-${this.zero ? this.zero : 'off'}·${this.sched === 'one' ? '×1mb' : '1F1B'}·${this.world} GPUs`,
           };
           this.render();
-        };
-        mini2.append(pb);
+        }));
+        if (this._pinCfg) mini2.append(mkBtn('×', 'unpin the baseline', () => { this._pinCfg = null; this.render(); }));
       }
       root.append(mini);
       if (this.hasAttribute('local')) { barSlot = el('div', 'lv-bar'); root.append(barSlot); }
@@ -1290,8 +1294,9 @@ export class Dsv3Layer extends HTMLElement {
     if (barSlot && this._barHtml) {
       barSlot.innerHTML = this._barHtml;
       this._barHtml = null;
-      // Perfetto-style ruler: drag a span, read the FACTOR it covers (on a
-      // log axis a span is a multiplier wherever it sits). Click clears.
+      // scrub cursor: one vertical line you click/drag along the axis — the
+      // readout is the value there and its factor vs the 80 GiB capacity
+      // (a log axis makes that distance a multiplier). Click ON it to clear.
       const svgEl2 = barSlot.querySelector('svg');
       const toU = (ev) => {   // client → svg units, clamped to the axis
         const r2 = svgEl2.getBoundingClientRect();
@@ -1304,26 +1309,31 @@ export class Dsv3Layer extends HTMLElement {
       rul.append(rlab);
       barSlot.append(rul);
       const drawR = () => {
-        const R = this._ruler;
-        if (!R || Math.abs(R.a - R.b) < 2) { rul.style.display = 'none'; return; }
+        const u = this._cursor;
+        if (u == null) { rul.style.display = 'none'; return; }
         const r2 = svgEl2.getBoundingClientRect(), k = r2.width / BAR_GEO.w;
-        const [u1, u2] = [Math.min(R.a, R.b), Math.max(R.a, R.b)];
         rul.style.display = 'block';
-        rul.style.left = `${(svgEl2.offsetLeft + u1 * k).toFixed(1)}px`;
-        rul.style.width = `${((u2 - u1) * k).toFixed(1)}px`;
+        rul.style.left = `${(svgEl2.offsetLeft + u * k).toFixed(1)}px`;
+        rul.style.width = '0px';
         rul.style.top = '10px';
-        rul.style.height = `${(r2.height - 22) * 1}px`;
-        const f = 2 ** ((u2 - u1) / BAR_GEO.bw * (BAR_GEO.hi - BAR_GEO.lo));
+        rul.style.height = `${r2.height - 22}px`;
+        const b = bytesAt(u), cap2 = 80 * 2 ** 30, r3 = b / cap2;
+        const f = r3 >= 1 ? r3 : 1 / r3;
         const ff = f >= 100 || Math.abs(f - Math.round(f)) < 0.02 * f ? Math.round(f) : f.toFixed(1);
-        rlab.textContent = `×${ff} (${fmtBytes(bytesAt(u1))} → ${fmtBytes(bytesAt(u2))})`;
+        rlab.textContent = `${fmtBytes(b)} · ${r3 >= 1 ? '×' : '÷'}${ff} vs 80 GiB`;
       };
       barSlot.onmousedown = (ev) => {
-        this._ruler = { a: toU(ev), b: toU(ev) };
-        const move = (e2) => { this._ruler.b = toU(e2); drawR(); };
+        const tog = ev.target.closest?.('[data-prop]');
+        if (tog) { this.toggleComp(tog.dataset.prop, !this[tog.dataset.prop]); return; }
+        const u0 = toU(ev);
+        if (this._cursor != null && Math.abs(u0 - this._cursor) < 4) {   // click the line to clear
+          this._cursor = null; drawR(); return;
+        }
+        this._cursor = u0;
+        const move = (e2) => { this._cursor = toU(e2); drawR(); };
         const up = () => {
           document.removeEventListener('mousemove', move);
           document.removeEventListener('mouseup', up);
-          if (Math.abs(this._ruler.a - this._ruler.b) < 2) { this._ruler = null; drawR(); }
         };
         document.addEventListener('mousemove', move);
         document.addEventListener('mouseup', up);
@@ -2345,47 +2355,66 @@ export class Dsv3Layer extends HTMLElement {
       const segs = nowB.map((b, i) => geo(prevB[i], b, V ? V.t : 1) * vis[i]);
       const colors = [...COMPS.map((c) => c.color), '#eda100'];
       const onB = [...COMPS.map((c) => this[c.prop] ? 1 : 0), this.showActs ? 1 : 0];
-      this._segTotals = nowB;                                       // margin legend rows show these
-      const totalN = nowB.reduce((t, b, i) => t + b * onB[i], 0);   // label snaps
+      this._segTotals = nowB;
+      const totalN = nowB.reduce((t, b, i) => t + b * onB[i], 0);   // labels snap
       const totalT = segs.reduce((a, b2) => a + b2, 0);             // lerped (bar)
-      // UNSTACKED rows on a FIXED log₂ axis: each gridline is exactly ×2, so
-      // the distance from a bar's end to the 80 GiB line counts the halvings
-      // a knob has to buy. A separate grey TOTAL row carries the fit verdict
-      // (sums don't stack on a log axis).
+      // UNSTACKED rows on a FIXED log₂ axis: each labeled gridline is exactly
+      // ×2 (unlabeled minor ticks show the linear spacing inside an octave),
+      // so distance-to-fit reads as countable halvings. The row labels ARE
+      // the legend: name + absolute bytes, click to toggle. Bar ends carry
+      // the over/under factor vs the 80 GiB capacity line.
       const { x0, bw, lo: LO, hi: HI } = BAR_GEO;   // 256 MiB … 16 TiB, 16 doublings
-      const rowH = 11, barH = 8, topY = 12;
+      const rowH = 12, barH = 8, topY = 14;
       const px = (b) => x0 + Math.max(0, Math.min(1, (Math.log2(Math.max(b, 1)) - LO) / (HI - LO))) * bw;
-      const rowsB = [...segs.map((b, i) => ({ b, color: colors[i], on: onB[i] })),
-        { b: totalT, color: '#52514e', on: 1, label: fmtBytes(totalN) }];
-      const nR = rowsB.length, axisY = topY + nR * rowH + 3;
-      const B = [`<text class="grplabel" x="${x0}" y="9">this rank, whole stage (log₂ — each gridline is ×2):</text>`];
-      for (let e = LO; e <= HI; e += 1)   // the ×2 grid
-        B.push(`<line x1="${px(2 ** e).toFixed(1)}" y1="${topY - 2}" x2="${px(2 ** e).toFixed(1)}" y2="${axisY - 3}" stroke="#e9e8e2" stroke-width="1"/>`);
+      const IF2 = inflightOf(SCHED, STG, PPn);
+      const names = ['weights', 'gradients (fp32)', 'optimizer states', `activations ×${IF2} mb`];
+      const rowsB = [
+        ...segs.map((b, i) => ({ b, color: colors[i], on: onB[i], name: names[i],
+          prop: i < COMPS.length ? COMPS[i].prop : 'showActs', abs: nowB[i] })),
+        { b: totalT, color: '#52514e', on: 1, name: 'total', abs: totalN },
+      ];
+      const nR = rowsB.length, axisY = topY + nR * rowH + 5;
+      const B = [`<text class="grplabel" x="2" y="9">this rank, whole stage (log₂ — gridlines are ×2):</text>`];
+      // unit swatch legend floats right in the header
+      B.push(`<rect x="${x0 + bw - 96}" y="3" width="5" height="4" fill="#898781"/>` +
+        `<text class="dims" x="${x0 + bw - 87}" y="9">= ${fmtBytes(PB_UNIT * 2)} / square</text>`);
+      for (let e = LO; e <= HI; e += 1) {   // the ×2 grid + unlabeled linear minors
+        B.push(`<line x1="${px(2 ** e).toFixed(1)}" y1="${topY - 2}" x2="${px(2 ** e).toFixed(1)}" y2="${axisY - 3}" stroke="#e1e0d9" stroke-width="1"/>`);
+        if (e < HI) for (const m2 of [1.25, 1.5, 1.75])
+          B.push(`<line x1="${px(2 ** e * m2).toFixed(1)}" y1="${topY - 2}" x2="${px(2 ** e * m2).toFixed(1)}" y2="${axisY - 3}" stroke="#f0efe9" stroke-width="1"/>`);
+      }
       for (const [e, lab] of [[30, '1 GiB'], [33, '8 GiB'], [40, '1 TiB'], [43, '8 TiB']])
         B.push(`<text class="dims" x="${(px(2 ** e) + 3).toFixed(1)}" y="${axisY + 8}">${lab}</text>`);
       const pin = this._pinCfg;
       const pinTotal = pin ? pin.segs.reduce((t, b, i) => t + b * onB[i], 0) : 0;
-      const factor = (cur, base) => {
+      const factor = (cur, base, always = false) => {
         if (!base || !cur) return '';
         const r = cur / base;
-        if (Math.abs(Math.log2(r)) < 0.05) return '';
-        const f = (v) => Math.abs(v - Math.round(v)) < 0.05 * v ? String(Math.round(v)) : v.toFixed(1);
-        return r > 1 ? ` ×${f(r)}` : ` ÷${f(1 / r)}`;
+        if (!always && Math.abs(Math.log2(r)) < 0.05) return '';
+        const f = (v) => v >= 100 || Math.abs(v - Math.round(v)) < 0.02 * v ? String(Math.round(v)) : v.toFixed(1);
+        return r > 1 ? `×${f(r)}` : `÷${f(1 / r)}`;
       };
       for (const [i, r] of rowsB.entries()) {
-        const y2 = topY + i * rowH + (i === nR - 1 ? 3 : 0);   // the total row sits a hair apart
-        B.push(`<rect x="${x0}" y="${y2}" width="${Math.max(0.5, px(r.b) - x0).toFixed(1)}" height="${barH}" fill="${r.color}"${r.on ? '' : ' opacity="0.3"'}/>`);
+        const y2 = topY + i * rowH + (i === nR - 1 ? 4 : 0);   // the total row sits a hair apart
+        const dim = r.on ? '' : ' opacity="0.35"';
+        // the row label IS the legend: swatch-colored name + absolute bytes
+        B.push(`<g${r.prop ? ` data-prop="${r.prop}" style="cursor:pointer"` : ''}${dim}>` +
+          `<text class="dims" x="2" y="${y2 + 7}" fill="${r.color}" font-weight="600">${r.name}</text>` +
+          `<text class="dims" x="${x0 - 8}" y="${y2 + 7}" text-anchor="end">${fmtBytes(r.abs)}</text></g>`);
+        B.push(`<rect x="${x0}" y="${y2}" width="${Math.max(0.5, px(r.b) - x0).toFixed(1)}" height="${barH}" fill="${r.color}"${dim}/>`);
         const pinB = pin ? (i === nR - 1 ? pinTotal : pin.segs[i]) : 0;
         if (pinB) B.push(`<line x1="${px(pinB).toFixed(1)}" y1="${y2 - 1}" x2="${px(pinB).toFixed(1)}" y2="${y2 + barH + 1}" stroke="#0b0b0b" stroke-width="1.4"/>`);
-        const nowVal = i === nR - 1 ? totalN : nowB[i];
-        const fac = pin ? factor(nowVal, pinB) : '';
-        if (r.label || fac) B.push(`<text class="dims" x="${(Math.max(px(r.b), pinB ? px(pinB) : 0) + 5).toFixed(1)}" y="${y2 + 7}">${(r.label ?? '') + fac}</text>`);
+        // bar-end factor: over/under the 80 GiB boundary — or, when pinned,
+        // ONLY the vs-pin factor (both at once was confusing)
+        const fac = pin ? factor(r.abs, pinB) : factor(r.abs, cap, true);
+        B.push(`<text class="dims" x="${(Math.max(px(r.b), pinB ? px(pinB) : 0) + 5).toFixed(1)}" y="${y2 + 7}"${dim}>` +
+          `${fac}${pin && fac ? ' vs pin' : ''}</text>`);
       }
-      if (pin) B.push(`<text class="dims" x="${x0 + bw}" y="9" text-anchor="end">pinned: ${pin.label}</text>`);
+      if (pin) B.push(`<text class="dims" x="${x0 + bw}" y="${axisY + 18}" text-anchor="end">pinned: ${pin.label}</text>`);
       const cx2 = px(cap);
       B.push(`<line x1="${cx2.toFixed(1)}" y1="${topY - 3}" x2="${cx2.toFixed(1)}" y2="${axisY - 3}" stroke="#0b0b0b" stroke-width="1.2"/>` +
-        `<text class="dims" x="${(cx2 - 4).toFixed(1)}" y="${axisY + 8}" text-anchor="end">80 GiB (H100)</text>`);
-      const HB = axisY + 12;
+        `<text class="dims" x="${cx2.toFixed(1)}" y="${axisY + 8}" text-anchor="middle">80 GiB (H100)</text>`);
+      const HB = axisY + 22;   // the pinned-label line is always reserved (no reflow on pin)
       this._barHtml = `<svg width="${BAR_GEO.w}" height="${HB}" viewBox="0 0 ${BAR_GEO.w} ${HB}">${B.join('')}</svg>`;
     }
     if (SCOPE === 'model') {   // the surrounding stack: ×61 rule, final norm, lm head, loss
