@@ -122,6 +122,11 @@ export class Dsv3AnatomyPlan extends HTMLElement {
     const BPPe = COMPS.reduce((t, c) => t + ((l?.[c.prop] ?? true) ? cbpp(c, 'e') : 0), 0);
     // knob tween mirror: the plan's strips lerp their optimizer factor with
     // the layer's _vtween (plan ops are dense-class; PP/ZeRO affect them)
+    // sub-part filter mirror: the plan's ops are the VOCAB part (2)
+    const psel2 = (st2) => st2 == null || st2 === 2 ? 1 : 0;
+    const pvis2 = !LOC ? 1 : (l?._ptween
+      ? psel2(l._ptween.prev) + (psel2(l.partSel ?? null) - psel2(l._ptween.prev)) * l._ptween.t
+      : psel2(l?.partSel ?? null));
     const pf = (c) => {
       if (!LOC) return cbpp(c, 'd');
       const eff = (S) => (S.zero ?? 1) >= c.zthresh ? c.bpp / ((S.world ?? LOCAL_PAR.world) / S.pp) : c.bpp;
@@ -133,7 +138,7 @@ export class Dsv3AnatomyPlan extends HTMLElement {
       // FLOOR per comp (remainders round down); one hollow trace only when
       // the op would otherwise show nothing, in the largest remainder's color
       const cells = COMPS.map((c) => {
-        const f = nParams * pf(c) / 2 / UNIT * cmult(c.prop);
+        const f = nParams * pf(c) / 2 / UNIT * cmult(c.prop) * pvis2;
         return { c, f, n: Math.floor(f) };
       });
       let g = '', i = 0;

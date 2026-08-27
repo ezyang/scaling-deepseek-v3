@@ -56,7 +56,7 @@ export const actLayerBytes = () => ACT_LAYER_B ||=
 export const inflightOf = (sched, s, pp) => sched === 'one' ? 1 : pp - Math.min(s, pp - 1);
 
 // fit-chart geometry (svg units): the log₂ axis spans 2^lo…2^hi over bw px
-const BAR_GEO = { w: 800, x0: 140, bw: 620, lo: 28, hi: 44 };   // 140px row-label gutter
+const BAR_GEO = { w: 800, x0: 110, bw: 650, lo: 28, hi: 44 };   // 110px name gutter (values live at bar ends)
 
 // the PP stage holding the most resident bytes under the local model (all
 // components on, vocab counted on the end stages, activations under the
@@ -741,6 +741,8 @@ dsv3-layer { display: block; margin: 14px 0 26px; }
 .lv-tip.pinned { border-color: #eda100; box-shadow: 0 2px 10px rgba(237,161,0,0.3); }
 .lv-head { display: flex; align-items: center; gap: 8px; padding-bottom: 6px; color: #52514e; flex-wrap: wrap; }
 .lv-head select { font: 12px system-ui; padding: 2px 6px; border: 1px solid #c3c2b7; border-radius: 4px; background: #fff; }
+.lv-head .savebox { margin-left: auto; display: inline-flex; gap: 6px; align-items: flex-start;
+  padding-left: 12px; border-left: 1px solid #e1e0d9; align-self: flex-start; }
 .lv-head .pargrp { display: inline-flex; flex-direction: column; gap: 2px;
   border: 1px solid #e1e0d9; border-radius: 6px; padding: 3px 8px 5px; align-self: stretch; }
 .lv-head .pargrp.center { justify-content: center; }
@@ -874,9 +876,13 @@ export class Dsv3Layer extends HTMLElement {
     this.render(); this.changed(false);
   }
   toggleMark(ids) {
-    const to = this.marks[ids[0]] === false ? true : false;
-    for (const id of ids) { if (to) delete this.marks[id]; else this.marks[id] = false; }
-    this.render(); this.changed();
+    const mutate = () => {
+      const to = this.marks[ids[0]] === false ? true : false;
+      for (const id of ids) { if (to) delete this.marks[id]; else this.marks[id] = false; }
+    };
+    if (this.hasAttribute('local') && this.getAttribute('lens') === 'param-bytes') {
+      const prev = this._snapLocal(); mutate(); this._tweenLocal(prev);
+    } else { mutate(); this.render(); this.changed(); }
   }
   // ---- local-lens knob tween: EVERY knob change (EP/PP/stage/ZeRO/×N) pours
   // squares between the old and new configuration, per-block-tween style.
@@ -898,6 +904,22 @@ export class Dsv3Layer extends HTMLElement {
     this[prop] = on;
     this._compTween(new Set([prop]));
   }
+  // sub-part filter (inside a solo): click 'experts' etc — same idea one
+  // level down. null = all parts.
+  togglePart(k) {
+    const prev = this.partSel ?? null;
+    this.partSel = prev === k ? null : k;
+    const FRAMES = 12; let f = 0;
+    this._ptween = { prev, t: 0 };
+    const step = () => {
+      f++; const p = Math.min(1, f / FRAMES);
+      this._ptween = { prev, t: 1 - (1 - p) * (1 - p) };
+      this.render(); this.changed(false);
+      if (p < 1) setTimeout(step, 16);
+      else { this._ptween = undefined; this.render(); this.changed(true); }
+    };
+    setTimeout(step, 16);
+  }
   // legend clicks SOLO a component (the useful filter: "show me only the
   // weights"); soloing the already-solo component brings everything back
   _compProps() {
@@ -905,6 +927,7 @@ export class Dsv3Layer extends HTMLElement {
     return cons ? ['showWeights', 'showGrads', 'showOptim', 'showActs'] : ['showWeights', 'showOptim'];
   }
   soloComp(prop) {
+    this.partSel = null;   // the part filter lives inside a solo
     const props = this._compProps();
     const already = this[prop] && props.every((p2) => p2 === prop || !this[p2]);
     const changed = new Set();
@@ -917,7 +940,10 @@ export class Dsv3Layer extends HTMLElement {
   _snapLocal() {
     return { ep: this.ep, pp: this.pp, stage: this.stage,
       zero: this.zero ?? 1, world: this.world ?? LOCAL_PAR.world,
-      sched: this.sched ?? '1f1b', cum: !!this.cumulative };
+      sched: this.sched ?? '1f1b', cum: !!this.cumulative,
+      // the pre-change analysis: stash-affecting knobs (precision, marks,
+      // fp8ᵀ) lerp chip squares and the acts bar between old and new bytes
+      saved: this._anaMemo?.ana?.savedBytes, anaPrev: this._anaMemo?.ana };
   }
   _tweenLocal(prev) {
     this.changed(true);
@@ -986,11 +1012,17 @@ export class Dsv3Layer extends HTMLElement {
     if (!curRecipe) {
       const o = document.createElement('option'); o.value = o.textContent = 'custom'; o.selected = true; preset.append(o);
     }
+    const localTween = (mutate) => {   // stash knobs animate like every other knob
+      if (this.hasAttribute('local') && this.getAttribute('lens') === 'param-bytes') {
+        const prev = this._snapLocal(); mutate(); this._tweenLocal(prev);
+      } else { mutate(); this.render(); this.changed(); }
+    };
     preset.onchange = () => {
       if (preset.value === 'custom') return;
-      this.setAttribute('recipe', preset.value);
-      this.matmuls = resolveMatmuls({ recipe: preset.value });
-      this.render(); this.changed();
+      localTween(() => {
+        this.setAttribute('recipe', preset.value);
+        this.matmuls = resolveMatmuls({ recipe: preset.value });
+      });
     };
     if (this._ctl.dtype) head.append(preset);
     if (this._ctl.marks) head.append(' · recompute: ');
@@ -1006,9 +1038,10 @@ export class Dsv3Layer extends HTMLElement {
     }
     rsel.onchange = () => {
       if (rsel.value === 'custom') return;
-      this.setAttribute('recompute', rsel.value);
-      this.marks = { ...RECOMPUTE_PRESETS[rsel.value] };
-      this.render(); this.changed();
+      localTween(() => {
+        this.setAttribute('recompute', rsel.value);
+        this.marks = { ...RECOMPUTE_PRESETS[rsel.value] };
+      });
     };
     if (this._ctl.marks) head.append(rsel);
     head.append(' · view: ');
@@ -1044,6 +1077,15 @@ export class Dsv3Layer extends HTMLElement {
       this.flatDims = false;
       this.cumulative = this.hasAttribute('cumulative');
       this.kind = this.getAttribute('kind') === 'dense' ? 'dense' : 'moe';
+      // the local lens' own knobs — factory = the degenerate "whole model,
+      // one GPU" view: PP1, EP1, ZeRO off (recipe/recompute reset to the
+      // instance attrs above: bf16, none)
+      this.ep = 1; this.pp = 1; this.world = LOCAL_PAR.world;
+      this.zero = 0; this.sched = '1f1b';
+      this.stage = 0;
+      this.showWeights = this.showGrads = this.showOptim = this.showActs = true;
+      this.partSel = null;
+      this._pinCfg = null; this._cursor = null;
       clearUrlState(this.urlKey);
       this.render(); this.changed(false);
     };
@@ -1054,7 +1096,7 @@ export class Dsv3Layer extends HTMLElement {
       'scales requantize the transpose exactly; leave off for Blackwell.';
     const tcb = document.createElement('input');
     tcb.type = 'checkbox'; tcb.checked = this.transposed;
-    tcb.onchange = () => { this.transposed = tcb.checked; this.render(); this.changed(); };
+    tcb.onchange = () => localTween(() => { this.transposed = tcb.checked; });
     tl.append(tcb, 'fp8ᵀ dual stash');
     if (this._ctl.dtype) head.append(tl);
     // local: the multiplier is the stage's block count, not the whole model's
@@ -1309,21 +1351,38 @@ export class Dsv3Layer extends HTMLElement {
         const mkBtn = (txt, title, fn) => {
           const b = document.createElement('button');
           b.style.cssText = 'font:11px ui-monospace,monospace;padding:2px 8px;border:1px solid #c3c2b7;' +
-            'border-radius:4px;background:#fff;cursor:pointer;margin-left:8px;';
+            'border-radius:4px;background:#fff;cursor:pointer;';
           b.textContent = txt; b.title = title; b.onclick = fn;
           return b;
         };
-        // always RE-pins the current config; the × next to it unpins
-        mini2.append(mkBtn('pin baseline', 'snapshot this config: the chart gains ticks and ×N/÷N factors vs it', () => {
+        // SAVE semantics, top right and visually apart: save locks in the
+        // current config (deltas display vs the save; re-save to lock in a
+        // change), reset returns TO the save, reset-all is factory
+        const saveBox = el('span', 'savebox');
+        saveBox.append(mkBtn('save', 'lock in this config: the chart shows deltas vs the save (re-save to lock in a change)', () => {
           this._pinCfg = {
             segs: [...(this._segTotals ?? [])],
             parts: (this._segParts ?? []).map((p2) => [...p2]),
             scalars: { ...(this._scalars ?? {}) },
+            state: { ep: this.ep, pp: this.pp, stage: this.stage, world: this.world,
+              zero: this.zero, sched: this.sched, cumulative: this.cumulative, partSel: this.partSel ?? null,
+              showWeights: this.showWeights, showGrads: this.showGrads,
+              showOptim: this.showOptim, showActs: this.showActs,
+              transposed: this.transposed, marks: { ...this.marks }, matmuls: { ...this.matmuls } },
             label: `EP${this.ep}·PP${this.pp}·stage ${this.stage}·ZeRO-${this.zero ? this.zero : 'off'}·${this.sched === 'one' ? '×1mb' : '1F1B'}·${this.world} GPUs`,
           };
           this.render();
         }));
-        if (this._pinCfg) mini2.append(mkBtn('×', 'unpin the baseline', () => { this._pinCfg = null; this.render(); }));
+        if (this._pinCfg?.state) saveBox.append(mkBtn('reset', 'return to the saved config', () => {
+          const prev = this._snapLocal();
+          Object.assign(this, this._pinCfg.state,
+            { marks: { ...this._pinCfg.state.marks }, matmuls: { ...this._pinCfg.state.matmuls } });
+          this._tweenLocal(prev);
+        }));
+        saveBox.append(reset);   // factory reset (built above; also clears the save)
+        reset.textContent = 'reset all';
+        reset.style.marginLeft = '0';
+        mini.append(saveBox);
         // the preexisting AC + precision knobs (built above for the full
         // head; the static head never displays it, so they move here)
         const plab = (t2) => { const sp = el('span'); sp.style.cssText = 'color:#52514e;font-size:11px;margin-left:8px;'; sp.textContent = t2; return sp; };
@@ -1378,6 +1437,8 @@ export class Dsv3Layer extends HTMLElement {
         rlab.textContent = `×${fmtF(f)} (${fmtBytes(bytesAt(u1))} → ${fmtBytes(bytesAt(u2))})`;
       };
       barSlot.onmousedown = (ev) => {
+        const tp = ev.target.closest?.('[data-part]');
+        if (tp) { this._cursor = null; drawR(); this.togglePart(+tp.dataset.part); return; }
         const tog = ev.target.closest?.('[data-prop]');
         if (tog) { this._cursor = null; drawR(); this.soloComp(tog.dataset.prop); return; }
         // the ruler arms only on the scrub overlay (the bars band itself)
@@ -1566,6 +1627,14 @@ export class Dsv3Layer extends HTMLElement {
     const cmult = (prop) => this._ctween?.props?.has(prop)
       ? (this[prop] ? this._ctween.t : 1 - this._ctween.t)
       : (this[prop] ? 1 : 0);
+    // sub-part filter visibility (experts / non-expert / vocab), lerped
+    const psel = (state2, k) => state2 == null || state2 === k ? 1 : 0;
+    const pvis = (k) => this._ptween
+      ? psel(this._ptween.prev, k) + (psel(this.partSel ?? null, k) - psel(this._ptween.prev, k)) * this._ptween.t
+      : psel(this.partSel ?? null, k);
+    // an op's part: expert-class ops are the experts part; vocab never
+    // appears in block scope (the plan carries it); the rest are non-expert
+    const partOfCls = (cls) => cls === 'e' ? 0 : 1;
     // visible bytes per parameter (numbers snap). Two classes under local:
     // 'd' (dense/replicated: optimizer ZeRO-1-sharded /DP) and 'e' (expert:
     // sharded over the smaller expert-DP group)
@@ -1652,12 +1721,14 @@ export class Dsv3Layer extends HTMLElement {
     const fmtPV = (n, cls = 'd') => PBYTES ? fmtPB(n, cls) : fmtP(n);
     const pk = (n, noK = false) => {
       if (PBYTES && !BPPT()) return '';   // nothing visible, nothing to number
+      if (LOCAL && this.partSel != null && this.partSel !== 1) return '';   // norms/micro ops are non-expert
       const v = (CUM && !noK ? fmtPV(n * KMUL) : fmtPV(n)) + facTxt('d');
       return PONLY ? ` ${v}` : ` (${v})`;   // params lenses: no parens — params are the only numbers left
     };
     const pstr = (id) => {
       const p = PCNT[id];
       if (!p || (PBYTES && !BPPT())) return '';
+      if (LOCAL && this.partSel != null && partOfCls(clsOf(id)) !== this.partSel) return '';
       const tot = (Array.isArray(p) ? p[0] * p[1] : p);
       const wrap = (str) => PONLY ? ` ${str}` : ` (${str})`;
       const fx = facTxt(clsOf(id));
@@ -1669,7 +1740,9 @@ export class Dsv3Layer extends HTMLElement {
     const marks = this._ctl.quant || this._ctl.marks ? this.marks : {};   // static: save everything
     const state = (id) => {
       const n = ana.byId[id];
-      if (n.always) return 'pin';
+      // the checkpoint-anchor lock only means something when a replay exists
+      // to terminate at it: with recompute none, x0 is just a saved tensor
+      if (n.always) return ana.replayed.size ? 'pin' : (ana.neededSaved.has(id) ? 'save' : 'idle');
       if (marks[id] === false) return 'redo';
       return ana.neededSaved.has(id) ? 'save' : 'idle';
     };
@@ -1786,7 +1859,8 @@ export class Dsv3Layer extends HTMLElement {
     const compCells = (nParams, cls) => COMPS.map((c) => {
       const m = cmult(c.prop);
       if (!m) return { c, f: 0, n: 0 };
-      const eff = LOCAL ? nParams * fT(c, cls) : nParams * bppOf(c, cls) * stripMul;
+      const pm = LOCAL ? pvis(partOfCls(cls)) : 1;   // sub-part filter (inside a solo)
+      const eff = (LOCAL ? nParams * fT(c, cls) : nParams * bppOf(c, cls) * stripMul) * pm;
       const f = eff / 2 / PB_UNIT * m;
       return { c, f, n: Math.floor(f) };
     });
@@ -1853,7 +1927,16 @@ export class Dsv3Layer extends HTMLElement {
         // convention (labels snap, squares grow with the tween like the strips)
         const b4096 = bytes * 4096 * (LOCAL ? (CUM ? KMUL : 1) * IFN : CUM ? KMUL : 1);
         const chipF = LOCAL ? actsT : ABS ? stripMul : CUM ? KMUL : 1;
-        const full = Math.round(bytes * 4096 * chipF / (PB_UNIT * 2));
+        // stash-knob tween: the squares pour between the OLD and NEW bytes
+        const VA = this._vtween?.prev?.anaPrev;
+        const bytesT = VA
+          ? ids.reduce((t2, i2) => {
+            const nb = ana.byId[i2].outBytes * (ana.dual.has(i2) ? 2 : 1);
+            const pb2 = (VA.byId[i2]?.outBytes ?? nb / (ana.dual.has(i2) ? 2 : 1)) * (ana.dual.has(i2) ? 2 : 1);
+            return t2 + pb2 + (nb - pb2) * this._vtween.t;
+          }, 0) * (ov?.frac ?? 1)
+          : bytes;
+        const full = Math.round(bytesT * 4096 * chipF / (PB_UNIT * 2));
         const nsq = Math.round(full * m), hollow = !nsq && m >= 0.5 && chipF > 0;
         const name = esc(name0.replace(' (checkpoint anchor)', ''));
         const lock = st === 'pin' ? ' 🔒' : '';
@@ -2454,7 +2537,7 @@ export class Dsv3Layer extends HTMLElement {
       const segB = (S) => {
         const q = stageParts(S);
         return COMPS.map((c) => (q.d + q.v) * shardOf(S, c, 'd') + q.e * shardOf(S, c, 'e'))
-          .concat([ana.savedBytes * 4096 * q.layers * inflightOf(S.sched ?? '1f1b', S.stage, S.pp)]);
+          .concat([(S.saved ?? ana.savedBytes) * 4096 * q.layers * inflightOf(S.sched ?? '1f1b', S.stage, S.pp)]);
       };
       this._segParts = partsFor(Snow);
       const V = this._vtween;
@@ -2476,23 +2559,41 @@ export class Dsv3Layer extends HTMLElement {
       const totalN = nowB.reduce((t, b) => t + b, 0);               // labels snap (full total)
       const totalT = allB.reduce((a, b2) => a + b2, 0);             // lerped (full total)
       const otherT = allB.reduce((a, b2, i) => a + b2 * (1 - vis[i]), 0);
-      // UNSTACKED rows on a FIXED log₂ axis: each labeled gridline is exactly
-      // ×2 (unlabeled minor ticks show the linear spacing inside an octave),
-      // so distance-to-fit reads as countable halvings. The row labels ARE
-      // the legend: name + absolute bytes, click to toggle. Bar ends carry
-      // the over/under factor vs the 80 GiB capacity line.
+      // UNSTACKED rows on a FIXED log₂ axis; the row labels are the legend
+      // (names in the gutter, click to solo) and the ABSOLUTE values sit at
+      // the bar ends, where the log axis gives them meaning. Soloing a param
+      // component accordions its breakdown sub-rows open beneath it.
       const { x0, bw, lo: LO, hi: HI } = BAR_GEO;   // 256 MiB … 16 TiB, 16 doublings
       const rowH = 12, barH = 8, topY = 14;
       const px = (b) => x0 + Math.max(0, Math.min(1, (Math.log2(Math.max(b, 1)) - LO) / (HI - LO))) * bw;
       const IF2 = inflightOf(SCHED, STG, PPn);
-      const names = ['weights', 'gradients (fp32)', 'optimizer states', `activations ×${IF2} mb`];
+      const names = ['weights', 'gradients (fp32)', 'optimizer states', `activations ×${IF2}mb`];
       const rowsB = [
         ...segs.map((b, i) => ({ b, color: colors[i], on: onB[i], name: names[i],
           prop: i < COMPS.length ? COMPS[i].prop : 'showActs', abs: nowB[i] })),
         { b: totalT, color: '#52514e', on: 1, name: 'total', abs: totalN },
       ];
-      const nR = rowsB.length, axisY = topY + nR * rowH + 5;
-      const B = [`<text class="grplabel" x="2" y="9">this rank, whole stage (log₂ — gridlines are ×2):</text>`];
+      const nR = rowsB.length;
+      const pin = this._pinCfg;
+      const pinTotal = pin ? pin.segs.reduce((t, b) => t + b, 0) : 0;
+      const chg = this._ctween?.props, tC = this._ctween?.t ?? 1;
+      const allOnTarget = onB.every(Boolean);
+      const propOf = (j) => j < COMPS.length ? COMPS[j].prop : 'showActs';
+      // the accordion: a soloed param component opens its sub-rows below it
+      // (subEase rides the solo tween both ways — open on solo, close on unsolo)
+      let sIdx = -1, subEase = 0;
+      const onCount = onB.reduce((t2, o2) => t2 + o2, 0);
+      if (onCount === 1 && onB.indexOf(1) < 3) { sIdx = onB.indexOf(1); subEase = chg ? tC : 1; }
+      else if (allOnTarget && chg) {
+        const steady = [0, 1, 2, 3].filter((j) => onB[j] && !chg.has(propOf(j)));
+        if (steady.length === 1 && steady[0] < 3) { sIdx = steady[0]; subEase = 1 - tC; }
+      }
+      const parts2 = sIdx >= 0 ? this._segParts[sIdx] : null;
+      const partIdxs = parts2 ? [0, 1, 2].filter((k) => parts2[k] > 0) : [];
+      const subHTot = partIdxs.length * rowH * subEase;
+      const yOf = (i) => topY + i * rowH + (sIdx >= 0 && i > sIdx ? subHTot : 0) + (i === nR - 1 ? 4 : 0);
+      const axisY = topY + nR * rowH + subHTot + 5 + 4;
+      const B = [`<text class="grplabel" x="2" y="9">this rank, whole stage (logarithmic):</text>`];
       // unit swatch legend floats right in the header
       B.push(`<rect x="${x0 + bw - 96}" y="3" width="5" height="4" fill="#898781"/>` +
         `<text class="dims" x="${x0 + bw - 87}" y="9">= ${fmtBytes(PB_UNIT * 2)} / square</text>`);
@@ -2500,31 +2601,23 @@ export class Dsv3Layer extends HTMLElement {
         B.push(`<line x1="${px(2 ** e).toFixed(1)}" y1="${topY - 2}" x2="${px(2 ** e).toFixed(1)}" y2="${axisY - 3}" stroke="#e1e0d9" stroke-width="1"/>`);
       for (const [e, lab] of [[30, '1 GiB'], [33, '8 GiB'], [40, '1 TiB'], [43, '8 TiB']])
         B.push(`<text class="dims" x="${(px(2 ** e) + 3).toFixed(1)}" y="${axisY + 8}">${lab}</text>`);
-      const pin = this._pinCfg;
-      const pinTotal = pin ? pin.segs.reduce((t, b) => t + b, 0) : 0;
-      const factor = facStr;
       for (const [i, r] of rowsB.entries()) {
-        const y2 = topY + i * rowH + (i === nR - 1 ? 4 : 0);   // the total row sits a hair apart
+        const y2 = yOf(i);
         const dim = r.on ? '' : ' opacity="0.35"';
-        // the row label IS the legend: swatch-colored name + absolute bytes
+        // gutter: the name alone (whole-row hitbox; click to solo)
         B.push(`<g${r.prop ? ` data-prop="${r.prop}" style="cursor:pointer"` : ''}${dim}>` +
           (r.prop ? `<rect x="0" y="${y2 - 2}" width="${x0 - 4}" height="${rowH}" fill="transparent"/>` : '') +
-          `<text class="dims" x="2" y="${y2 + 7}" fill="${r.color}" font-weight="600">${r.name}</text>` +
-          `<text class="dims" x="${x0 - 8}" y="${y2 + 7}" text-anchor="end">${fmtBytes(r.abs)}</text></g>`);
+          `<text class="dims" x="2" y="${y2 + 7}" fill="${r.color}" font-weight="600">${r.name}</text></g>`);
         const topSum = allB.reduce((a2, b2, j) => a2 + (onB[j] ? b2 * vis[j] : 0), 0);
-        const chg = this._ctween?.props;
-        const allOnTarget = onB.every(Boolean);
-        const tC = this._ctween?.t ?? 1;
         if (i === nR - 1 && allOnTarget && chg && tC < 1) {
           // returning to all-on: arriving components never paint (they're
           // future grey) — the full grey bar shows and the steady colored
           // tip dissolves into it (no four-color flash on the way back)
           B.push(`<rect x="${x0}" y="${y2}" width="${Math.max(0.5, px(totalT) - x0).toFixed(1)}" height="${barH}" fill="#c3c2b7"/>`);
-          const steadySum = allB.reduce((a2, b2, j) => a2 +
-            (onB[j] && !chg.has(j < COMPS.length ? COMPS[j].prop : 'showActs') ? b2 : 0), 0);
+          const steadySum = allB.reduce((a2, b2, j) => a2 + (onB[j] && !chg.has(propOf(j)) ? b2 : 0), 0);
           let acc = totalT - steadySum;
           for (let j = 0; j < allB.length; j++) {
-            if (!onB[j] || chg.has(j < COMPS.length ? COMPS[j].prop : 'showActs')) continue;
+            if (!onB[j] || chg.has(propOf(j))) continue;
             const a1 = px(acc); acc += allB[j];
             B.push(`<rect x="${(a1 + 1).toFixed(1)}" y="${y2}" width="${Math.max(0.5, px(acc) - a1 - 1).toFixed(1)}" height="${barH}" fill="${colors[j]}" opacity="${(1 - tC).toFixed(3)}"/>`);
           }
@@ -2542,42 +2635,46 @@ export class Dsv3Layer extends HTMLElement {
             const a1 = px(acc); acc += w2;
             B.push(`<rect x="${(a1 + 1).toFixed(1)}" y="${y2}" width="${Math.max(0.5, px(acc) - a1 - 1).toFixed(1)}" height="${barH}" fill="${colors[j]}"/>`);
           }
+        } else if (i === sIdx && parts2 && (this.partSel != null || this._ptween)) {
+          // the soloed row gets the same stacked treatment one level down:
+          // grey = unselected parts, colored top = the selected part
+          const selSum = parts2.reduce((a2, b2, k) => a2 + b2 * pvis(k), 0);
+          const grey2 = Math.max(0, r.b - selSum);
+          B.push(`<rect x="${x0}" y="${y2}" width="${Math.max(0.5, px(grey2) - x0).toFixed(1)}" height="${barH}" fill="#c3c2b7"/>`);
+          B.push(`<rect x="${(px(grey2) + 1).toFixed(1)}" y="${y2}" width="${Math.max(0.5, px(r.b) - px(grey2) - 1).toFixed(1)}" height="${barH}" fill="${r.color}"/>`);
         } else {
           B.push(`<rect x="${x0}" y="${y2}" width="${Math.max(0.5, px(r.b) - x0).toFixed(1)}" height="${barH}" fill="${r.color}"${dim}/>`);
         }
         const pinB = pin ? (i === nR - 1 ? pinTotal : pin.segs[i]) : 0;
-        if (pinB) B.push(`<line x1="${px(pinB).toFixed(1)}" y1="${y2 - 1}" x2="${px(pinB).toFixed(1)}" y2="${y2 + barH + 1}" stroke="#0b0b0b" stroke-width="1.4"/>`);
-        // bar-end factor: over/under the 80 GiB boundary — or, when pinned,
-        // ONLY the vs-pin badge (both at once was confusing). Hidden
-        // components show none (a factor parked at the zero line reads wrong)
-        if (r.on) {
-          const fac = pin ? facBadge(r.abs, pinB) : factor(r.abs, cap, true);
-          B.push(`<text class="dims" x="${(Math.max(px(r.b), pinB ? px(pinB) : 0) + 5).toFixed(1)}" y="${y2 + 7}">${fac}</text>`);
+        // the save renders as a dotted GHOST bar (not a tick), so the value
+        // label can always ride the live bar's end
+        if (pinB) B.push(`<rect x="${x0}" y="${y2}" width="${Math.max(0.5, px(pinB) - x0).toFixed(1)}" height="${barH}" ` +
+          `fill="none" stroke="${i === nR - 1 ? '#898781' : r.color}" stroke-width="1" stroke-dasharray="2 2" opacity="0.7"/>`);
+        // bar end: the ABSOLUTE value (+ the vs-save badge when saved);
+        // hidden components show none
+        if (r.on) B.push(`<text class="dims" x="${(px(r.b) + 5).toFixed(1)}" y="${y2 + 7}">` +
+          `${fmtBytes(r.abs)}${pin ? facBadge(r.abs, pinB) : ''}</text>`);
+        // the accordion sub-rows open right below the soloed row
+        if (i === sIdx && partIdxs.length && subEase > 0.02) {
+          const prevParts = V ? partsFor(V.prev) : null;
+          const names2 = ['experts', 'non-expert', 'vocab'];
+          for (const [k3, k2] of partIdxs.entries()) {
+            const now2 = parts2[k2];
+            const bT = prevParts ? geo(prevParts[sIdx][k2], now2, V.t) : now2;
+            const yS = topY + (sIdx + 1) * rowH + k3 * rowH * subEase + 2;
+            const pinP = pin?.parts?.[sIdx]?.[k2];
+            const pOp = subEase * (0.4 + 0.6 * pvis(k2));   // dim unselected parts
+            B.push(`<g opacity="${pOp.toFixed(3)}" data-part="${k2}" style="cursor:pointer">` +
+              `<rect x="0" y="${(yS - 2).toFixed(1)}" width="${x0 - 4}" height="${rowH - 2}" fill="transparent"/>` +
+              `<text class="dims" x="12" y="${(yS + 5.5).toFixed(1)}">· ${names2[k2]}</text>` +
+              `<rect x="${x0}" y="${yS.toFixed(1)}" width="${Math.max(0.5, px(bT) - x0).toFixed(1)}" height="5" fill="${colors[sIdx]}" opacity="0.55"/>` +
+              (pinP ? `<rect x="${x0}" y="${yS.toFixed(1)}" width="${Math.max(0.5, px(pinP) - x0).toFixed(1)}" height="5" ` +
+                `fill="none" stroke="${colors[sIdx]}" stroke-width="1" stroke-dasharray="2 2" opacity="0.7"/>` : '') +
+              `<text class="dims" x="${(px(bT) + 5).toFixed(1)}" y="${(yS + 5.5).toFixed(1)}">${fmtBytes(now2)}${pin ? facBadge(now2, pinP) : ''}</text></g>`);
+          }
         }
       }
-      // SOLO breakdown: when one param component is soloed, the three freed
-      // rows host its sub-parts (experts / non-expert blocks / vocab) — they
-      // ease in as the old bars fade out, so nothing reflows. Clean factors
-      // per part when pinned (e.g. only the experts sub-bar moves under EP).
-      const soloIdx = onB[3] ? -1 : onB.reduce((k, on2, j) => on2 ? (k === -1 ? j : -2) : k, -1);
-      if (soloIdx >= 0 && soloIdx < 3 && onB.reduce((t2, o2) => t2 + o2, 0) === 1) {
-        const prevParts = V ? partsFor(V.prev) : null;
-        const names2 = ['experts', 'non-expert', 'vocab'];
-        const freeRows = [0, 1, 2, 3].filter((j) => j !== soloIdx);
-        for (const [k2, jRow] of freeRows.entries()) {
-          const now2 = this._segParts[soloIdx][k2];
-          if (!now2) continue;
-          const bT = prevParts ? geo(prevParts[soloIdx][k2], now2, V.t) : now2;
-          const ease = 1 - vis[jRow];
-          if (ease < 0.03) continue;
-          const y3 = topY + jRow * rowH + 1.5;
-          const pinP = pin?.parts?.[soloIdx]?.[k2];
-          B.push(`<g opacity="${ease.toFixed(3)}">` +
-            `<rect x="${x0}" y="${y3}" width="${Math.max(0.5, px(bT) - x0).toFixed(1)}" height="5" fill="${colors[soloIdx]}" opacity="0.55"/>` +
-            `<text class="dims" x="${(px(bT) + 5).toFixed(1)}" y="${y3 + 5.5}">· ${names2[k2]} ${fmtBytes(now2)}${pin ? facBadge(now2, pinP) : ''}</text></g>`);
-        }
-      }
-      if (pin) B.push(`<text class="dims" x="${x0 + bw}" y="${axisY + 18}" text-anchor="end">pinned: ${pin.label}</text>`);
+      if (pin) B.push(`<text class="dims" x="${x0 + bw}" y="${axisY + 18}" text-anchor="end">saved: ${pin.label}</text>`);
       // the scrub overlay: cursor affordance AND arming region live exactly
       // on the bars band — not the captions, not below the axis
       B.push(`<rect class="scrub" x="${x0}" y="${topY - 2}" width="${bw}" height="${axisY - topY + 1}" ` +
@@ -2661,9 +2758,13 @@ export class Dsv3Layer extends HTMLElement {
       `<path d="M 0 0 L 8 4 L 0 8 z" fill="#898781"/></marker></defs>` + P.join('');
     for (const b of svgEl.querySelectorAll('button[data-dt]')) {
       b.onclick = () => {
-        const cycle = { bf16: 'mxfp8', mxfp8: 'fp32', fp32: 'bf16' };
-        this.matmuls[b.dataset.dt] = cycle[this.matmuls[b.dataset.dt]] ?? 'bf16';
-        this.render(); this.changed();
+        const mutate = () => {
+          const cycle = { bf16: 'mxfp8', mxfp8: 'fp32', fp32: 'bf16' };
+          this.matmuls[b.dataset.dt] = cycle[this.matmuls[b.dataset.dt]] ?? 'bf16';
+        };
+        if (this.hasAttribute('local') && this.getAttribute('lens') === 'param-bytes') {
+          const prev = this._snapLocal(); mutate(); this._tweenLocal(prev);
+        } else { mutate(); this.render(); this.changed(); }
       };
     }
     for (const b of svgEl.querySelectorAll('button[data-mark]')) {
