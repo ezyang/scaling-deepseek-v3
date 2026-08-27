@@ -1157,14 +1157,14 @@ export class Dsv3Layer extends HTMLElement {
           return s;
         };
         const pp = this.pp ?? LOCAL_PAR.pp;
-        const stageLabel = (o) => {
+        const stageLabel = (o) => {   // compact: '0: L0–2 · 3d+emb', '15: L57–60 · head · peak'
           const g = ppStage(o, pp);
-          const range = !g.layers ? 'no layers'
-            : g.lo === g.hi - 1 ? `layer ${g.lo}` : `layers ${g.lo}–${g.hi - 1}`;
-          const tags = [g.dense ? `${g.dense} dense` : '', o === 0 ? 'embed' : '',
-            o === pp - 1 ? 'lm head' : ''].filter(Boolean).join(', ');
+          const range = !g.layers ? '—'
+            : g.lo === g.hi - 1 ? `L${g.lo}` : `L${g.lo}–${g.hi - 1}`;
+          const tags = [g.dense ? `${g.dense}d` : '', o === 0 ? 'emb' : '',
+            o === pp - 1 ? 'head' : ''].filter(Boolean).join('+');
           const pk2 = o === peakStage(pp, this.ep, this.zero ?? 1, world, this.sched) ? ' · peak' : '';
-          return `${o}: ${range}${tags ? ` (${tags})` : ''}${pk2}`;
+          return `${o}: ${range}${tags ? ` · ${tags}` : ''}${pk2}`;
         };
         // EP/PP step by powers of two: a segmented − value + control
         const POW2 = [1, 2, 4, 8, 16, 32, 64];
