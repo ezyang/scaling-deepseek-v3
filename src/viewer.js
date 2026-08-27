@@ -2407,12 +2407,18 @@ export class Dsv3Layer extends HTMLElement {
       // the exponent, not the bytes (linear byte lerp lurches then crawls)
       const geo = (a, b, t) => a > 0 && b > 0
         ? 2 ** ((1 - t) * Math.log2(a) + t * Math.log2(b)) : a + (b - a) * t;
-      const segs = nowB.map((b, i) => geo(prevB[i], b, V ? V.t : 1) * vis[i]);
+      const allB = nowB.map((b, i) => geo(prevB[i], b, V ? V.t : 1));   // knob-tweened, visibility-independent
+      const segs = allB.map((b, i) => b * vis[i]);
       const colors = [...COMPS.map((c) => c.color), '#eda100'];
       const onB = [...COMPS.map((c) => this[c.prop] ? 1 : 0), this.showActs ? 1 : 0];
       this._segTotals = nowB;
-      const totalN = nowB.reduce((t, b, i) => t + b * onB[i], 0);   // labels snap
-      const totalT = segs.reduce((a, b2) => a + b2, 0);             // lerped (bar)
+      // the TOTAL row never resizes: it always shows ALL components. Under a
+      // solo it becomes a stacked bar — grey "other" base + the highlighted
+      // component on top — so the visible colored width IS the factor you
+      // could gain by optimizing only that component.
+      const totalN = nowB.reduce((t, b) => t + b, 0);               // labels snap (full total)
+      const totalT = allB.reduce((a, b2) => a + b2, 0);             // lerped (full total)
+      const otherT = allB.reduce((a, b2, i) => a + b2 * (1 - vis[i]), 0);
       // UNSTACKED rows on a FIXED log₂ axis: each labeled gridline is exactly
       // ×2 (unlabeled minor ticks show the linear spacing inside an octave),
       // so distance-to-fit reads as countable halvings. The row labels ARE
@@ -2438,7 +2444,7 @@ export class Dsv3Layer extends HTMLElement {
       for (const [e, lab] of [[30, '1 GiB'], [33, '8 GiB'], [40, '1 TiB'], [43, '8 TiB']])
         B.push(`<text class="dims" x="${(px(2 ** e) + 3).toFixed(1)}" y="${axisY + 8}">${lab}</text>`);
       const pin = this._pinCfg;
-      const pinTotal = pin ? pin.segs.reduce((t, b, i) => t + b * onB[i], 0) : 0;
+      const pinTotal = pin ? pin.segs.reduce((t, b) => t + b, 0) : 0;
       const factor = facStr;
       for (const [i, r] of rowsB.entries()) {
         const y2 = topY + i * rowH + (i === nR - 1 ? 4 : 0);   // the total row sits a hair apart
@@ -2448,7 +2454,20 @@ export class Dsv3Layer extends HTMLElement {
           (r.prop ? `<rect x="0" y="${y2 - 2}" width="${x0 - 4}" height="${rowH}" fill="transparent"/>` : '') +
           `<text class="dims" x="2" y="${y2 + 7}" fill="${r.color}" font-weight="600">${r.name}</text>` +
           `<text class="dims" x="${x0 - 8}" y="${y2 + 7}" text-anchor="end">${fmtBytes(r.abs)}</text></g>`);
-        B.push(`<rect x="${x0}" y="${y2}" width="${Math.max(0.5, px(r.b) - x0).toFixed(1)}" height="${barH}" fill="${r.color}"${dim}/>`);
+        if (i === nR - 1 && otherT > totalT * 0.001) {
+          // stacked total: grey "other" base, then the visible components —
+          // the colored width is the gain available from optimizing them
+          B.push(`<rect x="${x0}" y="${y2}" width="${Math.max(0.5, px(otherT) - x0).toFixed(1)}" height="${barH}" fill="#c3c2b7"/>`);
+          let acc = otherT;
+          for (let j = 0; j < allB.length; j++) {
+            const w2 = allB[j] * vis[j];
+            if (w2 <= 0) continue;
+            const a1 = px(acc); acc += w2;
+            B.push(`<rect x="${(a1 + 1).toFixed(1)}" y="${y2}" width="${Math.max(0.5, px(acc) - a1 - 1).toFixed(1)}" height="${barH}" fill="${colors[j]}"/>`);
+          }
+        } else {
+          B.push(`<rect x="${x0}" y="${y2}" width="${Math.max(0.5, px(r.b) - x0).toFixed(1)}" height="${barH}" fill="${r.color}"${dim}/>`);
+        }
         const pinB = pin ? (i === nR - 1 ? pinTotal : pin.segs[i]) : 0;
         if (pinB) B.push(`<line x1="${px(pinB).toFixed(1)}" y1="${y2 - 1}" x2="${px(pinB).toFixed(1)}" y2="${y2 + barH + 1}" stroke="#0b0b0b" stroke-width="1.4"/>`);
         // bar-end factor: over/under the 80 GiB boundary — or, when pinned,
