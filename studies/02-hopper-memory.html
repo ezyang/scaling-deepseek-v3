@@ -23,23 +23,27 @@
     the memory usage of any given rank in an arbitrarily large training config
     on a single GPU.</p>
 
-    <p>However, it's good to have an expectation about how much memory
-    your model <em>should</em> be using, given choices on parallelism, activation
-    checkpointing and low precision, so you can tell if your implementation
-    is buggy and using more memory than it should be.  It's also common to be in
-    a fairly memory constrained regime, where in your hero run you will be
-    trying to just barely fit your model in memory while trying not to
-    sacrifice too much MFU.  For example, the original DeepSeek-V3 pretrain
-    was done on 2048 H800 GPUs (same amount of memory as any H100), as we'll
-    see, memory is pretty tight in this setting!</p>
+    <p>However, it's good to have an expectation about how much memory your
+    model <em>should</em> be using, given choices on parallelism, activation
+    checkpointing and low precision, so you can tell if your implementation is
+    buggy and using more memory than it should be.  It's also helpful to know
+    what levers you have available for reducing memory usage: you will often
+    be in a regime where your hero run can just barely fit your model in
+    memory, and you're trying to make it fit without sacrificing too much MFU.
+    For example, the original DeepSeek-V3 pretrain was done on 2048 H800 GPUs
+    (same amount of memory as any H100), as we'll see, memory is pretty tight
+    in this setting!</p>
 
-    <p>This post is organized as follows: first, we'll recap at a high level
+    <p>This post is organized as follows: <s>first, we'll recap at a high level
     what memory is used for in LLM training.  Next, we will individually
     discuss each knob you have for adjusting memory usage, using simplified
-    models to build intuition for how these knobs affect memory.  Then we'll
+    models to build intuition for how these knobs affect memory.</s>  Then we'll
     put it all together to reproduce DeepSeek-V3's 2048 GPU Hopper training
     configuration.  Credit where credit is due: this analysis is based off of
     an unpublished analysis done by Daniel Haziza.</p>
+
+    TODO: we need to step through the tricky parts of the model, without having
+    overwhelmingly too much text
 
     <h2>What is memory used for in training?</h2>
 
@@ -75,7 +79,7 @@
     to our diagram, with the optimizer states colored in green, opposed to the
     parameter's blue.</p>
 
-    <dsv3-anatomy style="min-height:751px" lens="param-bytes" optim layer="opt-diagram" detail controls="static" nocaption></dsv3-anatomy>
+    <dsv3-anatomy style="min-height:732px" lens="param-bytes" optim layer="opt-diagram" detail controls="static" nocaption></dsv3-anatomy>
 
     <p><strong>Activations.</strong></p>
 
@@ -86,11 +90,11 @@
     <p class="note">The consolidated per-block memory picture: weights (blue),
     fp32 gradient accumulators (orange), optimizer states (green), and the
     saved-for-backward activations of one 4096-token microbatch (amber, on the
-    wires where they live — like the activation-checkpointing diagram; the
-    line at the bottom totals them). Colors match the memory-bar segments.
-    Toggle components in the legend.</p>
+    wires where they live — like the activation-checkpointing diagram).
+    Colors match the memory-bar segments. Toggle components in the margin
+    legend.</p>
 
-    <dsv3-anatomy style="min-height:876px" lens="param-bytes" local cumulative recipe="bf16" layer="local-diagram" detail controls="static" nocaption></dsv3-anatomy>
+    <dsv3-anatomy style="min-height:916px" lens="param-bytes" local cumulative recipe="bf16" layer="local-diagram" detail controls="static" nocaption></dsv3-anatomy>
 
     <p class="note">The same picture per GPU, under a fiat parallelism (we
     can't justify it without talking about comms — later chapters): 2048 GPUs,
@@ -111,8 +115,12 @@
     holds PP−<em>s</em> forward microbatches at steady state — which is why
     the peak rank is an <em>early</em> stage, not the parameter-heavy last
     one. The schedule is itself a knob (flip to ×1 mb to see the
-    single-microbatch fiction this section started with). The bar at the
-    bottom totals the whole rank against an H100's 80&nbsp;GiB.</p>
+    single-microbatch fiction this section started with). The log₂ bars under
+    the controls put every component (and the grey total) against the
+    80&nbsp;GiB line — each gridline is exactly ×2, so you can count the
+    halvings a knob has to buy; pin a baseline and the bars grow ticks and
+    ×N/÷N factors relative to it. The margin legend rows toggle each
+    component and carry its per-rank bytes.</p>
 
     <strong>Full tally</strong>
     show the tally bar

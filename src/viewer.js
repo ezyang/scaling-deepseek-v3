@@ -55,6 +55,9 @@ export const actLayerBytes = () => ACT_LAYER_B ||=
 // depth, assuming ≥ pp microbatches per step); 'one' = a single microbatch
 export const inflightOf = (sched, s, pp) => sched === 'one' ? 1 : pp - Math.min(s, pp - 1);
 
+// fit-chart geometry (svg units): the log₂ axis spans 2^lo…2^hi over bw px
+const BAR_GEO = { w: 800, x0: 2, bw: 690, lo: 28, hi: 44 };
+
 // the PP stage holding the most resident bytes under the local model (all
 // components on, vocab counted on the end stages, activations under the
 // schedule) — the default stage to show: the fully loaded rank.
@@ -754,6 +757,13 @@ dsv3-layer { display: block; margin: 14px 0 26px; }
 .lv svg { display: block; margin: 0 auto; }
 /* no scaling, ever: a diagram wider than its container scrolls horizontally */
 .lv-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.lv-bar svg { display: block; margin: 2px 0 6px; max-width: 100%; height: auto; }
+.lv-bar { position: relative; cursor: col-resize; }
+.lv-ruler { display: none; position: absolute; background: rgba(237, 161, 0, 0.12);
+  border-left: 1px solid #0b0b0b; border-right: 1px solid #0b0b0b; pointer-events: none; }
+.lv-ruler-lab { position: absolute; top: -2px; left: 100%; margin-left: 5px; white-space: nowrap;
+  font: 11px ui-monospace, monospace; color: #0b0b0b; background: #fff8ea; padding: 1px 4px;
+  border: 1px solid #eda100; border-radius: 3px; }
 ${tokensCss('.lv')}
 .lv select.dt { font: 600 10px system-ui; width: 100%; height: 20px; border: 1px solid #c3c2b7;
   border-radius: 3px; background: #fff; }
@@ -866,6 +876,20 @@ export class Dsv3Layer extends HTMLElement {
   // ---- local-lens knob tween: EVERY knob change (EP/PP/stage/ZeRO/×N) pours
   // squares between the old and new configuration, per-block-tween style.
   // Numbers snap; a change that flips the kind snaps (different layout).
+  // toggle a byte component (either legend): squares pour in/out
+  toggleComp(prop, on) {
+    this[prop] = on;
+    const FRAMES = 12; let f = 0;             // ~200 ms, deterministic
+    this._ctween = { prop, t: 0 };
+    const step = () => {
+      f++; const p = Math.min(1, f / FRAMES);
+      this._ctween = { prop, t: 1 - (1 - p) * (1 - p) };   // ease-out
+      this.render(); this.changed(false);     // plan strips tween along
+      if (p < 1) setTimeout(step, 16);
+      else { this._ctween = undefined; this.render(); this.changed(true); }
+    };
+    setTimeout(step, 16);
+  }
   _snapLocal() {
     return { ep: this.ep, pp: this.pp, stage: this.stage,
       zero: this.zero ?? 1, world: this.world ?? LOCAL_PAR.world,
@@ -1060,19 +1084,38 @@ export class Dsv3Layer extends HTMLElement {
     dcb.onchange = () => { this.detail = dcb.checked; this.render(); this.changed(true); };
     dl.append(dcb, 'elided kernels');
     head.append(dl, mkDimsBtn(), mkCumBtn(), reset);
-    const ana = analyze(blockGraph(this.kind, DSV3, this.matmuls, 4096),
-      this._ctl.quant ? this.marks : {}, this.transposed);
+    // memoized: tween frames re-render 12× with identical analysis inputs —
+    // recomputing the graph walk each frame is what made toggles sluggish
+    const anaKey = `${this.kind}|${cmode}|${JSON.stringify(this.matmuls)}|` +
+      `${JSON.stringify(this.marks)}|${this.transposed}`;
+    if (this._anaMemo?.key !== anaKey) {
+      this._anaMemo = {
+        key: anaKey,
+        ana: analyze(blockGraph(this.kind, DSV3, this.matmuls, 4096),
+          this._ctl.quant ? this.marks : {}, this.transposed),
+        // dense mode also analyzes the MoE graph, purely for LAYOUT (row
+        // alignment across kind flips)
+        anaM: this.kind === 'dense'
+          ? analyze(blockGraph('moe', DSV3, this.matmuls, 4096), this._ctl.quant ? this.marks : {}, this.transposed)
+          : null,
+      };
+    }
+    const ana = this._anaMemo.ana;
+    let barSlot = null;   // the local fit bar renders under the parallelism row
     if (cmode !== 'static') root.append(head);
     else {
       const mini = el('div', 'lv-head');
+      // local gets TWO control rows: parallelism (with the fit bar right
+      // under it — the headline effect) and a second row for the misc bits
+      const mini2 = this.hasAttribute('local') ? el('div', 'lv-head') : mini;
       // param-bytes always shows sizes multiplied out — no toggle to offer
       const sizeCtl = this.getAttribute('lens') === 'param-bytes' ? [] : ['sizes:', mkDimsBtn()];
       // the optim variant is pinned per block; consolidated allows ×N (long!);
       // local toggles between one block and the stage total
       const cumCtl = this.hasAttribute('optim') && !this.hasAttribute('consolidated') ? [] : [mkCumBtn()];
       // no kind select when MLA-only (kind-independent) or when the tabs carry the flip
-      if (SCOPE === 'mla' || this.hasAttribute('tabs')) mini.append(...sizeCtl, ...cumCtl);
-      else mini.append('block: ', mkKindSel(), ...(sizeCtl.length ? [' · '] : []), ...sizeCtl, ...cumCtl);
+      if (SCOPE === 'mla' || this.hasAttribute('tabs')) mini2.append(...sizeCtl, ...cumCtl);
+      else mini2.append('block: ', mkKindSel(), ...(sizeCtl.length ? [' · '] : []), ...sizeCtl, ...cumCtl);
       if (this.hasAttribute('local')) {
         // the fiat parallelism: 2048 GPUs fixed; EP width (or off), PP degree
         // (powers of two), the PP stage, and ZeRO-1 are the knobs. The kind
@@ -1184,7 +1227,8 @@ export class Dsv3Layer extends HTMLElement {
         // rule for the main diagram would otherwise stack the swatch on its own line
         const sw = (c) => `<svg width="5" height="4" style="display:inline-block;margin:0;vertical-align:baseline"><rect width="5" height="4" fill="${c}"/></svg>`;
         const cons2 = this.hasAttribute('consolidated') || this.hasAttribute('local');
-        if (this.hasAttribute('optim') || cons2) {
+        if (this.hasAttribute('marginlegend')) { /* the anatomy margin hosts the legend */ }
+        else if (this.hasAttribute('optim') || cons2) {
           // the legend entries ARE the visibility toggles: the squares pour
           // in/out (per-block-tween style, boxes reflow with the filled rows)
           // and the numbers snap to exactly what's shown
@@ -1193,20 +1237,10 @@ export class Dsv3Layer extends HTMLElement {
             lab.style.cssText = 'display:inline-flex;align-items:center;gap:3px;margin-right:10px;cursor:pointer;';
             const c = document.createElement('input');
             c.type = 'checkbox'; c.checked = this[prop];
-            c.onchange = () => {
-              this[prop] = c.checked;
-              const FRAMES = 12; let f = 0;             // ~200 ms, deterministic
-              this._ctween = { prop, t: 0 };
-              const step = () => {
-                f++; const p = Math.min(1, f / FRAMES);
-                this._ctween = { prop, t: 1 - (1 - p) * (1 - p) };   // ease-out
-                this.render(); this.changed(false);     // plan strips tween along
-                if (p < 1) setTimeout(step, 16);
-                else { this._ctween = undefined; this.render(); this.changed(true); }
-              };
-              setTimeout(step, 16);
-            };
-            const t = el('span'); t.innerHTML = `${sw(color)} ${label}`;
+            c.onchange = () => this.toggleComp(prop, c.checked);
+            const t = el('span');
+            t.style.cssText = 'display:inline-flex;align-items:center;gap:3px;';   // swatch centers regardless of baseline
+            t.innerHTML = `${sw(color)} <span>${label}</span>`;
             lab.append(c, t);
             return lab;
           };
@@ -1215,23 +1249,89 @@ export class Dsv3Layer extends HTMLElement {
           if (cons2) leg.append(cb(this.hasAttribute('local')
             ? `saved activations (bf16, ×4096 tok × ${inflightOf(this.sched ?? '1f1b', this.stage ?? 1, this.pp ?? LOCAL_PAR.pp)} in flight)`
             : 'saved activations (bf16, ×4096 tokens)', '#eda100', 'showActs'));
-          const u = el('span'); u.innerHTML = `· ${sw('#898781')} = ${fmtBytes(unit)}`;
+          const u = el('span');
+          u.style.cssText = 'display:inline-flex;align-items:center;gap:3px;';   // swatch centers regardless of baseline
+          u.innerHTML = `· ${sw('#898781')} <span>= ${fmtBytes(unit)}</span>`;
           leg.append(u);
-        } else leg.innerHTML = `${sw('#2a78d6')} = ${fmtBytes(unit)}`;
-        mini.append(leg);
+        } else {
+          leg.style.cssText += 'display:inline-flex;align-items:center;gap:3px;';
+          leg.innerHTML = `${sw('#2a78d6')} <span>= ${fmtBytes(unit)}</span>`;
+        }
+        mini2.append(leg);
+      }
+      if (this.hasAttribute('local')) {
+        // pin a baseline config: the log bars then carry ticks at the pinned
+        // values and ×N/÷N factors — "I ×256'ed this and it /256'ed that"
+        const pb = document.createElement('button');
+        pb.style.cssText = 'font:11px ui-monospace,monospace;padding:2px 8px;border:1px solid #c3c2b7;' +
+          'border-radius:4px;background:#fff;cursor:pointer;margin-left:8px;';
+        pb.textContent = this._pinCfg ? 'unpin baseline' : 'pin baseline';
+        pb.onclick = () => {
+          this._pinCfg = this._pinCfg ? null : {
+            segs: [...(this._segTotals ?? [])],
+            label: `EP${this.ep}·PP${this.pp}·stage ${this.stage}·ZeRO-${this.zero ? this.zero : 'off'}·${this.sched === 'one' ? '×1mb' : '1F1B'}·${this.world} GPUs`,
+          };
+          this.render();
+        };
+        mini2.append(pb);
       }
       root.append(mini);
+      if (this.hasAttribute('local')) { barSlot = el('div', 'lv-bar'); root.append(barSlot); }
+      if (mini2 !== mini) root.append(mini2);
     }
     // dense mode also analyzes the MoE graph, purely for LAYOUT: the dense
     // column reserves whitespace where the routing rows sit, so flipping
     // kinds keeps every surviving element in the same place
-    const anaM = this.kind === 'dense'
-      ? analyze(blockGraph('moe', DSV3, this.matmuls, 4096), this._ctl.quant ? this.marks : {}, this.transposed)
-      : null;
+    const anaM = this._anaMemo.anaM;
     // never scale the diagram: it renders at natural size inside its own
     // scroll container (tooltips stay outside it, so they aren't clipped)
     const scroller = el('div', 'lv-scroll');
     scroller.append(this.buildSvg(ana, anaM));
+    if (barSlot && this._barHtml) {
+      barSlot.innerHTML = this._barHtml;
+      this._barHtml = null;
+      // Perfetto-style ruler: drag a span, read the FACTOR it covers (on a
+      // log axis a span is a multiplier wherever it sits). Click clears.
+      const svgEl2 = barSlot.querySelector('svg');
+      const toU = (ev) => {   // client → svg units, clamped to the axis
+        const r2 = svgEl2.getBoundingClientRect();
+        const u = (ev.clientX - r2.left) / r2.width * BAR_GEO.w;
+        return Math.max(BAR_GEO.x0, Math.min(BAR_GEO.x0 + BAR_GEO.bw, u));
+      };
+      const bytesAt = (u) => 2 ** (BAR_GEO.lo + (u - BAR_GEO.x0) / BAR_GEO.bw * (BAR_GEO.hi - BAR_GEO.lo));
+      const rul = el('div', 'lv-ruler');
+      const rlab = el('div', 'lv-ruler-lab');
+      rul.append(rlab);
+      barSlot.append(rul);
+      const drawR = () => {
+        const R = this._ruler;
+        if (!R || Math.abs(R.a - R.b) < 2) { rul.style.display = 'none'; return; }
+        const r2 = svgEl2.getBoundingClientRect(), k = r2.width / BAR_GEO.w;
+        const [u1, u2] = [Math.min(R.a, R.b), Math.max(R.a, R.b)];
+        rul.style.display = 'block';
+        rul.style.left = `${(svgEl2.offsetLeft + u1 * k).toFixed(1)}px`;
+        rul.style.width = `${((u2 - u1) * k).toFixed(1)}px`;
+        rul.style.top = '10px';
+        rul.style.height = `${(r2.height - 22) * 1}px`;
+        const f = 2 ** ((u2 - u1) / BAR_GEO.bw * (BAR_GEO.hi - BAR_GEO.lo));
+        const ff = f >= 100 || Math.abs(f - Math.round(f)) < 0.02 * f ? Math.round(f) : f.toFixed(1);
+        rlab.textContent = `×${ff} (${fmtBytes(bytesAt(u1))} → ${fmtBytes(bytesAt(u2))})`;
+      };
+      barSlot.onmousedown = (ev) => {
+        this._ruler = { a: toU(ev), b: toU(ev) };
+        const move = (e2) => { this._ruler.b = toU(e2); drawR(); };
+        const up = () => {
+          document.removeEventListener('mousemove', move);
+          document.removeEventListener('mouseup', up);
+          if (Math.abs(this._ruler.a - this._ruler.b) < 2) { this._ruler = null; drawR(); }
+        };
+        document.addEventListener('mousemove', move);
+        document.addEventListener('mouseup', up);
+        drawR();
+        ev.preventDefault();
+      };
+      drawR();
+    }
     root.append(scroller);
     const note = el('div', 'lv-note');
     const M2 = this.view === 'combined' ? this.dispLayers * this.dispInflight * 4096 : 1;
@@ -1574,31 +1674,36 @@ export class Dsv3Layer extends HTMLElement {
       if (LOCAL && clsOf(id) === 'e' && Array.isArray(p)) return p[0] * DSV3.routedExperts;
       return exactParam(id);
     };
+    // per-comp cells FLOOR (sub-square remainders just round down — rounding
+    // error is understood); ONE hollow trace appears only when the op would
+    // otherwise show nothing at all, in the largest remainder's color
     const compCells = (nParams, cls) => COMPS.map((c) => {
       const m = cmult(c.prop);
-      if (!m) return { c, n: 0, hollow: false };
+      if (!m) return { c, f: 0, n: 0 };
       const eff = LOCAL ? nParams * fT(c, cls) : nParams * bppOf(c, cls) * stripMul;
-      const full = Math.round(eff / 2 / PB_UNIT);
-      const n = Math.round(full * m);
-      return { c, n, hollow: !n && m >= 0.5 && eff > 0 };   // hollow pops in mid-tween like a 1-square run (never for a true zero)
+      const f = eff / 2 / PB_UNIT * m;
+      return { c, f, n: Math.floor(f) };
     });
-    const stripCells = (nParams, cls) =>
-      compCells(nParams, cls).reduce((t, r) => t + r.n + (r.hollow ? 1 : 0), 0);
-    const stripExtra = (nParams, cls) => {                // box growth beyond the built-in strip row
-      if (!nParams || !(ABS || OPTIM)) return 0;
-      return (Math.max(1, Math.ceil(stripCells(nParams, cls) / FLOP_ROW)) - 1) * 6;
+    const stripCells = (nParams, cls) => {
+      const cells = compCells(nParams, cls);
+      const n = cells.reduce((t, r) => t + r.n, 0);
+      return n || (cells.some((r) => r.f > 0.02) ? 1 : 0);
     };
-    const paramBlocks = (x, y, nParams, cls) => {
+    const stripExtra = (nParams, cls, row = FLOP_ROW) => {   // box growth beyond the built-in strip row
+      if (!nParams || !(ABS || OPTIM)) return 0;
+      return (Math.max(1, Math.ceil(stripCells(nParams, cls) / row)) - 1) * 6;
+    };
+    const paramBlocks = (x, y, nParams, cls, row = FLOP_ROW) => {
       if (!PBYTES || !nParams) return;
+      const cells = compCells(nParams, cls);
       let g = '', i = 0;
-      for (const { c, n, hollow } of compCells(nParams, cls)) {
-        if (hollow) {   // hollow, never a full square — that would overstate
-          const cx = x + (i % FLOP_ROW) * 6, cy = y + Math.floor(i / FLOP_ROW) * 6;
-          g += `<rect x="${cx + 0.4}" y="${cy + 0.4}" width="4.2" height="3.2" fill="none" stroke="${c.color}" stroke-width="0.8"/>`; i++;
-          continue;
-        }
+      for (const { c, n } of cells)
         for (let k = 0; k < n; k++, i++)
-          g += `<rect x="${x + (i % FLOP_ROW) * 6}" y="${y + Math.floor(i / FLOP_ROW) * 6}" width="5" height="4" fill="${c.color}"/>`;
+          g += `<rect x="${x + (i % row) * 6}" y="${y + Math.floor(i / row) * 6}" width="5" height="4" fill="${c.color}"/>`;
+      if (!i) {
+        const top = cells.reduce((b2, r) => r.f > b2.f ? r : b2, { f: 0 });
+        if (top.f > 0.02)
+          g += `<rect x="${x + 0.4}" y="${y + 0.4}" width="4.2" height="3.2" fill="none" stroke="${top.c.color}" stroke-width="0.8"/>`;
       }
       P.push(g);
     };
@@ -1800,8 +1905,9 @@ export class Dsv3Layer extends HTMLElement {
       P.push(`<circle cx="${SX1}" cy="${y - 10}" r="2.5" fill="#898781"/>` +
         `<path class="wire" d="M ${SX1} ${y - 10} L ${RX} ${y - 10} L ${RX} ${y}" marker-end="url(#arr)"/>`);
       const qFrac = DSV3.qRank / (DSV3.qRank + DSV3.kvRank + DSV3.qkRope);
+      const HALF_ROW = 21;   // 140px half boxes: strip rows wrap inside the box
       const dhalf = (x, name, dims, tip, frac, withBtns, pc = '', nP = 0) => {
-        const ex = stripExtra(nP);   // strip rows can outgrow the box (×N)
+        const ex = stripExtra(nP, 'd', HALF_ROW);   // strip rows can outgrow the box (×N)
         P.push(`<g data-op="qkv_down" data-tip="${escAttr(tip)}">` +
           `<rect class="box" x="${x}" y="${y}" width="140" height="${HBH + ex}" rx="4"/>` +
           (PBYTES ? `<text class="dims" x="${x + 134}" y="${y + 13}" text-anchor="end">bf16</text>` : '') +
@@ -1809,7 +1915,7 @@ export class Dsv3Layer extends HTMLElement {
           `<text class="dims" x="${x + 6}" y="${y + 25}">${PONLY ? pc.trim() : flatten(dims) + pc}</text></g>` +
           (withBtns ? modeBtn(['qkv_down'], x + 140 - 86, y + 29) + dtBtn('qkv_down', x + 140 - 58, y + 29) : ''));
         flopBlocks(x + 6, y + 52, ana.byId.qkv_down.flopsTok * frac, dt('qkv_down'));
-        paramBlocks(x + 6, y + 52, nP);
+        paramBlocks(x + 6, y + 52, nP, 'd', HALF_ROW);
         return ex;
       };
       const pQ = pk(DSV3.hidden * DSV3.qRank), pKV = pk(DSV3.hidden * (DSV3.kvRank + DSV3.qkRope));
@@ -1831,6 +1937,7 @@ export class Dsv3Layer extends HTMLElement {
         bypTop = y + 14;
         P.push(`<path class="wire" d="M ${kx} ${y} L ${kx} ${bypTop} L ${bypX} ${bypTop}"/>`);
         if (!PONLY) P.push(`<text class="tensor tidle" x="${kx + 6}" y="${bypTop - 4}">· k_rope · ${DSV3.qkRope}</text>`);
+        else if (CONS) P.push(`<text class="tensor tidle" x="${kx + 6}" y="${bypTop - 4}">· k_rope</text>`);   // named, idle: never saved (RoPE bwd is a rotation)
         // pre-norm latent chips: real graph state (saved at no-AC — the latent
         // norms' backward input; the replay anchor under recompute presets)
         tensorChip(['qkv_down'], SX1 + 14, y + 24,
@@ -1874,7 +1981,7 @@ export class Dsv3Layer extends HTMLElement {
       y += latGap;
       const halfBox = (id, x) => {
         const m = MATMULS.find(mm2 => mm2.id === id);
-        const ex = stripExtra(sqParam(id));   // strip rows can outgrow the box (×N)
+        const ex = stripExtra(sqParam(id), 'd', 21);   // strip rows can outgrow the box (×N; 140px box row)
         P.push(`<g data-op="${id}"${boxTip(id, m.dimsNote)}>` +
           `<rect class="box" x="${x}" y="${y}" width="140" height="${HBH + ex}" rx="4"/>` +
           (PBYTES ? `<text class="dims" x="${x + 134}" y="${y + 13}" text-anchor="end">bf16</text>` : '') +
@@ -1882,7 +1989,7 @@ export class Dsv3Layer extends HTMLElement {
           `<text class="dims" x="${x + 6}" y="${y + 25}">${PONLY ? pstr(id).trim() : flatten(m.dims) + pstr(id)}</text></g>` +
           modeBtn([id], x + 140 - 86, y + 29) + dtBtn(id, x + 140 - 58, y + 29));
         flopBlocks(x + 6, y + 52, ana.byId[id]?.flopsTok, dt(id));
-        paramBlocks(x + 6, y + 52, sqParam(id));
+        paramBlocks(x + 6, y + 52, sqParam(id), 'd', 21);
         return ex;
       };
       y += HBH + Math.max(halfBox('q_up', C1), halfBox('kv_up', C1 + 150));   // the pair advances together
@@ -2204,7 +2311,16 @@ export class Dsv3Layer extends HTMLElement {
     // Segments follow the legend checkboxes and lerp with the knob tween;
     // the total label snaps. Activations approximate mixed-kind stages with
     // the current kind's per-layer stash.
-    if (LOCAL) {
+    // per-comp byte tallies for the margin legend (target values, snap):
+    // local = this rank's whole stage (matches the bar); otherwise the
+    // current view's block ×N
+    if (OPTIM && !LOCAL) {
+      const kindP = this.kind === 'dense' ? PARAMS.denseBlock : PARAMS.moeBlock;
+      const m2 = CUM ? KMUL : 1;
+      this._segTotals = COMPS.map((c) => kindP * c.bpp * m2);
+      if (CONS) this._segTotals.push(ana.savedBytes * 4096 * m2);
+    }
+    if (LOCAL) {   // the fit bar renders in its own row under the controls (this._barHtml)
       const cap = 80 * 2 ** 30;
       const moeExp = PARAMS.expert * DSV3.routedExperts;
       const segB = (S) => {
@@ -2222,26 +2338,55 @@ export class Dsv3Layer extends HTMLElement {
       const V = this._vtween;
       const nowB = segB(Snow), prevB = V ? segB(V.prev) : nowB;
       const vis = [...COMPS.map((c) => cmult(c.prop)), cmult('showActs')];
-      const segs = nowB.map((b, i) => (prevB[i] + (b - prevB[i]) * (V ? V.t : 1)) * vis[i]);
+      // GEOMETRIC interpolation: on a log axis, uniform motion means lerping
+      // the exponent, not the bytes (linear byte lerp lurches then crawls)
+      const geo = (a, b, t) => a > 0 && b > 0
+        ? 2 ** ((1 - t) * Math.log2(a) + t * Math.log2(b)) : a + (b - a) * t;
+      const segs = nowB.map((b, i) => geo(prevB[i], b, V ? V.t : 1) * vis[i]);
       const colors = [...COMPS.map((c) => c.color), '#eda100'];
       const onB = [...COMPS.map((c) => this[c.prop] ? 1 : 0), this.showActs ? 1 : 0];
+      this._segTotals = nowB;                                       // margin legend rows show these
       const totalN = nowB.reduce((t, b, i) => t + b * onB[i], 0);   // label snaps
-      const total = segs.reduce((a, b2) => a + b2, 0);
-      const x0 = C1 - 20, bw = C2 + W - x0, by = h + 14;
-      const scale = bw / Math.max(total * 1.02, cap * 1.15);
-      P.push(`<text class="grplabel" x="${x0}" y="${h + 9}">this rank, whole stage:</text>`);
-      let bx = x0;
-      for (let i = 0; i < segs.length; i++) {
-        const w2 = segs[i] * scale;
-        if (w2 < 0.5) continue;
-        P.push(`<rect x="${bx.toFixed(1)}" y="${by}" width="${Math.max(0.5, w2 - 2).toFixed(1)}" height="12" fill="${colors[i]}"/>`);
-        bx += w2;
+      const totalT = segs.reduce((a, b2) => a + b2, 0);             // lerped (bar)
+      // UNSTACKED rows on a FIXED log₂ axis: each gridline is exactly ×2, so
+      // the distance from a bar's end to the 80 GiB line counts the halvings
+      // a knob has to buy. A separate grey TOTAL row carries the fit verdict
+      // (sums don't stack on a log axis).
+      const { x0, bw, lo: LO, hi: HI } = BAR_GEO;   // 256 MiB … 16 TiB, 16 doublings
+      const rowH = 11, barH = 8, topY = 12;
+      const px = (b) => x0 + Math.max(0, Math.min(1, (Math.log2(Math.max(b, 1)) - LO) / (HI - LO))) * bw;
+      const rowsB = [...segs.map((b, i) => ({ b, color: colors[i], on: onB[i] })),
+        { b: totalT, color: '#52514e', on: 1, label: fmtBytes(totalN) }];
+      const nR = rowsB.length, axisY = topY + nR * rowH + 3;
+      const B = [`<text class="grplabel" x="${x0}" y="9">this rank, whole stage (log₂ — each gridline is ×2):</text>`];
+      for (let e = LO; e <= HI; e += 1)   // the ×2 grid
+        B.push(`<line x1="${px(2 ** e).toFixed(1)}" y1="${topY - 2}" x2="${px(2 ** e).toFixed(1)}" y2="${axisY - 3}" stroke="#e9e8e2" stroke-width="1"/>`);
+      for (const [e, lab] of [[30, '1 GiB'], [33, '8 GiB'], [40, '1 TiB'], [43, '8 TiB']])
+        B.push(`<text class="dims" x="${(px(2 ** e) + 3).toFixed(1)}" y="${axisY + 8}">${lab}</text>`);
+      const pin = this._pinCfg;
+      const pinTotal = pin ? pin.segs.reduce((t, b, i) => t + b * onB[i], 0) : 0;
+      const factor = (cur, base) => {
+        if (!base || !cur) return '';
+        const r = cur / base;
+        if (Math.abs(Math.log2(r)) < 0.05) return '';
+        const f = (v) => Math.abs(v - Math.round(v)) < 0.05 * v ? String(Math.round(v)) : v.toFixed(1);
+        return r > 1 ? ` ×${f(r)}` : ` ÷${f(1 / r)}`;
+      };
+      for (const [i, r] of rowsB.entries()) {
+        const y2 = topY + i * rowH + (i === nR - 1 ? 3 : 0);   // the total row sits a hair apart
+        B.push(`<rect x="${x0}" y="${y2}" width="${Math.max(0.5, px(r.b) - x0).toFixed(1)}" height="${barH}" fill="${r.color}"${r.on ? '' : ' opacity="0.3"'}/>`);
+        const pinB = pin ? (i === nR - 1 ? pinTotal : pin.segs[i]) : 0;
+        if (pinB) B.push(`<line x1="${px(pinB).toFixed(1)}" y1="${y2 - 1}" x2="${px(pinB).toFixed(1)}" y2="${y2 + barH + 1}" stroke="#0b0b0b" stroke-width="1.4"/>`);
+        const nowVal = i === nR - 1 ? totalN : nowB[i];
+        const fac = pin ? factor(nowVal, pinB) : '';
+        if (r.label || fac) B.push(`<text class="dims" x="${(Math.max(px(r.b), pinB ? px(pinB) : 0) + 5).toFixed(1)}" y="${y2 + 7}">${(r.label ?? '') + fac}</text>`);
       }
-      const cx2 = x0 + cap * scale;
-      P.push(`<line x1="${cx2.toFixed(1)}" y1="${by - 3}" x2="${cx2.toFixed(1)}" y2="${by + 15}" stroke="#0b0b0b" stroke-width="1.2"/>` +
-        `<text class="dims" x="${cx2 + 4}" y="${by + 26}">80 GiB (H100)</text>` +
-        `<text class="dims" x="${(bx + 6).toFixed(1)}" y="${by + 10}">${fmtBytes(totalN)}</text>`);
-      h += 48;
+      if (pin) B.push(`<text class="dims" x="${x0 + bw}" y="9" text-anchor="end">pinned: ${pin.label}</text>`);
+      const cx2 = px(cap);
+      B.push(`<line x1="${cx2.toFixed(1)}" y1="${topY - 3}" x2="${cx2.toFixed(1)}" y2="${axisY - 3}" stroke="#0b0b0b" stroke-width="1.2"/>` +
+        `<text class="dims" x="${(cx2 - 4).toFixed(1)}" y="${axisY + 8}" text-anchor="end">80 GiB (H100)</text>`);
+      const HB = axisY + 12;
+      this._barHtml = `<svg width="${BAR_GEO.w}" height="${HB}" viewBox="0 0 ${BAR_GEO.w} ${HB}">${B.join('')}</svg>`;
     }
     if (SCOPE === 'model') {   // the surrounding stack: ×61 rule, final norm, lm head, loss
       P.push(`<line class="wire" x1="${C1 - 20}" y1="${h}" x2="${C2 + W + 20}" y2="${h}" stroke-dasharray="3 3"/>`);
