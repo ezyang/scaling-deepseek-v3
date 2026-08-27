@@ -64,6 +64,20 @@ double-counted anywhere in the figure); supports `highlightOps`.
 | `mode` | `total` (default) · `active` — initial toggle position |
 | `units` | absent · `bytes` — bf16 memory framing: values in binary bytes, the total/active toggle hidden (activation doesn't change resident bytes). `<dsv3-anatomy lens="param-bytes" tally>` sets this automatically |
 
+## `<dsv3-pp-schedule layer=…>` — the pipeline-schedule strip
+
+One row per PP stage, time flowing right; F cells one slot, B cells two
+(backward ≈ 2× forward FLOPs), every cell numbered with its microbatch.
+Colors follow the byte language (F stashes activations = amber; B consumes
+them into gradients = orange). Bound to a local-lens layer it follows the
+layer's PP / schedule / stage (the selected stage's row is tinted) AND wears
+its own replica of the pipeline knob group — PP stepper, stage select,
+1F1B/×1 mb segments — whose changes drive the layer (`layer.setLocal`), so
+either widget's controls move both. Under 1F1B it draws pp+4 microbatches
+(warmup + steady state + cooldown); ×1 mb draws the single-microbatch wave.
+PP/sched changes tween the strip's height (12-frame ease-out, deterministic).
+No state of its own; unbound instances read `pp`/`sched`/`stage` attributes.
+
 ## Other elements (unchanged conventions)
 - `<dsv3-trace level height title config>` — the canvas trace viewer over the
   simulator (not yet on a published page; the timing posts' widget).

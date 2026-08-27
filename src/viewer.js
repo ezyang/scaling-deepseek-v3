@@ -79,6 +79,19 @@ export const peakStage = (pp, ep, zero, world = LOCAL_PAR.world, sched = '1f1b')
   return best;
 };
 
+// compact stage-option label: '0: L0\u20132 \u00b7 3d+emb', '15: L57\u201360 \u00b7 head \u00b7 peak'
+// (l = the local-lens layer whose knobs pick the split)
+export const stageLabelOf = (o, l) => {
+  const pp = l.pp ?? LOCAL_PAR.pp, world = l.world ?? LOCAL_PAR.world;
+  const g = ppStage(o, pp);
+  const range = !g.layers ? '\u2014'
+    : g.lo === g.hi - 1 ? `L${g.lo}` : `L${g.lo}\u2013${g.hi - 1}`;
+  const tags = [g.dense ? `${g.dense}d` : '', o === 0 ? 'emb' : '',
+    o === pp - 1 ? 'head' : ''].filter(Boolean).join('+');
+  const pk = o === peakStage(pp, l.ep, l.zero ?? 1, world, l.sched) ? ' \u00b7 peak' : '';
+  return `${o}: ${range}${tags ? ` \u00b7 ${tags}` : ''}${pk}`;
+};
+
 // parameter-count formatter for the dims parentheticals ('(29M \u00d7256)' / '(7.5B)')
 export const fmtP = (n) => n >= 1e9 ? (n / 1e9).toFixed(1) + 'B'
   : n >= 9.95e6 ? Math.round(n / 1e6) + 'M' : n >= 1e6 ? (n / 1e6).toFixed(1) + 'M'
@@ -579,6 +592,30 @@ ${s} .oplabel { font: 10.5px system-ui; fill: #52514e; }
 ${s} .grplabel { font: italic 10px system-ui; fill: #898781; }
 ${s} .plus { font: 600 12px system-ui; fill: #52514e; }
 `;
+// the local-knob control-strip styles (steppers, grouped rows) — shared by
+// the layer's mini-head and <dsv3-pp-schedule>'s replicated pipeline group
+const knobCss = (s) => `
+${s} .pargrp { display: inline-flex; flex-direction: column; gap: 2px;
+  border: 1px solid #e1e0d9; border-radius: 6px; padding: 3px 8px 5px; align-self: stretch; }
+${s} .pargrp.center { justify-content: center; }
+${s} .parlab { font: italic 10px system-ui; color: #898781; }
+${s} .parrow { display: flex; align-items: center; gap: 5px; min-height: 20px; }
+${s} .stp { display: inline-flex; align-items: stretch; }
+${s} .stp button { font: 12px ui-monospace, monospace; width: 20px; padding: 0 0 1px; border: 1px solid #c3c2b7; background: #fff; color: #52514e; cursor: pointer; }
+${s} .stp button:hover:not(:disabled) { background: #f3f2ee; }
+${s} .stp button:disabled { color: #dedcd3; cursor: default; }
+${s} .stp button:first-child { border-radius: 4px 0 0 4px; }
+${s} .stp button:last-child { border-radius: 0 4px 4px 0; }
+${s} .stp button + button { border-left: none; }
+${s} .stp button.on { background: #f3f2ee; color: #0b0b0b; font-weight: 600; cursor: default; }
+${s} .stp button { width: auto; min-width: 20px; padding: 0 5px 1px; }
+${s} .stp select.v { font: 11px ui-monospace, monospace; min-width: 4ch; padding: 2px 5px;
+  border: 1px solid #c3c2b7; border-left: none; border-right: none; border-radius: 0;
+  background: #fff; appearance: none; -webkit-appearance: none; text-align: center;
+  text-align-last: center; cursor: pointer; }
+${s} select { font: 12px system-ui; padding: 2px 6px; border: 1px solid #c3c2b7; border-radius: 4px; background: #fff; }
+`;
+
 const LAYER_CSS = `
 dsv3-layer { display: block; margin: 14px 0 26px; }
 .lv { font: 12px system-ui, -apple-system, "Segoe UI", sans-serif; color: #0b0b0b;
@@ -589,24 +626,7 @@ dsv3-layer { display: block; margin: 14px 0 26px; }
 .lv-head select { font: 12px system-ui; padding: 2px 6px; border: 1px solid #c3c2b7; border-radius: 4px; background: #fff; }
 .lv-head .savebox { margin-left: auto; display: inline-flex; gap: 6px; align-items: flex-start;
   padding-left: 12px; border-left: 1px solid #e1e0d9; align-self: flex-start; }
-.lv-head .pargrp { display: inline-flex; flex-direction: column; gap: 2px;
-  border: 1px solid #e1e0d9; border-radius: 6px; padding: 3px 8px 5px; align-self: stretch; }
-.lv-head .pargrp.center { justify-content: center; }
-.lv-head .parlab { font: italic 10px system-ui; color: #898781; }
-.lv-head .parrow { display: flex; align-items: center; gap: 5px; min-height: 20px; }
-.lv-head .stp { display: inline-flex; align-items: stretch; }
-.lv-head .stp button { font: 12px ui-monospace, monospace; width: 20px; padding: 0 0 1px; border: 1px solid #c3c2b7; background: #fff; color: #52514e; cursor: pointer; }
-.lv-head .stp button:hover:not(:disabled) { background: #f3f2ee; }
-.lv-head .stp button:disabled { color: #dedcd3; cursor: default; }
-.lv-head .stp button:first-child { border-radius: 4px 0 0 4px; }
-.lv-head .stp button:last-child { border-radius: 0 4px 4px 0; }
-.lv-head .stp button + button { border-left: none; }
-.lv-head .stp button.on { background: #f3f2ee; color: #0b0b0b; font-weight: 600; cursor: default; }
-.lv-head .stp button { width: auto; min-width: 20px; padding: 0 5px 1px; }
-.lv-head .stp select.v { font: 11px ui-monospace, monospace; min-width: 4ch; padding: 2px 5px;
-  border: 1px solid #c3c2b7; border-left: none; border-right: none; border-radius: 0;
-  background: #fff; appearance: none; -webkit-appearance: none; text-align: center;
-  text-align-last: center; cursor: pointer; }
+${knobCss('.lv-head')}
 .lv svg { display: block; margin: 0 auto; }
 /* no scaling, ever: a diagram wider than its container scrolls horizontally */
 .lv-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
@@ -729,6 +749,15 @@ export class Dsv3Layer extends HTMLElement {
     if (this.hasAttribute('local') && this.getAttribute('lens') === 'param-bytes') {
       const prev = this._snapLocal(); mutate(); this._tweenLocal(prev);
     } else { mutate(); this.render(); this.changed(); }
+  }
+  // local-knob mutations shared by the head controls and external drivers
+  // (<dsv3-pp-schedule>): callers go through setLocal so every change tweens
+  setLocal(mutate) { const prev = this._snapLocal(); mutate(); this._tweenLocal(prev); }
+  _setPP(v) {
+    const world = this.world ?? LOCAL_PAR.world;
+    this.pp = v;
+    this.ep = Math.min(this.ep, world / v);
+    this.stage = peakStage(v, this.ep, this.zero ?? 1, world, this.sched);   // stage indices don't survive a resplit — jump to the new peak
   }
   // ---- local-lens knob tween: EVERY knob change (EP/PP/stage/ZeRO/×N) pours
   // squares between the old and new configuration, per-block-tween style.
@@ -1025,15 +1054,7 @@ export class Dsv3Layer extends HTMLElement {
           return s;
         };
         const pp = this.pp ?? LOCAL_PAR.pp;
-        const stageLabel = (o) => {   // compact: '0: L0–2 · 3d+emb', '15: L57–60 · head · peak'
-          const g = ppStage(o, pp);
-          const range = !g.layers ? '—'
-            : g.lo === g.hi - 1 ? `L${g.lo}` : `L${g.lo}–${g.hi - 1}`;
-          const tags = [g.dense ? `${g.dense}d` : '', o === 0 ? 'emb' : '',
-            o === pp - 1 ? 'head' : ''].filter(Boolean).join('+');
-          const pk2 = o === peakStage(pp, this.ep, this.zero ?? 1, world, this.sched) ? ' · peak' : '';
-          return `${o}: ${range}${tags ? ` · ${tags}` : ''}${pk2}`;
-        };
+        const stageLabel = (o) => stageLabelOf(o, this);
         // EP/PP step by powers of two: a segmented − value + control
         const POW2 = [1, 2, 4, 8, 16, 32, 64];
         const mkStep = (get, set, fmt, max = 64, opts = POW2, min = 1) => {
@@ -1079,12 +1100,8 @@ export class Dsv3Layer extends HTMLElement {
           String, 16384, [128, 256, 512, 1024, 2048, 4096, 8192, 16384], 128)));
         const gPipe = grp2('pipeline');
         gPipe.append(
-          row2(txt2('PP'), mkStep(() => this.pp,
-            (v) => {
-              this.pp = v;
-              this.ep = Math.min(this.ep, world / v);
-              this.stage = peakStage(v, this.ep, this.zero ?? 1, world, this.sched);   // stage indices don't survive a resplit — jump to the new peak
-            }, String, 64), txt2('stage'), mkSel([...Array(pp).keys()], this.stage, stageLabel, (v) => { this.stage = v; })));
+          row2(txt2('PP'), mkStep(() => this.pp, (v) => this._setPP(v), String, 64),
+            txt2('stage'), mkSel([...Array(pp).keys()], this.stage, stageLabel, (v) => { this.stage = v; })));
         const gMesh = grp2('SPMD mesh');
         const txtR = (t3) => {   // right-aligned row labels, so the mesh rows line up
           const sp = txt2(t3);
@@ -2642,4 +2659,175 @@ export class Dsv3Layer extends HTMLElement {
 }
 if (typeof customElements !== 'undefined' && !customElements.get('dsv3-layer')) {
   customElements.define('dsv3-layer', Dsv3Layer);
+}
+
+// ---- <dsv3-pp-schedule> custom element -------------------------------------------
+// Compact pipeline-schedule strip: one row per PP stage, time flows right.
+// F cells take one slot, B cells two (backward ≈ 2× forward FLOPs), and each
+// cell is numbered with its microbatch. Linked to a local-lens layer via
+// layer="id": it follows the layer's PP degree, schedule knob and stage
+// selection (the selected stage's row is tinted). Under 1F1B it draws pp+4
+// microbatches — enough warmup + steady state + cooldown to read the pattern;
+// ×1 mb draws the single-microbatch fiction (an F wave down, a B wave up).
+// Cell colors follow the byte language: a forward stashes activations
+// (amber), a backward consumes them to make gradients (orange). No state of
+// its own; standalone instances read pp/sched/stage attributes instead.
+const PPS_CSS = `
+dsv3-pp-schedule { display: block; margin: 14px 0; }
+.pps { font: 12px system-ui, -apple-system, "Segoe UI", sans-serif; color: #0b0b0b;
+  border: 1px solid #e1e0d9; border-radius: 6px; background: #fcfcfb; padding: 8px 10px; }
+.pps .top { display: flex; align-items: flex-start; gap: 12px; padding-bottom: 8px; flex-wrap: wrap; }
+${knobCss('.pps .top')}
+.pps .hd { color: #52514e; font-size: 11.5px; align-self: center; }
+.pps .scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.pps svg { display: block; }
+`;
+class Dsv3PpSchedule extends HTMLElement {
+  connectedCallback() {
+    this._sig = '';
+    const style = document.createElement('style'); style.textContent = PPS_CSS;
+    this._root = el('div', 'pps');
+    this._top = el('div', 'top');
+    this._ctl = el('span');            // the replicated pipeline knob group
+    this._hd = el('div', 'hd');
+    this._top.append(this._ctl, this._hd);
+    this._scr = el('div', 'scroll');
+    this._root.append(this._top, this._scr);
+    this.append(style, this._root);
+    const lid = this.getAttribute('layer');
+    if (!lid) { this.sync(); return; }
+    const bind = () => {   // the layer upgrades async; poll briefly until it's live
+      const l = document.getElementById(lid);
+      if (l?.render) { this._layer = l; l.addEventListener('recipe', () => this.sync()); this.sync(); }
+      else setTimeout(bind, 30);
+    };
+    bind();
+  }
+  // the SAME pipeline group the layer's mini-head wears (PP stepper over
+  // powers of two, stage select with layer-assignment labels, 1F1B/×1 mb
+  // segments) — changes drive the LAYER (l.setLocal), and the layer's
+  // 'recipe' event circles back to redraw both widgets in sync.
+  controls(pp, sched, stage) {
+    const l = this._layer;
+    this._ctl.innerHTML = '';
+    if (!l) return;
+    const g = el('span', 'pargrp');
+    const lab = el('div', 'parlab'); lab.textContent = 'pipeline'; g.append(lab);
+    const row = (...kids) => { const d = el('div', 'parrow'); d.append(...kids); return d; };
+    const txt = (t) => { const sp = el('span'); sp.style.cssText = 'color:#52514e;font-size:11px;'; sp.textContent = t; return sp; };
+    const stp = el('span', 'stp');
+    const val = document.createElement('select'); val.className = 'v';
+    for (const o of [1, 2, 4, 8, 16, 32, 64]) val.append(new Option(o, o));
+    val.value = String(pp);
+    val.onchange = () => l.setLocal(() => l._setPP(+val.value));
+    const btn = (t, v, dis) => {
+      const b = document.createElement('button');
+      b.textContent = t; b.type = 'button'; b.disabled = dis;
+      b.onclick = () => l.setLocal(() => l._setPP(v));
+      return b;
+    };
+    stp.append(btn('−', pp / 2, pp <= 1), val, btn('+', pp * 2, pp >= 64));
+    const ssel = document.createElement('select');
+    for (const o of [...Array(pp).keys()]) ssel.append(new Option(stageLabelOf(o, l), o));
+    ssel.value = String(stage);
+    ssel.onchange = () => l.setLocal(() => { l.stage = +ssel.value; });
+    const sw = el('span', 'stp');
+    for (const [k, t] of [['1f1b', '1F1B'], ['one', '×1 mb']]) {
+      const b = document.createElement('button');
+      b.textContent = t; b.type = 'button';
+      if (sched === k) b.classList.add('on');
+      else b.onclick = () => l.setLocal(() => { l.sched = k; });
+      sw.append(b);
+    }
+    g.append(row(txt('PP'), stp, txt('stage'), ssel), row(txt('sched'), sw));
+    this._ctl.append(g);
+  }
+  cfg() {
+    const l = this._layer;
+    return {
+      pp: l?.pp ?? +(this.getAttribute('pp') ?? LOCAL_PAR.pp),
+      sched: l?.sched ?? (this.getAttribute('sched') ?? '1f1b'),
+      stage: l?.stage ?? +(this.getAttribute('stage') ?? 0),
+    };
+  }
+  sync() {
+    const { pp, sched, stage } = this.cfg();
+    const sig = `${pp}|${sched}|${stage}`;
+    if (sig === this._sig) return;   // the layer's tween fires 'recipe' every frame
+    const grew = this._sig.split('|').slice(0, 2).join('|') !== `${pp}|${sched}`;
+    const prevH = this._sig && grew ? this._scr.getBoundingClientRect().height : 0;
+    this._sig = sig;
+    this.controls(pp, sched, stage);
+    this.draw(pp, sched, stage);
+    if (prevH) {   // animate the reflow: same deterministic 12-frame ease-out
+      const target = this._scr.scrollHeight;
+      const FR = 12; let f = 0;
+      this._scr.style.overflowY = 'hidden';
+      this._scr.style.height = prevH + 'px';
+      const step = () => {
+        f++; const p = 1 - (1 - Math.min(1, f / FR)) ** 2;
+        this._scr.style.height = (prevH + (target - prevH) * p) + 'px';
+        if (f < FR) setTimeout(step, 16);
+        else { this._scr.style.height = ''; this._scr.style.overflowY = ''; }
+      };
+      setTimeout(step, 16);
+    }
+  }
+  draw(pp, sched, stage) {
+    const m = sched === 'one' ? 1 : pp + 4;
+    // resolve the 1F1B item list per stage (same shape the simulator builds):
+    // F_mb@s waits on F_mb@(s−1); B_mb@s waits on B_mb@(s+1), or on its own
+    // forward on the last stage. Durations: F = 1 slot, B = 2.
+    const done = new Map(); const cells = [];
+    const qs = Array.from({ length: pp }, (_, s) => {
+      const wu = Math.min(pp - 1 - s, m); const items = [];
+      for (let j = 0; j < wu; j++) items.push(['F', j]);
+      for (let j = wu; j < m; j++) items.push(['F', j], ['B', j - wu]);
+      for (let j = Math.max(m - wu, 0); j < m; j++) items.push(['B', j]);
+      return { items, i: 0, t: 0 };
+    });
+    let progress = true;
+    while (progress) {
+      progress = false;
+      for (let s = 0; s < pp; s++) {
+        const q = qs[s];
+        while (q.i < q.items.length) {
+          const [ph, mb] = q.items[q.i];
+          const dep = ph === 'F'
+            ? (s === 0 ? 0 : done.get(`F${mb}@${s - 1}`))
+            : (s === pp - 1 ? done.get(`F${mb}@${s}`) : done.get(`B${mb}@${s + 1}`));
+          if (dep === undefined) break;
+          const t0 = Math.max(q.t, dep), t1 = t0 + (ph === 'F' ? 1 : 2);
+          cells.push({ s, mb, ph, t0, t1 });
+          done.set(`${ph}${mb}@${s}`, t1);
+          q.t = t1; q.i++; progress = true;
+        }
+      }
+    }
+    const T = Math.max(...cells.map(c => c.t1));
+    const U = 10, RH = 14, GAP = 2, GUT = 34;   // slot width / row height / row gap / stage gutter
+    const W = GUT + T * U + 1, H = pp * (RH + GAP) - GAP;
+    const rowY = (s) => s * (RH + GAP);
+    const P = [`<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" font-family="system-ui">`];
+    if (pp > 1) P.push(`<rect class="stghl" x="0" y="${rowY(stage)}" width="${W}" height="${RH}" fill="#fff3d1"/>`);
+    for (let s = 0; s < pp; s++)
+      P.push(`<text x="${GUT - 6}" y="${rowY(s) + RH - 4}" text-anchor="end" font-size="9.5" fill="${s === stage ? '#0b0b0b' : '#898781'}">s${s}</text>`);
+    const STY = { F: ['#fdeab5', '#eda100', '#7a5200'], B: ['#fbd4c0', '#eb6834', '#7a2f12'] };
+    for (const c of cells) {
+      const [fill, stroke, ink] = STY[c.ph];
+      const x = GUT + c.t0 * U, w = (c.t1 - c.t0) * U;
+      P.push(`<rect data-cell="${c.ph}${c.mb}@${c.s}" x="${x + 0.5}" y="${rowY(c.s) + 0.5}" width="${w - 1}" height="${RH - 1}" fill="${fill}" stroke="${stroke}" stroke-width="0.8"/>`);
+      if (w >= (c.mb >= 10 ? 12 : 8))
+        P.push(`<text x="${x + w / 2}" y="${rowY(c.s) + RH - 4}" text-anchor="middle" font-size="7.5" fill="${ink}">${c.mb}</text>`);
+    }
+    P.push('</svg>');
+    const ppTag = this._layer ? '' : `PP${pp} · `;   // the knob group already names PP
+    this._hd.textContent = sched === 'one'
+      ? `${ppTag}one microbatch at a time — an F wave down the stages, then a B wave back up`
+      : `${ppTag}1F1B · ${m} microbatches shown — F = forward (one slot), B = backward (two: ~2× the FLOPs)`;
+    this._scr.innerHTML = P.join('');
+  }
+}
+if (typeof customElements !== 'undefined' && !customElements.get('dsv3-pp-schedule')) {
+  customElements.define('dsv3-pp-schedule', Dsv3PpSchedule);
 }
