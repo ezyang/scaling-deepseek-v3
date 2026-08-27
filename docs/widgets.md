@@ -73,10 +73,17 @@ them into gradients = orange). Bound to a local-lens layer it follows the
 layer's PP / schedule / stage (the selected stage's row is tinted) AND wears
 its own replica of the pipeline knob group — PP stepper, stage select,
 1F1B/DPV/×1 mb segments — whose changes drive the layer (`layer.setLocal`), so
-either widget's controls move both. Under 1F1B it draws pp+4 microbatches
-(warmup + steady state + cooldown); ×1 mb draws the single-microbatch wave;
-DPV shows a deferred-rendering note stating the modeled residency (drawing
-the V fold is a TODO).
+either widget's controls move both, plus a strip-local `mb` knob for how many
+microbatches to DRAW (default 64, a real step's worth; 'auto' = depth+4, just
+enough to reach steady state — the memory model needs no m, its law assumes
+m ≥ pp; smaller m shows a pipeline that never fills). ×1 mb draws the
+single-microbatch wave. DPV draws the V fold as 1F1B admission over the
+2pp-deep virtual chain, each rank interleaving its down-pass chunk (light)
+and up-pass chunk (darker) greedily one-op-at-a-time (the official schedule's
+overlapped F+B blocks are NOT modeled — disclosed in the header); the drawn
+peak residency reproduces the modeled 2pp+1 half-rank chunks exactly, and
+cells carry data-v/t0/t1 so tests count it. Microbatch numbers hide past
+PP32 (cell budget).
 PP/sched changes tween the strip's height (12-frame ease-out, deterministic).
 No state of its own; unbound instances read `pp`/`sched`/`stage` attributes.
 

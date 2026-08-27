@@ -2707,6 +2707,7 @@ ${knobCss('.pps .top')}
 class Dsv3PpSchedule extends HTMLElement {
   connectedCallback() {
     this._sig = '';
+    this._m = this.getAttribute('mb') === 'auto' ? 'auto' : +(this.getAttribute('mb') ?? 64);
     const style = document.createElement('style'); style.textContent = PPS_CSS;
     this._root = el('div', 'pps');
     this._top = el('div', 'top');
@@ -2761,7 +2762,16 @@ class Dsv3PpSchedule extends HTMLElement {
       else b.onclick = () => l.setLocal(() => { l.sched = k; });
       sw.append(b);
     }
-    g.append(row(txt('PP'), stp, txt('stage'), ssel), row(txt('sched'), sw));
+    // microbatches DRAWN — a strip-local knob (the memory model needs no m;
+    // its 1F1B law assumes m ≥ pp): a real step's worth by default, 'auto'
+    // = just enough to reach steady state (depth + 4)
+    const msel = document.createElement('select'); msel.className = 'v';
+    msel.style.borderLeft = msel.style.borderRight = '1px solid #c3c2b7';
+    msel.style.borderRadius = '4px';
+    for (const o of ['auto', 4, 8, 16, 32, 64, 128]) msel.append(new Option(o, o));
+    msel.value = String(this._m);
+    msel.onchange = () => { this._m = msel.value === 'auto' ? 'auto' : +msel.value; this._sig = ''; this.sync(); };
+    g.append(row(txt('PP'), stp, txt('stage'), ssel), row(txt('sched'), sw, txt('mb'), msel));
     this._ctl.append(g);
   }
   cfg() {
@@ -2774,7 +2784,7 @@ class Dsv3PpSchedule extends HTMLElement {
   }
   sync() {
     const { pp, sched, stage } = this.cfg();
-    const sig = `${pp}|${sched}|${stage}`;
+    const sig = `${pp}|${sched}|${stage}|${this._m}`;
     if (sig === this._sig) return;   // the layer's tween fires 'recipe' every frame
     const grew = this._sig.split('|').slice(0, 2).join('|') !== `${pp}|${sched}`;
     const prevH = this._sig && grew ? this._scr.getBoundingClientRect().height : 0;
@@ -2796,42 +2806,52 @@ class Dsv3PpSchedule extends HTMLElement {
     }
   }
   draw(pp, sched, stage) {
-    if (sched === 'dpv') {   // DualPipeV rendering is deferred; state the model
-      this._hd.textContent = 'DualPipeV — the V fold: rank r hosts chunks r and '
-        + `${2 * pp - 1}−r of a ${2 * pp}-chunk split (embed + head both on rank 0)`;
-      this._scr.innerHTML = `<div style="color:#898781;font-size:11.5px;padding:6px 2px;">`
-        + `schedule drawing TBD — modeled residency: a uniform ${2 * pp + 1} half-rank chunks `
-        + `= ${pp === 1 ? 1 : pp + 0.5} microbatch-equivalents on every rank</div>`;
-      return;
-    }
-    const m = sched === 'one' ? 1 : pp + 4;
-    // resolve the 1F1B item list per stage (same shape the simulator builds):
-    // F_mb@s waits on F_mb@(s−1); B_mb@s waits on B_mb@(s+1), or on its own
-    // forward on the last stage. Durations: F = 1 slot, B = 2.
-    const done = new Map(); const cells = [];
-    const qs = Array.from({ length: pp }, (_, s) => {
-      const wu = Math.min(pp - 1 - s, m); const items = [];
+    // one chain of VIRTUAL stages with 1F1B admission per stage: depth pp
+    // (plain 1F1B / ×1 mb), or 2pp for DualPipeV's V fold, where virtual
+    // stage v lives on physical rank min(v, 2pp−1−v) — each rank hosts a
+    // down-pass chunk and an up-pass chunk and runs one op at a time (the
+    // official DualPipeV overlaps F+B blocks; this greedy interleave doesn't,
+    // but the residency it draws is the modeled 2pp+1 half-rank chunks).
+    // F_mb@v waits on F_mb@(v−1); B_mb@v on B_mb@(v+1), or its own forward
+    // on the deepest stage. Durations: F = 1 slot, B = 2 (~2× the FLOPs).
+    const DPV = sched === 'dpv' && pp > 1;
+    const D = DPV ? 2 * pp : pp;
+    const m = sched === 'one' ? 1 : this._m === 'auto' ? D + 4 : this._m;
+    const qs = Array.from({ length: D }, (_, v) => {
+      const wu = Math.min(D - 1 - v, m); const items = [];
       for (let j = 0; j < wu; j++) items.push(['F', j]);
       for (let j = wu; j < m; j++) items.push(['F', j], ['B', j - wu]);
       for (let j = Math.max(m - wu, 0); j < m; j++) items.push(['B', j]);
-      return { items, i: 0, t: 0 };
+      return { items, i: 0 };
     });
+    const done = new Map(); const cells = [];
+    const rankT = Array(pp).fill(0);
+    const stagesOf = Array.from({ length: pp }, (_, r) => DPV ? [r, 2 * pp - 1 - r] : [r]);
     let progress = true;
     while (progress) {
       progress = false;
-      for (let s = 0; s < pp; s++) {
-        const q = qs[s];
-        while (q.i < q.items.length) {
+      for (let r = 0; r < pp; r++) {
+        // among this rank's queue heads, run the one ready EARLIEST
+        // (ties: backward first, then the deeper virtual stage — drain bias)
+        let best = null;
+        for (const v of stagesOf[r]) {
+          const q = qs[v];
+          if (q.i >= q.items.length) continue;
           const [ph, mb] = q.items[q.i];
           const dep = ph === 'F'
-            ? (s === 0 ? 0 : done.get(`F${mb}@${s - 1}`))
-            : (s === pp - 1 ? done.get(`F${mb}@${s}`) : done.get(`B${mb}@${s + 1}`));
-          if (dep === undefined) break;
-          const t0 = Math.max(q.t, dep), t1 = t0 + (ph === 'F' ? 1 : 2);
-          cells.push({ s, mb, ph, t0, t1 });
-          done.set(`${ph}${mb}@${s}`, t1);
-          q.t = t1; q.i++; progress = true;
+            ? (v === 0 ? 0 : done.get(`F${mb}@${v - 1}`))
+            : (v === D - 1 ? done.get(`F${mb}@${v}`) : done.get(`B${mb}@${v + 1}`));
+          if (dep === undefined) continue;
+          const cand = { v, q, ph, mb, ready: Math.max(rankT[r], dep) };
+          if (!best || cand.ready < best.ready
+            || (cand.ready === best.ready && cand.ph === 'B' && best.ph === 'F')
+            || (cand.ready === best.ready && cand.ph === best.ph && cand.v > best.v)) best = cand;
         }
+        if (!best) continue;
+        const t0 = best.ready, t1 = t0 + (best.ph === 'F' ? 1 : 2);
+        cells.push({ s: r, v: best.v, mb: best.mb, ph: best.ph, chunk: best.v >= pp && DPV ? 1 : 0, t0, t1 });
+        done.set(`${best.ph}${best.mb}@${best.v}`, t1);
+        rankT[r] = t1; best.q.i++; progress = true;
       }
     }
     const T = Math.max(...cells.map(c => c.t1));
@@ -2842,19 +2862,26 @@ class Dsv3PpSchedule extends HTMLElement {
     if (pp > 1) P.push(`<rect class="stghl" x="0" y="${rowY(stage)}" width="${W}" height="${RH}" fill="#fff3d1"/>`);
     for (let s = 0; s < pp; s++)
       P.push(`<text x="${GUT - 6}" y="${rowY(s) + RH - 4}" text-anchor="end" font-size="9.5" fill="${s === stage ? '#0b0b0b' : '#898781'}">s${s}</text>`);
-    const STY = { F: ['#fdeab5', '#eda100', '#7a5200'], B: ['#fbd4c0', '#eb6834', '#7a2f12'] };
+    // chunk 1 (DualPipeV's up pass) wears deeper shades of the same hues
+    const STY = {
+      F: [['#fdeab5', '#eda100', '#7a5200'], ['#f6cd74', '#c98800', '#5c3d00']],
+      B: [['#fbd4c0', '#eb6834', '#7a2f12'], ['#f3ac8b', '#c74e1d', '#5c2410']],
+    };
     for (const c of cells) {
-      const [fill, stroke, ink] = STY[c.ph];
+      const [fill, stroke, ink] = STY[c.ph][c.chunk];
       const x = GUT + c.t0 * U, w = (c.t1 - c.t0) * U;
-      P.push(`<rect data-cell="${c.ph}${c.mb}@${c.s}" x="${x + 0.5}" y="${rowY(c.s) + 0.5}" width="${w - 1}" height="${RH - 1}" fill="${fill}" stroke="${stroke}" stroke-width="0.8"/>`);
-      if (w >= (c.mb >= 10 ? 12 : 8))
+      P.push(`<rect data-cell="${c.ph}${c.mb}@${c.s}" data-v="${c.v}" data-t0="${c.t0}" data-t1="${c.t1}" x="${x + 0.5}" y="${rowY(c.s) + 0.5}" width="${w - 1}" height="${RH - 1}" fill="${fill}" stroke="${stroke}" stroke-width="0.8"/>`);
+      if (pp <= 32 && w >= (c.mb >= 10 ? 12 : 8))
         P.push(`<text x="${x + w / 2}" y="${rowY(c.s) + RH - 4}" text-anchor="middle" font-size="7.5" fill="${ink}">${c.mb}</text>`);
     }
     P.push('</svg>');
     const ppTag = this._layer ? '' : `PP${pp} · `;   // the knob group already names PP
     this._hd.textContent = sched === 'one'
       ? `${ppTag}one microbatch at a time — an F wave down the stages, then a B wave back up`
-      : `${ppTag}1F1B · ${m} microbatches shown — F = forward (one slot), B = backward (two: ~2× the FLOPs)`;
+      : DPV
+        ? `${ppTag}DualPipeV · ${m} microbatches shown — each rank runs its down-pass chunk (light) and `
+          + `up-pass chunk (dark); F = one slot, B = two. Chunks scheduled 1F1B (the real schedule also overlaps F+B)`
+        : `${ppTag}1F1B · ${m} microbatches shown — F = forward (one slot), B = backward (two: ~2× the FLOPs)`;
     this._scr.innerHTML = P.join('');
   }
 }

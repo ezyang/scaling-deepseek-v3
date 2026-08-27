@@ -5,6 +5,11 @@ const l = () => document.getElementById('local-diagram');
 const cells = (ph) => [...w().querySelectorAll(`rect[data-cell^="${ph}"]`)];
 const stps = () => [...l().parentElement.querySelectorAll('.stp')];
 
+// pin the drawn-microbatch knob to 'auto' (= depth+4, steady state reached)
+{
+  const msel = [...w().querySelectorAll('select')].at(-1);
+  msel.value = 'auto'; msel.dispatchEvent(new Event('change')); await T.tick(150);
+}
 const pp = l().pp, m = pp + 4;
 T.log('pp', pp);
 T.check('one F cell per (stage, mb)', cells('F').length === pp * m, cells('F').length);
