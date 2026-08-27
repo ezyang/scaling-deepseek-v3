@@ -129,7 +129,7 @@ export class Dsv3AnatomyPlan extends HTMLElement {
         if (!n) {   // nonzero but sub-square (e.g. the embedding under ×58): hollow trace
           if (m < 0.5) continue;
           const cx = x + (i % 30) * 5, cy = y + Math.floor(i / 30) * 5;
-          g += `<rect x="${cx}" y="${cy}" width="4" height="3.5" fill="none" stroke="${c.color}" stroke-width="0.8"/>`; i++;
+          g += `<rect x="${cx + 0.4}" y="${cy + 0.4}" width="3.2" height="2.7" fill="none" stroke="${c.color}" stroke-width="0.8"/>`; i++;
           continue;
         }
         for (let k = 0; k < n; k++, i++)

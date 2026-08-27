@@ -95,9 +95,12 @@
     <p class="note">The same picture per GPU, under a fiat parallelism (we
     can't justify it without talking about comms — later chapters): 2048 GPUs,
     PP16 over a contiguous split of the 61 layers, EP32/EP64 selectable, and
-    ZeRO-1 (optimizer states shard over each parameter's replication group:
-    dense params over the DP group, expert params over the much smaller
-    expert-DP, which is why the green squares don't vanish on the experts).
+    ZeRO-1 (optimizer states shard over each parameter's replication group —
+    dense params over DP, expert params over expert-DP. The two effects cancel
+    for experts: fewer local experts × a smaller sharding group means the
+    per-rank optimizer bytes are a uniform 8&nbsp;B ÷ DP per global parameter,
+    independent of EP — the green looks big on experts only because the
+    weights DO divide by EP).
     EP, the PP degree, and ZeRO-1 can each be turned off or varied; the stage
     selector names every PP rank's layer assignment — stage 0 holds the
     embedding (and the dense blocks while they last); the last stage adds the

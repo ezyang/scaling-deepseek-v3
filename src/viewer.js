@@ -712,9 +712,10 @@ dsv3-layer { display: block; margin: 14px 0 26px; }
 .lv-head .stp button:disabled { color: #dedcd3; cursor: default; }
 .lv-head .stp button:first-child { border-radius: 4px 0 0 4px; }
 .lv-head .stp button:last-child { border-radius: 0 4px 4px 0; }
-.lv-head .stp .v { font: 11px ui-monospace, monospace; min-width: 4ch; padding: 2px 5px;
-  border-top: 1px solid #c3c2b7; border-bottom: 1px solid #c3c2b7; background: #fff;
-  display: inline-flex; align-items: center; justify-content: center; }
+.lv-head .stp select.v { font: 11px ui-monospace, monospace; min-width: 4ch; padding: 2px 5px;
+  border: 1px solid #c3c2b7; border-left: none; border-right: none; border-radius: 0;
+  background: #fff; appearance: none; -webkit-appearance: none; text-align: center;
+  text-align-last: center; cursor: pointer; }
 .lv svg { display: block; margin: 0 auto; }
 /* no scaling, ever: a diagram wider than its container scrolls horizontally */
 .lv-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
@@ -1055,7 +1056,11 @@ export class Dsv3Layer extends HTMLElement {
         // EP/PP step by powers of two: a segmented − value + control
         const mkStep = (get, set, fmt) => {
           const wrap = el('span', 'stp');
-          const val = el('span', 'v'); val.textContent = fmt(get());
+          // the value chip is itself a dropdown: click the number to jump
+          const val = document.createElement('select'); val.className = 'v';
+          for (const o of [1, 2, 4, 8, 16, 32, 64]) val.append(new Option(fmt(o), o));
+          val.value = String(get());
+          val.onchange = () => { const prev = this._snapLocal(); set(+val.value); this._tweenLocal(prev); };
           const btn = (txt, dir) => {
             const b = document.createElement('button');
             b.textContent = txt; b.type = 'button';
@@ -1129,7 +1134,7 @@ export class Dsv3Layer extends HTMLElement {
           const comps2 = cons2 ? BYTE_COMPS : [BYTE_COMPS[0], BYTE_COMPS[2]];
           leg.append(...comps2.map((c) => cb(c.label, c.color, c.prop)));
           if (cons2) leg.append(cb('saved activations (bf16, ×4096 tokens)', '#eda100', 'showActs'));
-          const u = el('span'); u.innerHTML = `· 1 square = ${fmtBytes(unit)}`;
+          const u = el('span'); u.innerHTML = `· ${sw('#898781')} = ${fmtBytes(unit)}`;
           leg.append(u);
         } else leg.innerHTML = `${sw('#2a78d6')} = ${fmtBytes(unit)}`;
         mini.append(leg);
@@ -1499,7 +1504,7 @@ export class Dsv3Layer extends HTMLElement {
       for (const { c, n, hollow } of compCells(nParams, cls)) {
         if (hollow) {   // hollow, never a full square — that would overstate
           const cx = x + (i % FLOP_ROW) * 6, cy = y + Math.floor(i / FLOP_ROW) * 6;
-          g += `<rect x="${cx}" y="${cy}" width="5" height="4" fill="none" stroke="${c.color}" stroke-width="0.8"/>`; i++;
+          g += `<rect x="${cx + 0.4}" y="${cy + 0.4}" width="4.2" height="3.2" fill="none" stroke="${c.color}" stroke-width="0.8"/>`; i++;
           continue;
         }
         for (let k = 0; k < n; k++, i++)
@@ -1557,7 +1562,7 @@ export class Dsv3Layer extends HTMLElement {
           ? `<text class="tensor tsave" x="${x}" y="${y + 8}">${needDir(ids)} ${name}${lock}</text>` +
             `<text class="tensor tsave" x="${x}" y="${y + 21}">${fmtBytes(b4096)}</text>`
           : `<text class="tensor tsave" x="${x}" y="${y + 8}">${needDir(ids)} ${name} · ${fmtBytes(b4096)}${lock}</text>`;
-        if (hollow) g += `<rect x="${sqX}" y="${sqY}" width="5" height="4" fill="none" stroke="#eda100" stroke-width="0.8"/>`;
+        if (hollow) g += `<rect x="${sqX + 0.4}" y="${sqY + 0.4}" width="4.2" height="3.2" fill="none" stroke="#eda100" stroke-width="0.8"/>`;
         else for (let i = 0; i < nsq; i++)
           g += `<rect x="${sqX + (i % CROW) * 6}" y="${sqY + Math.floor(i / CROW) * 6}" width="5" height="4" fill="#eda100"/>`;
         P.push(`<g opacity="${m.toFixed(3)}">${g}</g>`);
