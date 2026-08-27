@@ -1260,9 +1260,14 @@ export class Dsv3Layer extends HTMLElement {
               this.stage = peakStage(v, this.ep, this.zero ?? 1, world, this.sched);   // stage indices don't survive a resplit — jump to the new peak
             }, String, 64), txt2('stage'), mkSel([...Array(pp).keys()], this.stage, stageLabel, (v) => { this.stage = v; })));
         const gMesh = grp2('SPMD mesh');
+        const txtR = (t3) => {   // right-aligned row labels, so the mesh rows line up
+          const sp = txt2(t3);
+          sp.style.cssText += 'display:inline-block;width:64px;text-align:right;';
+          return sp;
+        };
         gMesh.append(
-          row2(txt2('non-expert:'), txt2(`DP ${world / pp}`)),
-          row2(txt2('expert: EP'), mkStep(() => this.ep, (v) => { this.ep = v; }, String, epMax),
+          row2(txtR('non-expert:'), txt2(`DP ${world / pp}`)),
+          row2(txtR('expert:'), txt2('EP'), mkStep(() => this.ep, (v) => { this.ep = v; }, String, epMax),
             txt2(`× EDP ${world / pp / this.ep}`)));
         // ZeRO-(off|1|2|3): a segmented level picker (1 shards optimizer,
         // 2 + gradients, 3 + weights — each over its replication group)
