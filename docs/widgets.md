@@ -39,7 +39,7 @@ Runtime-only properties (driven by other widgets, not attributes):
 
 | attribute | kind | meaning |
 |---|---|---|
-| `layer` | binding | id given to the inner `<dsv3-layer tabs scope="block">` (URL state, `dsv3-controls layer=` links, page scripts all address it) |
+| `layer` | binding | id given to the inner `<dsv3-layer tabs scope="block">` (URL state and page scripts address it) |
 | `tally` | view | mount the compact parameter tally in the margin below the plan |
 | *(forwarded)* | | `controls recipe recompute detail transposed for nocaption kind xlayers xinflight lens strips optim consolidated local cumulative` pass through to the inner layer |
 
@@ -65,8 +65,5 @@ double-counted anywhere in the figure); supports `highlightOps`.
 | `units` | absent · `bytes` — bf16 memory framing: values in binary bytes, the total/active toggle hidden (activation doesn't change resident bytes). `<dsv3-anatomy lens="param-bytes" tally>` sets this automatically |
 
 ## Other elements (unchanged conventions)
-- `<dsv3-stack arch dense choices for>` — layer-structure strip; the dense-count
-  toggle patches linked widgets' `arch`.
-- `<dsv3-controls for layer fields values bundles toggles>` — config knobs;
-  `layer` links the block diagram for bundle presets.
-- `<dsv3-memory configs>` · `<dsv3-trace level height title config>`.
+- `<dsv3-trace level height title config>` — the canvas trace viewer over the
+  simulator (not yet on a published page; the timing posts' widget).

@@ -22,8 +22,7 @@
     .sub { color: #52514e; margin-top: 0; }
     .dek { font-size: 19px; line-height: 1.45; color: #52514e; margin: 4px 0 20px; max-width: 620px; }
     code { font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; background: #f3f2ee; border-radius: 4px; padding: 1px 5px; }
-    dsv3-trace, dsv3-layer, dsv3-controls, dsv3-memory, dsv3-stack { display: block; margin: 14px 0; }
-    dsv3-anatomy { display: block; margin: 14px 0; }
+    dsv3-layer, dsv3-anatomy { display: block; margin: 14px 0; }
     .note { font-size: 13.5px; color: #52514e; max-width: 720px; }
     .posts li { margin: 8px 0; }
     .posts .tag { font-size: 12px; color: #52514e; background: #f0efe9; border-radius: 4px; padding: 1px 6px; margin-left: 6px; }
@@ -85,35 +84,9 @@
       <li><a href="./studies/02-hopper-memory.html">A DSv3-family MoE on 2048 H100s: memory</a>
         (PP8 · EP64, FP8 tile scaling, attn-replay recompute, DualPipe in-flight) — does it even
         fit on 80 GiB, and what the aggressive recompute policy buys and costs.</li>
-      <li><a href="./studies/03-nvidia-mlperf-gb300.html">NVIDIA's MLPerf 6.0 256×GB300
-        submission</a> (PP2 · EP32, MXFP8 incl. FP8 attention, fp8 parameter gather, <em>no</em> activation
-        checkpointing) — per-stash precision accounting; 136/288 GiB watermark; timing anchors for the
-        upcoming timing posts.</li>
-      <li><a href="./drafts/full-article.html">The full article</a><span class="tag">draft</span> — the
-        cumulative essay: roofline → kernel costs → pipeline bubbles → EP all-to-all → FSDP → overhead →
-        jitter, each refinement ruling out configurations.</li>
       -->
     </ul>
 
-    <!--
-    <h2 id="model">The performance model</h2>
-    <p>All of the posts are built off of a shared model of DeepSeek-V3's
-    memory and performance behavior.  Below, I've placed all of the widgets
-    for interacting with this model, in case you want to work with the
-    model directly.  <strong>There are still mistakes in the model.</strong>
-    Part of the reason I'm writing the posts incrementally is that I'm
-    using these posts to flush out bugs and omissions from various parts of
-    the model.  Remember, the model here isn't the important thing: the
-    important thing is teaching you how the model works, so you can build your
-    own for your own model.</p>
-    <dsv3-anatomy id="an-sand" style="min-height:897px" layer="layer-sand" for="mem-sand trace-sand" recipe="nv-mxfp8"></dsv3-anatomy>
-    <dsv3-controls id="ctl-sand" style="min-height:231px" for="mem-sand trace-sand" layer="layer-sand" toggles
-      bundles="nvidia-mlperf-gb300,dsv3-h100"
-      fields="hardware,dtype,pp,ep,dp,zero,granularity,seqLen,globalBatch,dpRanksToSim,seed"
-      values='{"pp":1,"ep":64,"dp":256,"globalBatch":6144}'></dsv3-controls>
-    <dsv3-memory id="mem-sand" style="min-height:102px" configs='[{"label":"your config","note":"watermark at the worst stage","recipe":"nv-mxfp8"}]'></dsv3-memory>
-    <dsv3-trace id="trace-sand" style="min-height:151px" level="1" height="380" title="your config — simulated profile"></dsv3-trace>
-    -->
   </main>
   <script type="module">
     import './src/viewer.js';

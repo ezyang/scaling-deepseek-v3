@@ -264,7 +264,7 @@ customElements.define('dsv3-anatomy-plan', Dsv3AnatomyPlan);
 
 // <dsv3-anatomy layer="..." [layer attrs...]>: the shipped composition.
 // Forwards layer attributes to an inner <dsv3-layer tabs scope="block">
-// whose id is the layer attr (so URL state, dsv3-controls links, and page
+// whose id is the layer attr (so URL state and page
 // scripts keep working). The grid breaks out of a width-capped <main> so the
 // diagram renders at natural size (it scales only below ~1330px viewports).
 const ANAT_CSS = `

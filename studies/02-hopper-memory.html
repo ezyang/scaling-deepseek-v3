@@ -53,6 +53,10 @@
       - PP microbatches (gradients)
     - Some factors are very round (e.g., EP directly acts on expert weights),
       we want to step through them
+    - Maaaaybe want to talk through FLOPs implications for some policy
+      decisions, similarly..
+    - Need to do some forward references for warnings: ZeRO-3 can't be hidden
+      (not applicable here but maybe other places: global batch size run out DP)
 
     <h2>What is memory used for in training?</h2>
 
@@ -283,28 +287,6 @@
       <b>(3) The in-flight law:</b> DualPipe's two-chunk schedule halves the naive (2·PP+1) in-flight count
       per layer, so the activation column is 8.5×, not 17×.</p>
 
-    <h3>Layer structure</h3>
-    <p class="note"><b>Structure disclosure:</b> everything above models <b>all 62 layers as MoE</b>. The
-      real model family stacks 3 dense-FFN blocks (inter 18432) before the sparse ones to stabilize early
-      routing. The pinned row below stays on the simplification; the toggle patches the exploration row
-      with the structure you pick (dense first layers trade expert stashes for a fatter FFN on rank 0).</p>
-    <dsv3-stack id="stack1" style="min-height:90px" for="mem-widget" choices="0,3" dense="0"></dsv3-stack>
-
-    <h3>Widgets at this configuration</h3>
-    <p class="note">The block schematic is set to this study's recipe (DSv3 FP8, attn-replay recompute
-      marks) and drives the memory bars; the parallelism controls below it feed the exploration row, so you
-      can vary pp (or anything else) and see whether the scheme still fits. The first row stays pinned to
-      the study configuration (including its DualPipe in-flight = 8.5) and shows the mid rank; the
-      exploration row uses our 1F1B in-flight law instead — a pinned in-flight would be wrong away from
-      pp = 8 — and reports the <em>worst</em> rank, usually pp0, whose bar grows a separate
-      "weights (embed/head)" segment for the 917M-param embedding.</p>
-    <dsv3-anatomy style="min-height:897px" layer="study1-layer" for="mem-widget" recipe="dsv3-fp8" recompute="attn-replay"
-      xlayers="8" xinflight="8.5"></dsv3-anatomy>
-    <dsv3-controls id="study-ctl" style="min-height:178px" for="mem-widget" layer="study1-layer"
-      bundles="dsv3-h100,nvidia-mlperf-gb300"
-      fields="hardware,pp,ep,dp,zero,seqLen,globalBatch"
-      values='{"hardware":"h100","pp":8,"ep":64,"dp":256,"zero":1,"seqLen":4096,"globalBatch":16384}'></dsv3-controls>
-    <dsv3-memory id="mem-widget" style="min-height:200px"></dsv3-memory>
     <div class="fnotes">
     </div>
   </main>
@@ -312,7 +294,7 @@
     import '../src/viewer.js';
     import '../src/anatomy.js';
     import './series.js';
-    import { CFG_OVERRIDES, VARIANT_ARCH, inventory } from './02-hopper-memory.js';
+    import { inventory } from './02-hopper-memory.js';
     // per-rank inventory table (our model's numbers)
     const { mid, first, last, capacityGB } = inventory();
     const fmt = (v) => v.toFixed(1);
@@ -325,13 +307,6 @@
         `<td>${fmt(r.optimizer)}</td><td>${fmt(r.actMla)}</td><td>${fmt(r.actMoe)}</td><td>${fmt(r.actResidual)}</td>` +
         `<td>${fmt(r.buffers)}</td><td><b>${fmt(r.total)} / ${capacityGB}</b></td></tr>`).join('') +
       '</table>';
-    // arch comes from the structure widget (so its dense-layers toggle can act on the explore row)
-    const { inflight, hardware, gpus, pp, ep, zero, mbs, seqLen, microbatches, recompute, recipe, arch, ...conventions } = CFG_OVERRIDES;
-    document.getElementById('stack1').setAttribute('arch', JSON.stringify(VARIANT_ARCH));
-    document.getElementById('mem-widget').setAttribute('configs', JSON.stringify([
-      { label: 'study config (pinned)', note: 'PP8 · EP64 · 2048 GPUs · H100 80 GiB · DualPipe in-flight 8.5 — mid rank (pp1); precision/marks from the schematic', dispStage: 1, ...CFG_OVERRIDES },
-      { label: 'explore (knobs above)', note: 'study accounting conventions + 1F1B in-flight; parallelism from the controls', ...conventions },
-    ]));
   </script>
 </body>
 
