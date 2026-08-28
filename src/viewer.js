@@ -2899,8 +2899,38 @@ class Dsv3PpSchedule extends HTMLElement {
     }
     const T = Math.max(...cells.map(c => c.t1));
     const U = 10, RH = 14, GAP = 2, GUT = 34;   // slot width / row height / row gap / stage gutter
-    const W = GUT + T * U + 1, H = pp * (RH + GAP) - GAP;
+
+    // ---- in-flight lanes for the SELECTED stage: each stash is one bar —
+    // the F that makes it, an amber tail while it is held, and the B that
+    // frees it. The braid's thickness IS the in-flight count; a dashed line
+    // marks the modeled peak (resident once the forward completes).
+    const vset = new Set(stagesOf[Math.min(stage, pp - 1)]);
+    const byKey = new Map();
+    for (const c of cells) {
+      if (!vset.has(c.v)) continue;
+      const e = byKey.get(`${c.v}:${c.mb}`) ?? { mb: c.mb, chunk: c.chunk };
+      if (c.ph === 'F') { e.f0 = c.t0; e.f1 = c.t1; } else { e.b0 = c.t0; e.b1 = c.t1; }
+      byKey.set(`${c.v}:${c.mb}`, e);
+    }
+    const stash = [...byKey.values()].sort((a, b) => a.f0 - b.f0);
+    const laneEnd = [];   // lowest-free-lane allocation over each bar's [f0, b1]
+    for (const e of stash) {
+      let ln = laneEnd.findIndex(t => t <= e.f0);
+      if (ln < 0) { ln = laneEnd.length; laneEnd.push(0); }
+      laneEnd[ln] = e.b1; e.lane = ln;
+    }
+    // modeled peak, in the model's convention: resident from F end to B end
+    const evts = stash.flatMap(e => [[e.f1, 1], [e.b1, -1]]).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    let live = 0, peakN = 0;
+    for (const [, d] of evts) peakN = Math.max(peakN, live += d);
+
+    const RH2 = 12, HDR = 18;                   // lane height / section header
+    const schedH = pp * (RH + GAP) - GAP;
+    const laneY0 = schedH + 10 + HDR;
+    const H = laneY0 + laneEnd.length * (RH2 + GAP) - GAP + 4;
+    const W = GUT + T * U + 1;
     const rowY = (s) => s * (RH + GAP);
+    const laneY = (ln) => laneY0 + ln * (RH2 + GAP);
     const P = [`<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" font-family="system-ui">`];
     if (pp > 1) P.push(`<rect class="stghl" x="0" y="${rowY(stage)}" width="${W}" height="${RH}" fill="#fff3d1"/>`);
     for (let s = 0; s < pp; s++)
@@ -2917,9 +2947,30 @@ class Dsv3PpSchedule extends HTMLElement {
       const [fill, stroke, ink] = STY[c.ph][c.chunk];
       const x = GUT + c.t0 * U, w = (c.t1 - c.t0) * U;
       P.push(`<rect data-cell="${c.ph}${c.mb}@${c.s}" data-v="${c.v}" data-t0="${c.t0}" data-t1="${c.t1}" x="${x + 0.5}" y="${rowY(c.s) + 0.5}" width="${w - 1}" height="${RH - 1}" fill="${fill}" stroke="${stroke}" stroke-width="0.8"/>`);
-      if (pp <= 32 && w >= (c.mb >= 10 ? 12 : 8))
-        P.push(`<text x="${x + w / 2}" y="${rowY(c.s) + RH - 4}" text-anchor="middle" font-size="7.5" fill="${ink}">${c.mb}</text>`);
+      // no wide convention for narrow double digits — shrink the font instead
+      const fs = w >= 12 || c.mb < 10 ? 7.5 : 6;
+      if (pp <= 32 && c.mb < (w >= 12 ? 1000 : 100))
+        P.push(`<text x="${x + w / 2}" y="${rowY(c.s) + RH - 4}" text-anchor="middle" font-size="${fs}" fill="${ink}">${c.mb}</text>`);
     }
+    // ---- the in-flight section (same svg → the horizontal scroll is shared)
+    const IFm = peakN / vpp;
+    P.push(`<text x="0" y="${laneY0 - 7}" font-size="10" fill="#52514e">in flight on s${Math.min(stage, pp - 1)}`
+      + ` — each bar: the F that stashes a microbatch, held (amber) until the B that frees it</text>`);
+    for (const e of stash) {
+      const [f, fs2, fi] = STY.F[e.chunk], [bf, bs, bi] = STY.B[e.chunk];
+      const y = laneY(e.lane);
+      P.push(`<rect x="${GUT + e.f1 * U}" y="${y + RH2 / 2 - 2}" width="${(e.b0 - e.f1) * U}" height="4" fill="#fdeab5" data-stash-tail="1"/>`);
+      P.push(`<rect data-stash="F${e.mb}" x="${GUT + e.f0 * U + 0.5}" y="${y + 0.5}" width="${(e.f1 - e.f0) * U - 1}" height="${RH2 - 1}" fill="${f}" stroke="${fs2}" stroke-width="0.8"/>`);
+      P.push(`<rect data-stash="B${e.mb}" x="${GUT + e.b0 * U + 0.5}" y="${y + 0.5}" width="${(e.b1 - e.b0) * U - 1}" height="${RH2 - 1}" fill="${bf}" stroke="${bs}" stroke-width="0.8"/>`);
+      if (pp <= 32 && e.mb < 100) {
+        P.push(`<text x="${GUT + (e.f0 + e.f1) / 2 * U}" y="${y + RH2 - 3}" text-anchor="middle" font-size="${e.mb < 10 ? 7.5 : 6}" fill="${fi}">${e.mb}</text>`);
+        P.push(`<text x="${GUT + (e.b0 + e.b1) / 2 * U}" y="${y + RH2 - 3}" text-anchor="middle" font-size="7.5" fill="${bi}">${e.mb}</text>`);
+      }
+    }
+    // the modeled peak: a dashed line under lane peakN, labeled in microbatches
+    const pkY = laneY(peakN) - GAP / 2;
+    P.push(`<line x1="${GUT}" y1="${pkY}" x2="${W}" y2="${pkY}" stroke="#0b0b0b" stroke-dasharray="4 3" stroke-width="1"/>`);
+    P.push(`<text data-peak="${IFm}" x="${GUT + 4}" y="${pkY + 11}" font-size="10" fill="#0b0b0b">peak: ${IFm} microbatch${IFm === 1 ? '' : 'es'} in flight${vpp > 1 ? ` (${peakN} half-rank chunks)` : ''} — what the memory bars charge</text>`);
     P.push('</svg>');
     const ppTag = this._layer ? '' : `PP${pp} · `;   // the knob group already names PP
     const vppTag = vpp > 1

@@ -84,7 +84,15 @@ ties backward-first, then the deeper chunk — DualPipeV's official overlapped
 F+B blocks are NOT modeled, disclosed in the header); later passes wear
 deeper shades. The drawn peak residency reproduces the modeled law exactly
 (2pp+1 half-rank chunks under VPP2+reflect), and cells carry data-v/t0/t1 so
-tests count it. Microbatch numbers hide past PP32 (cell budget).
+tests count it. Below the schedule, an IN-FLIGHT section (same svg, so the
+horizontal scroll is shared) shows the selected stage's stashes as lifetime
+lanes — the F cell that stashes a microbatch, an amber tail while it's held,
+and the B cell that frees it (data-stash) — so the braid's thickness IS the
+in-flight count; a dashed line marks the modeled peak, labeled in
+microbatches (text[data-peak]): the number the memory bars charge. Cell
+microbatch numbers shrink to a 6px font when double digits meet a 1-slot
+cell (no wide convention exists; papers widen cells instead) and hide past
+PP32 (cell budget).
 PP/sched changes tween the strip's height (12-frame ease-out, deterministic).
 No state of its own; unbound instances read `pp`/`sched`/`stage` attributes.
 

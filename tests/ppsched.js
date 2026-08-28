@@ -35,6 +35,19 @@ T.check('×1 mb: one F per stage', cells('F').length === l().pp, cells('F').leng
 T.check('×1 mb: one B per stage', cells('B').length === l().pp, cells('B').length);
 const hdr = w().querySelector('.hd').textContent;
 T.check('header describes the wave', hdr.includes('wave'), hdr);
+// in-flight section: one lane per concurrently-held stash, peak = the law
+{
+  const back1 = [...w().querySelectorAll('.stp[data-knob="sched"] button')].find(b => b.textContent === '1F1B');
+  back1.click(); await T.tick(500);
+  const lanes = new Set([...w().querySelectorAll('rect[data-stash^="F"]')].map(r => r.getAttribute('y'))).size;
+  const expect = l().pp - l().stage;   // 1F1B staircase on the selected stage
+  T.check('in-flight lanes = PP − stage', lanes === expect, `${lanes} vs ${expect}`);
+  T.check('peak label matches the law', +w().querySelector('text[data-peak]').dataset.peak === expect, '');
+  T.check('stash bars carry F and B cells', w().querySelectorAll('rect[data-stash^="B"]').length
+    === w().querySelectorAll('rect[data-stash^="F"]').length, '');
+  [...w().querySelectorAll('.stp[data-knob="sched"] button')].find(b => b.textContent === '×1 mb').click();
+  await T.tick(400);   // restore ×1 mb for the checks below
+}
 // PP step: row count follows
 const ppPlus = stps()[1].querySelectorAll('button')[1];
 ppPlus.click(); await T.tick(600);
