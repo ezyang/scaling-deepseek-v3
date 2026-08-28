@@ -2975,7 +2975,8 @@ class Dsv3PpSchedule extends HTMLElement {
     // ---- the in-flight section (same svg → the horizontal scroll is shared)
     const IFm = peakN / vpp;
     P.push(`<text x="0" y="${laneY0 - 7}" font-size="10" fill="#52514e">in flight on s${Math.min(stage, pp - 1)}`
-      + ` — each bar: the F that stashes a microbatch, held (amber) until the B that frees it</text>`);
+      + ` — each bar: the F that stashes a microbatch, held (amber) until the B that frees it.`
+      + ` The peak is what the memory bars charge</text>`);
     for (const e of stash) {
       const [f, fs2, fi] = STY.F[e.chunk], [bf, bs, bi] = STY.B[e.chunk];
       const y = laneY(e.lane);
@@ -2987,10 +2988,17 @@ class Dsv3PpSchedule extends HTMLElement {
         P.push(`<text x="${GUT + (e.b0 + e.b1) / 2 * U}" y="${y + RH2 - 3}" text-anchor="middle" font-size="7.5" fill="${bi}">${e.mb}</text>`);
       }
     }
-    // the modeled peak: a dashed line under lane peakN, labeled in microbatches
-    const pkY = laneY(peakN) - GAP / 2;
-    P.push(`<line x1="${GUT}" y1="${pkY}" x2="${W}" y2="${pkY}" stroke="#0b0b0b" stroke-dasharray="4 3" stroke-width="1"/>`);
-    P.push(`<text data-peak="${IFm}" x="${GUT + 4}" y="${pkY + 11}" font-size="10" fill="#0b0b0b">peak: ${IFm} microbatch${IFm === 1 ? '' : 'es'} in flight${vpp > 1 ? ` (${peakN} half-rank chunks)` : ''} — what the memory bars charge</text>`);
+    // the modeled peak, annotated like a dimension line: a bracket spanning
+    // the braid at a steady-state moment when the count is maximal
+    let live2 = 0, tPk = 0, tPkEnd = T;
+    for (let i = 0; i < evts.length; i++) {
+      live2 += evts[i][1];
+      if (live2 === peakN) { tPk = evts[i][0]; tPkEnd = evts[i + 1]?.[0] ?? T; break; }
+    }
+    const bx = GUT + (tPk + tPkEnd) / 2 * U;
+    const by0 = laneY(0) + 1, by1 = laneY(peakN - 1) + RH2 - 1;
+    P.push(`<path d="M ${bx - 4} ${by0} h 8 M ${bx} ${by0} V ${by1} M ${bx - 4} ${by1} h 8" stroke="#0b0b0b" stroke-width="1.2" fill="none"/>`);
+    P.push(`<text data-peak="${IFm}" x="${bx + 7}" y="${(by0 + by1) / 2 + 3.5}" font-size="10" font-weight="600" fill="#0b0b0b" stroke="#fcfcfb" stroke-width="3" paint-order="stroke">${IFm} mb in flight (peak)${vpp > 1 ? ` = ${peakN} chunks` : ''}</text>`);
     P.push('</svg>');
     const ppTag = this._layer ? '' : `PP${pp} · `;   // the knob group already names PP
     const vppTag = vpp > 1
