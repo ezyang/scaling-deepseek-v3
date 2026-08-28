@@ -2751,6 +2751,15 @@ class Dsv3PpSchedule extends HTMLElement {
       const l = this._layer, v = +t.dataset.stage;
       if (l.stage !== v) l.setLocal(() => { l.stage = v; });
     });
+    // hovering an in-flight bar lights up ITS two ops in the schedule —
+    // the F that made the stash and the B that frees it — and dims the rest
+    this._scr.addEventListener('mouseover', (e) => {
+      const g = e.target.closest('g.lane');
+      if (g) this._hl(+g.dataset.mb, +g.dataset.v);
+    });
+    this._scr.addEventListener('mouseout', (e) => {
+      if (e.target.closest('g.lane')) this._hl(null);
+    });
     this._scr.addEventListener('keydown', (e) => {
       const d = e.key === 'ArrowDown' ? 1 : e.key === 'ArrowUp' ? -1 : 0;
       const l = this._layer;
@@ -2769,6 +2778,14 @@ class Dsv3PpSchedule extends HTMLElement {
       else setTimeout(bind, 30);
     };
     bind();
+  }
+  _hl(mb, v) {
+    const svg = this._scr.querySelector('svg');
+    if (!svg) return;
+    for (const n of svg.querySelectorAll('[data-mb]')) {
+      const on = mb == null || (+n.dataset.mb === mb && +n.dataset.v === v);
+      n.style.opacity = on ? '' : 0.22;
+    }
   }
   // the SAME pipeline group the layer's mini-head wears (PP stepper over
   // powers of two, stage select with layer-assignment labels, 1F1B/×1 mb
@@ -2925,7 +2942,7 @@ class Dsv3PpSchedule extends HTMLElement {
     const byKey = new Map();
     for (const c of cells) {
       if (!vset.has(c.v)) continue;
-      const e = byKey.get(`${c.v}:${c.mb}`) ?? { mb: c.mb, chunk: c.chunk };
+      const e = byKey.get(`${c.v}:${c.mb}`) ?? { mb: c.mb, v: c.v, chunk: c.chunk };
       if (c.ph === 'F') { e.f0 = c.t0; e.f1 = c.t1; } else { e.b0 = c.t0; e.b1 = c.t1; }
       byKey.set(`${c.v}:${c.mb}`, e);
     }
@@ -2966,11 +2983,11 @@ class Dsv3PpSchedule extends HTMLElement {
     for (const c of cells) {
       const [fill, stroke, ink] = STY[c.ph][c.chunk];
       const x = GUT + c.t0 * U, w = (c.t1 - c.t0) * U;
-      P.push(`<rect data-cell="${c.ph}${c.mb}@${c.s}" data-v="${c.v}" data-t0="${c.t0}" data-t1="${c.t1}" x="${x + 0.5}" y="${rowY(c.s) + 0.5}" width="${w - 1}" height="${RH - 1}" fill="${fill}" stroke="${stroke}" stroke-width="0.8"/>`);
+      P.push(`<rect data-cell="${c.ph}${c.mb}@${c.s}" data-mb="${c.mb}" data-v="${c.v}" data-t0="${c.t0}" data-t1="${c.t1}" x="${x + 0.5}" y="${rowY(c.s) + 0.5}" width="${w - 1}" height="${RH - 1}" fill="${fill}" stroke="${stroke}" stroke-width="0.8"/>`);
       // no wide convention for narrow double digits — shrink the font instead
       const fs = w >= 12 || c.mb < 10 ? 7.5 : 6;
       if (pp <= 32 && c.mb < (w >= 12 ? 1000 : 100))
-        P.push(`<text x="${x + w / 2}" y="${rowY(c.s) + RH - 4}" text-anchor="middle" font-size="${fs}" fill="${ink}">${c.mb}</text>`);
+        P.push(`<text data-mb="${c.mb}" data-v="${c.v}" x="${x + w / 2}" y="${rowY(c.s) + RH - 4}" text-anchor="middle" font-size="${fs}" fill="${ink}">${c.mb}</text>`);
     }
     // ---- the in-flight section (same svg → the horizontal scroll is shared)
     const IFm = peakN / vpp;
@@ -2980,6 +2997,9 @@ class Dsv3PpSchedule extends HTMLElement {
     for (const e of stash) {
       const [f, fs2, fi] = STY.F[e.chunk], [bf, bs, bi] = STY.B[e.chunk];
       const y = laneY(e.lane);
+      P.push(`<g class="lane" data-mb="${e.mb}" data-v="${e.v}">`);
+      // hitbox: the whole row band over the stash's span, not just the marks
+      P.push(`<rect x="${GUT + e.f0 * U}" y="${y - GAP / 2}" width="${(e.b1 - e.f0) * U}" height="${RH2 + GAP}" fill="transparent"/>`);
       P.push(`<rect x="${GUT + e.f1 * U}" y="${y + RH2 / 2 - 2}" width="${(e.b0 - e.f1) * U}" height="4" fill="#fdeab5" data-stash-tail="1"/>`);
       P.push(`<rect data-stash="F${e.mb}" x="${GUT + e.f0 * U + 0.5}" y="${y + 0.5}" width="${(e.f1 - e.f0) * U - 1}" height="${RH2 - 1}" fill="${f}" stroke="${fs2}" stroke-width="0.8"/>`);
       P.push(`<rect data-stash="B${e.mb}" x="${GUT + e.b0 * U + 0.5}" y="${y + 0.5}" width="${(e.b1 - e.b0) * U - 1}" height="${RH2 - 1}" fill="${bf}" stroke="${bs}" stroke-width="0.8"/>`);
@@ -2987,6 +3007,7 @@ class Dsv3PpSchedule extends HTMLElement {
         P.push(`<text x="${GUT + (e.f0 + e.f1) / 2 * U}" y="${y + RH2 - 3}" text-anchor="middle" font-size="${e.mb < 10 ? 7.5 : 6}" fill="${fi}">${e.mb}</text>`);
         P.push(`<text x="${GUT + (e.b0 + e.b1) / 2 * U}" y="${y + RH2 - 3}" text-anchor="middle" font-size="7.5" fill="${bi}">${e.mb}</text>`);
       }
+      P.push('</g>');
     }
     // the modeled peak, annotated like a dimension line: a bracket spanning
     // the braid at a steady-state moment when the count is maximal
@@ -2997,8 +3018,8 @@ class Dsv3PpSchedule extends HTMLElement {
     }
     const bx = GUT + (tPk + tPkEnd) / 2 * U;
     const by0 = laneY(0) + 1, by1 = laneY(peakN - 1) + RH2 - 1;
-    P.push(`<path d="M ${bx - 4} ${by0} h 8 M ${bx} ${by0} V ${by1} M ${bx - 4} ${by1} h 8" stroke="#0b0b0b" stroke-width="1.2" fill="none"/>`);
-    P.push(`<text data-peak="${IFm}" x="${bx + 7}" y="${(by0 + by1) / 2 + 3.5}" font-size="10" font-weight="600" fill="#0b0b0b" stroke="#fcfcfb" stroke-width="3" paint-order="stroke">${IFm} mb in flight (peak)${vpp > 1 ? ` = ${peakN} chunks` : ''}</text>`);
+    P.push(`<path d="M ${bx - 4} ${by0} h 8 M ${bx} ${by0} V ${by1} M ${bx - 4} ${by1} h 8" stroke="#0b0b0b" stroke-width="1.2" fill="none" pointer-events="none"/>`);
+    P.push(`<text data-peak="${IFm}" x="${bx + 7}" y="${(by0 + by1) / 2 + 3.5}" font-size="10" font-weight="600" fill="#0b0b0b" stroke="#fcfcfb" stroke-width="3" paint-order="stroke" pointer-events="none">${IFm} mb in flight (peak)${vpp > 1 ? ` = ${peakN} chunks` : ''}</text>`);
     P.push('</svg>');
     const ppTag = this._layer ? '' : `PP${pp} · `;   // the knob group already names PP
     const vppTag = vpp > 1

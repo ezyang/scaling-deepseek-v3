@@ -45,6 +45,17 @@ T.check('header describes the wave', hdr.includes('wave'), hdr);
   T.check('peak label matches the law', +w().querySelector('text[data-peak]').dataset.peak === expect, '');
   T.check('stash bars carry F and B cells', w().querySelectorAll('rect[data-stash^="B"]').length
     === w().querySelectorAll('rect[data-stash^="F"]').length, '');
+  // hovering a stash lights exactly its two schedule ops (same mb AND v)
+  const lane7 = [...w().querySelectorAll('g.lane')].find(g => g.dataset.mb === '7');
+  lane7.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })); await T.tick(50);
+  const cellsOf = (mb) => [...w().querySelectorAll(`rect[data-cell][data-mb="${mb}"]`)];
+  const lit = cellsOf(7).filter(r => r.style.opacity === '');
+  T.check('hover: exactly the stash\'s F and B stay lit', lit.length === 2
+    && lit.every(r => r.dataset.v === lane7.dataset.v), lit.length);
+  T.check('hover: everything else dims', cellsOf(3).every(r => r.style.opacity === '0.22'), '');
+  T.check('hitbox spans the row band', +lane7.querySelector('rect[fill="transparent"]').getAttribute('height') > 10, '');
+  lane7.dispatchEvent(new MouseEvent('mouseout', { bubbles: true })); await T.tick(50);
+  T.check('unhover restores', cellsOf(3).every(r => r.style.opacity === ''), '');
   [...w().querySelectorAll('.stp[data-knob="sched"] button')].find(b => b.textContent === '×1 mb').click();
   await T.tick(400);   // restore ×1 mb for the checks below
 }
