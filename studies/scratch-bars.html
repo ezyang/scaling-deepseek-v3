@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>scratch: bars-only views for 02</title>
+  <link rel="stylesheet" href="./study.css">
+</head>
+
+<body>
+  <main>
+    <h1>scratch: bars-only fit-chart views</h1>
+    <p class="note">Unlinked draft widgets for iterating on 02's article plan
+      (not part of the series). Each instance is a full local-lens layer in
+      <code>barsonly</code> mode with a disclosed knob subset (<code>knobs=…</code>);
+      each keeps its OWN state (id-keyed URL hash), so every discussion can pin
+      its own scenario. Linking/sidebar TBD.</p>
+
+    <h2>everything (sidebar candidate)</h2>
+    <dsv3-layer id="bars-all" style="min-height:324px" barsonly local cumulative lens="param-bytes" recipe="bf16"
+      recompute="none" controls="static" detail nocaption></dsv3-layer>
+
+    <h2>pipeline discussion: knobs="pipeline"</h2>
+    <dsv3-layer id="bars-pp" style="min-height:235px" barsonly knobs="pipeline" local cumulative lens="param-bytes"
+      recipe="bf16" recompute="none" controls="static" detail nocaption></dsv3-layer>
+
+    <h2>sharding discussion: knobs="mesh,zero"</h2>
+    <dsv3-layer id="bars-shard" style="min-height:232px" barsonly knobs="mesh,zero" local cumulative
+      lens="param-bytes" recipe="bf16" recompute="none" controls="static" detail nocaption></dsv3-layer>
+
+    <h2>AC/precision discussion: knobs="prec"</h2>
+    <dsv3-layer id="bars-prec" style="min-height:197px" barsonly knobs="prec" local cumulative lens="param-bytes"
+      recipe="bf16" recompute="none" controls="static" detail nocaption></dsv3-layer>
+  </main>
+  <script type="module">
+    import '../src/viewer.js';
+  </script>
+</body>
+
+</html>

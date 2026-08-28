@@ -1063,6 +1063,10 @@ export class Dsv3Layer extends HTMLElement {
     if (cmode !== 'static') root.append(head);
     else {
       const mini = el('div', 'lv-head');
+      // article instances disclose a SUBSET of the knob groups:
+      // knobs="cluster,pipeline,mesh,zero,save,prec,blocks" (absent = all)
+      const knAttr = this.getAttribute('knobs');
+      const KN = (k) => !knAttr || knAttr.split(/[ ,]+/).includes(k);
       // local gets TWO control rows: parallelism (with the fit bar right
       // under it — the headline effect) and a second row for the misc bits
       const mini2 = this.hasAttribute('local') ? el('div', 'lv-head') : mini;
@@ -1072,8 +1076,10 @@ export class Dsv3Layer extends HTMLElement {
       // local toggles between one block and the stage total
       const cumCtl = this.hasAttribute('optim') && !this.hasAttribute('consolidated') ? [] : [mkCumBtn()];
       // no kind select when MLA-only (kind-independent) or when the tabs carry the flip
-      if (SCOPE === 'mla' || this.hasAttribute('tabs')) mini2.append(...sizeCtl, ...cumCtl);
-      else mini2.append('block: ', mkKindSel(), ...(sizeCtl.length ? [' · '] : []), ...sizeCtl, ...cumCtl);
+      if (KN('blocks')) {
+        if (SCOPE === 'mla' || this.hasAttribute('tabs')) mini2.append(...sizeCtl, ...cumCtl);
+        else mini2.append('block: ', mkKindSel(), ...(sizeCtl.length ? [' · '] : []), ...sizeCtl, ...cumCtl);
+      }
       if (this.hasAttribute('local')) {
         // the fiat parallelism: 2048 GPUs fixed; EP width (or off), PP degree
         // (powers of two), the PP stage, and ZeRO-1 are the knobs. The kind
@@ -1191,7 +1197,8 @@ export class Dsv3Layer extends HTMLElement {
         const gZ = grp2('ZeRO');
         gZ.classList.add('center');   // spans the mesh rows, like PP: it applies universally
         gZ.append(row2(zw));
-        mini.append(gCluster, gPipe, gMesh, gZ);
+        for (const [k2, g3] of [['cluster', gCluster], ['pipeline', gPipe], ['mesh', gMesh], ['zero', gZ]])
+          if (KN(k2)) mini.append(g3);
       }
       if (this.getAttribute('lens') === 'param-bytes') {
         // the strip unit rescales with the ×N toggle — label it so the jump
@@ -1282,15 +1289,15 @@ export class Dsv3Layer extends HTMLElement {
         reset.textContent = 'reset all';
         reset.style.cssText = 'font:11px ui-monospace,monospace;padding:2px 8px;border:1px solid #c3c2b7;' +
           'border-radius:4px;background:#fff;cursor:pointer;';   // match the save cluster's face
-        mini.append(saveBox);
+        if (KN('save')) mini.append(saveBox);
         // the preexisting AC + precision knobs (built above for the full
         // head; the static head never displays it, so they move here)
         const plab = (t2) => { const sp = el('span'); sp.style.cssText = 'color:#52514e;font-size:11px;margin-left:8px;'; sp.textContent = t2; return sp; };
-        mini2.append(plab('precision:'), preset, plab('recompute:'), rsel, tl);
+        if (KN('prec')) mini2.append(plab('precision:'), preset, plab('recompute:'), rsel, tl);
       }
       root.append(mini);
       if (this.hasAttribute('local')) { barSlot = el('div', 'lv-bar'); root.append(barSlot); }
-      if (mini2 !== mini) root.append(mini2);
+      if (mini2 !== mini && mini2.childNodes.length) root.append(mini2);
     }
     // dense mode also analyzes the MoE graph, purely for LAYOUT: the dense
     // column reserves whitespace where the routing rows sit, so flipping
@@ -1366,7 +1373,7 @@ export class Dsv3Layer extends HTMLElement {
       document.addEventListener('mousedown', this._rulDismiss);
       drawR();
     }
-    root.append(scroller);
+    if (!this.hasAttribute('barsonly')) root.append(scroller);
     const note = el('div', 'lv-note');
     const M2 = this.view === 'combined' ? this.dispLayers * this.dispInflight * 4096 : 1;
     const parts = [
