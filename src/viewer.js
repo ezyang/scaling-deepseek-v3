@@ -2896,6 +2896,86 @@ class Dsv3PpSchedule extends HTMLElement {
       setTimeout(step, 16);
     }
   }
+  // The OFFICIAL DualPipeV program (deepseek-ai/DualPipe, dualpipev.py):
+  // eight steps per rank. Backward splits zero-bubble style into B (input
+  // grads, one slot) and W (weight grads, one slot, deferred via a FIFO);
+  // the steady state runs F of one chunk fused with the OTHER chunk's B as
+  // one overlapped block (drawn as a split cell; we model its F result
+  // available one slot in, its B at block end — the real kernels interleave).
+  // Requires m ≥ 2pp. Emits the same cell records as the generic engine.
+  _officialDPV(pp, m) {
+    const D = 2 * pp;
+    const prog = [];
+    for (let r = 0; r < pp; r++) {
+      const ops = [], wq = [];
+      const v0 = r, v1 = D - 1 - r;
+      let f0 = 0, f1 = 0, b0 = 0, b1 = 0;
+      const F0 = () => ops.push({ ph: 'F', v: v0, mb: f0++ });
+      const F1 = () => ops.push({ ph: 'F', v: v1, mb: f1++ });
+      const B = (v, mb, zb) => { ops.push({ ph: 'B', v, mb, zb }); if (zb) wq.push({ v, mb }); };
+      const W = () => { const e = wq.shift(); if (e) ops.push({ ph: 'W', v: e.v, mb: e.mb }); };
+      const FB = (vF, mbF, vB, mbB) => ops.push({ ph: 'FB', vF, mbF, vB, mbB });
+      for (let i = 0; i < (pp - r - 1) * 2; i++) F0();                      // 1: nF0
+      for (let i = 0; i < r + 1; i++) { F0(); F1(); }                       // 2: nF0F1
+      for (let i = 0; i < pp - r - 1; i++) { B(v1, b1++, true); W(); F1(); } // 3: nB1W1F1
+      for (let i = 0; i < m - 2 * pp + r + 1; i++) {                        // 4: main nF0B1F1B0
+        FB(v0, f0++, v1, b1++); FB(v1, f1++, v0, b0++);
+      }
+      for (let i = 0; i < pp - r - 1; i++) { B(v1, b1++, false); FB(v1, f1++, v0, b0++); } // 5: nB1F1B0
+      let zb = false;                                                       // 6: nB1B0 (2nd half zb)
+      for (let i = 0; i < r + 1; i++) {
+        if (i === (r + 1 >> 1) && r % 2 === 1) zb = true;
+        B(v1, b1++, zb);
+        if (i === (r + 1 >> 1) && r % 2 === 0) zb = true;
+        B(v0, b0++, zb);
+      }
+      for (let i = 0; i < pp - r - 1; i++) { W(); B(v0, b0++, true); }      // 7: nWB0
+      for (let i = 0; i < r + 1; i++) W();                                  // 8: nW
+      prog.push({ ops, i: 0 });
+    }
+    // resolve timing: rank-sequential, F waits on F@v−1, B on B@v+1 (its own
+    // F at the deepest stage), W only on rank order; fused blocks wait on both
+    const done = new Map(), cells = [], rankT = Array(pp).fill(0);
+    const depF = (v, mb) => v === 0 ? 0 : done.get(`F${mb}@${v - 1}`);
+    const depB = (v, mb) => v === D - 1 ? done.get(`F${mb}@${v}`) : done.get(`B${mb}@${v + 1}`);
+    let progress = true;
+    while (progress) {
+      progress = false;
+      for (let r = 0; r < pp; r++) {
+        const q = prog[r];
+        while (q.i < q.ops.length) {
+          const o = q.ops[q.i];
+          let rec;
+          if (o.ph === 'F' || o.ph === 'B') {
+            const dep = o.ph === 'F' ? depF(o.v, o.mb) : depB(o.v, o.mb);
+            if (dep === undefined) break;
+            const t0 = Math.max(rankT[r], dep), t1 = t0 + (o.ph === 'B' && !o.zb ? 2 : 1);
+            rec = [{ s: r, v: o.v, mb: o.mb, ph: o.ph, t0, t1, chunk: o.v >= pp ? 1 : 0 }];
+            done.set(`${o.ph}${o.mb}@${o.v}`, t1);
+            rankT[r] = t1;
+          } else if (o.ph === 'W') {
+            const t0 = rankT[r];
+            rec = [{ s: r, v: o.v, mb: o.mb, ph: 'W', t0, t1: t0 + 1, chunk: o.v >= pp ? 1 : 0 }];
+            rankT[r] = t0 + 1;
+          } else {   // FB: fused forward+backward, 3 slots
+            const dF = depF(o.vF, o.mbF), dB = depB(o.vB, o.mbB);
+            if (dF === undefined || dB === undefined) break;
+            const t0 = Math.max(rankT[r], dF, dB);
+            rec = [
+              { s: r, v: o.vF, mb: o.mbF, ph: 'F', t0, t1: t0 + 1, vx0: t0, vx1: t0 + 3, half: 'top', chunk: o.vF >= pp ? 1 : 0 },
+              { s: r, v: o.vB, mb: o.mbB, ph: 'B', t0: t0 + 1, t1: t0 + 3, vx0: t0, vx1: t0 + 3, half: 'bot', chunk: o.vB >= pp ? 1 : 0 },
+            ];
+            done.set(`F${o.mbF}@${o.vF}`, t0 + 1);
+            done.set(`B${o.mbB}@${o.vB}`, t0 + 3);
+            rankT[r] = t0 + 3;
+          }
+          cells.push(...rec);
+          q.i++; progress = true;
+        }
+      }
+    }
+    return cells;
+  }
   draw(pp, sched, stage, vpp = 1, fold = 'reflect') {
     this._pinHl = null;
     // one chain of VIRTUAL stages with 1F1B admission per stage, vpp·pp deep;
@@ -2907,17 +2987,18 @@ class Dsv3PpSchedule extends HTMLElement {
     // on the deepest stage. Durations: F = 1 slot, B = 2 (~2× the FLOPs).
     const D = vpp * pp;
     const m = sched === 'one' ? 1 : this._m === 'auto' ? D + 4 : this._m;
-    const qs = Array.from({ length: D }, (_, v) => {
+    const OFFICIAL = sched === '1f1b' && vpp === 2 && fold === 'reflect' && pp > 1 && m >= 2 * pp;
+    const qs = OFFICIAL ? [] : Array.from({ length: D }, (_, v) => {
       const wu = Math.min(D - 1 - v, m); const items = [];
       for (let j = 0; j < wu; j++) items.push(['F', j]);
       for (let j = wu; j < m; j++) items.push(['F', j], ['B', j - wu]);
       for (let j = Math.max(m - wu, 0); j < m; j++) items.push(['B', j]);
       return { items, i: 0 };
     });
-    const done = new Map(); const cells = [];
+    const done = new Map(); const cells = OFFICIAL ? this._officialDPV(pp, m) : [];
     const rankT = Array(pp).fill(0);
     const stagesOf = Array.from({ length: pp }, (_, r) => vstagesOf(r, pp, vpp, fold));
-    let progress = true;
+    let progress = !OFFICIAL;
     while (progress) {
       progress = false;
       for (let r = 0; r < pp; r++) {
@@ -2954,9 +3035,9 @@ class Dsv3PpSchedule extends HTMLElement {
     const vset = new Set(stagesOf[Math.min(stage, pp - 1)]);
     const byKey = new Map();
     for (const c of cells) {
-      if (!vset.has(c.v)) continue;
+      if (!vset.has(c.v) || c.ph === 'W') continue;
       const e = byKey.get(`${c.v}:${c.mb}`) ?? { mb: c.mb, v: c.v, chunk: c.chunk };
-      if (c.ph === 'F') { e.f0 = c.t0; e.f1 = c.t1; } else { e.b0 = c.t0; e.b1 = c.t1; }
+      if (c.ph === 'F') { e.f0 = c.vx0 ?? c.t0, e.f1 = c.t1; } else { e.b0 = c.t0; e.b1 = c.t1; }
       byKey.set(`${c.v}:${c.mb}`, e);
     }
     const stash = [...byKey.values()].sort((a, b) => a.f0 - b.f0);
@@ -2986,21 +3067,30 @@ class Dsv3PpSchedule extends HTMLElement {
       P.push(`<rect class="stghit" data-stage="${s}" x="0" y="${rowY(s)}" width="${GUT - 2}" height="${RH}" fill="#fff3d1" opacity="0"/>`);
     }
     // later chunks wear progressively deeper shades of the same hues
-    // (VPP2 reflect: light down pass, dark up pass)
+    // (VPP2 reflect: light down pass, dark up pass); W = deferred weight
+    // grads, the pale dashed cells of the zero-bubble split
     const STY = {
       F: [['#fdeab5', '#eda100', '#7a5200'], ['#f6cd74', '#c98800', '#5c3d00'],
         ['#eab04a', '#a86e00', '#4a3000'], ['#d69432', '#875600', '#3a2500']],
       B: [['#fbd4c0', '#eb6834', '#7a2f12'], ['#f3ac8b', '#c74e1d', '#5c2410'],
         ['#e58a63', '#a63c12', '#471b09'], ['#d16b42', '#88300c', '#361406']],
+      W: [['#fdefe8', '#eb6834', '#7a2f12'], ['#f9ded0', '#c74e1d', '#5c2410'],
+        ['#f3c8b3', '#a63c12', '#471b09'], ['#ecb298', '#88300c', '#361406']],
     };
     for (const c of cells) {
       const [fill, stroke, ink] = STY[c.ph][c.chunk];
-      const x = GUT + c.t0 * U, w = (c.t1 - c.t0) * U;
-      P.push(`<rect data-cell="${c.ph}${c.mb}@${c.s}" data-mb="${c.mb}" data-v="${c.v}" data-t0="${c.t0}" data-t1="${c.t1}" x="${x + 0.5}" y="${rowY(c.s) + 0.5}" width="${w - 1}" height="${RH - 1}" fill="${fill}" stroke="${stroke}" stroke-width="0.8"/>`);
+      const x0 = c.vx0 ?? c.t0, x1 = c.vx1 ?? c.t1;
+      const x = GUT + x0 * U, w = (x1 - x0) * U;
+      const hh = (RH - 1) / 2;   // fused F&B blocks: F top half, B bottom half
+      const y = rowY(c.s) + (c.half === 'bot' ? 0.5 + hh : 0.5);
+      const h = c.half ? hh : RH - 1;
+      const dash = c.ph === 'W' ? ' stroke-dasharray="2 1.5"' : '';
+      P.push(`<rect data-cell="${c.ph}${c.mb}@${c.s}" data-mb="${c.mb}" data-v="${c.v}" data-t0="${c.t0}" data-t1="${c.t1}" x="${x + 0.5}" y="${y}" width="${w - 1}" height="${h}" fill="${fill}" stroke="${stroke}" stroke-width="0.8"${dash}/>`);
       // no wide convention for narrow double digits — shrink the font instead
-      const fs = w >= 12 || c.mb < 10 ? 7.5 : 6;
+      const fs = c.half ? 5.5 : w >= 12 || c.mb < 10 ? 7.5 : 6;
+      const ty = c.half ? y + h - 1 : rowY(c.s) + RH - 4;
       if (pp <= 32 && c.mb < (w >= 12 ? 1000 : 100))
-        P.push(`<text data-mb="${c.mb}" data-v="${c.v}" x="${x + w / 2}" y="${rowY(c.s) + RH - 4}" text-anchor="middle" font-size="${fs}" fill="${ink}">${c.mb}</text>`);
+        P.push(`<text data-mb="${c.mb}" data-v="${c.v}" x="${x + w / 2}" y="${ty}" text-anchor="middle" font-size="${fs}" fill="${ink}">${c.mb}</text>`);
     }
     // ---- the in-flight section (same svg → the horizontal scroll is shared)
     const IFm = peakN / vpp;
@@ -3035,11 +3125,14 @@ class Dsv3PpSchedule extends HTMLElement {
     P.push(`<text data-peak="${IFm}" x="${bx + 7}" y="${(by0 + by1) / 2 + 3.5}" font-size="10" font-weight="600" fill="#0b0b0b" stroke="#fcfcfb" stroke-width="3" paint-order="stroke" pointer-events="none">${IFm} mb in flight (peak)${vpp > 1 ? ` = ${peakN} chunks` : ''}</text>`);
     P.push('</svg>');
     const ppTag = this._layer ? '' : `PP${pp} · `;   // the knob group already names PP
-    const vppTag = vpp > 1
-      ? `VPP${vpp} ${fold === 'wrap' ? 'wrap (Megatron interleaving)' : `reflect${vpp === 2 ? ' — DualPipeV' : ''}`}`
-        + ` · each rank runs ${vpp} chunks, later passes darker`
-        + (fold === 'reflect' ? '. Chunks scheduled 1F1B (DualPipeV proper also overlaps F+B)' : '')
-      : '';
+    const vppTag = OFFICIAL
+      ? 'DualPipeV (official program) · down-pass chunk light, up-pass dark · split cells = overlapped F&B ·'
+        + ' pale dashed W = deferred weight grads (B alone = input grads)'
+      : vpp > 1
+        ? `VPP${vpp} ${fold === 'wrap' ? 'wrap (Megatron interleaving)' : 'reflect'}`
+          + ` · each rank runs ${vpp} chunks, later passes darker · chunks scheduled 1F1B`
+          + (fold === 'reflect' && vpp === 2 ? ' (official DualPipeV needs ≥ 2·PP microbatches)' : '')
+        : '';
     this._hd.textContent = sched === 'one'
       ? `${ppTag}one microbatch at a time — an F wave down the stages, then a B wave back up`
       : vpp > 1

@@ -46,7 +46,13 @@ const w = document.querySelector('dsv3-pp-schedule');
   T.check('strip VPP replica shows 2', w.querySelector('.stp[data-knob="vpp"] select.v').value === '2', '');
   const PP = l().pp, D = 2 * PP, M = D + 4;
   const all = [...w.querySelectorAll('rect[data-cell]')];
-  T.check('every virtual-stage op drawn', all.length === 2 * D * M, `${all.length} vs ${2 * D * M}`);
+  const nOf = (ph) => all.filter(r => r.dataset.cell.startsWith(ph)).length;
+  T.check('every F and B drawn', nOf('F') === D * M && nOf('B') === D * M, `${nOf('F')}/${nOf('B')} vs ${D * M}`);
+  // official program: W (deferred weight grads) = sum over ranks of 2PP−r−1
+  const wExpect = [...Array(PP).keys()].reduce((t, r) => t + 2 * PP - r - 1, 0);
+  T.check('W cells match the zero-bubble count', nOf('W') === wExpect, `${nOf('W')} vs ${wExpect}`);
+  T.check('fused F&B blocks drawn (half-height cells)',
+    all.some(r => +r.getAttribute('height') < 8), '');
   const row0v = new Set(all.filter(r => r.dataset.cell.endsWith('@0')).map(r => +r.dataset.v));
   T.check('rank 0 hosts virtual stages 0 and ' + (D - 1), row0v.has(0) && row0v.has(D - 1), [...row0v].join(','));
   const row1 = all.filter(r => r.dataset.cell.endsWith('@1'))
