@@ -67,8 +67,10 @@ const schedBtn = [...wctl().querySelectorAll('.stp button')].find(b => b.textCon
 schedBtn.click(); await T.tick(600);                               // widget's sched → 1F1B
 T.check('widget sched flips the layer', l().sched === '1f1b', l().sched);
 T.check('strip redrew for 1F1B', cells('F').length === l().pp * (l().pp + 4), cells('F').length);
-const wsel = wctl().querySelectorAll('select')[1];                 // stage select (after PP's value chip)
-wsel.value = '0'; wsel.dispatchEvent(new Event('change')); await T.tick(600);
-T.check('widget stage select moves the layer', l().stage === 0, l().stage);
+// the sX axis is the stage picker: click a gutter row
+T.check('no stage dropdown on the strip (axis picks)', !wctl().querySelector('[data-knob="stage"]'), '');
+w().querySelector('rect.stghit[data-stage="0"]').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+await T.tick(600);
+T.check('clicking the s0 gutter moves the layer', l().stage === 0, l().stage);
 T.check('tinted row follows', +w().querySelector('rect.stghl').getAttribute('y') === 0, '');
 T.done();

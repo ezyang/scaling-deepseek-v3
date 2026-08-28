@@ -2724,6 +2724,8 @@ dsv3-pp-schedule { display: block; margin: 14px 0; }
 .pps .top { display: flex; align-items: flex-start; gap: 12px; padding-bottom: 8px; flex-wrap: wrap; }
 ${knobCss('.pps .top')}
 .pps .hd { color: #52514e; font-size: 11.5px; align-self: center; }
+.pps .stghit { cursor: pointer; }
+.pps .stghit:hover { opacity: 0.6; }
 .pps .scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 .pps svg { display: block; }
 `;
@@ -2738,6 +2740,13 @@ class Dsv3PpSchedule extends HTMLElement {
     this._hd = el('div', 'hd');
     this._top.append(this._ctl, this._hd);
     this._scr = el('div', 'scroll');
+    // the sX axis IS the stage picker: click a row's gutter to select it
+    this._scr.addEventListener('click', (e) => {
+      const t = e.target.closest('[data-stage]');
+      if (!t || !this._layer) return;
+      const l = this._layer, v = +t.dataset.stage;
+      if (l.stage !== v) l.setLocal(() => { l.stage = v; });
+    });
     this._root.append(this._top, this._scr);
     this.append(style, this._root);
     const lid = this.getAttribute('layer');
@@ -2779,10 +2788,6 @@ class Dsv3PpSchedule extends HTMLElement {
       return w2;
     };
     const stp = mkstp([1, 2, 4, 8, 16, 32, 64], pp, (v) => l.setLocal(() => l._setPP(v)));
-    const ssel = document.createElement('select');
-    for (const o of [...Array(pp).keys()]) ssel.append(new Option(stageLabelOf(o, l), o));
-    ssel.value = String(stage);
-    ssel.onchange = () => l.setLocal(() => { l.stage = +ssel.value; });
     const seg = (opts, cur, set) => {
       const w2 = el('span', 'stp');
       for (const [k, t] of opts) {
@@ -2811,9 +2816,9 @@ class Dsv3PpSchedule extends HTMLElement {
     for (const o of ['auto', 4, 8, 16, 32, 64, 128]) msel.append(new Option(o, o));
     msel.value = String(this._m);
     msel.onchange = () => { this._m = msel.value === 'auto' ? 'auto' : +msel.value; this._sig = ''; this.sync(); };
-    for (const [n, e2] of [['pp', stp], ['stage', ssel], ['sched', sw], ['vpp', vw], ['fold', fw], ['mb', msel]])
+    for (const [n, e2] of [['pp', stp], ['sched', sw], ['vpp', vw], ['fold', fw], ['mb', msel]])
       e2.dataset.knob = n;
-    g.append(row(txt('PP'), stp, txt('stage'), ssel),
+    g.append(row(txt('PP'), stp),
       row(txt('sched'), sw, txt('VPP'), vw, fw, txt('mb'), msel));
     this._ctl.append(g);
   }
@@ -2933,8 +2938,11 @@ class Dsv3PpSchedule extends HTMLElement {
     const laneY = (ln) => laneY0 + ln * (RH2 + GAP);
     const P = [`<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" font-family="system-ui">`];
     if (pp > 1) P.push(`<rect class="stghl" x="0" y="${rowY(stage)}" width="${W}" height="${RH}" fill="#fff3d1"/>`);
-    for (let s = 0; s < pp; s++)
-      P.push(`<text x="${GUT - 6}" y="${rowY(s) + RH - 4}" text-anchor="end" font-size="9.5" fill="${s === stage ? '#0b0b0b' : '#898781'}">s${s}</text>`);
+    for (let s = 0; s < pp; s++) {
+      P.push(`<text x="${GUT - 6}" y="${rowY(s) + RH - 4}" text-anchor="end" font-size="9.5"`
+        + ` font-weight="${s === stage ? 600 : 400}" fill="${s === stage ? '#0b0b0b' : '#898781'}">s${s}</text>`);
+      P.push(`<rect class="stghit" data-stage="${s}" x="0" y="${rowY(s)}" width="${GUT - 2}" height="${RH}" fill="#fff3d1" opacity="0"/>`);
+    }
     // later chunks wear progressively deeper shades of the same hues
     // (VPP2 reflect: light down pass, dark up pass)
     const STY = {

@@ -71,9 +71,12 @@ One row per PP stage, time flowing right; F cells one slot, B cells two
 Colors follow the byte language (F stashes activations = amber; B consumes
 them into gradients = orange). Bound to a local-lens layer it follows the
 layer's PP / schedule / stage (the selected stage's row is tinted) AND wears
-its own replica of the pipeline knob group — PP stepper, stage select, and the
+its own replica of the pipeline knob group — PP stepper and the
 sched/VPP/fold knobs — whose changes drive the layer (`layer.setLocal`), so
-either widget's controls move both, plus a strip-local `mb` knob for how many
+either widget's controls move both. The sX gutter labels ARE the stage
+picker (whole-gutter hit rects, `.stghit`; the selected row's label is bold
+and its row tinted) — no stage dropdown on the strip. It also carries a
+strip-local `mb` knob for how many
 microbatches to DRAW (default 64, a real step's worth; 'auto' = depth+4, just
 enough to reach steady state — the memory model needs no m, its law assumes
 m ≥ pp; smaller m shows a pipeline that never fills). ×1 mb draws the
