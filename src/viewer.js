@@ -1134,7 +1134,12 @@ export class Dsv3Layer extends HTMLElement {
         const gPipe = grp2('pipeline');
         gPipe.append(
           row2(txt2('PP'), knob('pp', mkStep(() => this.pp, (v) => this._setPP(v), String, 64)),
-            txt2('stage'), knob('stage', mkSel([...Array(pp).keys()], this.stage, stageLabel, (v) => { this.stage = v; }))));
+            txt2('stage'), knob('stage', Object.assign(
+              // fixed width: option labels change with every PP/ZeRO/VPP move
+              // (ranges, the roaming ' · peak' tag) and the select must not
+              // resize with them — worst-case VPP4 labels clip when closed
+              mkSel([...Array(pp).keys()], this.stage, stageLabel, (v) => { this.stage = v; }),
+              { style: 'width: 212px' }))));
         const gMesh = grp2('SPMD mesh');
         const txtR = (t3) => {   // right-aligned row labels, so the mesh rows line up
           const sp = txt2(t3);
