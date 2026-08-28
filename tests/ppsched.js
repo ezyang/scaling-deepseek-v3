@@ -56,6 +56,15 @@ T.check('header describes the wave', hdr.includes('wave'), hdr);
   T.check('hitbox spans the row band', +lane7.querySelector('rect[fill="transparent"]').getAttribute('height') > 10, '');
   lane7.dispatchEvent(new MouseEvent('mouseout', { bubbles: true })); await T.tick(50);
   T.check('unhover restores', cellsOf(3).every(r => r.style.opacity === ''), '');
+  // click PINS: the highlight survives mouseout; click again releases
+  lane7.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  lane7.dispatchEvent(new MouseEvent('mouseout', { bubbles: true })); await T.tick(50);
+  T.check('click pins the highlight', cellsOf(3).every(r => r.style.opacity === '0.22')
+    && lane7.classList.contains('pin'), '');
+  lane7.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  lane7.dispatchEvent(new MouseEvent('mouseout', { bubbles: true })); await T.tick(50);
+  T.check('second click releases', cellsOf(3).every(r => r.style.opacity === '')
+    && !lane7.classList.contains('pin'), '');
   [...w().querySelectorAll('.stp[data-knob="sched"] button')].find(b => b.textContent === '×1 mb').click();
   await T.tick(400);   // restore ×1 mb for the checks below
 }

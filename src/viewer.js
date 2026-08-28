@@ -2725,6 +2725,8 @@ dsv3-pp-schedule { display: block; margin: 14px 0; }
 ${knobCss('.pps .top')}
 .pps .hd { color: #52514e; font-size: 11.5px; align-self: center; }
 .pps .stghit { cursor: pointer; }
+.pps g.lane { cursor: pointer; }
+.pps g.lane.pin rect[data-stash] { stroke-width: 1.6; }
 .pps .stghit:hover { opacity: 0.6; }
 .pps .scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; overscroll-behavior-x: none; }
 .pps svg { display: block; }
@@ -2745,6 +2747,16 @@ class Dsv3PpSchedule extends HTMLElement {
     this._scr.tabIndex = -1;
     this._scr.style.outline = 'none';
     this._scr.addEventListener('click', (e) => {
+      const g = e.target.closest('g.lane');
+      if (g) {   // hover previews, click PINS (click again to release)
+        const mb = +g.dataset.mb, v = +g.dataset.v;
+        const same = this._pinHl && this._pinHl.mb === mb && this._pinHl.v === v;
+        this._scr.querySelector('g.lane.pin')?.classList.remove('pin');
+        this._pinHl = same ? null : { mb, v };
+        if (!same) g.classList.add('pin');
+        this._hl(this._pinHl?.mb ?? null, this._pinHl?.v);
+        return;
+      }
       const t = e.target.closest('[data-stage]');
       if (!t || !this._layer) return;
       this._scr.focus({ preventScroll: true });
@@ -2758,7 +2770,7 @@ class Dsv3PpSchedule extends HTMLElement {
       if (g) this._hl(+g.dataset.mb, +g.dataset.v);
     });
     this._scr.addEventListener('mouseout', (e) => {
-      if (e.target.closest('g.lane')) this._hl(null);
+      if (e.target.closest('g.lane')) this._hl(this._pinHl?.mb ?? null, this._pinHl?.v);
     });
     this._scr.addEventListener('keydown', (e) => {
       const d = e.key === 'ArrowDown' ? 1 : e.key === 'ArrowUp' ? -1 : 0;
@@ -2885,6 +2897,7 @@ class Dsv3PpSchedule extends HTMLElement {
     }
   }
   draw(pp, sched, stage, vpp = 1, fold = 'reflect') {
+    this._pinHl = null;
     // one chain of VIRTUAL stages with 1F1B admission per stage, vpp·pp deep;
     // placement per vstagesOf (wrap = Megatron interleaving, reflect = the
     // V/DualPipeV zigzag). Each rank interleaves its chunk queues greedily,

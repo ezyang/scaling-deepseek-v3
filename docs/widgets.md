@@ -96,7 +96,8 @@ lanes — the F cell that stashes a microbatch, an amber tail while it's held,
 and the B cell that frees it (data-stash) — so the braid's thickness IS the
 in-flight count. Hovering a stash bar (whole-row-band hitbox) lights exactly
 its two ops in the schedule — the F that made it, the B that frees it — and
-dims everything else. A dimension bracket at the maximal steady-state moment
+dims everything else; clicking PINS the highlight (survives mouseout, click
+again to release, cleared by any redraw; the pinned bar's marks thicken). A dimension bracket at the maximal steady-state moment
 measures the braid (text[data-peak], pointer-transparent), labeled in
 microbatches: the number the memory bars charge. Cell
 microbatch numbers shrink to a 6px font when double digits meet a 1-slot
