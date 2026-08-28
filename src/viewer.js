@@ -2962,8 +2962,8 @@ class Dsv3PpSchedule extends HTMLElement {
             if (dF === undefined || dB === undefined) break;
             const t0 = Math.max(rankT[r], dF, dB);
             rec = [
-              { s: r, v: o.vF, mb: o.mbF, ph: 'F', t0, t1: t0 + 1, vx0: t0, vx1: t0 + 3, half: 'top', chunk: o.vF >= pp ? 1 : 0 },
-              { s: r, v: o.vB, mb: o.mbB, ph: 'B', t0: t0 + 1, t1: t0 + 3, vx0: t0, vx1: t0 + 3, half: 'bot', chunk: o.vB >= pp ? 1 : 0 },
+              { s: r, v: o.vF, mb: o.mbF, ph: 'F', t0, t1: t0 + 1, fuse: 1, chunk: o.vF >= pp ? 1 : 0 },
+              { s: r, v: o.vB, mb: o.mbB, ph: 'B', t0: t0 + 1, t1: t0 + 3, fuse: 2, chunk: o.vB >= pp ? 1 : 0 },
             ];
             done.set(`F${o.mbF}@${o.vF}`, t0 + 1);
             done.set(`B${o.mbB}@${o.vB}`, t0 + 3);
@@ -3037,7 +3037,7 @@ class Dsv3PpSchedule extends HTMLElement {
     for (const c of cells) {
       if (!vset.has(c.v) || c.ph === 'W') continue;
       const e = byKey.get(`${c.v}:${c.mb}`) ?? { mb: c.mb, v: c.v, chunk: c.chunk };
-      if (c.ph === 'F') { e.f0 = c.vx0 ?? c.t0, e.f1 = c.t1; } else { e.b0 = c.t0; e.b1 = c.t1; }
+      if (c.ph === 'F') { e.f0 = c.t0; e.f1 = c.t1; } else { e.b0 = c.t0; e.b1 = c.t1; }
       byKey.set(`${c.v}:${c.mb}`, e);
     }
     const stash = [...byKey.values()].sort((a, b) => a.f0 - b.f0);
@@ -3079,18 +3079,17 @@ class Dsv3PpSchedule extends HTMLElement {
     };
     for (const c of cells) {
       const [fill, stroke, ink] = STY[c.ph][c.chunk];
-      const x0 = c.vx0 ?? c.t0, x1 = c.vx1 ?? c.t1;
-      const x = GUT + x0 * U, w = (x1 - x0) * U;
-      const hh = (RH - 1) / 2;   // fused F&B blocks: F top half, B bottom half
-      const y = rowY(c.s) + (c.half === 'bot' ? 0.5 + hh : 0.5);
-      const h = c.half ? hh : RH - 1;
+      const xr = GUT + c.t0 * U, span = (c.t1 - c.t0) * U;
+      // contiguity IS the fusion cue: ops wear a 2.5px trailing gap, but a
+      // fused F&B pair is drawn flush — two full-height cells sharing an edge
+      const x = c.fuse === 2 ? xr - 0.5 : xr + 0.5;
+      const w = c.fuse === 1 ? span - 1 : c.fuse === 2 ? span - 2 : span - 3;
       const dash = c.ph === 'W' ? ' stroke-dasharray="2 1.5"' : '';
-      P.push(`<rect data-cell="${c.ph}${c.mb}@${c.s}" data-mb="${c.mb}" data-v="${c.v}" data-t0="${c.t0}" data-t1="${c.t1}" x="${x + 0.5}" y="${y}" width="${w - 1}" height="${h}" fill="${fill}" stroke="${stroke}" stroke-width="0.8"${dash}/>`);
+      P.push(`<rect data-cell="${c.ph}${c.mb}@${c.s}" data-mb="${c.mb}" data-v="${c.v}" data-t0="${c.t0}" data-t1="${c.t1}" x="${x}" y="${rowY(c.s) + 0.5}" width="${w}" height="${RH - 1}" fill="${fill}" stroke="${stroke}" stroke-width="0.8"${dash}/>`);
       // no wide convention for narrow double digits — shrink the font instead
-      const fs = c.half ? 5.5 : w >= 12 || c.mb < 10 ? 7.5 : 6;
-      const ty = c.half ? y + h - 1 : rowY(c.s) + RH - 4;
+      const fs = w >= 12 || c.mb < 10 ? 7.5 : 6;
       if (pp <= 32 && c.mb < (w >= 12 ? 1000 : 100))
-        P.push(`<text data-mb="${c.mb}" data-v="${c.v}" x="${x + w / 2}" y="${ty}" text-anchor="middle" font-size="${fs}" fill="${ink}">${c.mb}</text>`);
+        P.push(`<text data-mb="${c.mb}" data-v="${c.v}" x="${x + w / 2}" y="${rowY(c.s) + RH - 4}" text-anchor="middle" font-size="${fs}" fill="${ink}">${c.mb}</text>`);
     }
     // ---- the in-flight section (same svg → the horizontal scroll is shared)
     const IFm = peakN / vpp;
@@ -3126,8 +3125,8 @@ class Dsv3PpSchedule extends HTMLElement {
     P.push('</svg>');
     const ppTag = this._layer ? '' : `PP${pp} · `;   // the knob group already names PP
     const vppTag = OFFICIAL
-      ? 'DualPipeV (official program) · down-pass chunk light, up-pass dark · split cells = overlapped F&B ·'
-        + ' pale dashed W = deferred weight grads (B alone = input grads)'
+      ? 'DualPipeV (official program) · down-pass chunk light, up-pass dark · F and B drawn touching = one'
+        + ' overlapped F&B block · pale dashed W = deferred weight grads (B alone = input grads)'
       : vpp > 1
         ? `VPP${vpp} ${fold === 'wrap' ? 'wrap (Megatron interleaving)' : 'reflect'}`
           + ` · each rank runs ${vpp} chunks, later passes darker · chunks scheduled 1F1B`

@@ -16,8 +16,8 @@ T.log('pp', pp);
 T.check('one F cell per (stage, mb)', cells('F').length === pp * m, cells('F').length);
 T.check('one B cell per (stage, mb)', cells('B').length === pp * m, cells('B').length);
 const f = cells('F')[0], b = cells('B').find(c => c.dataset.cell === 'B0@' + (pp - 1));
-// widths are slots*U − 1: F = U−1, B = 2U−1
-T.check('B cells are two slots wide', +b.getAttribute('width') + 1 === 2 * (+f.getAttribute('width') + 1),
+// widths are slots*U − 3 (the 2.5px inter-op gap): F = U−3, B = 2U−3
+T.check('B cells are two slots wide', +b.getAttribute('width') + 3 === 2 * (+f.getAttribute('width') + 3),
   `F ${f.getAttribute('width')} B ${b.getAttribute('width')}`);
 // steady state on stage 0: between F(pp-1) end and its B0, pp forwards are stashed
 T.check('warmup on stage 0 = pp forwards before first B',

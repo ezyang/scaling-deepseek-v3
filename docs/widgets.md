@@ -87,9 +87,10 @@ single-microbatch wave. VPP2+reflect with m ≥ 2·PP draws the OFFICIAL
 DualPipeV program, ported step-for-step from deepseek-ai/DualPipe
 (`_officialDPV`): eight phases per rank, the zero-bubble B/W split (B =
 input grads, one slot; W = deferred weight grads, one slot, pale dashed
-cells, FIFO), and fused F&B blocks in the steady state (split cells, F top
-half / B bottom half, 3 slots; the F's result is modeled available one slot
-in — the real kernels interleave). Every other (VPP, fold) combo — and
+cells, FIFO), and fused F&B blocks in the steady state, drawn as two
+full-height cells sharing an edge — contiguity is the fusion cue: every
+ordinary op wears a 2.5px trailing gap, a fused pair touches (the F's result
+is modeled available one slot in — the real kernels interleave). Every other (VPP, fold) combo — and
 m < 2·PP — draws generic 1F1B admission over the VPP·pp-deep virtual chain
 with `vstagesOf` placement, each rank interleaving its chunk queues greedily
 (earliest-ready; ties backward-first, then the deeper chunk); later passes

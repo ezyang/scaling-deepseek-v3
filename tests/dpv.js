@@ -51,8 +51,15 @@ const w = document.querySelector('dsv3-pp-schedule');
   // official program: W (deferred weight grads) = sum over ranks of 2PP−r−1
   const wExpect = [...Array(PP).keys()].reduce((t, r) => t + 2 * PP - r - 1, 0);
   T.check('W cells match the zero-bubble count', nOf('W') === wExpect, `${nOf('W')} vs ${wExpect}`);
-  T.check('fused F&B blocks drawn (half-height cells)',
-    all.some(r => +r.getAttribute('height') < 8), '');
+  // fusion cue = contiguity: a fused F touches its B (shared edge), while
+  // ordinary neighbours keep a visible gap
+  const fusedF = all.filter(r => r.dataset.cell.startsWith('F') && +r.getAttribute('width') === 9);
+  T.check('fused F cells drawn flush (width 9 vs gapped 7)', fusedF.length > 0
+    && all.some(r => r.dataset.cell.startsWith('F') && +r.getAttribute('width') === 7), fusedF.length);
+  const touches = fusedF.every(f => all.some(b => b.dataset.cell.startsWith('B')
+    && b.dataset.cell.endsWith('@' + f.dataset.cell.split('@')[1])
+    && Math.abs((+f.getAttribute('x') + +f.getAttribute('width')) - +b.getAttribute('x')) < 0.01));
+  T.check('every fused F shares an edge with a B', touches, '');
   const row0v = new Set(all.filter(r => r.dataset.cell.endsWith('@0')).map(r => +r.dataset.v));
   T.check('rank 0 hosts virtual stages 0 and ' + (D - 1), row0v.has(0) && row0v.has(D - 1), [...row0v].join(','));
   const row1 = all.filter(r => r.dataset.cell.endsWith('@1'))
