@@ -2748,7 +2748,9 @@ class Dsv3PpSchedule extends HTMLElement {
     this._scr.style.outline = 'none';
     this._scr.addEventListener('click', (e) => {
       const g = e.target.closest('g.lane');
-      if (g) {   // hover previews, click PINS (click again to release)
+      if (g) {   // clicking an in-flight bar lights up ITS two ops in the
+        // schedule — the F that made the stash and the B that frees it — and
+        // dims the rest; click again (or reconfigure) to release
         const mb = +g.dataset.mb, v = +g.dataset.v;
         const same = this._pinHl && this._pinHl.mb === mb && this._pinHl.v === v;
         this._scr.querySelector('g.lane.pin')?.classList.remove('pin');
@@ -2762,15 +2764,6 @@ class Dsv3PpSchedule extends HTMLElement {
       this._scr.focus({ preventScroll: true });
       const l = this._layer, v = +t.dataset.stage;
       if (l.stage !== v) l.setLocal(() => { l.stage = v; });
-    });
-    // hovering an in-flight bar lights up ITS two ops in the schedule —
-    // the F that made the stash and the B that frees it — and dims the rest
-    this._scr.addEventListener('mouseover', (e) => {
-      const g = e.target.closest('g.lane');
-      if (g) this._hl(+g.dataset.mb, +g.dataset.v);
-    });
-    this._scr.addEventListener('mouseout', (e) => {
-      if (e.target.closest('g.lane')) this._hl(this._pinHl?.mb ?? null, this._pinHl?.v);
     });
     this._scr.addEventListener('keydown', (e) => {
       const d = e.key === 'ArrowDown' ? 1 : e.key === 'ArrowUp' ? -1 : 0;
