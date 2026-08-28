@@ -2726,7 +2726,7 @@ ${knobCss('.pps .top')}
 .pps .hd { color: #52514e; font-size: 11.5px; align-self: center; }
 .pps .stghit { cursor: pointer; }
 .pps .stghit:hover { opacity: 0.6; }
-.pps .scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.pps .scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; overscroll-behavior-x: none; }
 .pps svg { display: block; }
 `;
 class Dsv3PpSchedule extends HTMLElement {
@@ -2740,11 +2740,23 @@ class Dsv3PpSchedule extends HTMLElement {
     this._hd = el('div', 'hd');
     this._top.append(this._ctl, this._hd);
     this._scr = el('div', 'scroll');
-    // the sX axis IS the stage picker: click a row's gutter to select it
+    // the sX axis IS the stage picker: click a row's gutter to select it;
+    // once clicked the strip holds focus, so ↑/↓ walk the stages
+    this._scr.tabIndex = -1;
+    this._scr.style.outline = 'none';
     this._scr.addEventListener('click', (e) => {
       const t = e.target.closest('[data-stage]');
       if (!t || !this._layer) return;
+      this._scr.focus({ preventScroll: true });
       const l = this._layer, v = +t.dataset.stage;
+      if (l.stage !== v) l.setLocal(() => { l.stage = v; });
+    });
+    this._scr.addEventListener('keydown', (e) => {
+      const d = e.key === 'ArrowDown' ? 1 : e.key === 'ArrowUp' ? -1 : 0;
+      const l = this._layer;
+      if (!d || !l) return;
+      e.preventDefault();
+      const v = Math.min(l.pp - 1, Math.max(0, l.stage + d));
       if (l.stage !== v) l.setLocal(() => { l.stage = v; });
     });
     this._root.append(this._top, this._scr);

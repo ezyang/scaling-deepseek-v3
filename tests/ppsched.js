@@ -73,4 +73,12 @@ w().querySelector('rect.stghit[data-stage="0"]').dispatchEvent(new MouseEvent('c
 await T.tick(600);
 T.check('clicking the s0 gutter moves the layer', l().stage === 0, l().stage);
 T.check('tinted row follows', +w().querySelector('rect.stghl').getAttribute('y') === 0, '');
+// after a click the strip holds focus: arrows walk the stages
+const scr = w().querySelector('.scroll');
+scr.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })); await T.tick(500);
+T.check('ArrowDown steps to s1', l().stage === 1, l().stage);
+scr.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true })); await T.tick(500);
+scr.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true })); await T.tick(200);
+T.check('ArrowUp clamps at s0', l().stage === 0, l().stage);
+T.check('overscroll-x contained', getComputedStyle(scr).overscrollBehaviorX === 'none', '');
 T.done();

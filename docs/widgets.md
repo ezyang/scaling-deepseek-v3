@@ -75,7 +75,10 @@ its own replica of the pipeline knob group — PP stepper and the
 sched/VPP/fold knobs — whose changes drive the layer (`layer.setLocal`), so
 either widget's controls move both. The sX gutter labels ARE the stage
 picker (whole-gutter hit rects, `.stghit`; the selected row's label is bold
-and its row tinted) — no stage dropdown on the strip. It also carries a
+and its row tinted; after a click the strip holds focus so ↑/↓ walk the
+stages, clamped at the ends) — no stage dropdown on the strip. The scroll
+container sets overscroll-behavior-x: none so hitting the strip's edge
+never triggers the browser's back-swipe. It also carries a
 strip-local `mb` knob for how many
 microbatches to DRAW (default 64, a real step's worth; 'auto' = depth+4, just
 enough to reach steady state — the memory model needs no m, its law assumes
