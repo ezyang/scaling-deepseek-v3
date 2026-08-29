@@ -3458,6 +3458,7 @@ dsv3-beat-deck { display: block; margin: 14px 0 26px; }
 .deck-step { font: 11px ui-monospace, monospace; color: #52514e; }
 .deck-hyp { font: italic 11px system-ui; color: #898781; }
 .deck-mod { font: italic 11px system-ui; color: #b05f00; }
+.deck-nav button.deck-rst { color: #b05f00; border-color: #b05f00; padding: 1px 8px; }
 .deck-cap { max-width: 760px; font-size: 13.5px; color: #1c1c1a; line-height: 1.5; }
 .deck-cap p { margin: 6px 0; }
 `;
@@ -3479,7 +3480,10 @@ class Dsv3BeatDeck extends HTMLElement {
     this._ind = el('span', 'deck-step');
     this._hyp = el('span', 'deck-hyp');   // hypothetical callout: lives in the FIXED nav row
     this._mod = el('span', 'deck-mod');   // detour callout: knobs fiddled off the slide
-    nav.append(this._first, this._prev, this._ind, this._next, this._last, this._hyp, this._mod);
+    this._rst = btn2('↩ back to the slide', 'deck-rst');   // the detour's undo
+    this._rst.style.display = 'none';
+    this._rst.onclick = () => this._rewind();
+    nav.append(this._first, this._prev, this._ind, this._next, this._last, this._hyp, this._mod, this._rst);
     this._first.onclick = () => this.go(0);
     this._prev.onclick = () => this.go(this._i - 1);
     this._next.onclick = () => this.go(this._i + 1);
@@ -3537,8 +3541,16 @@ class Dsv3BeatDeck extends HTMLElement {
   }
   _syncMod() {
     const f = this._fiddled();
-    this._mod.textContent = f ? '✎ detour — the caption describes the slide, not your knobs; stepping rewinds first' : '';
+    this._mod.textContent = f ? '✎ detour — the caption describes the slide, not your knobs' : '';
+    this._rst.style.display = f ? '' : 'none';   // the way back rides the notice
     this._cap.style.opacity = f ? 0.55 : '';   // the caption visibly detaches
+  }
+  // pour the knobs back to the CURRENT slide's config (the detour's undo)
+  _rewind() {
+    const l = this._layer, prevF = l._snapLocal();
+    l._applyCfg(this._full(this._steps[this._i].cfg));
+    l._tweenFrames = 14; l._tweenLocal(prevF); l._tweenFrames = 12;
+    this._syncMod();
   }
   go(i, instant = false) {
     if (i < 0 || i >= this._steps.length || i === this._i) return;
@@ -3546,10 +3558,7 @@ class Dsv3BeatDeck extends HTMLElement {
     // a detour rewinds FIRST (quick pour back to this slide's config), so the
     // step's delta always animates from the config its caption describes
     if (!instant && this._fiddled()) {
-      const prevF = l._snapLocal();
-      l._applyCfg(this._full(this._steps[this._i].cfg));
-      l._tweenFrames = 14; l._tweenLocal(prevF); l._tweenFrames = 12;
-      this._syncMod();
+      this._rewind();
       setTimeout(() => this.go(i, instant), 14 * 16 + 40);
       return;
     }

@@ -81,9 +81,10 @@ jump). Nav buttons + arrow keys; the current step persists in the URL
 (`d:<id>`). The deck renders as a framed CARD (study.css) and reserves its
 tallest caption at mount so slides never change its height. The inner layer
 is snapshot-mode but LIVE (`live` attr): the reader may fiddle the knobs —
-a DETOUR, marked by an amber '✎ detour' nav tag and a dimmed caption — and
-stepping first rewinds the detour to the slide's config, then animates the
-step's own delta. The visual audit covers every step.
+a DETOUR, marked by an amber '✎ detour' nav tag + an '↩ back to the slide'
+reset button and a dimmed caption — the reset pours back to the slide's
+config in place, and stepping first rewinds the detour the same way, then
+animates the step's own delta. The visual audit covers every step.
 
 ## The visual audit (src/audit.js)
 

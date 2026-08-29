@@ -33,9 +33,17 @@ T.check('audit clean at step 4', auditFitCharts(deck()).findings.length === 0,
 // ---- the DETOUR: fiddle a knob mid-slide — tag appears, caption detaches,
 // and the next step REWINDS to the slide's config before its own delta
 L().querySelector('.stp[data-knob="ep"]').querySelectorAll('button')[0].click(); await T.tick(400);
-T.check('fiddling marks a detour', L().ep === 32
+T.check('fiddling marks a detour (tag + reset button)', L().ep === 32
   && deck().querySelector('.deck-mod').textContent.includes('detour')
+  && deck().querySelector('.deck-rst').style.display === ''
   && deck().querySelector('.deck-cap').style.opacity === '0.55', '');
+// the reset button pours back to the slide without advancing
+deck().querySelector('.deck-rst').click(); await T.tick(500);
+T.check('↩ reset returns to the slide, notice clears', L().ep === 64
+  && deck().querySelector('.deck-step').textContent.includes('4 /')
+  && deck().querySelector('.deck-mod').textContent === ''
+  && deck().querySelector('.deck-rst').style.display === 'none', '');
+L().querySelector('.stp[data-knob="ep"]').querySelectorAll('button')[0].click(); await T.tick(400);   // detour again
 next(); await T.tick(150);    // rewind phase: back on the slide's config, not yet advanced
 T.check('stepping rewinds the detour first', L().ep === 64 && L().pp === 16
   && deck().querySelector('.deck-step').textContent.includes('4 /'), deck().querySelector('.deck-step').textContent);
