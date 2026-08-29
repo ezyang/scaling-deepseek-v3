@@ -871,9 +871,13 @@ export class Dsv3Layer extends HTMLElement {
     // (the beat deck) set _tweenFrames higher so the pour reads as a story
     const FRAMES = this._tweenFrames ?? 12; let f = 0;
     onFrame(0);
+    // cubic in-out — the standard chart-transition curve (d3's default);
+    // time-easing only: values lerp geometrically, which on the log axis is
+    // exactly linear pixel motion, so this curve IS the perceived motion
+    const ease = (p) => p < 0.5 ? 4 * p * p * p : 1 - (-2 * p + 2) ** 3 / 2;
     const step = () => {
       f++; const p = Math.min(1, f / FRAMES);
-      onFrame(1 - (1 - p) * (1 - p));         // ease-out
+      onFrame(ease(p));
       this.render(); this.changed(false);     // linked widgets tween along
       if (p < 1) setTimeout(step, 16);
       else { done(); this.render(); this.changed(true); }
@@ -3066,7 +3070,8 @@ class Dsv3PpSchedule extends HTMLElement {
       this._scr.style.overflowY = 'hidden';
       this._scr.style.height = prevH + 'px';
       const step = () => {
-        f++; const p = 1 - (1 - Math.min(1, f / FR)) ** 2;
+        f++; const q = Math.min(1, f / FR);
+        const p = q < 0.5 ? 4 * q * q * q : 1 - (-2 * q + 2) ** 3 / 2;   // cubic in-out, like every tween
         this._scr.style.height = (prevH + (target - prevH) * p) + 'px';
         if (f < FR) setTimeout(step, 16);
         else { this._scr.style.height = ''; this._scr.style.overflowY = ''; }
