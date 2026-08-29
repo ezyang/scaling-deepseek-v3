@@ -2600,8 +2600,10 @@ export class Dsv3Layer extends HTMLElement {
       // can't click is a dead affordance in a figure (interactive views keep
       // them: they're the solo/restore legend). The total keeps full mass.
       const SNAP2 = this.hasAttribute('snapshot');
+      const NOTOT = SNAP2 && this.hasAttribute('nototal');   // intro beats: the shading says "doesn't fit"; the tally beat lands the whole
       let vp = 0;
-      const posOf = rowsB.map((r2, i2) => SNAP2 && !r2.on && i2 !== nR - 1 ? -1 : vp++);
+      const posOf = rowsB.map((r2, i2) => i2 === nR - 1 ? (NOTOT ? -1 : vp++)
+        : SNAP2 && !r2.on ? -1 : vp++);
       const yOf = (i) => topY + posOf[i] * rowH + subAbove(i) + (i === nR - 1 ? 4 : 0);
       const axisY = topY + vp * rowH + subHTot + 5 + 4;
       const B = [`<text class="grplabel" x="2" y="9">this rank, whole stage (logarithmic):</text>`];

@@ -23,10 +23,9 @@ T.check('cards shrink-wrap their chart', beats().every(b =>
   b.querySelector('.lv').getBoundingClientRect().width < 900), '');
 T.check('beats have no ghosts (no to= no baseline)',
   beats().every(b => !b.querySelector('.lv-bar')?.textContent.includes('saved:')), '');
-// the total is ALWAYS the full consolidated mass (stacked grey + shown):
-// context for what hasn't been introduced yet
-T.check('every beat totals 8.65 TiB',
-  beats().every(b => b.textContent.includes('total8.65 TiB')), '');
+// intro beats drop the total (nototal); the tally beat lands the full mass
+T.check('intro beats have no total row', beats().slice(0, 4).every(b => !b.textContent.includes('total')), '');
+T.check('the tally beat totals 8.65 TiB', beats()[4].textContent.includes('total8.65 TiB'), '');
 const bar = () => snap().querySelector('.lv-bar');
 const txt = () => bar().textContent;
 
