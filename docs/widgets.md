@@ -66,6 +66,23 @@ double-counted anywhere in the figure); supports `highlightOps`.
 | `mode` | `total` (default) · `active` — initial toggle position |
 | `units` | absent · `bytes` — bf16 memory framing: values in binary bytes, the total/active toggle hidden (activation doesn't change resident bytes). `<dsv3-anatomy lens="param-bytes" tally>` sets this automatically |
 
+## The visual audit (src/audit.js)
+
+Every number the fit chart renders carries its EXACT value (`data-true`, plus
+`data-pin` where a badge compares to a save) and a role; plain bars and
+ghosts carry the value their pixels encode. `auditFitCharts(document)`
+replays the rendering rules and reports disagreements: (1) the label string
+must equal `fmtBytes(data-true)`; (2) the ▲/▼ badge must equal the recomputed
+exact factor (`facNum`); (3) total = Σ components and component = Σ open
+accordion parts, EXACTLY — the displayed digits alone can't be audited, since
+correctly-rounded components legitimately don't sum to the rounded total;
+(4) a bar's width must equal the log₂ position of its own value (±0.15, the
+print grid). Battery scenarios tests/audit.js (02's seven charts, plus a
+corruption canary proving the audit can fail) and tests/auditbars.js (after
+saves, knob turns, and solos). Vision/LLM checks stay out of the battery —
+they'd need rounding tolerances loose enough to miss real bugs; the exact
+values are strictly stronger for arithmetic.
+
 ## `<dsv3-pp-schedule layer=…>` — the pipeline-schedule strip
 
 One row per PP stage, time flowing right; F cells one slot, B cells two

@@ -83,7 +83,7 @@ export const inflightOf = (sched, s, pp, vpp = 1, fold = 'reflect') => {
 };
 
 // fit-chart geometry (svg units): the log₂ axis spans 2^lo…2^hi over bw px
-const BAR_GEO = { w: 800, x0: 110, bw: 650, lo: 28, hi: 44 };   // 110px name gutter (values live at bar ends)
+export const BAR_GEO = { w: 800, x0: 110, bw: 650, lo: 28, hi: 44 };   // 110px name gutter (values live at bar ends)
 
 // the PP stage holding the most resident bytes under the local model (all
 // components on, vocab counted on the end stages, activations under the
@@ -121,6 +121,9 @@ export const stageLabelOf = (o, l) => {
 };
 
 // parameter-count formatter for the dims parentheticals ('(29M \u00d7256)' / '(7.5B)')
+// change-badge magnitude formatting (▲×N / ▼×N), shared with the visual audit
+export const facNum = (v) => v >= 100 || Math.abs(v - Math.round(v)) < 0.02 * v ? String(Math.round(v)) : v.toFixed(1);
+
 export const fmtP = (n) => n >= 1e9 ? (n / 1e9).toFixed(1) + 'B'
   : n >= 9.95e6 ? Math.round(n / 1e6) + 'M' : n >= 1e6 ? (n / 1e6).toFixed(1) + 'M'
   : n >= 1e3 ? (n / 1e3).toFixed(1).replace(/\.0$/, '') + 'K' : String(n);
@@ -1606,10 +1609,9 @@ export class Dsv3Layer extends HTMLElement {
       if (!base || !cur) return '';
       const r = cur / base;
       if (Math.abs(Math.log2(r)) < 0.05) return '';
-      const f = (v) => v >= 100 || Math.abs(v - Math.round(v)) < 0.02 * v ? String(Math.round(v)) : v.toFixed(1);
       return r > 1
-        ? `<tspan fill="#d03b3b" font-weight="600"> ▲×${f(r)}</tspan>`
-        : `<tspan fill="#0b0b0b" font-weight="600"> ▼×${f(1 / r)}</tspan>`;
+        ? `<tspan fill="#d03b3b" font-weight="600"> ▲×${facNum(r)}</tspan>`
+        : `<tspan fill="#0b0b0b" font-weight="600"> ▼×${facNum(1 / r)}</tspan>`;
     };
     const facTxt = (cls) => {
       const pin2 = this._pinCfg;
@@ -2610,7 +2612,7 @@ export class Dsv3Layer extends HTMLElement {
         // gutter: the name alone (whole-row hitbox; click to solo)
         B.push(`<g${r.prop ? ` data-prop="${r.prop}" style="cursor:pointer"` : ''}${dim}>` +
           (r.prop ? `<rect x="0" y="${y2 - 2}" width="${x0 - 4}" height="${rowH}" fill="transparent"/>` : '') +
-          `<text class="dims" x="2" y="${y2 + 7}" fill="${r.color}" font-weight="600">${r.name}</text></g>`);
+          `<text class="dims" data-role="name:${i === nR - 1 ? 'total' : i}" data-true="${r.abs}" x="2" y="${y2 + 7}" fill="${r.color}" font-weight="600">${r.name}</text></g>`);
         const topSum = allB.reduce((a2, b2, j) => a2 + (onB[j] ? b2 * vis[j] : 0), 0);
         if (i === nR - 1 && allOnTarget && chg && tC < 1) {
           // returning to all-on: arriving components never paint (they're
@@ -2646,17 +2648,17 @@ export class Dsv3Layer extends HTMLElement {
           B.push(`<rect x="${x0}" y="${y2}" width="${Math.max(0.5, px(grey2) - x0).toFixed(1)}" height="${barH}" fill="#c3c2b7"/>`);
           B.push(`<rect x="${(px(grey2) + 1).toFixed(1)}" y="${y2}" width="${Math.max(0.5, px(r.b) - px(grey2) - 1).toFixed(1)}" height="${barH}" fill="${r.color}"/>`);
         } else {
-          B.push(`<rect x="${x0}" y="${y2}" width="${Math.max(0.5, px(r.b) - x0).toFixed(1)}" height="${barH}" fill="${r.color}"${dim}/>`);
+          B.push(`<rect data-bar="${i === nR - 1 ? 'total' : i}" data-true="${r.b}" x="${x0}" y="${y2}" width="${Math.max(0.5, px(r.b) - x0).toFixed(1)}" height="${barH}" fill="${r.color}"${dim}/>`);
         }
         const pinB = pin ? (i === nR - 1 ? pinTotal : pin.segs[i]) : 0;
         // the save renders as a dotted GHOST bar (not a tick), so the value
         // label can always ride the live bar's end — hidden components hide
         // their ghosts too
-        if (pinB && r.on) B.push(`<rect x="${x0}" y="${y2}" width="${Math.max(0.5, px(pinB) - x0).toFixed(1)}" height="${barH}" ` +
+        if (pinB && r.on) B.push(`<rect data-ghost="${i === nR - 1 ? 'total' : i}" data-true="${pinB}" x="${x0}" y="${y2}" width="${Math.max(0.5, px(pinB) - x0).toFixed(1)}" height="${barH}" ` +
           `fill="none" stroke="${i === nR - 1 ? '#898781' : r.color}" stroke-width="1" stroke-dasharray="2 2" opacity="0.7"/>`);
         // bar end: the ABSOLUTE value (+ the vs-save badge when saved);
         // hidden components show none
-        if (r.on) B.push(`<text class="dims" x="${(px(r.b) + 5).toFixed(1)}" y="${y2 + 7}">` +
+        if (r.on) B.push(`<text class="dims" data-role="val:${i === nR - 1 ? 'total' : i}" data-true="${r.abs}" data-pin="${pinB || ''}" x="${(px(r.b) + 5).toFixed(1)}" y="${y2 + 7}">` +
           `${fmtBytes(r.abs)}${pin ? facBadge(r.abs, pinB) : ''}</text>`);
         // the accordion sub-rows open right below their component's row
         if (openRows.includes(i) && partIdxsOf(i).length && easeOf(i) > 0.02) {
@@ -2671,10 +2673,10 @@ export class Dsv3Layer extends HTMLElement {
             B.push(`<g opacity="${pOp.toFixed(3)}" data-part="${k2}" style="cursor:pointer">` +
               `<rect x="0" y="${(yS - 2).toFixed(1)}" width="${x0 - 4}" height="${rowH - 2}" fill="transparent"/>` +
               `<text class="dims" x="12" y="${(yS + 5.5).toFixed(1)}">· ${names2[k2]}</text>` +
-              `<rect x="${x0}" y="${yS.toFixed(1)}" width="${Math.max(0.5, px(bT) - x0).toFixed(1)}" height="5" fill="${colors[i]}" opacity="0.55"/>` +
+              `<rect data-bar="part:${i}:${k2}" data-true="${bT}" x="${x0}" y="${yS.toFixed(1)}" width="${Math.max(0.5, px(bT) - x0).toFixed(1)}" height="5" fill="${colors[i]}" opacity="0.55"/>` +
               (pinP ? `<rect x="${x0}" y="${yS.toFixed(1)}" width="${Math.max(0.5, px(pinP) - x0).toFixed(1)}" height="5" ` +
                 `fill="none" stroke="${colors[i]}" stroke-width="1" stroke-dasharray="2 2" opacity="0.7"/>` : '') +
-              `<text class="dims" x="${(px(bT) + 5).toFixed(1)}" y="${(yS + 5.5).toFixed(1)}">${fmtBytes(now2)}${pin ? facBadge(now2, pinP) : ''}</text></g>`);
+              `<text class="dims" data-role="val:part:${i}:${k2}" data-true="${now2}" data-pin="${pinP || ''}" x="${(px(bT) + 5).toFixed(1)}" y="${(yS + 5.5).toFixed(1)}">${fmtBytes(now2)}${pin ? facBadge(now2, pinP) : ''}</text></g>`);
           }
         }
       }
