@@ -108,6 +108,129 @@ export const inflightOf = (sched, s, pp, vpp = 1, fold = 'reflect') => {
 // fit-chart geometry (svg units): the log₂ axis spans 2^lo…2^hi over bw px
 export const BAR_GEO = { w: 800, x0: 110, bw: 650, lo: 28, hi: 44 };   // 110px name gutter (values live at bar ends)
 
+// ---- fit-chart layout & blend ----------------------------------------------
+// The chart never animates the MODEL: every render draws a LAYOUT — a pure
+// pixel-space description of the picture (rows keyed by stable identity) —
+// and every transition is the one rule blendFit(from, to, t):
+//   · matched geometry lerps linearly in pixel space (the axis is log₂, so
+//     linear pixel motion IS geometric byte motion; px() clamps at the axis
+//     floor, so appearing/dying bars grow from / shrink to the floor)
+//   · text, data-* attributes and row identity snap to the target
+//   · fill colors lerp (the total flips dark↔light grey around a solo)
+//   · one-sided rows fade — sub-rows collapse into their parent's row line,
+//     whole bars shrink to the floor on the missing side
+// The model is consulted once per transition (building the target layout),
+// never per frame; the from-side is whatever is on screen when the tween
+// starts, so an interrupted tween retargets smoothly instead of stuttering.
+const FIT_ROWH = 12;
+const fitLerp = (a, b, t) => a + (b - a) * t;
+const fitColor = (a, b, t) => {
+  if (a === b) return b;
+  const c = (h, i) => parseInt(h.slice(i, i + 2), 16);
+  return '#' + [1, 3, 5].map((i) =>
+    Math.round(fitLerp(c(a, i), c(b, i), t)).toString(16).padStart(2, '0')).join('');
+};
+function blendFit(A, B, t) {
+  if (!A || t >= 1) return B;
+  const rowsA = new Map(A.rows.map((r) => [r.key, r]));
+  const rowsB = new Map(B.rows.map((r) => [r.key, r]));
+  const parentY = (r, L) => {
+    const m = /^part:(\d+):/.exec(r.key);
+    const par = m && L.rows.find((q) => q.key === `seg:${m[1]}`);
+    return par ? par.y + FIT_ROWH + 2 : r.y;
+  };
+  // the missing side of a one-sided row: invisible, sub-rows tucked at the
+  // parent's row line (the accordion fold), bars at the axis floor
+  const faded = (r, L) => ({ ...r, op: 0, nameOp: 0, y: parentY(r, L),
+    segs: r.segs.map((s) => r.type === 'part' ? { ...s, op: 0 } : { ...s, op: 0, x1: s.x0 }),
+    ghost: r.ghost && { ...r.ghost, op: 0 },
+    val: r.val && { ...r.val, op: 0 } });
+  const seg = (a, b) => ({ ...b,
+    x0: fitLerp(a.x0, b.x0, t), x1: fitLerp(a.x1, b.x1, t),
+    op: fitLerp(a.op, b.op, t), color: fitColor(a.color, b.color, t) });
+  const mark = (a, b, keys) => !a && !b ? null : (() => {
+    const m1 = a ?? { ...b, op: 0 }, m2 = b ?? { ...a, op: 0 };
+    const out = { ...m2, op: fitLerp(m1.op, m2.op, t) };
+    for (const k of keys) out[k] = fitLerp(m1[k], m2[k], t);
+    return out;
+  })();
+  const row = (a, b) => ({ ...b,
+    y: fitLerp(a.y, b.y, t), op: fitLerp(a.op, b.op, t), nameOp: fitLerp(a.nameOp, b.nameOp, t),
+    segs: b.segs.map((sb) => seg(a.segs.find((s) => s.key === sb.key) ?? { ...sb, op: 0 }, sb)),
+    ghost: mark(a.ghost, b.ghost, ['px']),
+    val: mark(a.val, b.val, ['x']) });
+  const rows = B.rows.map((b) => row(rowsA.get(b.key) ?? faded(b, A), b));
+  for (const a of A.rows) if (!rowsB.has(a.key)) rows.push(row(a, faded(a, B)));
+  return { ...B, axisY: fitLerp(A.axisY, B.axisY, t), HB: fitLerp(A.HB, B.HB, t), rows };
+}
+// layout → svg string. Pure: no widget state, no model — width/position
+// truths ride the data-* attributes for the visual audit.
+function fitSvg(L) {
+  const { w, x0, bw, lo: LO, hi: HI } = BAR_GEO;
+  const topY = 14;
+  const fo = (v) => String(Math.round(v * 1000) / 1000);
+  const op = (v) => v < 0.999 ? ` opacity="${fo(v)}"` : '';
+  const f1 = (v) => v.toFixed(1);
+  const gx = (e) => x0 + (e - LO) / (HI - LO) * bw;
+  const aY = L.axisY;
+  const B = [`<text class="grplabel" x="2" y="9">${L.hdr}</text>`];
+  // the infeasible region is SHADED, not a line; its label sits ON TOP,
+  // leaving the bottom axis to the power-of-two labels
+  B.push(`<rect x="${f1(L.capPx)}" y="${topY - 2}" width="${f1(x0 + bw - L.capPx)}" ` +
+    `height="${f1(aY - topY - 1)}" fill="#0b0b0b" opacity="0.07"/>`);
+  // unit swatch legend floats right in the header — only when the strip
+  // squares it explains are actually mounted (pointless on bars-only views)
+  if (L.unit) B.push(`<rect x="${x0 + bw - 96}" y="3" width="5" height="4" fill="#898781"/>` +
+    `<text class="dims" x="${x0 + bw - 87}" y="9">${L.unit}</text>`);
+  for (let e = LO; e <= HI; e += 1)   // the ×2 grid
+    B.push(`<line x1="${f1(gx(e))}" y1="${topY - 2}" x2="${f1(gx(e))}" y2="${f1(aY - 3)}" stroke="#e1e0d9" stroke-width="1"/>`);
+  for (const [e, lab] of [[30, '1 GiB'], [33, '8 GiB'], [36, '64 GiB'], [40, '1 TiB'], [43, '8 TiB']])
+    B.push(`<text class="dims" x="${f1(gx(e) + 3)}" y="${f1(aY + 8)}">${lab}</text>`);
+  for (const r of L.rows) {
+    const y = r.y;
+    if (r.type === 'part') {
+      // breakdown sub-row: one <g> per row (group opacity carries the part
+      // filter dim), name + bar + optional pin ghost + value
+      const s = r.segs[0];
+      B.push(`<g opacity="${r.op.toFixed(3)}"${r.part != null ? ` data-part="${r.part}" style="cursor:pointer"` : ''}>` +
+        `<rect x="0" y="${f1(y - 2)}" width="${x0 - 4}" height="${FIT_ROWH - 2}" fill="transparent"/>` +
+        `<text class="dims" x="12" y="${f1(y + 5.5)}">· ${r.name}</text>` +
+        `<rect data-bar="${s.bar}" data-true="${s.true}" x="${f1(s.x0)}" y="${f1(y)}" width="${f1(Math.max(0.5, s.x1 - s.x0))}" height="5" fill="${s.color}" opacity="${fo(s.op)}"/>` +
+        (r.ghost ? `<rect x="${x0}" y="${f1(y)}" width="${f1(Math.max(0.5, r.ghost.px - x0))}" height="5" ` +
+          `fill="none" stroke="${r.ghost.color}" stroke-width="1" stroke-dasharray="2 2" opacity="${fo(r.ghost.op)}"/>` : '') +
+        (r.val ? `<text class="dims" data-role="val:${r.id}" data-true="${r.val.true}" data-pin="${r.val.pin}" x="${f1(r.val.x)}" y="${f1(y + 5.5)}"${op(r.val.op)}>${r.val.text}</text>` : '') +
+        `</g>`);
+      continue;
+    }
+    // gutter: the name alone (whole-row hitbox; click to solo)
+    B.push(`<g${r.prop ? ` data-prop="${r.prop}" style="cursor:pointer"` : ''}${op(r.nameOp)}>` +
+      (r.prop ? `<rect x="0" y="${f1(y - 2)}" width="${x0 - 4}" height="${FIT_ROWH}" fill="transparent"/>` : '') +
+      `<text class="dims" data-role="name:${r.id}" data-true="${r.abs}" x="2" y="${f1(y + 7)}" fill="${r.color}" font-weight="600">${r.name}</text></g>`);
+    // canonical segs [grey base | colored tips]: degenerate ones (a closed
+    // stack) carry no data and skip rendering
+    for (const s of r.segs) {
+      if (s.bar == null && s.x1 - s.x0 < 0.35) continue;
+      B.push(`<rect${s.bar != null ? ` data-bar="${s.bar}" data-true="${s.true}"` : ''} x="${f1(s.x0)}" y="${f1(y)}" ` +
+        `width="${f1(Math.max(0.5, s.x1 - s.x0))}" height="8" fill="${s.color}"${op(s.op * r.op)}/>`);
+    }
+    // the save renders as a dotted GHOST bar (not a tick), so the value
+    // label can always ride the live bar's end
+    if (r.ghost) B.push(`<rect data-ghost="${r.id}" data-true="${r.ghost.true}" x="${x0}" y="${f1(y)}" width="${f1(Math.max(0.5, r.ghost.px - x0))}" height="8" ` +
+      `fill="none" stroke="${r.ghost.color}" stroke-width="1" stroke-dasharray="2 2" opacity="${fo(r.ghost.op)}"/>`);
+    // bar end: the ABSOLUTE value (+ the vs-save badge when saved)
+    if (r.val) B.push(`<text class="dims" data-role="val:${r.id}" data-true="${r.val.true}" data-pin="${r.val.pin}" x="${f1(r.val.x)}" y="${f1(y + 7)}"${op(r.val.op)}>${r.val.text}</text>`);
+  }
+  // the pinned-label line is always reserved (no reflow on pin) — except in
+  // pinless snapshots, which are static figures with nothing to reserve
+  if (L.lbl) B.push(`<text class="dims" x="${x0 + bw}" y="${f1(aY + 18)}" text-anchor="end">${L.lbl}</text>`);
+  // the scrub overlay: cursor affordance AND arming region live exactly on
+  // the bars band — not the captions, not below the axis
+  B.push(`<rect class="scrub" x="${x0}" y="${topY - 2}" width="${bw}" height="${f1(aY - topY + 1)}" ` +
+    `fill="transparent" style="cursor:col-resize"/>`);
+  B.push(`<text class="dims" x="${f1(L.capPx)}" y="9" text-anchor="middle">80 GiB (H100)</text>`);
+  return `<svg width="${w}" height="${f1(L.HB)}" viewBox="0 0 ${w} ${f1(L.HB)}">${B.join('')}</svg>`;
+}
+
 // the PP stage holding the most resident bytes under the local model (all
 // components on, vocab counted on the end stages, activations under the
 // schedule) — the default stage to show: the fully loaded rank.
@@ -871,6 +994,9 @@ export class Dsv3Layer extends HTMLElement {
     // (the beat deck) set _tweenFrames higher so the pour reads as a story
     const FRAMES = this._tweenFrames ?? 12; let f = 0;
     const gen = this._frameGen = (this._frameGen ?? 0) + 1;
+    // the fit chart tweens as a LAYOUT BLEND: from whatever is on screen at
+    // this instant (mid-tween retargets included) to the new state's layout
+    if (this._fitL) this._ftween = { L0: this._fitL, t: 0 };
     onFrame(0);
     // paint t=0 NOW: between starting a tween and the first timer tick the
     // DOM may hold some other synchronously-rendered state (the deck renders
@@ -885,10 +1011,11 @@ export class Dsv3Layer extends HTMLElement {
     const step = () => {
       if (this._frameGen !== gen) return;   // superseded by a newer tween
       f++; const p = Math.min(1, f / FRAMES);
+      if (this._ftween) this._ftween.t = ease(p);
       onFrame(ease(p));
       this.render(); this.changed(false);     // linked widgets tween along
       if (p < 1) setTimeout(step, 16);
-      else { done(); this.render(); this.changed(true); }
+      else { this._ftween = undefined; done(); this.render(); this.changed(true); }
     };
     setTimeout(step, 16);
   }
@@ -2599,195 +2726,133 @@ export class Dsv3Layer extends HTMLElement {
           .concat([(S.saved ?? ana.savedBytes) * 4096 * q.layers * inflightOf(S.sched ?? '1f1b', S.stage, S.pp, S.vpp, S.fold)]);
       };
       this._segParts = partsFor(Snow);
-      const V = this._vtween;
-      const nowB = segB(Snow), prevB = V ? segB(V.prev) : nowB;
-      const vis = [...COMPS.map((c) => cmult(c.prop)), cmult('showActs')];
-      // GEOMETRIC interpolation: on a log axis, uniform motion means lerping
-      // the exponent, not the bytes (linear byte lerp lurches then crawls)
-      // appearing/dying bars lerp from/to the AXIS FLOOR (2^lo), never an
-      // epsilon: the axis clamps below 2^lo, so a lerp from ~1 byte parks the
-      // bar at zero for most of the tween and pops it at the end
-      const MINB = 2 ** BAR_GEO.lo;
-      const geo = (a, b, t) => 2 ** ((1 - t) * Math.log2(Math.max(a, MINB)) + t * Math.log2(Math.max(b, MINB)));
-      const allB = nowB.map((b, i) => geo(prevB[i], b, V ? V.t : 1));   // knob-tweened, visibility-independent
-      const segs = allB.map((b, i) => b * vis[i]);
-      const colors = [...COMPS.map((c) => c.color), '#eda100'];
-      const onB = [...COMPS.map((c) => this[c.prop] ? 1 : 0), this.showActs ? 1 : 0];
+      const nowB = segB(Snow);
       this._segTotals = nowB;
-      // the TOTAL row never resizes: it always shows ALL components. Under a
-      // solo it becomes a stacked bar — grey "other" base + the highlighted
-      // component on top — so the visible colored width IS the factor you
-      // could gain by optimizing only that component.
-      const totalN = nowB.reduce((t, b) => t + b, 0);               // labels snap (full total)
-      const totalT = allB.reduce((a, b2) => a + b2, 0);             // lerped (full total)
-      const otherT = allB.reduce((a, b2, i) => a + b2 * (1 - vis[i]), 0);
-      // UNSTACKED rows on a FIXED log₂ axis; the row labels are the legend
-      // (names in the gutter, click to solo) and the ABSOLUTE values sit at
-      // the bar ends, where the log axis gives them meaning. Soloing a param
-      // component accordions its breakdown sub-rows open beneath it.
+      // The chart is UNSTACKED rows on a FIXED log₂ axis; the row labels are
+      // the legend (names in the gutter, click to solo) and the ABSOLUTE
+      // values sit at the bar ends, where the log axis gives them meaning.
+      // Soloing a param component accordions its breakdown open beneath it.
+      // Everything below builds the LAYOUT for the CURRENT state only —
+      // animation is blendFit's job, never the model's.
       const { x0, bw, lo: LO, hi: HI } = BAR_GEO;   // 256 MiB … 16 TiB, 16 doublings
-      const rowH = 12, barH = 8, topY = 14;
+      const rowH = FIT_ROWH, topY = 14;
       const px = (b) => x0 + Math.max(0, Math.min(1, (Math.log2(Math.max(b, 1)) - LO) / (HI - LO))) * bw;
+      const on = [...COMPS.map((c) => this[c.prop] ? 1 : 0), this.showActs ? 1 : 0];
+      const colors = [...COMPS.map((c) => c.color), '#eda100'];
       const IF2 = inflightOf(SCHED, STG, PPn, VPPn, FOLD);
       const names = ['weights', 'gradients (fp32)', 'optimizer states', `activations ×${IF2}mb`];
-      const rowsB = [
-        ...segs.map((b, i) => ({ b, color: colors[i], on: onB[i], name: names[i],
-          prop: i < COMPS.length ? COMPS[i].prop : 'showActs', abs: nowB[i] })),
-        { b: totalT, color: '#52514e', on: 1, name: 'total', abs: totalN },
-      ];
-      const nR = rowsB.length;
+      const totalN = nowB.reduce((t2, b) => t2 + b, 0);
       const pin = this._pinCfg;
-      const pinTotal = pin ? pin.segs.reduce((t, b) => t + b, 0) : 0;
-      const chg = this._ctween?.props, tC = this._ctween?.t ?? 1;
-      const allOnTarget = onB.every(Boolean);
-      const propOf = (j) => j < COMPS.length ? COMPS[j].prop : 'showActs';
-      // the accordion: a soloed param component opens its sub-rows below it
-      // (subEase rides the solo tween both ways — open on solo, close on unsolo)
-      let sIdx = -1, subEase = 0;
-      const onCount = onB.reduce((t2, o2) => t2 + o2, 0);
-      if (onCount === 1 && onB.indexOf(1) <= 3) { sIdx = onB.indexOf(1); subEase = chg ? tC : 1; }
-      else if (allOnTarget && chg) {
-        const steady = [0, 1, 2, 3].filter((j) => onB[j] && !chg.has(propOf(j)));
-        if (steady.length === 1 && steady[0] <= 3) { sIdx = steady[0]; subEase = 1 - tC; }
-      }
-      const parts2 = sIdx >= 0 ? this._segParts[sIdx] : null;
-      // which param rows ride with their breakdown OPEN: the solo (tweened),
-      // or — snapshot 'parts' — every visible param component at once
-      const openRows = this.hasAttribute('snapshot') && this.hasAttribute('parts')
-        ? [0, 1, 2, 3].filter((j) => onB[j]) : sIdx >= 0 ? [sIdx] : [];
-      const easeOf = (j) => j === sIdx ? subEase : 1;
-      const ALLPARTS = this.hasAttribute('snapshot') && this.hasAttribute('parts');
+      const pinTotal = pin ? pin.segs.reduce((t2, b) => t2 + b, 0) : 0;
+      const badge = (cur, base) => pin ? facBadge(cur, base) : '';
+      // a ghost only where there IS a delta — a coincident ghost just
+      // serrates an unchanged bar (same 5% log threshold as the badge)
+      const ghostOf = (cur, pinB, color) => pinB && Math.abs(Math.log2((cur || 1) / pinB)) >= 0.05
+        ? { px: px(pinB), op: 0.7, color, true: pinB } : null;
+      // the accordion: a soloed param component opens its breakdown below
+      // it; snapshot 'parts' figures open EVERY visible component at once
+      const onCount = on.reduce((t2, o2) => t2 + o2, 0);
+      const sIdx = onCount === 1 && on.indexOf(1) <= 3 ? on.indexOf(1) : -1;
+      const SNAP2 = this.hasAttribute('snapshot');
+      const ALLPARTS = SNAP2 && this.hasAttribute('parts');
+      const openRows = ALLPARTS ? [0, 1, 2, 3].filter((j) => on[j]) : sIdx >= 0 ? [sIdx] : [];
       const partIdxsOf = (j) => (this._segParts[j] ?? [])
-        .map((b, k) => b > 0 || (this._pinCfg?.parts?.[j]?.[k] ?? 0) > 0
+        .map((b, k) => b > 0 || (pin?.parts?.[j]?.[k] ?? 0) > 0
           || (ALLPARTS && !(j === 3 && k === ACT_BUCKETS.length - 1)) ? k : -1)
         .filter((k) => k >= 0);
-      const partIdxs = parts2 ? partIdxsOf(sIdx) : [];
-      const subHOf = (j) => partIdxsOf(j).length * rowH * easeOf(j);
-      const subAbove = (i) => openRows.reduce((t2, j) => t2 + (j < i ? subHOf(j) : 0), 0);
-      const subHTot = openRows.reduce((t2, j) => t2 + subHOf(j), 0);
+      const subAbove = (i) => openRows.reduce((t2, j) => t2 + (j < i ? partIdxsOf(j).length * rowH : 0), 0);
+      const subHTot = openRows.reduce((t2, j) => t2 + partIdxsOf(j).length * rowH, 0);
       // snapshots drop the off components' rows outright — a dimmed name you
       // can't click is a dead affordance in a figure (interactive views keep
       // them: they're the solo/restore legend). The total keeps full mass.
-      const SNAP2 = this.hasAttribute('snapshot');
       const NOTOT = SNAP2 && this.hasAttribute('nototal');   // intro beats: the shading says "doesn't fit"; the tally beat lands the whole
       let vp = 0;
-      const posOf = rowsB.map((r2, i2) => i2 === nR - 1 ? (NOTOT ? -1 : vp++)
-        : SNAP2 && !r2.on ? -1 : vp++);
-      const yOf = (i) => topY + posOf[i] * rowH + subAbove(i) + (i === nR - 1 ? 4 : 0);
+      const posOf = [...on.map((o2) => SNAP2 && !o2 ? -1 : vp++), NOTOT ? -1 : vp++];
+      const yOf = (i) => topY + posOf[i] * rowH + subAbove(i) + (i === 4 ? 4 : 0);
       const axisY = topY + vp * rowH + subHTot + 5 + 4;
-      // header: PP1 needs no locus (the prose owns the framing); a pipelined
-      // chart names whose bytes these are — one GPU's stage
-      const hdr = PPn === 1 ? 'logarithmic:'
-        : `one GPU, stage ${STG} of PP${PPn} (logarithmic):`;
-      const B = [`<text class="grplabel" x="2" y="9">${hdr}</text>`];
-      // unit swatch legend floats right in the header — only when the strip
-      // squares it explains are actually mounted (pointless on bars-only views)
-      if (!this.hasAttribute('barsonly') && !this.hasAttribute('snapshot'))
-        B.push(`<rect x="${x0 + bw - 96}" y="3" width="5" height="4" fill="#898781"/>` +
-          `<text class="dims" x="${x0 + bw - 87}" y="9">= ${fmtBytes(PB_UNIT * 2)} / square</text>`);
-      for (let e = LO; e <= HI; e += 1)   // the ×2 grid
-        B.push(`<line x1="${px(2 ** e).toFixed(1)}" y1="${topY - 2}" x2="${px(2 ** e).toFixed(1)}" y2="${axisY - 3}" stroke="#e1e0d9" stroke-width="1"/>`);
-      for (const [e, lab] of [[30, '1 GiB'], [33, '8 GiB'], [36, '64 GiB'], [40, '1 TiB'], [43, '8 TiB']])
-        B.push(`<text class="dims" x="${(px(2 ** e) + 3).toFixed(1)}" y="${axisY + 8}">${lab}</text>`);
-      for (const [i, r] of rowsB.entries()) {
+      const rows = [];
+      for (let i = 0; i < 4; i++) {
         if (posOf[i] < 0) continue;
-        const y2 = yOf(i);
-        const dim = r.on ? '' : ' opacity="0.35"';
-        // gutter: the name alone (whole-row hitbox; click to solo)
-        B.push(`<g${r.prop ? ` data-prop="${r.prop}" style="cursor:pointer"` : ''}${dim}>` +
-          (r.prop ? `<rect x="0" y="${y2 - 2}" width="${x0 - 4}" height="${rowH}" fill="transparent"/>` : '') +
-          `<text class="dims" data-role="name:${i === nR - 1 ? 'total' : i}" data-true="${r.abs}" x="2" y="${y2 + 7}" fill="${r.color}" font-weight="600">${r.name}</text></g>`);
-        const topSum = allB.reduce((a2, b2, j) => a2 + (onB[j] ? b2 * vis[j] : 0), 0);
-        if (i === nR - 1 && allOnTarget && chg && tC < 1) {
-          // returning to all-on: arriving components never paint (they're
-          // future grey) — the full grey bar shows and the steady colored
-          // tip dissolves into it (no four-color flash on the way back)
-          B.push(`<rect x="${x0}" y="${y2}" width="${Math.max(0.5, px(totalT) - x0).toFixed(1)}" height="${barH}" fill="#c3c2b7"/>`);
-          const steadySum = allB.reduce((a2, b2, j) => a2 + (onB[j] && !chg.has(propOf(j)) ? b2 : 0), 0);
-          let acc = totalT - steadySum;
-          for (let j = 0; j < allB.length; j++) {
-            if (!onB[j] || chg.has(propOf(j))) continue;
-            const a1 = px(acc); acc += allB[j];
-            B.push(`<rect x="${(a1 + 1).toFixed(1)}" y="${y2}" width="${Math.max(0.5, px(acc) - a1 - 1).toFixed(1)}" height="${barH}" fill="${colors[j]}" opacity="${(1 - tC).toFixed(3)}"/>`);
-          }
-        } else if (i === nR - 1 && !allOnTarget && totalT - topSum > totalT * 0.001) {
-          // stacked total: grey "other" base, then ONLY the target-on
-          // components (a departing component's share folds into the grey
-          // mid-tween — no four-color flash); the colored width is the gain
-          // available from optimizing what's highlighted
-          const grey = totalT - topSum;
-          B.push(`<rect x="${x0}" y="${y2}" width="${Math.max(0.5, px(grey) - x0).toFixed(1)}" height="${barH}" fill="#c3c2b7"/>`);
-          let acc = grey;
-          for (let j = 0; j < allB.length; j++) {
-            const w2 = onB[j] ? allB[j] * vis[j] : 0;
-            if (w2 <= 0) continue;
-            const a1 = px(acc); acc += w2;
-            B.push(`<rect x="${(a1 + 1).toFixed(1)}" y="${y2}" width="${Math.max(0.5, px(acc) - a1 - 1).toFixed(1)}" height="${barH}" fill="${colors[j]}"/>`);
-          }
-        } else if (i === sIdx && parts2 && (this.partSel != null || this._ptween)) {
-          // the soloed row gets the same stacked treatment one level down:
-          // grey = unselected parts, colored top = the selected part
-          const selSum = parts2.reduce((a2, b2, k) => a2 + b2 * pvis(k), 0);
-          const grey2 = Math.max(0, r.b - selSum);
-          B.push(`<rect x="${x0}" y="${y2}" width="${Math.max(0.5, px(grey2) - x0).toFixed(1)}" height="${barH}" fill="#c3c2b7"/>`);
-          B.push(`<rect x="${(px(grey2) + 1).toFixed(1)}" y="${y2}" width="${Math.max(0.5, px(r.b) - px(grey2) - 1).toFixed(1)}" height="${barH}" fill="${r.color}"/>`);
-        } else {
-          B.push(`<rect data-bar="${i === nR - 1 ? 'total' : i}" data-true="${r.b}" x="${x0}" y="${y2}" width="${Math.max(0.5, px(r.b) - x0).toFixed(1)}" height="${barH}" fill="${r.color}"${dim}/>`);
-        }
-        const pinB = pin ? (i === nR - 1 ? pinTotal : pin.segs[i]) : 0;
-        // the save renders as a dotted GHOST bar (not a tick), so the value
-        // label can always ride the live bar's end — hidden components hide
-        // their ghosts too
-        // a ghost only where there IS a delta — a coincident ghost just
-        // serrates an unchanged bar (same 5% log threshold as the badge)
-        const ghosted = pinB && r.on && Math.abs(Math.log2((r.abs || 1) / pinB)) >= 0.05;
-        if (ghosted) B.push(`<rect data-ghost="${i === nR - 1 ? 'total' : i}" data-true="${pinB}" x="${x0}" y="${y2}" width="${Math.max(0.5, px(pinB) - x0).toFixed(1)}" height="${barH}" ` +
-          `fill="none" stroke="${i === nR - 1 ? '#898781' : r.color}" stroke-width="1" stroke-dasharray="2 2" opacity="0.7"/>`);
-        // bar end: the ABSOLUTE value (+ the vs-save badge when saved);
-        // hidden components show none
-        if (r.on) B.push(`<text class="dims" data-role="val:${i === nR - 1 ? 'total' : i}" data-true="${r.abs}" data-pin="${pinB || ''}" x="${(px(r.b) + 5).toFixed(1)}" y="${y2 + 7}">` +
-          `${fmtBytes(r.abs)}${pin ? facBadge(r.abs, pinB) : ''}</text>`);
-        // the accordion sub-rows open right below their component's row
-        if (openRows.includes(i) && partIdxsOf(i).length && easeOf(i) > 0.02) {
-          const prevParts = V ? partsFor(V.prev) : null;
-          // param components break down by sharding class (clickable: the
-          // part filter); the acts row breaks down PER OP, like the chips
+        const abs = nowB[i];
+        const b = on[i] ? abs : 0;   // hidden components park at the axis floor
+        // a part filter turns the soloed row into a stack one level down:
+        // grey = unselected parts, colored tip = the selected part. The pair
+        // is CANONICAL (base zero-width without a filter) so every comp row
+        // blends against every other form without a representation switch.
+        const soloSel = i === sIdx && this.partSel != null;
+        const selSum = soloSel ? this._segParts[i].reduce((a2, b2, k) => a2 + (this.partSel === k ? b2 : 0), 0) : b;
+        const grey = soloSel ? Math.max(0, b - selSum) : 0;
+        const pinB = pin ? pin.segs[i] : 0;
+        rows.push({ key: `seg:${i}`, type: 'comp', id: String(i), y: yOf(i), op: 1,
+          nameOp: on[i] ? 1 : 0.35, name: names[i], color: colors[i],
+          prop: i < COMPS.length ? COMPS[i].prop : 'showActs', abs,
+          segs: [
+            { key: 'base', x0, x1: grey ? px(grey) : x0, color: '#c3c2b7', op: 1 },
+            { key: 'tip', x0: grey ? px(grey) + 1 : x0, x1: px(b), color: colors[i],
+              op: on[i] ? 1 : 0.35, bar: String(i), true: b },
+          ],
+          ghost: on[i] ? ghostOf(abs, pinB, colors[i]) : null,
+          val: on[i] ? { x: px(b) + 5, op: 1, text: `${fmtBytes(abs)}${badge(abs, pinB)}`,
+            true: abs, pin: pinB || '' } : null });
+        // the accordion sub-rows open right below their component's row:
+        // param components break down by sharding class (clickable — the
+        // part filter); the acts row breaks down PER OP, like the chips
+        if (openRows.includes(i) && partIdxsOf(i).length) {
           const names2 = i === 3 ? ACT_BUCKETS.map((b2) => b2.label) : ['experts', 'non-expert', 'vocab'];
           const clickable = i < 3;
           for (const [k3, k2] of partIdxsOf(i).entries()) {
-            const now2 = this._segParts[i][k2];
-            const bT = prevParts ? geo(prevParts[i][k2], now2, V.t) : now2;
-            const yS = yOf(i) + rowH + k3 * rowH * easeOf(i) + 2;
+            const bP = this._segParts[i][k2];
             const pinP0 = pin?.parts?.[i]?.[k2];
-            const pinP = pinP0 && Math.abs(Math.log2((now2 || 1) / pinP0)) >= 0.05 ? pinP0 : 0;
-            const pOp = easeOf(i) * (0.4 + 0.6 * (clickable && i === sIdx ? pvis(k2) : 1));   // dim unselected parts
-            B.push(`<g opacity="${pOp.toFixed(3)}"${clickable ? ` data-part="${k2}" style="cursor:pointer"` : ''}>` +
-              `<rect x="0" y="${(yS - 2).toFixed(1)}" width="${x0 - 4}" height="${rowH - 2}" fill="transparent"/>` +
-              `<text class="dims" x="12" y="${(yS + 5.5).toFixed(1)}">· ${names2[k2]}</text>` +
-              `<rect data-bar="part:${i}:${k2}" data-true="${bT}" x="${x0}" y="${yS.toFixed(1)}" width="${Math.max(0.5, px(bT) - x0).toFixed(1)}" height="5" fill="${colors[i]}" opacity="0.55"/>` +
-              (pinP ? `<rect x="${x0}" y="${yS.toFixed(1)}" width="${Math.max(0.5, px(pinP) - x0).toFixed(1)}" height="5" ` +
-                `fill="none" stroke="${colors[i]}" stroke-width="1" stroke-dasharray="2 2" opacity="0.7"/>` : '') +
-              `<text class="dims" data-role="val:part:${i}:${k2}" data-true="${now2}" data-pin="${pinP || ''}" x="${(px(bT) + 5).toFixed(1)}" y="${(yS + 5.5).toFixed(1)}">${fmtBytes(now2)}${pin ? facBadge(now2, pinP) : ''}</text></g>`);
+            const pinP = pinP0 && Math.abs(Math.log2((bP || 1) / pinP0)) >= 0.05 ? pinP0 : 0;
+            rows.push({ key: `part:${i}:${k2}`, type: 'part', id: `part:${i}:${k2}`,
+              y: yOf(i) + rowH + k3 * rowH + 2, nameOp: 1,
+              op: 0.4 + 0.6 * (clickable && i === sIdx ? psel(this.partSel ?? null, k2) : 1),   // dim unselected parts
+              name: names2[k2], color: colors[i], part: clickable ? k2 : null,
+              segs: [{ key: 'bar', x0, x1: px(bP), color: colors[i], op: 0.55, bar: `part:${i}:${k2}`, true: bP }],
+              ghost: pinP ? { px: px(pinP), op: 0.7, color: colors[i], true: pinP } : null,
+              val: { x: px(bP) + 5, op: 1, text: `${fmtBytes(bP)}${badge(bP, pinP)}`,
+                true: bP, pin: pinP || '' } });
           }
         }
       }
-      const SHOWLBL = pin && !(this.hasAttribute('snapshot') && this.getAttribute('knobs'));
-      if (SHOWLBL) B.push(`<text class="dims" x="${x0 + bw}" y="${axisY + 18}" text-anchor="end">saved: ${pin.label}</text>`);
-      // the scrub overlay: cursor affordance AND arming region live exactly
-      // on the bars band — not the captions, not below the axis
-      B.push(`<rect class="scrub" x="${x0}" y="${topY - 2}" width="${bw}" height="${axisY - topY + 1}" ` +
-        `fill="transparent" style="cursor:col-resize"/>`);
-      // the capacity label sits ON TOP, leaving the bottom axis to the
-      // power-of-two labels; the infeasible region is SHADED, not a line
-      const cx2 = px(cap);
-      B.splice(1, 0, `<rect x="${cx2.toFixed(1)}" y="${topY - 2}" width="${(x0 + bw - cx2).toFixed(1)}" ` +
-        `height="${axisY - topY - 1}" fill="#0b0b0b" opacity="0.07"/>`);
-      B.push(`<text class="dims" x="${cx2.toFixed(1)}" y="9" text-anchor="middle">80 GiB (H100)</text>`);
-      // the pinned-label line is always reserved (no reflow on pin) — except
-      // in pinless snapshots, which are static figures with nothing to reserve
-      const canLabel = !this.hasAttribute('snapshot') || SHOWLBL;
-      const HB = axisY + (canLabel ? 22 : 10);
-      this._barHtml = `<svg width="${BAR_GEO.w}" height="${HB}" viewBox="0 0 ${BAR_GEO.w} ${HB}">${B.join('')}</svg>`;
+      if (!NOTOT) {
+        // the TOTAL row never resizes: it always shows ALL components. Under
+        // a solo it becomes a stacked bar — grey "other" base + the on
+        // components as colored tips — so the visible colored width IS the
+        // factor you could gain by optimizing only what's highlighted. All
+        // on, the tips park zero-width at the bar end (they render nothing
+        // and blend smoothly into the stacked form).
+        const topSum = nowB.reduce((a2, b2, j) => a2 + (on[j] ? b2 : 0), 0);
+        const stacked = !on.every(Boolean) && totalN - topSum > totalN * 0.001;
+        let acc = stacked ? totalN - topSum : totalN;
+        const tips = [0, 1, 2, 3].map((j) => {
+          const w2 = stacked && on[j] ? nowB[j] : 0;
+          const t0 = px(acc) + 1; acc += w2;
+          return { key: `tip:${j}`, x0: t0, x1: px(acc), color: colors[j], op: 1 };
+        });
+        rows.push({ key: 'total', type: 'comp', id: 'total', y: yOf(4), op: 1, nameOp: 1,
+          name: 'total', color: '#52514e', prop: null, abs: totalN,
+          segs: [{ key: 'base', x0, x1: px(stacked ? totalN - topSum : totalN),
+            color: stacked ? '#c3c2b7' : '#52514e', op: 1,
+            bar: stacked ? null : 'total', true: stacked ? null : totalN }, ...tips],
+          ghost: ghostOf(totalN, pinTotal, '#898781'),
+          val: { x: px(totalN) + 5, op: 1, text: `${fmtBytes(totalN)}${badge(totalN, pinTotal)}`,
+            true: totalN, pin: pinTotal || '' } });
+      }
+      const SHOWLBL = pin && !(SNAP2 && this.getAttribute('knobs'));
+      const canLabel = !SNAP2 || SHOWLBL;   // the pinned-label line is reserved unless a pinless snapshot
+      const L1 = {
+        // header: PP1 needs no locus (the prose owns the framing); a
+        // pipelined chart names whose bytes these are — one GPU's stage
+        hdr: PPn === 1 ? 'logarithmic:' : `one GPU, stage ${STG} of PP${PPn} (logarithmic):`,
+        axisY, HB: axisY + (canLabel ? 22 : 10), capPx: px(cap),
+        unit: !this.hasAttribute('barsonly') && !SNAP2 ? `= ${fmtBytes(PB_UNIT * 2)} / square` : null,
+        lbl: SHOWLBL ? `saved: ${pin.label}` : null, rows,
+      };
+      const F = this._ftween;
+      const L = F ? blendFit(F.L0, L1, F.t) : L1;
+      this._fitL = L;   // what's on screen NOW — the origin of the next transition
+      this._barHtml = fitSvg(L);
     }
     if (SCOPE === 'model') {   // the surrounding stack: ×61 rule, final norm, lm head, loss
       P.push(`<line class="wire" x1="${C1 - 20}" y1="${h}" x2="${C2 + W + 20}" y2="${h}" stroke-dasharray="3 3"/>`);
@@ -3432,11 +3497,12 @@ class Dsv3BeatDeck extends HTMLElement {
     l.setAttribute('parts', '');
     if (st.hyp != null) l.setAttribute('hypothetical', st.hyp); else l.removeAttribute('hypothetical');
     const prev = this._i >= 0 ? l._snapLocal() : null;   // where the reader is looking NOW
+    const Ldisp = l._fitL;   // the on-screen layout — the baseline render below overwrites it
     if (base) {
       l._applyCfg(this._full(base.cfg)); l.render(); l._saveBaseline();
     } else l._pinCfg = null;
     l._applyCfg(this._full(st.cfg));
-    if (prev && !instant) l._tweenLocal(prev);   // the pour — forward, backward, or jump
+    if (prev && !instant) { l._fitL = Ldisp; l._tweenLocal(prev); }   // the pour — forward, backward, or jump
     else l.render();
     this._cap.innerHTML = st.cap;
     this._i = i;

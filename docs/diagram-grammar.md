@@ -37,6 +37,14 @@ the rest are conventions to uphold when editing the renderer.
    render: the in-box strip band exists in dtype tiers and the bytes lens, so
    static/params boxes are compact (32px, not 38/60). A toggle that must
    change height animates the reflow instead of jumping (the ×N strips tween).
+9. **One motion rule (fit chart).** The chart renders a pixel-space LAYOUT
+   (rows keyed by stable identity); every transition, whatever caused it, is
+   `blendFit(on-screen, target, t)`: geometry lerps linearly in pixel space
+   (on the log₂ axis that IS geometric byte motion, clamped at the axis
+   floor), text and `data-*` snap to the target, fill colors lerp, and
+   one-sided rows fade — sub-rows collapsing into their parent's line. The
+   model is consulted once per transition, never per frame, and the from-side
+   is whatever is on screen, so interrupted tweens retarget continuously.
 
 ## Text and labels
 
