@@ -688,6 +688,10 @@ ${knobCss('.lv-head')}
    is not clickable there (config-static), only the measuring scrub is */
 dsv3-layer[snapshot] .lv { width: fit-content; max-width: 100%; }
 dsv3-layer[snapshot] .lv-bar [data-part], dsv3-layer[snapshot] .lv-bar [data-prop] { cursor: default !important; }
+/* hypothetical beats: a counterfactual 'to' — the dashed card border is the
+   same not-real cue the ghost bars use, plus an explicit italic tag */
+dsv3-layer[hypothetical] .lv { border-style: dashed; }
+.lv-hyptag { font: italic 10.5px system-ui; color: #898781; padding-bottom: 4px; }
 .lv-bar svg { display: block; margin: 2px 0 6px; max-width: 100%; height: auto; }
 .lv-bar { position: relative; }
 .lv-ruler { display: none; position: absolute; background: rgba(237, 161, 0, 0.12);
@@ -1472,6 +1476,11 @@ export class Dsv3Layer extends HTMLElement {
       barSlot.innerHTML = this._barHtml;
       this._barHtml = null;
       this._wireBars(barSlot);
+      if (this.hasAttribute('snapshot') && this.hasAttribute('hypothetical')) {
+        const ht = el('div', 'lv-hyptag');
+        ht.textContent = this.getAttribute('hypothetical') || 'hypothetical — not what DSv3 did';
+        barSlot.before(ht);
+      }
       const sb = this.hasAttribute('snapshot') && this.getAttribute('sandbox');
       if (sb) {
         const a = document.createElement('a');

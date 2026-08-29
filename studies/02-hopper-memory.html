@@ -130,7 +130,7 @@
     ▼×2048, 2.4 GiB, solved. Total 8.65 → 3.77 TiB.]</p>
 
     <!-- beat: the ZeRO-2 temptation — greedy says grads next; DSv3 declined -->
-    <dsv3-layer style="min-height:141px" snapshot solo="grads"
+    <dsv3-layer style="min-height:157px" snapshot hypothetical solo="grads"
       from='{"world":2048,"pp":1,"ep":1,"zero":1}' to='{"zero":2}'
       local cumulative lens="param-bytes" recipe="bf16" recompute="none" controls="static" detail
       nocaption></dsv3-layer>
@@ -166,7 +166,7 @@
     the rest of the essay is about it. Total 116.5 GiB.]</p>
 
     <!-- beat: the ×1 mb dream — why the schedule is the whole problem -->
-    <dsv3-layer style="min-height:141px" snapshot
+    <dsv3-layer style="min-height:157px" snapshot hypothetical="hypothetical — a 16-deep pipeline with one microbatch is 94% idle"
       from='{"world":2048,"pp":16,"ep":64,"zero":1}' to='{"sched":"one"}'
       local cumulative lens="param-bytes" recipe="bf16" recompute="none" controls="static" detail
       nocaption></dsv3-layer>

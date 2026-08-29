@@ -86,6 +86,7 @@ the two meet only at `data-true`).
 | a rendered value | equals `fmtBytes(data-true)` — rounding is the ONLY gap between shown and true |
 | a bar with a value at its end | the rightmost solid edge on the row sits at `px(value)` on the log axis (a stacked bar's top segment ends at the total it claims) |
 | a dashed twin (ghost) on a row | a saved baseline exists; the ghost's edge sits at `px(saved)` and the row's ▲/▼×N badge is the exact live-vs-saved ratio |
+| dashed card border + italic 'hypothetical' tag | this beat's `to` is a counterfactual — shown to be declined, not part of the recipe being built |
 | indented `· name` rows under a row | a decomposition: the children sum EXACTLY to the parent (rendered digits can't be summed — correctly-rounded parts don't add to the rounded parent) |
 
 New visual patterns must register their implication here and in the audit —

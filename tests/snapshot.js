@@ -27,6 +27,13 @@ else T.log('no parts tally beat on the page (author choice)', '');
 // snapshots are figures: the card shrink-wraps (no full-width right slack)
 T.check('cards shrink-wrap their chart', beats().every(b =>
   b.querySelector('.lv').getBoundingClientRect().width < 900), '');
+// hypothetical beats wear the not-real treatment: dashed card + italic tag
+T.check('hypothetical beats: dashed card + tag', [...document.querySelectorAll('dsv3-layer[hypothetical]')].length >= 1
+  && [...document.querySelectorAll('dsv3-layer[hypothetical]')].every(b =>
+    getComputedStyle(b.querySelector('.lv')).borderTopStyle === 'dashed'
+    && b.querySelector('.lv-hyptag')?.textContent.includes('hypothetical')), '');
+T.check('real beats are solid-bordered', getComputedStyle(
+  beats().find(b => !b.hasAttribute('hypothetical')).querySelector('.lv')).borderTopStyle === 'solid', '');
 T.check('no-to beats have no ghosts',
   beats().filter(b => !b.hasAttribute('to')).every(b => !b.querySelector('.lv-bar')?.textContent.includes('saved:')), '');
 // intro beats drop the total (nototal); the tally beat lands the full mass
