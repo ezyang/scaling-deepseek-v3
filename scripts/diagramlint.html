@@ -134,7 +134,8 @@ function lintWidget(name, host) {
 // declare a min-height close to its rendered height (docs/diagram-grammar.md
 // — reserved, non-reflowing space applies to the page too)
 async function lintPlaceholders() {
-  const PAGES = ['/index.html', '/studies/01-deepseek-diagram.html', '/studies/02-hopper-memory.html'];
+  const PAGES = ['/index.html', '/studies/01-deepseek-diagram.html', '/studies/02-hopper-memory.html',
+    '/studies/scratch-bars.html', '/studies/scratch-globals.html'];
   const WTAGS = 'dsv3-anatomy, dsv3-layer, dsv3-trace, dsv3-param-tally, dsv3-pp-schedule';
   for (const p of PAGES) {
     const f = document.createElement('iframe');
@@ -153,7 +154,9 @@ async function lintPlaceholders() {
       if (hh < 40) continue;
       const name = el.tagName.toLowerCase() + (el.id ? '#' + el.id : '');
       if (!decl) push({ check: 'placeholder-height-missing', page: p, el: name, actual: Math.round(hh) });
-      else if (Math.abs(hh - decl) > 48)
+      // pixel-tight: ANY gap between the placeholder and the rendered
+      // height is a visible text reflow when the widget mounts
+      else if (Math.abs(hh - decl) > 3)
         push({ check: 'placeholder-height-drift', page: p, el: name, declared: decl, actual: Math.round(hh) });
     }
     f.remove();

@@ -37,7 +37,9 @@ generality.
   `// @args --width N`); one-off debug probes stay in /tmp.
 - Verify pages in headless Chrome (`node --check` misses browser-only
   errors). Every widget instance on a real page carries a measured
-  `min-height` placeholder; the linter reports the value to paste.
+  `min-height` placeholder; the linter enforces it to ±3px (any gap is a
+  visible text reflow when the widget mounts) and reports the value to
+  paste.
 
 ## Modeling conventions
 
