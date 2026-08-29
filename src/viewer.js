@@ -2606,9 +2606,9 @@ export class Dsv3Layer extends HTMLElement {
         : SNAP2 && !r2.on ? -1 : vp++);
       const yOf = (i) => topY + posOf[i] * rowH + subAbove(i) + (i === nR - 1 ? 4 : 0);
       const axisY = topY + vp * rowH + subHTot + 5 + 4;
-      // the header says what this chart actually shows: at PP1 one GPU holds
-      // the whole model; otherwise it's one GPU's stage of the pipeline
-      const hdr = PPn === 1 ? 'one GPU, the whole model (logarithmic):'
+      // header: PP1 needs no locus (the prose owns the framing); a pipelined
+      // chart names whose bytes these are — one GPU's stage
+      const hdr = PPn === 1 ? 'logarithmic:'
         : `one GPU, stage ${STG} of PP${PPn} (logarithmic):`;
       const B = [`<text class="grplabel" x="2" y="9">${hdr}</text>`];
       // unit swatch legend floats right in the header — only when the strip
