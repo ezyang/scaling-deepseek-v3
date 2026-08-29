@@ -137,9 +137,13 @@ async function lintPlaceholders() {
   const PAGES = ['/index.html', '/studies/01-deepseek-diagram.html', '/studies/02-hopper-memory.html',
     '/studies/scratch-bars.html', '/studies/scratch-globals.html'];
   const WTAGS = 'dsv3-anatomy, dsv3-layer, dsv3-trace, dsv3-param-tally, dsv3-pp-schedule';
-  for (const p of PAGES) {
+  // two widths: 1366 is the SUPPORTED MINIMUM viewport (the anatomy grid
+  // saturates its 1330px cap at ~1362; every container is width-capped, so
+  // layout must be IDENTICAL at any width ≥ 1366 — checking a wide viewport
+  // too enforces that nothing starts using the extra width)
+  for (const vw of [1366, 1680]) for (const p of PAGES) {
     const f = document.createElement('iframe');
-    f.style.cssText = 'width:1440px;height:900px;border:0;position:absolute;left:-9999px;top:0;';
+    f.style.cssText = `width:${vw}px;height:900px;border:0;position:absolute;left:-9999px;top:0;`;
     document.body.append(f);
     await new Promise(r => { f.onload = r; f.src = p; });
     await new Promise(r => setTimeout(r, 400));
@@ -157,7 +161,7 @@ async function lintPlaceholders() {
       // pixel-tight: ANY gap between the placeholder and the rendered
       // height is a visible text reflow when the widget mounts
       else if (Math.abs(hh - decl) > 3)
-        push({ check: 'placeholder-height-drift', page: p, el: name, declared: decl, actual: Math.round(hh) });
+        push({ check: 'placeholder-height-drift', page: p, vw, el: name, declared: decl, actual: Math.round(hh) });
     }
     f.remove();
   }

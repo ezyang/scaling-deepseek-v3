@@ -2607,9 +2607,11 @@ export class Dsv3Layer extends HTMLElement {
       const yOf = (i) => topY + posOf[i] * rowH + subAbove(i) + (i === nR - 1 ? 4 : 0);
       const axisY = topY + vp * rowH + subHTot + 5 + 4;
       const B = [`<text class="grplabel" x="2" y="9">this rank, whole stage (logarithmic):</text>`];
-      // unit swatch legend floats right in the header
-      B.push(`<rect x="${x0 + bw - 96}" y="3" width="5" height="4" fill="#898781"/>` +
-        `<text class="dims" x="${x0 + bw - 87}" y="9">= ${fmtBytes(PB_UNIT * 2)} / square</text>`);
+      // unit swatch legend floats right in the header — only when the strip
+      // squares it explains are actually mounted (pointless on bars-only views)
+      if (!this.hasAttribute('barsonly') && !this.hasAttribute('snapshot'))
+        B.push(`<rect x="${x0 + bw - 96}" y="3" width="5" height="4" fill="#898781"/>` +
+          `<text class="dims" x="${x0 + bw - 87}" y="9">= ${fmtBytes(PB_UNIT * 2)} / square</text>`);
       for (let e = LO; e <= HI; e += 1)   // the ×2 grid
         B.push(`<line x1="${px(2 ** e).toFixed(1)}" y1="${topY - 2}" x2="${px(2 ** e).toFixed(1)}" y2="${axisY - 3}" stroke="#e1e0d9" stroke-width="1"/>`);
       for (const [e, lab] of [[30, '1 GiB'], [33, '8 GiB'], [36, '64 GiB'], [40, '1 TiB'], [43, '8 TiB']])

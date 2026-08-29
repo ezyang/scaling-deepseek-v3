@@ -38,8 +38,10 @@ generality.
 - Verify pages in headless Chrome (`node --check` misses browser-only
   errors). Every widget instance on a real page carries a measured
   `min-height` placeholder; the linter enforces it to ±3px (any gap is a
-  visible text reflow when the widget mounts) and reports the value to
-  paste.
+  visible text reflow when the widget mounts) at BOTH the supported minimum
+  viewport (1366px — every container is width-capped, so layout is identical
+  at any width above it) and a wide one, and reports the value to paste.
+  Below 1366 knob rows may wrap; ≤860 is the stacked mobile layout.
 
 ## Modeling conventions
 
