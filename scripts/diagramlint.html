@@ -157,6 +157,28 @@ async function lintPlaceholders() {
       el.style.minHeight = decl ? decl + 'px' : '';
       if (hh < 40) continue;
       const name = el.tagName.toLowerCase() + (el.id ? '#' + el.id : '');
+      // pre-upgrade reservation: BEFORE the modules run, the tag must already
+      // be block-level with the SAME margins the widget CSS will later apply —
+      // otherwise the min-height placeholder is dead (an unknown element is
+      // inline, and inline elements have no height), the widget occupies zero
+      // space at first paint, and the whole page shoves when it mounts
+      if (vw === 1366) {
+        const tag = el.tagName.toLowerCase();
+        const cs = f.contentWindow.getComputedStyle(el);
+        let staticRule = null;
+        for (const sh of f.contentDocument.styleSheets) {
+          if (sh.ownerNode.closest?.(WTAGS)) continue;   // widget-injected styles don't exist pre-upgrade
+          let rules; try { rules = sh.cssRules; } catch { continue; }
+          for (const r of rules)
+            if (r.selectorText && r.selectorText.split(',').some((x) => x.trim() === tag) && r.style?.display === 'block')
+              staticRule = r;
+        }
+        if (!staticRule)
+          push({ check: 'pre-upgrade-reservation-missing', page: p, el: name });
+        else if (staticRule.style.marginTop !== cs.marginTop || staticRule.style.marginBottom !== cs.marginBottom)
+          push({ check: 'pre-upgrade-margin-mismatch', page: p, el: name,
+            static: staticRule.style.margin, computed: `${cs.marginTop} auto ${cs.marginBottom}` });
+      }
       if (!decl) push({ check: 'placeholder-height-missing', page: p, el: name, actual: Math.round(hh) });
       // pixel-tight: ANY gap between the placeholder and the rendered
       // height is a visible text reflow when the widget mounts

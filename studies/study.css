@@ -13,7 +13,13 @@
     .xcheck th, .xcheck td { text-align: left; padding: 5px 12px 5px 0; border-bottom: 1px solid #e1e0d9; font-variant-numeric: tabular-nums; vertical-align: top; }
     .xcheck th { color: #52514e; font-weight: 600; }
     .xcheck .note { font-size: 12px; }
-    dsv3-anatomy { display: block; margin: 14px 0; }
+    /* pre-upgrade reservation: custom elements are INLINE until their module
+       defines them — inline elements ignore min-height, so without these
+       rules every widget is zero-height at first paint and the page shoves
+       when it mounts. Display AND margins must match the widget-injected CSS
+       exactly (the diagramlint pre-upgrade tier enforces both). */
+    dsv3-anatomy, dsv3-layer { display: block; margin: 14px 0 26px; }
+    dsv3-pp-schedule { display: block; margin: 14px 0; }
 
 /* series navigation (injected by series.js) */
 .series-strip { font-size: 13px; color: #52514e; margin: 0 0 6px; }
