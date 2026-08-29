@@ -105,116 +105,79 @@
 
     <h2>[scaffolding] Fitting it, biggest problem first</h2>
 
-    <p class="note">[section 2 scaffolding — the optimization beats in the
-    agreed order; each beat's <code>from</code> is the previous beat's
-    <code>to</code>. Bracketed notes are AI-drafted placeholders.]</p>
+    <p class="note">[section 2 scaffolding, now a SLIDESHOW: one chart, the
+    reader advances beat by beat, every transition animates, ghosts + ▲/▼
+    badges show each step against the last real step. Each &lt;section&gt;
+    below carries a full config and its caption — edit captions in place;
+    bracketed text is AI-drafted.]</p>
 
-    <!-- beat: 2048 GPUs, pure DP — NO bar moves (replication isn't reduction) -->
-    <dsv3-layer style="min-height:141px" snapshot
-      from='{"world":2048,"pp":1,"ep":1,"zero":0}' to='{}'
-      local cumulative lens="param-bytes" recipe="bf16" recompute="none" controls="static" detail
-      nocaption></dsv3-layer>
-
-    <p class="note">[beat: we have 2048 GPUs; pure data parallelism copies the
-    model to every one of them — the saved baseline and the live bars
-    coincide, no badge moves. Replication isn't reduction.]</p>
-
-    <!-- beat: ZeRO-1 — the tallest bar first: optimizer ▼×2048, gone -->
-    <dsv3-layer style="min-height:141px" snapshot solo="optim"
-      from='{"world":2048,"pp":1,"ep":1,"zero":0}' to='{"zero":1}'
-      local cumulative lens="param-bytes" recipe="bf16" recompute="none" controls="static" detail
-      nocaption></dsv3-layer>
-
-    <p class="note">[beat: the tallest bar is optimizer states (4.88 TiB), and
-    DP built a 2048-wide replica group for free — ZeRO-1 shards over it:
-    ▼×2048, 2.4 GiB, solved. Total 8.65 → 3.77 TiB.]</p>
-
-    <!-- beat: the ZeRO-2 temptation — greedy says grads next; DSv3 declined -->
-    <dsv3-layer style="min-height:157px" snapshot hypothetical solo="grads"
-      from='{"world":2048,"pp":1,"ep":1,"zero":1}' to='{"zero":2}'
-      local cumulative lens="param-bytes" recipe="bf16" recompute="none" controls="static" detail
-      nocaption></dsv3-layer>
-
-    <p class="note">[beat: greedy says gradients next (2.44 TiB), and ZeRO-2
-    would work — ▼×2048. But DSv3 declined: fp32 accumulators live across 64
-    microbatches, and sharding them puts a reduce-scatter on every one.
-    First warning: this chart cannot see communication.]</p>
-
-    <!-- beat: EP64 — one lever for all the param-shaped memory -->
-    <dsv3-layer style="min-height:141px" snapshot
-      from='{"world":2048,"pp":1,"ep":1,"zero":1}' to='{"ep":64}'
-      local cumulative lens="param-bytes" recipe="bf16" recompute="none" controls="static" detail
-      nocaption></dsv3-layer>
-
-    <p class="note">[beat: weights and gradients are both param-shaped, and
-    expert parallelism cuts the expert share of both at once: ▼×24 each.
-    Note the optimizer bar does NOT move — expert optimizer states now shard
-    over a 64× smaller group holding 64× fewer experts; the effects cancel.
-    Total 3.77 TiB → 261.6 GiB. Still ×3.3 over.]</p>
-
-    <!-- beat: PP16, forced — and the pivot: activations don't move -->
-    <dsv3-layer style="min-height:141px" snapshot
-      from='{"world":2048,"pp":1,"ep":64,"zero":1}' to='{"pp":16}'
-      local cumulative lens="param-bytes" recipe="bf16" recompute="none" controls="static" detail
-      nocaption></dsv3-layer>
-
-    <p class="note">[beat: gradients alone are 101.8 GiB — over the card by
-    themselves, with every avoid-PP lever spent. Pipeline parallelism is
-    forced: ▼×17 on weights, ▼×16.7 on grads… and ▼×1.02 on activations.
-    PP divides the layers per GPU and multiplies the microbatches in flight
-    by the same factor. The tallest bar is now the one nothing has touched;
-    the rest of the essay is about it. Total 116.5 GiB.]</p>
-
-    <!-- beat: the ×1 mb dream — why the schedule is the whole problem -->
-    <dsv3-layer style="min-height:157px" snapshot hypothetical="hypothetical — a 16-deep pipeline with one microbatch is 94% idle"
-      from='{"world":2048,"pp":16,"ep":64,"zero":1}' to='{"sched":"one"}'
-      local cumulative lens="param-bytes" recipe="bf16" recompute="none" controls="static" detail
-      nocaption></dsv3-layer>
-
-    <p class="note">[beat: if only ONE microbatch were in flight, activations
-    would be 7.0 GiB and the total 24 GiB — done. But a 16-deep pipeline with
-    one microbatch in it is idle 15/16ths of the time. The schedule section
-    explains what 1F1B holds in flight and why.]</p>
-
-    <!-- beat: DualPipeV — memory PAYS for throughput -->
-    <dsv3-layer style="min-height:141px" snapshot
-      from='{"world":2048,"pp":16,"ep":64,"zero":1}' to='{"vpp":2}'
-      local cumulative lens="param-bytes" recipe="bf16" recompute="none" controls="static" detail
-      nocaption></dsv3-layer>
-
-    <p class="note">[beat: DeepSeek's actual schedule (DualPipeV) makes peak
-    memory WORSE — ▲ to 127.7 GiB (a uniform PP+½ microbatches on every rank
-    beats 1F1B's peak of PP−1 at the peak stage). Its payoff is pipeline
-    bubbles — off this chart. Second warning: this chart cannot see time.]</p>
-
-    <!-- beat: AC — the rescue; the per-op buckets show WHICH stashes die -->
-    <dsv3-layer style="min-height:177px" snapshot solo="acts"
-      from='{"world":2048,"pp":16,"ep":64,"zero":1,"vpp":2}' to='{"recompute":"dsv3"}'
-      local cumulative lens="param-bytes" recipe="bf16" recompute="none" controls="static" detail
-      nocaption></dsv3-layer>
-
-    <p class="note">[beat: activation checkpointing, the dsv3 policy — the
-    per-op buckets show which stashes it recomputes instead of saving.
-    Total 127.7 → 77.1 GiB: it fits, barely.]</p>
-
-    <!-- beat: fp8 stashes — headroom -->
-    <dsv3-layer style="min-height:177px" snapshot solo="acts"
-      from='{"world":2048,"pp":16,"ep":64,"zero":1,"vpp":2,"recompute":"dsv3"}' to='{"recipe":"dsv3-fp8"}'
-      local cumulative lens="param-bytes" recipe="bf16" recompute="none" controls="static" detail
-      nocaption></dsv3-layer>
-
-    <p class="note">[beat: the fp8 recipe halves the stashes the GEMMs read —
-    69.0 GiB total.]</p>
-
-    <!-- beat: the fit — final config against the budget -->
-    <dsv3-layer style="min-height:148px" snapshot sandbox="local-diagram"
-      from='{"world":2048,"pp":16,"ep":64,"zero":1,"vpp":2,"recompute":"dsv3","recipe":"dsv3-fp8"}'
-      local cumulative lens="param-bytes" recipe="bf16" recompute="none" controls="static" detail
-      nocaption></dsv3-layer>
-
-    <p class="note">[beat: the destination — every bar inside the budget,
-    ~11 GiB of headroom, to be read against the what-we-don't-model list.
-    Explore the whole configuration in the full widget.]</p>
+    <dsv3-beat-deck id="fitdeck" style="min-height:230px">
+      <section data-config='{"world":2048,"pp":1,"ep":1,"zero":0}'>
+        [<b>Step 1 — the debt.</b> The whole model on one imaginary GPU:
+        8.65 TiB against an 80 GiB card — ×111 over budget, about seven
+        halvings on this axis. Everything that follows pays it down.]
+      </section>
+      <section data-config='{"world":2048,"pp":1,"ep":1,"zero":0}'>
+        [<b>Step 2 — 2048 GPUs, pure data parallelism.</b> Copy the model to
+        every GPU: not a single bar moves. Replication isn&rsquo;t reduction —
+        but it quietly built a 2048-wide replica group we can shard over.]
+      </section>
+      <section data-config='{"world":2048,"pp":1,"ep":1,"zero":1}' data-solo="optim">
+        [<b>Step 3 — ZeRO-1.</b> Biggest problem first: optimizer states are
+        4.88 TiB, the tallest bar. Each replica keeps 1/2048th: ▼×2048, down
+        to 2.4 GiB. Solved outright. Total: 8.65 → 3.77 TiB.]
+      </section>
+      <section data-config='{"world":2048,"pp":1,"ep":1,"zero":2}' data-solo="grads"
+        data-hypothetical="hypothetical — DSv3 kept gradients unsharded">
+        [<b>Step 4 — the ZeRO-2 temptation.</b> Greedy says gradients next
+        (2.44 TiB), and on this chart ZeRO-2 works: ▼×2048. DeepSeek declined:
+        fp32 accumulators live across all 64 microbatches, and sharding them
+        puts a reduce-scatter on every one. First warning: this chart cannot
+        see communication.]
+      </section>
+      <section data-config='{"world":2048,"pp":1,"ep":64,"zero":1}'>
+        [<b>Step 5 — EP64.</b> Weights and gradients are both param-shaped,
+        and expert parallelism cuts the expert share of both at once: ▼×24
+        each. The optimizer bar does not move — smaller expert count, smaller
+        sharding group, the effects cancel. Total: 261.6 GiB. Still ×3.3
+        over.]
+      </section>
+      <section data-config='{"world":2048,"pp":16,"ep":64,"zero":1}'>
+        [<b>Step 6 — PP16, because we must.</b> Gradients alone are 101.8 GiB
+        — over the card by themselves, with every avoid-PP lever spent.
+        Pipelining divides the layers per GPU: ▼×17 weights, ▼×16.7 grads…
+        and ▼×1.02 activations. PP divides layers and multiplies microbatches
+        in flight by the same factor. The tallest bar is now the one nothing
+        has touched.]
+      </section>
+      <section data-config='{"world":2048,"pp":16,"ep":64,"zero":1,"sched":"one"}'
+        data-hypothetical="hypothetical — a 16-deep pipeline with one microbatch is 94% idle">
+        [<b>Step 7 — the one-microbatch dream.</b> If a single microbatch
+        flowed through the pipe, activations would be 7.0 GiB and we&rsquo;d be
+        done at 24 GiB total. But a pipeline stays busy only if ~PP
+        microbatches are in flight — see the schedule widget below.]
+      </section>
+      <section data-config='{"world":2048,"pp":16,"ep":64,"zero":1,"vpp":2}'>
+        [<b>Step 8 — DualPipeV, the schedule DeepSeek trained with.</b> Peak
+        memory gets WORSE: ▲ to 127.7 GiB (a uniform PP+½ microbatches on
+        every rank, vs 1F1B&rsquo;s staircase). Its payoff — pipeline bubbles —
+        is off this chart. Second warning: this chart cannot see time.]
+      </section>
+      <section data-config='{"world":2048,"pp":16,"ep":64,"zero":1,"vpp":2,"recompute":"dsv3"}' data-solo="acts">
+        [<b>Step 9 — activation checkpointing.</b> The only bar left. The
+        dsv3 recompute policy trades FLOPs for stashes — the per-op rows show
+        exactly which ones die. 127.7 → 77.1 GiB. It fits. Barely.]
+      </section>
+      <section data-config='{"world":2048,"pp":16,"ep":64,"zero":1,"vpp":2,"recompute":"dsv3","recipe":"dsv3-fp8"}' data-solo="acts">
+        [<b>Step 10 — fp8 stashes.</b> The fp8 recipe halves what the GEMMs
+        keep for backward: 69.0 GiB, and now there is headroom to spend.]
+      </section>
+      <section data-config='{"world":2048,"pp":16,"ep":64,"zero":1,"vpp":2,"recompute":"dsv3","recipe":"dsv3-fp8"}' data-parts>
+        [<b>Step 11 — the destination.</b> Every bar inside the budget, every
+        breakdown open: ~11 GiB of headroom, to be read against the
+        what-we-don&rsquo;t-model list.]
+      </section>
+    </dsv3-beat-deck>
 
     TODO transition here
 

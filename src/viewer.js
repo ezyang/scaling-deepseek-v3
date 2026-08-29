@@ -3301,3 +3301,97 @@ class Dsv3PpSchedule extends HTMLElement {
 if (typeof customElements !== 'undefined' && !customElements.get('dsv3-pp-schedule')) {
   customElements.define('dsv3-pp-schedule', Dsv3PpSchedule);
 }
+
+// ---- <dsv3-beat-deck> custom element ----------------------------------------------
+// The optimization story as a SLIDESHOW over one fit chart. Each <section>
+// child is a step: a FULL config in data-config (never a patch — so stepping
+// past a hypothetical reverts it automatically), optional data-solo /
+// data-parts / data-hypothetical (dashed not-real card + tag), and the
+// step's caption as its HTML. The reader advances explicitly; a forward step
+// saves the last REAL step as the baseline and pours the bars to the new
+// config through the layer's own knob tween, so ghosts and ▲/▼ badges
+// narrate every move. Backward and jump navigation snap (no reverse fiction).
+// The current step persists in the URL (d:<id>).
+const DECK_CSS = `
+dsv3-beat-deck { display: block; margin: 14px 0 26px; }
+.deck-nav { display: flex; align-items: center; gap: 10px; margin: 0 0 6px; }
+.deck-nav button { font: 12px ui-monospace, monospace; padding: 2px 12px; border: 1px solid #c3c2b7;
+  border-radius: 4px; background: #fff; cursor: pointer; }
+.deck-nav button:hover:not(:disabled) { background: #f3f2ee; }
+.deck-nav button:disabled { color: #dedcd3; cursor: default; }
+.deck-step { font: 11px ui-monospace, monospace; color: #52514e; }
+.deck-cap { max-width: 760px; font-size: 13.5px; color: #1c1c1a; line-height: 1.5; }
+.deck-cap p { margin: 6px 0; }
+`;
+class Dsv3BeatDeck extends HTMLElement {
+  connectedCallback() {
+    this._steps = [...this.querySelectorAll('section')].map((sec) => ({
+      cfg: JSON.parse(sec.dataset.config ?? '{}'),
+      solo: sec.dataset.solo ?? null,
+      parts: sec.dataset.parts != null,
+      hyp: sec.dataset.hypothetical,
+      cap: sec.innerHTML,
+    }));
+    this.textContent = '';
+    const style = document.createElement('style'); style.textContent = DECK_CSS;
+    const nav = el('div', 'deck-nav');
+    this._prev = document.createElement('button'); this._prev.textContent = '‹ back';
+    this._next = document.createElement('button'); this._next.textContent = 'next ›';
+    this._ind = el('span', 'deck-step');
+    nav.append(this._prev, this._ind, this._next);
+    this._prev.onclick = () => this.go(this._i - 1);
+    this._next.onclick = () => this.go(this._i + 1);
+    // the chart: a snapshot-mode layer (measure-only, no knobs, no URL state
+    // of its own) that the deck drives programmatically
+    const l = this._layer = document.createElement('dsv3-layer');
+    for (const [k, v] of [['snapshot', ''], ['local', ''], ['cumulative', ''], ['lens', 'param-bytes'],
+      ['recipe', 'bf16'], ['recompute', 'none'], ['controls', 'static'], ['detail', ''], ['nocaption', '']])
+      l.setAttribute(k, v);
+    this._cap = el('div', 'deck-cap');
+    this.append(style, nav, l, this._cap);
+    this.tabIndex = -1; this.style.outline = 'none';
+    this.addEventListener('keydown', (e) => {
+      const d = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
+      if (d) { e.preventDefault(); this.go(this._i + d); }
+    });
+    this._i = -1;
+    const st = this.id ? readUrlState('d:' + this.id) : null;
+    this.go(Math.max(0, Math.min(this._steps.length - 1, st?.i ?? 0)), true);
+  }
+  // baseline: the last REAL (non-hypothetical) step before i — a hypothetical
+  // is a parenthesis, never something later deltas are measured against
+  _baseOf(i) {
+    for (let j = i - 1; j >= 0; j--) if (!this._steps[j].hyp) return this._steps[j];
+    return null;
+  }
+  go(i, instant = false) {
+    if (i < 0 || i >= this._steps.length || i === this._i) return;
+    const st = this._steps[i], l = this._layer, base = this._baseOf(i);
+    const fwd = i === this._i + 1 && !instant;
+    // per-step view state: solo / all-on, all accordions, the not-real card
+    const P = { weights: 'showWeights', grads: 'showGrads', optim: 'showOptim', acts: 'showActs' };
+    for (const p of Object.values(P)) l[p] = st.solo ? p === P[st.solo] : true;
+    if (st.parts) l.setAttribute('parts', ''); else l.removeAttribute('parts');
+    if (st.hyp != null) l.setAttribute('hypothetical', st.hyp); else l.removeAttribute('hypothetical');
+    if (base) {
+      l._applyCfg(base.cfg); l.render(); l._saveBaseline();
+    } else l._pinCfg = null;
+    if (fwd && base) {
+      const prev = l._snapLocal();
+      l._applyCfg(st.cfg);
+      l._tweenLocal(prev);        // the pour: squares and bars animate to the new config
+    } else {
+      l._applyCfg(st.cfg); l.render();
+    }
+    this._cap.innerHTML = st.cap;
+    this._i = i;
+    this._ind.textContent = `step ${i + 1} / ${this._steps.length}`;
+    this._prev.disabled = i === 0;
+    this._next.disabled = i === this._steps.length - 1;
+    if (this.id) writeUrlState('d:' + this.id, { i });
+    this.focus({ preventScroll: true });
+  }
+}
+if (typeof customElements !== 'undefined' && !customElements.get('dsv3-beat-deck')) {
+  customElements.define('dsv3-beat-deck', Dsv3BeatDeck);
+}

@@ -136,7 +136,7 @@ function lintWidget(name, host) {
 async function lintPlaceholders() {
   const PAGES = ['/index.html', '/studies/01-deepseek-diagram.html', '/studies/02-hopper-memory.html',
     '/studies/scratch-bars.html', '/studies/scratch-globals.html'];
-  const WTAGS = 'dsv3-anatomy, dsv3-layer, dsv3-trace, dsv3-param-tally, dsv3-pp-schedule';
+  const WTAGS = 'dsv3-anatomy, dsv3-layer, dsv3-trace, dsv3-param-tally, dsv3-pp-schedule, dsv3-beat-deck';
   // two widths: 1366 is the SUPPORTED MINIMUM viewport (the anatomy grid
   // saturates its 1330px cap at ~1362; every container is width-capped, so
   // layout must be IDENTICAL at any width ≥ 1366 — checking a wide viewport
@@ -148,7 +148,7 @@ async function lintPlaceholders() {
     await new Promise(r => { f.onload = r; f.src = p; });
     await new Promise(r => setTimeout(r, 400));
     for (const el of f.contentDocument.querySelectorAll(WTAGS)) {
-      if (el.tagName !== 'DSV3-ANATOMY' && el.closest('dsv3-anatomy')) continue;  // the wrapper's min-height covers its children
+      if (!['DSV3-ANATOMY', 'DSV3-BEAT-DECK'].includes(el.tagName) && el.closest('dsv3-anatomy, dsv3-beat-deck')) continue;  // the wrapper's min-height covers its children
       // measure the CONTENT height: min-height inflates the element itself,
       // which would hide too-large declarations
       const decl = parseFloat(el.style.minHeight) || 0;

@@ -20,6 +20,7 @@
        exactly (the diagramlint pre-upgrade tier enforces both). */
     dsv3-anatomy, dsv3-layer { display: block; margin: 14px 0 26px; }
     dsv3-pp-schedule { display: block; margin: 14px 0; }
+    dsv3-beat-deck { display: block; margin: 14px 0 26px; }
 
 /* series navigation (injected by series.js) */
 .series-strip { font-size: 13px; color: #52514e; margin: 0 0 6px; }

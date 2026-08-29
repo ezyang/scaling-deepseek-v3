@@ -1,0 +1,41 @@
+// @page studies/02-hopper-memory.html
+// the beat deck: explicit advance, animated transitions, baseline = the last
+// REAL step, hypothetical steps dashed + auto-reverted by full configs
+const deck = () => document.getElementById('fitdeck');
+const L = () => deck().querySelector('dsv3-layer');
+const cap = () => deck().querySelector('.deck-cap').textContent;
+const bar = () => L().querySelector('.lv-bar').textContent;
+const next = () => { deck().querySelector('.deck-nav button:last-of-type').click(); };
+
+T.check('step 1 renders the debt', cap().includes('the debt') && bar().includes('total8.65 TiB'), '');
+T.check('back disabled at step 1', deck().querySelector('.deck-nav button').disabled, '');
+next(); await T.tick(500);
+T.check('step 2: pure DP — baseline saved, nothing moves', bar().includes('saved:')
+  && !bar().includes('▼') && !bar().includes('▲'), '');
+next(); await T.tick(500);
+T.check('step 3: ZeRO-1 solo, ▼×2048', L().zero === 1 && bar().includes('▼×2048')
+  && !/weights\d/.test(bar()), bar().slice(0, 120));
+next(); await T.tick(500);
+T.check('step 4: hypothetical ZeRO-2 — dashed card + tag', L().zero === 2
+  && getComputedStyle(L().querySelector('.lv')).borderTopStyle === 'dashed'
+  && L().querySelector('.lv-hyptag').textContent.includes('unsharded'), '');
+next(); await T.tick(600);
+T.check('step 5: EP64 — the hypothetical reverted, solid card', L().zero === 1 && L().ep === 64
+  && getComputedStyle(L().querySelector('.lv')).borderTopStyle === 'solid', `zero ${L().zero}`);
+T.check('step 5 baseline is ZeRO-1 (skips the hypothetical)',
+  L()._pinCfg.state.zero === 1 && L()._pinCfg.state.ep === 1, '');
+// visual audit holds mid-deck (badges, ghosts, decomposition)
+const { auditFitCharts } = await import('/src/audit.js');
+T.check('audit clean at step 5', auditFitCharts(deck()).findings.length === 0,
+  auditFitCharts(deck()).findings[0]);
+// arrow keys navigate; backward snaps
+deck().dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true })); await T.tick(200);
+T.check('ArrowLeft goes back (snap)', L().zero === 2, '');
+deck().dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })); await T.tick(600);
+// walk to the end: the fit
+for (let i = 0; i < 6; i++) { next(); await T.tick(450); }
+T.check('final step: fits with headroom', cap().includes('destination')
+  && L().querySelectorAll('.lv-bar text').length > 20, '');
+T.check('next disabled at the end', deck().querySelector('.deck-nav button:last-of-type').disabled, '');
+T.check('audit clean at the end', auditFitCharts(deck()).findings.length === 0, '');
+T.done();

@@ -66,6 +66,20 @@ double-counted anywhere in the figure); supports `highlightOps`.
 | `mode` | `total` (default) · `active` — initial toggle position |
 | `units` | absent · `bytes` — bf16 memory framing: values in binary bytes, the total/active toggle hidden (activation doesn't change resident bytes). `<dsv3-anatomy lens="param-bytes" tally>` sets this automatically |
 
+## `<dsv3-beat-deck>` — the optimization story as a slideshow
+
+One fit chart, stepped explicitly. Each `<section>` child is a beat: a FULL
+config in `data-config` (never a patch — stepping past a hypothetical
+reverts it automatically), optional `data-solo` / `data-parts` /
+`data-hypothetical` (the dashed not-real card + authorable tag), and the
+step's caption as its HTML (author prose lives in the page). A forward step
+saves the last REAL step as the baseline (hypotheticals are parentheses —
+never measured against) and pours the bars to the new config through the
+layer's knob tween; ghosts and ▲/▼ badges narrate the move. Backward and
+jump navigation snap. ‹/› buttons + arrow keys; the current step persists in
+the URL (`d:<id>`). The inner layer is snapshot-mode (measure-only, no
+knobs); the visual audit covers it at every step.
+
 ## The visual audit (src/audit.js)
 
 The audit keys on the VISUAL LANGUAGE, never the model: each pattern the

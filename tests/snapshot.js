@@ -4,7 +4,8 @@
 // scenario into the full widget
 const snap = () => document.querySelector('dsv3-layer[sandbox][to]');   // the ZeRO demo (the fit beat has sandbox but no to)
 // the opening tally beats: weights · optim · acts · grads · everything
-const beats = () => [...document.querySelectorAll('dsv3-layer[snapshot]:not([sandbox])')];
+const beats = () => [...document.querySelectorAll('dsv3-layer[snapshot]:not([sandbox])')]
+  .filter(b => !b.closest('dsv3-beat-deck'));   // the deck drives its own layer
 T.check('tally beats render bars (the parts beat is optional — author-curated)', beats().length >= 4
   && beats().every(b => b.querySelector('.lv-bar svg') && !b.querySelector('.lv-scroll')), beats().length);
 T.check('beat 1: whole-model weights 1.22 TiB + breakdown', beats()[0].textContent.includes('weights1.22 TiB')
@@ -27,13 +28,6 @@ else T.log('no parts tally beat on the page (author choice)', '');
 // snapshots are figures: the card shrink-wraps (no full-width right slack)
 T.check('cards shrink-wrap their chart', beats().every(b =>
   b.querySelector('.lv').getBoundingClientRect().width < 900), '');
-// hypothetical beats wear the not-real treatment: dashed card + italic tag
-T.check('hypothetical beats: dashed card + tag', [...document.querySelectorAll('dsv3-layer[hypothetical]')].length >= 1
-  && [...document.querySelectorAll('dsv3-layer[hypothetical]')].every(b =>
-    getComputedStyle(b.querySelector('.lv')).borderTopStyle === 'dashed'
-    && b.querySelector('.lv-hyptag')?.textContent.includes('hypothetical')), '');
-T.check('real beats are solid-bordered', getComputedStyle(
-  beats().find(b => !b.hasAttribute('hypothetical')).querySelector('.lv')).borderTopStyle === 'solid', '');
 T.check('no-to beats have no ghosts',
   beats().filter(b => !b.hasAttribute('to')).every(b => !b.querySelector('.lv-bar')?.textContent.includes('saved:')), '');
 // intro beats drop the total (nototal); the tally beat lands the full mass
