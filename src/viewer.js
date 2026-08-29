@@ -871,10 +871,12 @@ export class Dsv3Layer extends HTMLElement {
     // (the beat deck) set _tweenFrames higher so the pour reads as a story
     const FRAMES = this._tweenFrames ?? 12; let f = 0;
     onFrame(0);
-    // cubic in-out — the standard chart-transition curve (d3's default);
-    // time-easing only: values lerp geometrically, which on the log axis is
-    // exactly linear pixel motion, so this curve IS the perceived motion
-    const ease = (p) => p < 0.5 ? 4 * p * p * p : 1 - (-2 * p + 2) ** 3 / 2;
+    // ease-out cubic: these tweens RESPOND to a click, and response motion
+    // must start immediately (in-out's slow first beat reads as lag) and
+    // decelerate into place. Time-easing only: values lerp geometrically,
+    // which on the log axis is exactly linear pixel motion, so this curve
+    // IS the perceived motion. Duration handles gravitas, not the curve.
+    const ease = (p) => 1 - (1 - p) ** 3;
     const step = () => {
       f++; const p = Math.min(1, f / FRAMES);
       onFrame(ease(p));
@@ -1488,7 +1490,8 @@ export class Dsv3Layer extends HTMLElement {
     // never scale the diagram: it renders at natural size inside its own
     // scroll container (tooltips stay outside it, so they aren't clipped)
     const scroller = el('div', 'lv-scroll');
-    scroller.append(this.buildSvg(ana, anaM));
+    const diagSvg = this.buildSvg(ana, anaM);
+    if (diagSvg) scroller.append(diagSvg);
     if (barSlot && this._barHtml) {
       barSlot.innerHTML = this._barHtml;
       this._barHtml = null;
@@ -2834,6 +2837,10 @@ export class Dsv3Layer extends HTMLElement {
 
     const H = h + lmH + 14;
 
+    // barsonly/snapshot never mount this svg — the string work above already
+    // produced the fit chart (_barHtml) and totals; parsing thousands of
+    // diagram nodes on every tween frame was the animation stutter
+    if (this.hasAttribute('barsonly') || this.hasAttribute('snapshot')) return null;
     const svgEl = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svgEl.setAttribute('width', WIDTH); svgEl.setAttribute('height', H);
     svgEl.setAttribute('viewBox', `0 0 ${WIDTH} ${H}`);
@@ -3361,17 +3368,20 @@ class Dsv3BeatDeck extends HTMLElement {
     this.textContent = '';
     const style = document.createElement('style'); style.textContent = DECK_CSS;
     const nav = el('div', 'deck-nav');
-    this._prev = document.createElement('button'); this._prev.textContent = '‹ back';
-    this._next = document.createElement('button'); this._next.textContent = 'next ›';
+    const btn2 = (t, cls) => { const b = document.createElement('button'); b.textContent = t; b.className = cls; return b; };
+    this._first = btn2('|‹', 'deck-first'); this._prev = btn2('‹ back', 'deck-prev');
+    this._next = btn2('next ›', 'deck-next'); this._last = btn2('›|', 'deck-last');
     this._ind = el('span', 'deck-step');
     this._hyp = el('span', 'deck-hyp');   // hypothetical callout: lives in the FIXED nav row
-    nav.append(this._prev, this._ind, this._next, this._hyp);
+    nav.append(this._first, this._prev, this._ind, this._next, this._last, this._hyp);
+    this._first.onclick = () => this.go(0);
     this._prev.onclick = () => this.go(this._i - 1);
     this._next.onclick = () => this.go(this._i + 1);
+    this._last.onclick = () => this.go(this._steps.length - 1);
     // the chart: a snapshot-mode layer (measure-only, no knobs, no URL state
     // of its own) that the deck drives programmatically
     const l = this._layer = document.createElement('dsv3-layer');
-    l._tweenFrames = 45;   // ~720 ms: slide transitions are watched, not operated
+    l._tweenFrames = 28;   // ~450 ms: slower than a knob tweak, faster than a lag
     for (const [k, v] of [['snapshot', ''], ['local', ''], ['cumulative', ''], ['lens', 'param-bytes'],
       ['recipe', 'bf16'], ['recompute', 'none'], ['controls', 'static'], ['detail', ''], ['nocaption', ''],
       ['knobs', 'cluster,pipeline,mesh,zero']])   // the per-slide config READOUT
@@ -3420,8 +3430,8 @@ class Dsv3BeatDeck extends HTMLElement {
     this._i = i;
     this._ind.textContent = `step ${i + 1} / ${this._steps.length}`;
     this._hyp.textContent = st.hyp != null ? (st.hyp || 'hypothetical — not what DSv3 did') : '';
-    this._prev.disabled = i === 0;
-    this._next.disabled = i === this._steps.length - 1;
+    this._first.disabled = this._prev.disabled = i === 0;
+    this._last.disabled = this._next.disabled = i === this._steps.length - 1;
     if (this.id) writeUrlState('d:' + this.id, { i });
     this.focus({ preventScroll: true });
   }
