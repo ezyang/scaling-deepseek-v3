@@ -96,6 +96,7 @@ the two meet only at `data-true`).
 | a dashed twin (ghost) on a row | a saved baseline exists; the ghost's edge sits at `px(saved)` and the row's ▲/▼×N badge is the exact live-vs-saved ratio |
 | dashed card border + italic 'hypothetical' tag | this beat's `to` is a counterfactual — shown to be declined, not part of the recipe being built |
 | indented `· name` rows under a row | a decomposition: the children sum EXACTLY to the parent (rendered digits can't be summed — correctly-rounded parts don't add to the rounded parent) |
+| the distances ruler below the axis (map-style, ticks ×2 / ×16 (PP) / ×64 (EP) / ×2048 (DP)) | each tick sits exactly log₂(N) doublings from the origin cap — a bar shortened by that span shrank by exactly that factor (`data-fac` carries the claim) |
 
 New visual patterns must register their implication here and in the audit —
 a pattern with no implication is decoration, and an implication with no

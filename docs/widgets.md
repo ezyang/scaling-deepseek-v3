@@ -75,10 +75,15 @@ reverts it automatically), optional `data-solo` / `data-parts` /
 step's caption as its HTML (author prose lives in the page). A forward step
 saves the last REAL step as the baseline (hypotheticals are parentheses —
 never measured against) and pours the bars to the new config through the
-layer's knob tween; ghosts and ▲/▼ badges narrate the move. Backward and
-jump navigation snap. ‹/› buttons + arrow keys; the current step persists in
-the URL (`d:<id>`). The inner layer is snapshot-mode (measure-only, no
-knobs); the visual audit covers it at every step.
+layout blend (ghosts plant FIRST, then the bars move — diagram-grammar rule
+9); ▲/▼ badges narrate the move. Every direction animates (forward, back,
+jump). Nav buttons + arrow keys; the current step persists in the URL
+(`d:<id>`). The deck renders as a framed CARD (study.css) and reserves its
+tallest caption at mount so slides never change its height. The inner layer
+is snapshot-mode but LIVE (`live` attr): the reader may fiddle the knobs —
+a DETOUR, marked by an amber '✎ detour' nav tag and a dimmed caption — and
+stepping first rewinds the detour to the slide's config, then animates the
+step's own delta. The visual audit covers every step.
 
 ## The visual audit (src/audit.js)
 

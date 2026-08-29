@@ -13,6 +13,8 @@
 //   4. an indented '· name' row beneath a row is a DECOMPOSITION: the
 //      children sum EXACTLY to their parent (rendered digits can't be
 //      summed — correctly-rounded parts don't add up to the rounded parent)
+//   5. a distances-ruler tick labeled ×N sits exactly log₂(N) doublings
+//      from the origin cap — the legend's spans really are those factors
 //
 // Deliberately absent: any re-derivation of the model. Model identities (the
 // stage split partitions the checkpoint-exact total; params vs the released
@@ -85,6 +87,15 @@ export function auditFitCharts(root = document) {
       const sum = kids.reduce((a2, t) => a2 + +t.dataset.true, 0);
       if (Math.abs(sum - parent) > parent * 1e-9)
         bad(`decomposition under "${nm.textContent}": Σ children ${sum} ≠ ${parent}`);
+    }
+
+    // 5) the distances ruler: a tick claiming ×N sits at exactly log₂(N)
+    // doublings along the axis (the map legend must be to scale)
+    for (const tk of svg.querySelectorAll('line[data-fac]')) {
+      const f = +tk.dataset.fac;
+      const want = BAR_GEO.x0 + Math.log2(f) / (BAR_GEO.hi - BAR_GEO.lo) * BAR_GEO.bw;
+      if (Math.abs(+tk.getAttribute('x1') - want) > 0.15)
+        bad(`distances tick ×${f} at ${tk.getAttribute('x1')} ≠ ${want.toFixed(1)}`);
     }
   }
   return { charts, findings: out };

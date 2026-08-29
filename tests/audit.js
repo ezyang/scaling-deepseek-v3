@@ -21,4 +21,11 @@ const p2 = document.querySelector('.lv-bar text[data-role^="val:part:"]');
 p2.dataset.true = String(+p2.dataset.true + 4096);
 const f2 = auditFitCharts(document).findings;
 T.check('a decomposition lie is caught', f2.some(m => m.includes('decomposition')), f2[0]);
+p2.dataset.true = String(+p2.dataset.true - 4096);
+// a distances-ruler tick claiming the wrong factor (drawn-at-×2, claims ×3)
+const tk = document.querySelector('.lv-bar line[data-fac="2"]');
+tk.dataset.fac = '3';
+const f3 = auditFitCharts(document).findings;
+T.check('a distances-ruler lie is caught', f3.some(m => m.includes('distances')), f3[0]);
+tk.dataset.fac = '2';
 T.done();
