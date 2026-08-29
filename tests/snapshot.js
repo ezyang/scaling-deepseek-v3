@@ -2,7 +2,22 @@
 // snapshot story beats: from = saved baseline (ghosts), to = live bars with
 // badges, solo picks the row, zero interactivity, sandbox link loads the
 // scenario into the full widget
-const snap = () => document.querySelector('dsv3-layer[snapshot]');
+const snap = () => document.querySelector('dsv3-layer[sandbox]');   // the ZeRO beat
+// the three opening tally beats: weights · weights+optim · everything
+const beats = () => [...document.querySelectorAll('dsv3-layer[snapshot]:not([sandbox])')];
+T.check('three tally beats render bars', beats().length === 3
+  && beats().every(b => b.querySelector('.lv-bar svg') && !b.querySelector('.lv-scroll')), beats().length);
+T.check('beat 1: whole-model weights 1.22 TiB + breakdown', beats()[0].textContent.includes('weights1.22 TiB')
+  && beats()[0].textContent.includes('· experts'), '');
+T.check('beat 2: optimizer joins at 8 B/param', beats()[1].textContent.includes('optimizer states4.88 TiB'), '');
+T.check('beat 3: all four components', ['weights', 'gradients', 'optimizer', 'activations', 'total']
+  .every(t => beats()[2].textContent.includes(t)), '');
+T.check('beats have no ghosts (no to= no baseline)',
+  beats().every(b => !b.querySelector('.lv-bar')?.textContent.includes('saved:')), '');
+// additive story: each beat's total = the components introduced so far
+T.check('beat totals grow 1.22 → 6.10 → 8.65 TiB',
+  beats()[0].textContent.includes('total1.22 TiB') && beats()[1].textContent.includes('total6.10 TiB')
+  && beats()[2].textContent.includes('total8.65 TiB'), '');
 const bar = () => snap().querySelector('.lv-bar');
 const txt = () => bar().textContent;
 

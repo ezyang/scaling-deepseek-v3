@@ -63,13 +63,14 @@
     we want to start somewhere), we can tally up the overall memory usage of
     the entire model.</p>
 
-    <dsv3-anatomy style="min-height:752px" tally lens="param-bytes" strips="absolute" layer="diagram" detail controls="static" nocaption></dsv3-anatomy>
+    <dsv3-layer style="min-height:177px" snapshot comps="weights"
+      from='{"world":2048,"pp":1,"ep":1,"zero":0}'
+      local cumulative lens="param-bytes" recipe="bf16" recompute="none" controls="static" detail
+      nocaption></dsv3-layer>
 
-    <p class="note">This is the parameter-count diagram from the last post, restated
-    in bytes: every number is a bf16 weight size, and the blue strips inside the
-    boxes show each operation's share of the block's weight bytes (the largest
-    fills one row).  Use the "per block" toggle to see totals over all blocks of
-    a kind.</p>
+    <p class="note">[snapshot beat: the whole model's bf16 weights on one
+    (imaginary, giant) GPU, against the 80&nbsp;GiB an H100 actually has —
+    the shaded region is infeasible, and each gridline is exactly ×2.]</p>
 
     <p><strong>Optimizer states.</strong>  DeepSeek-V3 was trained with AdamW
     with bfloat16 first and second moment and float32 master weights.  This means
@@ -77,20 +78,23 @@
     to our diagram, with the optimizer states colored in green, opposed to the
     parameter's blue.</p>
 
-    <dsv3-anatomy style="min-height:732px" lens="param-bytes" optim layer="opt-diagram" detail controls="static" nocaption></dsv3-anatomy>
+    <dsv3-layer style="min-height:141px" snapshot comps="weights,optim"
+      from='{"world":2048,"pp":1,"ep":1,"zero":0}'
+      local cumulative lens="param-bytes" recipe="bf16" recompute="none" controls="static" detail
+      nocaption></dsv3-layer>
 
     <p><strong>Activations.</strong></p>
 
     <p><strong>Gradients.</strong></p>
 
-    <dsv3-anatomy style="min-height:797px" lens="param-bytes" consolidated strips="absolute" recipe="bf16" layer="all-diagram" detail controls="static" nocaption></dsv3-anatomy>
+    <dsv3-layer style="min-height:141px" snapshot
+      from='{"world":2048,"pp":1,"ep":1,"zero":0}'
+      local cumulative lens="param-bytes" recipe="bf16" recompute="none" controls="static" detail
+      nocaption></dsv3-layer>
 
-    <p class="note">The consolidated per-block memory picture: weights (blue),
-    fp32 gradient accumulators (orange), optimizer states (green), and the
-    saved-for-backward activations of one 4096-token microbatch (amber, on the
-    wires where they live — like the activation-checkpointing diagram).
-    Colors match the memory-bar segments. Toggle components in the margin
-    legend.</p>
+    <p class="note">[snapshot beat: the full tally — weights, fp32 gradient
+    accumulators, optimizer states, and the saved activations of one
+    4096-token microbatch through all 61 layers (bf16, nothing recomputed).]</p>
 
     <dsv3-anatomy style="min-height:989px" lens="param-bytes" local cumulative recipe="bf16" recompute="none" layer="local-diagram" detail controls="static" nocaption></dsv3-anatomy>
 

@@ -1,4 +1,4 @@
-// @page studies/02-hopper-memory.html
+// @page studies/scratch-globals.html
 const l = document.getElementById('all-diagram');
 const plan = l.closest('.anat-grid').querySelector('dsv3-anatomy-plan');
 const embed = () => plan.querySelector('g[data-op="embed"]');

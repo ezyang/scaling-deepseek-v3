@@ -1,4 +1,4 @@
-// @page studies/02-hopper-memory.html
+// @page studies/scratch-globals.html
 // 02: optimizer-states diagram (lens=param-bytes optim)
 const layer = () => document.getElementById('opt-diagram');
 T.check('opt diagram exists', !!layer(), '');

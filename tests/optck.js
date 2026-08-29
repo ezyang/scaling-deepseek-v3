@@ -1,4 +1,4 @@
-// @page studies/02-hopper-memory.html
+// @page studies/scratch-globals.html
 // optim diagram: margin legend rows SOLO components; numbers track squares
 const layer = () => document.getElementById('opt-diagram');
 const dims = () => layer().querySelector('g[data-op="ffn_gate_up"] text.dims:not([text-anchor])')?.textContent.trim();

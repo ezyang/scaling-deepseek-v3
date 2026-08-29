@@ -1,4 +1,4 @@
-// @page studies/02-hopper-memory.html
+// @page studies/scratch-globals.html
 // consolidated ×58: cumulative grows everything (strips, chips, totals)
 const layer = () => document.getElementById('all-diagram');
 const dia = () => layer().querySelector('.lv-scroll svg');

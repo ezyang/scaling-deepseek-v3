@@ -1,4 +1,4 @@
-// @page studies/02-hopper-memory.html
+// @page studies/scratch-globals.html
 // Scenario: the per-block / ×N-blocks (cumulative) toggle on 02's bytes diagram
 const layer = () => document.getElementById('diagram');
 const cumBtn = () => [...layer().parentElement.querySelectorAll('button')]

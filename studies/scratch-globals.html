@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>scratch: the global-tally diagrams (moved out of 02)</title>
+  <link rel="stylesheet" href="./study.css">
+</head>
+
+<body>
+  <main>
+    <h1>scratch: the global-tally diagrams</h1>
+    <p class="note">The three whole-model diagrams 02 used to open with —
+      parameters (byte lens), + optimizer states, and the consolidated picture
+      with wire-chip activations. 02 now tells that story with bar-only
+      snapshots; these instances live on so the diagram variants (and their
+      interaction tests) stay exercised. May return to a post as the
+      "how the bars map onto the model" figure.</p>
+
+    <dsv3-anatomy style="min-height:752px" tally lens="param-bytes" strips="absolute" layer="diagram" detail controls="static" nocaption></dsv3-anatomy>
+
+    <dsv3-anatomy style="min-height:732px" lens="param-bytes" optim layer="opt-diagram" detail controls="static" nocaption></dsv3-anatomy>
+
+    <dsv3-anatomy style="min-height:797px" lens="param-bytes" consolidated strips="absolute" recipe="bf16" layer="all-diagram" detail controls="static" nocaption></dsv3-anatomy>
+  </main>
+  <script type="module">
+    import '../src/viewer.js';
+    import '../src/anatomy.js';
+  </script>
+</body>
+
+</html>

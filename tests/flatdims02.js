@@ -1,4 +1,4 @@
-// @page studies/02-hopper-memory.html
+// @page studies/scratch-globals.html
 // 02: param-bytes has no sizes toggle, values always multiplied; plan drops ×58 in cumulative
 const layer = () => document.getElementById('diagram');
 const btns = () => [...layer().parentElement.querySelectorAll('button')].map(b => b.textContent);

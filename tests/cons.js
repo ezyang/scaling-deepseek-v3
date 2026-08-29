@@ -1,4 +1,4 @@
-// @page studies/02-hopper-memory.html
+// @page studies/scratch-globals.html
 // 02 consolidated diagram: weights + grads + optimizer + activations band
 const layer = () => document.getElementById('all-diagram');
 T.check('exists', !!layer(), '');
