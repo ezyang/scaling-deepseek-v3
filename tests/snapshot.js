@@ -3,16 +3,24 @@
 // badges, solo picks the row, zero interactivity, sandbox link loads the
 // scenario into the full widget
 const snap = () => document.querySelector('dsv3-layer[sandbox]');   // the ZeRO beat
-// the three opening tally beats: weights · weights+optim · everything
+// the opening tally beats: weights · optim · acts · grads · everything
 const beats = () => [...document.querySelectorAll('dsv3-layer[snapshot]:not([sandbox])')];
-T.check('three tally beats render bars', beats().length === 3
+T.check('five tally beats render bars', beats().length === 5
   && beats().every(b => b.querySelector('.lv-bar svg') && !b.querySelector('.lv-scroll')), beats().length);
 T.check('beat 1: whole-model weights 1.22 TiB + breakdown', beats()[0].textContent.includes('weights1.22 TiB')
   && beats()[0].textContent.includes('· experts'), '');
 T.check('beat 2: optimizer soloed at 8 B/param, accordion open', beats()[1].textContent.includes('optimizer states4.88 TiB')
   && beats()[1].textContent.includes('· experts') && !/weights\d/.test(beats()[1].textContent), '');
-T.check('beat 3: all four components', ['weights', 'gradients', 'optimizer', 'activations', 'total']
-  .every(t => beats()[2].textContent.includes(t)), '');
+T.check('beat 3: activations soloed (no param accordion)', beats()[2].textContent.includes('activations ×1mb106.4 GiB')
+  && !beats()[2].textContent.includes('· experts'), '');
+T.check('beat 4: gradients soloed at fp32, accordion open', beats()[3].textContent.includes('gradients (fp32)2.44 TiB')
+  && beats()[3].textContent.includes('· experts'), '');
+T.check('beat 5: all four components, ALL param accordions open', ['weights', 'gradients', 'optimizer', 'activations', 'total']
+  .every(t => beats()[4].textContent.includes(t))
+  && [...beats()[4].querySelectorAll('text')].filter(t => t.textContent === '· experts').length === 3, '');
+// snapshots are figures: the card shrink-wraps (no full-width right slack)
+T.check('cards shrink-wrap their chart', beats().every(b =>
+  b.querySelector('.lv').getBoundingClientRect().width < 900), '');
 T.check('beats have no ghosts (no to= no baseline)',
   beats().every(b => !b.querySelector('.lv-bar')?.textContent.includes('saved:')), '');
 // the total is ALWAYS the full consolidated mass (stacked grey + shown):

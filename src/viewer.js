@@ -658,6 +658,8 @@ ${knobCss('.lv-head')}
 .lv svg { display: block; margin: 0 auto; }
 /* no scaling, ever: a diagram wider than its container scrolls horizontally */
 .lv-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+/* snapshots are figures: the card shrink-wraps its chart */
+dsv3-layer[snapshot] .lv { width: fit-content; max-width: 100%; }
 .lv-bar svg { display: block; margin: 2px 0 6px; max-width: 100%; height: auto; }
 .lv-bar { position: relative; }
 .lv-ruler { display: none; position: absolute; background: rgba(237, 161, 0, 0.12);
@@ -2567,9 +2569,17 @@ export class Dsv3Layer extends HTMLElement {
         if (steady.length === 1 && steady[0] < 3) { sIdx = steady[0]; subEase = 1 - tC; }
       }
       const parts2 = sIdx >= 0 ? this._segParts[sIdx] : null;
-      const partIdxs = parts2 ? [0, 1, 2].filter((k) => parts2[k] > 0) : [];
-      const subHTot = partIdxs.length * rowH * subEase;
-      const yOf = (i) => topY + i * rowH + (sIdx >= 0 && i > sIdx ? subHTot : 0) + (i === nR - 1 ? 4 : 0);
+      // which param rows ride with their breakdown OPEN: the solo (tweened),
+      // or — snapshot 'parts' — every visible param component at once
+      const openRows = this.hasAttribute('snapshot') && this.hasAttribute('parts')
+        ? [0, 1, 2].filter((j) => onB[j]) : sIdx >= 0 ? [sIdx] : [];
+      const easeOf = (j) => j === sIdx ? subEase : 1;
+      const partIdxsOf = (j) => [0, 1, 2].filter((k) => (this._segParts[j] ?? [])[k] > 0);
+      const partIdxs = parts2 ? partIdxsOf(sIdx) : [];
+      const subHOf = (j) => partIdxsOf(j).length * rowH * easeOf(j);
+      const subAbove = (i) => openRows.reduce((t2, j) => t2 + (j < i ? subHOf(j) : 0), 0);
+      const subHTot = openRows.reduce((t2, j) => t2 + subHOf(j), 0);
+      const yOf = (i) => topY + i * rowH + subAbove(i) + (i === nR - 1 ? 4 : 0);
       const axisY = topY + nR * rowH + subHTot + 5 + 4;
       const B = [`<text class="grplabel" x="2" y="9">this rank, whole stage (logarithmic):</text>`];
       // unit swatch legend floats right in the header
@@ -2633,22 +2643,22 @@ export class Dsv3Layer extends HTMLElement {
         // hidden components show none
         if (r.on) B.push(`<text class="dims" x="${(px(r.b) + 5).toFixed(1)}" y="${y2 + 7}">` +
           `${fmtBytes(r.abs)}${pin ? facBadge(r.abs, pinB) : ''}</text>`);
-        // the accordion sub-rows open right below the soloed row
-        if (i === sIdx && partIdxs.length && subEase > 0.02) {
+        // the accordion sub-rows open right below their component's row
+        if (openRows.includes(i) && partIdxsOf(i).length && easeOf(i) > 0.02) {
           const prevParts = V ? partsFor(V.prev) : null;
           const names2 = ['experts', 'non-expert', 'vocab'];
-          for (const [k3, k2] of partIdxs.entries()) {
-            const now2 = parts2[k2];
-            const bT = prevParts ? geo(prevParts[sIdx][k2], now2, V.t) : now2;
-            const yS = topY + (sIdx + 1) * rowH + k3 * rowH * subEase + 2;
-            const pinP = pin?.parts?.[sIdx]?.[k2];
-            const pOp = subEase * (0.4 + 0.6 * pvis(k2));   // dim unselected parts
+          for (const [k3, k2] of partIdxsOf(i).entries()) {
+            const now2 = this._segParts[i][k2];
+            const bT = prevParts ? geo(prevParts[i][k2], now2, V.t) : now2;
+            const yS = yOf(i) + rowH + k3 * rowH * easeOf(i) + 2;
+            const pinP = pin?.parts?.[i]?.[k2];
+            const pOp = easeOf(i) * (0.4 + 0.6 * (i === sIdx ? pvis(k2) : 1));   // dim unselected parts
             B.push(`<g opacity="${pOp.toFixed(3)}" data-part="${k2}" style="cursor:pointer">` +
               `<rect x="0" y="${(yS - 2).toFixed(1)}" width="${x0 - 4}" height="${rowH - 2}" fill="transparent"/>` +
               `<text class="dims" x="12" y="${(yS + 5.5).toFixed(1)}">· ${names2[k2]}</text>` +
-              `<rect x="${x0}" y="${yS.toFixed(1)}" width="${Math.max(0.5, px(bT) - x0).toFixed(1)}" height="5" fill="${colors[sIdx]}" opacity="0.55"/>` +
+              `<rect x="${x0}" y="${yS.toFixed(1)}" width="${Math.max(0.5, px(bT) - x0).toFixed(1)}" height="5" fill="${colors[i]}" opacity="0.55"/>` +
               (pinP ? `<rect x="${x0}" y="${yS.toFixed(1)}" width="${Math.max(0.5, px(pinP) - x0).toFixed(1)}" height="5" ` +
-                `fill="none" stroke="${colors[sIdx]}" stroke-width="1" stroke-dasharray="2 2" opacity="0.7"/>` : '') +
+                `fill="none" stroke="${colors[i]}" stroke-width="1" stroke-dasharray="2 2" opacity="0.7"/>` : '') +
               `<text class="dims" x="${(px(bT) + 5).toFixed(1)}" y="${(yS + 5.5).toFixed(1)}">${fmtBytes(now2)}${pin ? facBadge(now2, pinP) : ''}</text></g>`);
           }
         }
@@ -2664,7 +2674,9 @@ export class Dsv3Layer extends HTMLElement {
       B.splice(1, 0, `<rect x="${cx2.toFixed(1)}" y="${topY - 2}" width="${(x0 + bw - cx2).toFixed(1)}" ` +
         `height="${axisY - topY - 1}" fill="#0b0b0b" opacity="0.07"/>`);
       B.push(`<text class="dims" x="${cx2.toFixed(1)}" y="9" text-anchor="middle">80 GiB (H100)</text>`);
-      const HB = axisY + 22;   // the pinned-label line is always reserved (no reflow on pin)
+      // the pinned-label line is always reserved (no reflow on pin) — except
+      // in pinless snapshots, which are static figures with nothing to reserve
+      const HB = axisY + (this.hasAttribute('snapshot') && !pin ? 10 : 22);
       this._barHtml = `<svg width="${BAR_GEO.w}" height="${HB}" viewBox="0 0 ${BAR_GEO.w} ${HB}">${B.join('')}</svg>`;
     }
     if (SCOPE === 'model') {   // the surrounding stack: ×61 rule, final norm, lm head, loss
