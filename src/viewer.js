@@ -2534,12 +2534,8 @@ export class Dsv3Layer extends HTMLElement {
       // solo it becomes a stacked bar — grey "other" base + the highlighted
       // component on top — so the visible colored width IS the factor you
       // could gain by optimizing only that component.
-      // snapshot comps= beats tell an ADDITIVE tally story: their total is
-      // the sum of the components shown so far — nothing is soloed, the
-      // hidden ones simply haven't been introduced yet (no grey "other")
-      const SNAPC = this.hasAttribute('snapshot') && this.hasAttribute('comps');
-      const totalN = nowB.reduce((t, b, i) => t + b * (SNAPC ? onB[i] : 1), 0);   // labels snap
-      const totalT = allB.reduce((a, b2, i) => a + b2 * (SNAPC ? onB[i] : 1), 0); // lerped
+      const totalN = nowB.reduce((t, b) => t + b, 0);               // labels snap (full total)
+      const totalT = allB.reduce((a, b2) => a + b2, 0);             // lerped (full total)
       const otherT = allB.reduce((a, b2, i) => a + b2 * (1 - vis[i]), 0);
       // UNSTACKED rows on a FIXED log₂ axis; the row labels are the legend
       // (names in the gutter, click to solo) and the ABSOLUTE values sit at
@@ -2603,7 +2599,7 @@ export class Dsv3Layer extends HTMLElement {
             const a1 = px(acc); acc += allB[j];
             B.push(`<rect x="${(a1 + 1).toFixed(1)}" y="${y2}" width="${Math.max(0.5, px(acc) - a1 - 1).toFixed(1)}" height="${barH}" fill="${colors[j]}" opacity="${(1 - tC).toFixed(3)}"/>`);
           }
-        } else if (i === nR - 1 && !SNAPC && !allOnTarget && totalT - topSum > totalT * 0.001) {
+        } else if (i === nR - 1 && !allOnTarget && totalT - topSum > totalT * 0.001) {
           // stacked total: grey "other" base, then ONLY the target-on
           // components (a departing component's share folds into the grey
           // mid-tween — no four-color flash); the colored width is the gain
