@@ -3369,8 +3369,8 @@ class Dsv3BeatDeck extends HTMLElement {
     const style = document.createElement('style'); style.textContent = DECK_CSS;
     const nav = el('div', 'deck-nav');
     const btn2 = (t, cls) => { const b = document.createElement('button'); b.textContent = t; b.className = cls; return b; };
-    this._first = btn2('|‹', 'deck-first'); this._prev = btn2('‹ back', 'deck-prev');
-    this._next = btn2('next ›', 'deck-next'); this._last = btn2('›|', 'deck-last');
+    this._first = btn2('« start', 'deck-first'); this._prev = btn2('‹ back', 'deck-prev');
+    this._next = btn2('next ›', 'deck-next'); this._last = btn2('end »', 'deck-last');
     this._ind = el('span', 'deck-step');
     this._hyp = el('span', 'deck-hyp');   // hypothetical callout: lives in the FIXED nav row
     nav.append(this._first, this._prev, this._ind, this._next, this._last, this._hyp);
