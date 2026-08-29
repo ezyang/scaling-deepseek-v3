@@ -10,8 +10,15 @@ T.check('zero findings', findings.length === 0, findings.slice(0, 4).join(' | ')
 T.check('exact values present', document.querySelectorAll('.lv-bar text[data-true]').length > 30, '');
 T.check('badges audited (the ZeRO beat has pins)',
   [...document.querySelectorAll('.lv-bar text[data-pin]')].some(t => t.dataset.pin !== ''), '');
-// the audit CATCHES a lie: corrupt one exact value and re-run
+// the audit CATCHES lies: corrupt an exact value (rounding + bar-edge fire),
+// then a sub-row value (the decomposition-sum implication fires)
 const v = document.querySelector('.lv-bar text[data-role^="val:"]');
+const orig = v.dataset.true;
 v.dataset.true = String(Math.round(+v.dataset.true * 3));
 T.check('a corrupted value is caught', auditFitCharts(document).findings.length > 0, '');
+v.dataset.true = orig;
+const p2 = document.querySelector('.lv-bar text[data-role^="val:part:"]');
+p2.dataset.true = String(+p2.dataset.true + 4096);
+const f2 = auditFitCharts(document).findings;
+T.check('a decomposition lie is caught', f2.some(m => m.includes('decomposition')), f2[0]);
 T.done();

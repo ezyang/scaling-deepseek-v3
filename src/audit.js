@@ -1,15 +1,25 @@
-// Visual audit: what the fit chart SHOWS must be re-derivable from what the
-// model COMPUTED. Every rendered number carries its exact value (data-true,
-// plus data-pin for badges) and a role; every plain bar and ghost carries the
-// value its pixels encode. This module replays the rendering rules — rounding
-// (fmtBytes), badge factors (facNum), sums, and log-axis geometry — and
-// reports every disagreement. Displayed digits alone CANNOT be audited: the
-// rounded components legitimately don't sum to the rounded total (1.22 + 2.44
-// + 4.88 TiB + 106.4 GiB reads 8.64, the true total rounds to 8.65), so the
-// audit runs on the exact values and checks the rounding separately.
-import { fmtBytes, facNum, BAR_GEO, ppStage } from './viewer.js';
-import { PARAMS } from './params.js';
-import { DSV3 } from './model.js';
+// Visual audit: the audit keys on the VISUAL LANGUAGE, never on the model.
+// Whenever the chart draws a pattern, the pattern IMPLIES arithmetic, and the
+// implication is checked against the exact values (data-true / data-pin)
+// linked behind the rendered numbers. The vocabulary (see the semantic-
+// implications section of docs/diagram-grammar.md):
+//
+//   1. a rendered value IS its exact value, rounded: text == fmtBytes(data-true)
+//   2. a bar with a value at its end: the rightmost solid edge on the row
+//      sits at px(value) — one rule covers plain AND stacked bars (a stack's
+//      top segment must end at the total it claims)
+//   3. a dashed twin (ghost) implies a saved baseline: its edge sits at
+//      px(data-pin), and the row's ▲/▼×N badge equals the exact ratio
+//   4. an indented '· name' row beneath a row is a DECOMPOSITION: the
+//      children sum EXACTLY to their parent (rendered digits can't be
+//      summed — correctly-rounded parts don't add up to the rounded parent)
+//
+// Deliberately absent: any re-derivation of the model. Model identities (the
+// stage split partitions the checkpoint-exact total; params vs the released
+// checkpoint) live in scripts/sanity.mjs. The audit proves the RENDERING
+// tells one coherent story; sanity proves the model tells the true one;
+// data-true is the bridge between them.
+import { fmtBytes, facNum, BAR_GEO } from './viewer.js';
 
 export function auditFitCharts(root = document) {
   const out = [];
@@ -24,64 +34,57 @@ export function auditFitCharts(root = document) {
       || (host.hasAttribute('parts') ? 'parts' : `chart${charts}`);
     const bad = (msg) => out.push(`${id}: ${msg}`);
 
-    // 1) rounding + 2) badges: the label is fmtBytes(true) + the exact factor
-    for (const t of svg.querySelectorAll('text[data-role^="val:"]')) {
+    const vals = [...svg.querySelectorAll('text[data-role^="val:"]')];
+    const bars = [...svg.querySelectorAll('rect')].filter((r) => {
+      const h = +r.getAttribute('height');
+      return (h === 8 || h === 5) && +r.getAttribute('width') > 0;   // bars, not hitboxes/shading
+    });
+    const onRow = (t, r) => Math.abs((+r.getAttribute('y') + +r.getAttribute('height') / 2)
+      - (+t.getAttribute('y') - 2.5)) < 5;
+
+    for (const t of vals) {
       const b = +t.dataset.true, pinB = +(t.dataset.pin || 0);
-      const shown = t.textContent;
-      if (!shown.startsWith(fmtBytes(b)))
-        bad(`${t.dataset.role} shows "${shown}" but ${b} rounds to "${fmtBytes(b)}"`);
-      const badge = shown.slice(fmtBytes(b).length).trim();
+      // 1) the rendered number is its exact value, rounded
+      if (!t.textContent.startsWith(fmtBytes(b)))
+        bad(`${t.dataset.role} shows "${t.textContent}" but ${b} rounds to "${fmtBytes(b)}"`);
+      // 3a) the ▲/▼ badge is the exact ratio vs the saved value
+      const badge = t.textContent.slice(fmtBytes(b).length).trim();
       const want = !pinB || !b || Math.abs(Math.log2(b / pinB)) < 0.05 ? ''
         : b > pinB ? `▲×${facNum(b / pinB)}` : `▼×${facNum(pinB / b)}`;
       if (badge !== want) bad(`${t.dataset.role} badge "${badge}" ≠ recomputed "${want}"`);
-    }
-
-    // 3) sums, on the EXACT values: total = Σ components (gutter names carry
-    // every row's value, visible or dimmed), component = Σ its open parts
-    const nameOf = (r) => svg.querySelector(`text[data-role="name:${r}"]`);
-    // snapshots drop off-components' rows, so the sum is only checkable when
-    // all four are present (conservation below covers completeness anyway)
-    if (nameOf('total') && [0, 1, 2, 3].every((i) => nameOf(i))) {
-      const comps = [0, 1, 2, 3].map((i) => +nameOf(i).dataset.true);
-      const total = +nameOf('total').dataset.true;
-      const sum = comps.reduce((a, b) => a + b, 0);
-      if (Math.abs(sum - total) > total * 1e-9)
-        bad(`total ${total} ≠ Σ components ${sum}`);
-      for (let i = 0; i < 4; i++) {
-        const parts = [...svg.querySelectorAll(`text[data-role^="val:part:${i}:"]`)];
-        if (!parts.length) continue;
-        const psum = parts.reduce((a, t) => a + +t.dataset.true, 0);
-        // parts render only when > 0; a skipped part contributes exactly 0
-        if (Math.abs(psum - comps[i]) > comps[i] * 1e-9)
-          bad(`comp ${i} = ${comps[i]} ≠ Σ open parts ${psum}`);
+      // pair this value with the bars drawn on ITS row — pure geometry
+      const row = bars.filter((r) => onRow(t, r));
+      const solid = row.filter((r) => !r.getAttribute('stroke-dasharray'));
+      const dashed = row.filter((r) => r.getAttribute('stroke-dasharray'));
+      // 2) the rightmost solid edge sits at px(value) — plain or stacked
+      if (solid.length && b > 0) {
+        const edge = Math.max(...solid.map((r) => +r.getAttribute('x') + +r.getAttribute('width')));
+        if (Math.abs(edge - px(b)) > 1.6)   // stacked segments carry ±1px seams
+          bad(`${t.dataset.role} bar edge ${edge.toFixed(1)} ≠ px(${b}) = ${px(b).toFixed(1)}`);
+      }
+      // 3b) a dashed twin means a saved baseline drawn at px(saved)
+      for (const g of dashed) {
+        const edge = +g.getAttribute('x') + +g.getAttribute('width');
+        if (!pinB) bad(`${t.dataset.role} has a ghost but no saved value to imply`);
+        else if (Math.abs(edge - px(pinB)) > 0.6)
+          bad(`${t.dataset.role} ghost edge ${edge.toFixed(1)} ≠ px(saved ${pinB}) = ${px(pinB).toFixed(1)}`);
       }
     }
 
-    // 3b) conservation: internal consistency can't catch an UNDERCOUNT (the
-    // rows and their parts share one decomposition), so re-derive it: summed
-    // over all stages of this chart's split, expert + non-expert + vocab
-    // params must equal the checkpoint-exact total — every RMSNorm, router
-    // bias, and the final norm included, nothing dropped, nothing doubled
-    if (host.hasAttribute('local')) {
-      const pp = host.pp ?? 1, vpp = host.vpp ?? 1, fold = host.fold ?? 'reflect';
-      const moeExp = PARAMS.expert * DSV3.routedExperts;
-      let t2 = 0;
-      for (let s2 = 0; s2 < pp; s2++) {
-        const g = ppStage(s2, pp, vpp, fold);
-        t2 += g.dense * PARAMS.denseBlock + g.moe * (PARAMS.moeBlock - moeExp) + g.moe * moeExp
-          + ((g.emb ? 1 : 0) + (g.head ? 1 : 0)) * PARAMS.embed + (g.head ? DSV3.hidden : 0);
-      }
-      if (t2 !== PARAMS.total)
-        bad(`conservation: Σ stages ${t2} ≠ model total ${PARAMS.total}`);
-    }
-
-    // 4) geometry: a bar's pixels must encode the same number as its label
-    // (0.15 = the .toFixed(1) print grid; 0.5 = the min sliver for tiny values)
-    for (const r of svg.querySelectorAll('rect[data-bar], rect[data-ghost]')) {
-      const b = +r.dataset.true;
-      const wantW = Math.max(0.5, px(b) - BAR_GEO.x0);
-      if (Math.abs(+r.getAttribute('width') - wantW) > 0.15)
-        bad(`${r.dataset.bar ?? 'ghost:' + r.dataset.ghost} bar width ${r.getAttribute('width')} ≠ log₂(${b}) → ${wantW.toFixed(1)}`);
+    // 4) decomposition: the '· name' rows below a row sum exactly to it —
+    // the indent IS the claim; which rows are children comes from layout
+    const names = [...svg.querySelectorAll('text[data-role^="name:"]')]
+      .sort((a2, b2) => +a2.getAttribute('y') - +b2.getAttribute('y'));
+    const parts = vals.filter((t) => t.dataset.role.startsWith('val:part:'));
+    for (const [ni, nm] of names.entries()) {
+      const y = +nm.getAttribute('y');
+      const nextY = +(names[ni + 1]?.getAttribute('y') ?? Infinity);
+      const kids = parts.filter((t) => +t.getAttribute('y') > y && +t.getAttribute('y') < nextY);
+      if (!kids.length) continue;
+      const parent = +nm.dataset.true;
+      const sum = kids.reduce((a2, t) => a2 + +t.dataset.true, 0);
+      if (Math.abs(sum - parent) > parent * 1e-9)
+        bad(`decomposition under "${nm.textContent}": Σ children ${sum} ≠ ${parent}`);
     }
   }
   return { charts, findings: out };

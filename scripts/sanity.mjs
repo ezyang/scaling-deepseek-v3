@@ -132,6 +132,31 @@ const solo = simulate({ level: 1, refinements: { epComm: true } });
 check('a2a toggles on without pipeline', solo.trace.ranks.some(r => r.tracks.some(t => t.name === 'a2a')),
   `step ${fmtUs(solo.stats.stepUs)}`);
 
+// conservation: the local-lens stage split (viewer.js ppStage — the same
+// decomposition every fit chart renders from) must PARTITION the
+// checkpoint-exact parameter total for every schedule geometry: nothing
+// dropped (final norm, block norms), nothing doubled (DualPipeV puts embed
+// AND head on rank 0). The visual audit (src/audit.js) deliberately never
+// re-derives the model — this is where that identity is enforced.
+globalThis.HTMLElement = class {};   // viewer.js defines custom elements; the math exports are DOM-free
+const { ppStage } = await import('../src/viewer.js');
+{
+  const moeExp = PARAMS.expert * DSV3.routedExperts;
+  let worst = null;
+  for (const pp of [1, 2, 4, 8, 16, 32, 64])
+    for (const vpp of [1, 2, 4])
+      for (const fold of ['reflect', 'wrap']) {
+        let t = 0;
+        for (let s2 = 0; s2 < pp; s2++) {
+          const g = ppStage(s2, pp, vpp, fold);
+          t += g.dense * PARAMS.denseBlock + g.moe * (PARAMS.moeBlock - moeExp) + g.moe * moeExp
+            + ((g.emb ? 1 : 0) + (g.head ? 1 : 0)) * PARAMS.embed + (g.head ? DSV3.hidden : 0);
+        }
+        if (t !== PARAMS.total) worst = `pp${pp}·vpp${vpp}·${fold}: ${t}`;
+      }
+  check('stage split partitions the exact total (42 geometries)', worst === null, worst ?? PARAMS.total.toLocaleString('en-US'));
+}
+
 function check(name, ok, detail) {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}  (${detail})`);
   if (!ok) process.exitCode = 1;

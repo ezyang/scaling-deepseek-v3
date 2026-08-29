@@ -68,20 +68,21 @@ double-counted anywhere in the figure); supports `highlightOps`.
 
 ## The visual audit (src/audit.js)
 
-Every number the fit chart renders carries its EXACT value (`data-true`, plus
-`data-pin` where a badge compares to a save) and a role; plain bars and
-ghosts carry the value their pixels encode. `auditFitCharts(document)`
-replays the rendering rules and reports disagreements: (1) the label string
-must equal `fmtBytes(data-true)`; (2) the ▲/▼ badge must equal the recomputed
-exact factor (`facNum`); (3) total = Σ components and component = Σ open
-accordion parts, EXACTLY — the displayed digits alone can't be audited, since
-correctly-rounded components legitimately don't sum to the rounded total;
-(4) a bar's width must equal the log₂ position of its own value (±0.15, the
-print grid). Battery scenarios tests/audit.js (02's seven charts, plus a
-corruption canary proving the audit can fail) and tests/auditbars.js (after
-saves, knob turns, and solos). Vision/LLM checks stay out of the battery —
-they'd need rounding tolerances loose enough to miss real bugs; the exact
-values are strictly stronger for arithmetic.
+The audit keys on the VISUAL LANGUAGE, never the model: each pattern the
+chart draws implies arithmetic (the semantic-implications table in
+docs/diagram-grammar.md), detected from geometry and checked against the
+exact values linked behind the rendered numbers (`data-true`, `data-pin`).
+Rendered value == fmtBytes(true); a row's rightmost solid bar edge sits at
+px(value) (covers stacked bars); a dashed ghost sits at px(saved) and the
+▲/▼ badge is the exact ratio; indented `· name` rows sum exactly to their
+parent (rounded digits can't be summed). Model identities are deliberately
+NOT re-derived here — the stage-split-partitions-the-exact-total check
+(catches dropped norms / doubled vocab across all 42 schedule geometries)
+lives in scripts/sanity.mjs; `data-true` is the bridge. Battery scenarios:
+tests/audit.js (02's charts + a corruption canary proving the audit can
+fail), tests/auditbars.js (after saves, knob turns, solos). Vision/LLM
+checks stay out of the battery — rounding-tolerant OCR is strictly weaker
+than exact values for arithmetic.
 
 ## `<dsv3-pp-schedule layer=…>` — the pipeline-schedule strip
 

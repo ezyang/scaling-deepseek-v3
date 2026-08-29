@@ -71,3 +71,23 @@ The useful abstraction is NOT a general graph-layout engine. The candidate
 primitives, if we ever extract them: `column(spine)`, `seq(op…)`,
 `fork(dot)`, `bypass(rail, rejoinAt)`, `alignWith(otherRow)`, `outputChip`,
 `auxOut`, `reserveWorstCase`. Until then, the linter is the contract.
+
+## Semantic implications (the visual audit's contract)
+
+The geometric grammar above says how things LOOK; these rules say what a
+pattern CLAIMS. Every rendered number links its exact value (`data-true`,
+plus `data-pin` when compared against a save); `src/audit.js` detects each
+pattern from geometry and checks its implication against those exact values
+— it never re-derives the model (model identities live in scripts/sanity.mjs;
+the two meet only at `data-true`).
+
+| pattern (fit chart) | implication |
+|---|---|
+| a rendered value | equals `fmtBytes(data-true)` — rounding is the ONLY gap between shown and true |
+| a bar with a value at its end | the rightmost solid edge on the row sits at `px(value)` on the log axis (a stacked bar's top segment ends at the total it claims) |
+| a dashed twin (ghost) on a row | a saved baseline exists; the ghost's edge sits at `px(saved)` and the row's ▲/▼×N badge is the exact live-vs-saved ratio |
+| indented `· name` rows under a row | a decomposition: the children sum EXACTLY to the parent (rendered digits can't be summed — correctly-rounded parts don't add to the rounded parent) |
+
+New visual patterns must register their implication here and in the audit —
+a pattern with no implication is decoration, and an implication with no
+pattern is a lie the reader can't see.
