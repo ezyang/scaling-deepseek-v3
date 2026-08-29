@@ -2604,8 +2604,11 @@ export class Dsv3Layer extends HTMLElement {
       const vis = [...COMPS.map((c) => cmult(c.prop)), cmult('showActs')];
       // GEOMETRIC interpolation: on a log axis, uniform motion means lerping
       // the exponent, not the bytes (linear byte lerp lurches then crawls)
-      const geo = (a, b, t) => a > 0 && b > 0
-        ? 2 ** ((1 - t) * Math.log2(a) + t * Math.log2(b)) : a + (b - a) * t;
+      // appearing/dying bars lerp from/to the AXIS FLOOR (2^lo), never an
+      // epsilon: the axis clamps below 2^lo, so a lerp from ~1 byte parks the
+      // bar at zero for most of the tween and pops it at the end
+      const MINB = 2 ** BAR_GEO.lo;
+      const geo = (a, b, t) => 2 ** ((1 - t) * Math.log2(Math.max(a, MINB)) + t * Math.log2(Math.max(b, MINB)));
       const allB = nowB.map((b, i) => geo(prevB[i], b, V ? V.t : 1));   // knob-tweened, visibility-independent
       const segs = allB.map((b, i) => b * vis[i]);
       const colors = [...COMPS.map((c) => c.color), '#eda100'];
@@ -2753,7 +2756,7 @@ export class Dsv3Layer extends HTMLElement {
           const clickable = i < 3;
           for (const [k3, k2] of partIdxsOf(i).entries()) {
             const now2 = this._segParts[i][k2];
-            const bT = prevParts ? geo(prevParts[i][k2] || 1, now2 || 1, V.t) : now2;
+            const bT = prevParts ? geo(prevParts[i][k2], now2, V.t) : now2;
             const yS = yOf(i) + rowH + k3 * rowH * easeOf(i) + 2;
             const pinP0 = pin?.parts?.[i]?.[k2];
             const pinP = pinP0 && Math.abs(Math.log2((now2 || 1) / pinP0)) >= 0.05 ? pinP0 : 0;
