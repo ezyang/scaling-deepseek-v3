@@ -859,7 +859,9 @@ export class Dsv3Layer extends HTMLElement {
   // steady under headless/virtual time). onFrame(t) mutates the tween state,
   // then the widget re-renders; done() clears it.
   _frames(onFrame, done) {
-    const FRAMES = 12; let f = 0;
+    // 12 frames (~200 ms) for knob twiddling; hosts that NARRATE a change
+    // (the beat deck) set _tweenFrames higher so the pour reads as a story
+    const FRAMES = this._tweenFrames ?? 12; let f = 0;
     onFrame(0);
     const step = () => {
       f++; const p = Math.min(1, f / FRAMES);
@@ -3344,6 +3346,7 @@ class Dsv3BeatDeck extends HTMLElement {
     // the chart: a snapshot-mode layer (measure-only, no knobs, no URL state
     // of its own) that the deck drives programmatically
     const l = this._layer = document.createElement('dsv3-layer');
+    l._tweenFrames = 45;   // ~720 ms: slide transitions are watched, not operated
     for (const [k, v] of [['snapshot', ''], ['local', ''], ['cumulative', ''], ['lens', 'param-bytes'],
       ['recipe', 'bf16'], ['recompute', 'none'], ['controls', 'static'], ['detail', ''], ['nocaption', '']])
       l.setAttribute(k, v);

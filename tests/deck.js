@@ -9,17 +9,17 @@ const next = () => { deck().querySelector('.deck-nav button:last-of-type').click
 
 T.check('step 1 renders the debt', cap().includes('the debt') && bar().includes('total8.65 TiB'), '');
 T.check('back disabled at step 1', deck().querySelector('.deck-nav button').disabled, '');
-next(); await T.tick(500);
+next(); await T.tick(1000);
 T.check('step 2: pure DP — baseline saved, nothing moves', bar().includes('saved:')
   && !bar().includes('▼') && !bar().includes('▲'), '');
-next(); await T.tick(500);
+next(); await T.tick(1000);
 T.check('step 3: ZeRO-1 solo, ▼×2048', L().zero === 1 && bar().includes('▼×2048')
   && !/weights\d/.test(bar()), bar().slice(0, 120));
-next(); await T.tick(500);
+next(); await T.tick(1000);
 T.check('step 4: hypothetical ZeRO-2 — dashed card + tag', L().zero === 2
   && getComputedStyle(L().querySelector('.lv')).borderTopStyle === 'dashed'
   && L().querySelector('.lv-hyptag').textContent.includes('unsharded'), '');
-next(); await T.tick(600);
+next(); await T.tick(1000);
 T.check('step 5: EP64 — the hypothetical reverted, solid card', L().zero === 1 && L().ep === 64
   && getComputedStyle(L().querySelector('.lv')).borderTopStyle === 'solid', `zero ${L().zero}`);
 T.check('step 5 baseline is ZeRO-1 (skips the hypothetical)',
@@ -31,9 +31,9 @@ T.check('audit clean at step 5', auditFitCharts(deck()).findings.length === 0,
 // arrow keys navigate; backward snaps
 deck().dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true })); await T.tick(200);
 T.check('ArrowLeft goes back (snap)', L().zero === 2, '');
-deck().dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })); await T.tick(600);
+deck().dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })); await T.tick(1000);
 // walk to the end: the fit
-for (let i = 0; i < 6; i++) { next(); await T.tick(450); }
+for (let i = 0; i < 6; i++) { next(); await T.tick(1000); }
 T.check('final step: fits with headroom', cap().includes('destination')
   && L().querySelectorAll('.lv-bar text').length > 20, '');
 T.check('next disabled at the end', deck().querySelector('.deck-nav button:last-of-type').disabled, '');
