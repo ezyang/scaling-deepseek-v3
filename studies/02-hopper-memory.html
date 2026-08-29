@@ -34,43 +34,42 @@
     (same amount of memory as any H100), as we'll see, memory is pretty tight
     in this setting!</p>
 
-    The plan:
-
-    The meta-plan:
-    - How do I know the model is right?
-      - 01
-        - cross-check via official checkpoint parameter count
-        - cross-check via source code analysis of training codebases
-        - high level intuition what it should look like
+    TODO: describe the plan (after we've done it)
 
     <h2>What is memory used for in training?</h2>
 
     <p>While your exact memory usage depends on implementation details of your
     training framework, it's still possible to reason through what the major
-    consumers of memory will be: at a high level, you need to spend memory on
-    parameters, optimizer states, activations (saved for backwards) and
-    gradients.  Now, exactly how much memory you will need on a single GPU
-    depends on both parallelization choices (how we are distributing things
-    across ranks) as well as our direct memory adjustment knobs (activation
-    checkpointing, low precision).  But to keep things simple, let's
-    first work out the global (across all ranks) memory usage of DeepSeek-V3
-    training assuming everything in bfloat16 and no activation
+    consumers of memory will be.  Now, exactly how much memory you will need
+    on a single GPU depends on both parallelization choices (how we are
+    distributing things across ranks) as well as our direct memory adjustment
+    knobs (activation checkpointing, low precision).  But let's first set the
+    stage with a naive, global (across all ranks) memory accounting of
+    DeepSeek-V3 training assuming everything in bfloat16 and no activation
     checkpointing.</p>
 
-    <p><strong>Parameters.</strong>  In <a href="./01-deepseek-diagram.html">the
-    previous post</a>, we did a tally of DSv3's parameters.  If we assume
-    the parameters are bfloat16 (this is <em>not</em> a good assumption, but
-    we want to start somewhere), we can tally up the overall memory usage of
-    the entire model.</p>
+    <p><strong>Parameters.</strong>  In <a
+    href="./01-deepseek-diagram.html">the previous post</a>, we did a tally of
+    DSv3's parameters.  But because we are assuming the parameters are
+    bfloat16 (this is <em>not</em> a good assumption, but we want to start
+    somewhere), we can tally up the overall memory usage of the entire
+    model.</p>
 
-    <dsv3-layer style="min-height:165px" snapshot comps="weights"
+    <dsv3-layer style="min-height:129px" snapshot comps="weights"
       from='{"world":2048,"pp":1,"ep":1,"zero":0}'
       local cumulative lens="param-bytes" recipe="bf16" recompute="none" controls="static" detail
       nocaption></dsv3-layer>
 
-    <p class="note">[snapshot beat: the whole model's bf16 weights on one
-    (imaginary, giant) GPU, against the 80&nbsp;GiB an H100 actually has —
-    the shaded region is infeasible, and each gridline is exactly ×2.]</p>
+    <p>This bar chart needs some explanation.  Most notably, the x-axis is in
+    logarithmic scale, because many of the interventions we do involve
+    dividing a quantity by some factor: for example, when we distribute
+    parameters for expert parallelism, we'll divide the expert weights exactly
+    by the EP factor.  A log scale lets us express the change from applying
+    EP64 by shortening a bar by six ticks (each tick is a factor of two), no
+    matter what the original starting quantity was, and allows us to keep
+    a consistent x-scale across all the diagrams in this essay.</p>
+
+    <p>At the bottom of the chart 
 
     <p><strong>Optimizer states.</strong>  DeepSeek-V3 was trained with AdamW
     with bfloat16 first and second moment and float32 master weights.  This means
@@ -78,14 +77,14 @@
     to our diagram, with the optimizer states colored in green, opposed to the
     parameter's blue.</p>
 
-    <dsv3-layer style="min-height:165px" snapshot solo="optim"
+    <dsv3-layer style="min-height:129px" snapshot solo="optim"
       from='{"world":2048,"pp":1,"ep":1,"zero":0}'
       local cumulative lens="param-bytes" recipe="bf16" recompute="none" controls="static" detail
       nocaption></dsv3-layer>
 
     <p><strong>Activations.</strong></p>
 
-    <dsv3-layer style="min-height:129px" snapshot solo="acts"
+    <dsv3-layer style="min-height:93px" snapshot solo="acts"
       from='{"world":2048,"pp":1,"ep":1,"zero":0}'
       local cumulative lens="param-bytes" recipe="bf16" recompute="none" controls="static" detail
       nocaption></dsv3-layer>
@@ -96,7 +95,7 @@
 
     <p><strong>Gradients.</strong></p>
 
-    <dsv3-layer style="min-height:165px" snapshot solo="grads"
+    <dsv3-layer style="min-height:129px" snapshot solo="grads"
       from='{"world":2048,"pp":1,"ep":1,"zero":0}'
       local cumulative lens="param-bytes" recipe="bf16" recompute="none" controls="static" detail
       nocaption></dsv3-layer>
@@ -161,7 +160,7 @@
     <em>s</em> has admitted PP−<em>s</em> forwards whose backwards haven't
     arrived yet — the in-flight law the diagram charges for.</p>
 
-    <dsv3-layer style="min-height:184px" snapshot solo="optim" sandbox="local-diagram"
+    <dsv3-layer style="min-height:148px" snapshot solo="optim" sandbox="local-diagram"
       from='{"world":2048,"pp":16,"ep":64,"zero":0}' to='{"zero":1}'
       local cumulative lens="param-bytes" recipe="bf16" recompute="none" controls="static" detail
       nocaption></dsv3-layer>
@@ -352,6 +351,21 @@
       of models that are tweaking arch sizes like hidden
     - Stretch: understand why things like TP/ETP are inapplicable (how come we
       don't need to model CP here?)
+
+
+    The plan:
+
+    The meta-plan:
+    - How do I know the model is right?
+      - 01
+        - cross-check via official checkpoint parameter count
+        - cross-check via source code analysis of training codebases
+        - high level intuition what it should look like
+      - 02
+        - every piece of the model is examinable, no magic. complexity is
+          explained
+        - a clear visual audit rule for every diagram (pull all these numbers,
+          and then other numbers are related in this way)
     </pre>
 
 

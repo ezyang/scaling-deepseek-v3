@@ -61,8 +61,10 @@ T.check('baseline label names the from config', txt().includes('saved: EP64·PP1
 // zero-1 shards optimizer over DP=128: a bold ▼×128 badge on the optim row
 T.check('optimizer shrink badge ▼×128', txt().includes('▼×128'), txt().slice(0, 160));
 T.check('ghost bars drawn', bar().querySelectorAll('rect[stroke-dasharray]').length > 0, '');
-// solo="optim": weights/grads rows dimmed name-only (no value), total stacked
-T.check('solo: weights row has no value', txt().includes('weightsgradients (fp32)optimizer'), '');
+// solo="optim": the off components' rows are GONE (a dimmed unclickable
+// name is a dead affordance in a figure); total keeps the full mass
+T.check('solo: no weights/grads/acts rows at all', !txt().includes('weights')
+  && !txt().includes('gradients') && txt().includes('optimizer states'), '');
 T.check('total row present', txt().includes('total'), '');
 // snapshots keep no URL state
 T.check('no snapshot URL state', !location.hash.includes('l:layer'), location.hash);

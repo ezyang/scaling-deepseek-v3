@@ -39,8 +39,10 @@ export function auditFitCharts(root = document) {
     // 3) sums, on the EXACT values: total = Σ components (gutter names carry
     // every row's value, visible or dimmed), component = Σ its open parts
     const nameOf = (r) => svg.querySelector(`text[data-role="name:${r}"]`);
-    if (nameOf('total')) {
-      const comps = [0, 1, 2, 3].map((i) => +(nameOf(i)?.dataset.true ?? 0));
+    // snapshots drop off-components' rows, so the sum is only checkable when
+    // all four are present (conservation below covers completeness anyway)
+    if (nameOf('total') && [0, 1, 2, 3].every((i) => nameOf(i))) {
+      const comps = [0, 1, 2, 3].map((i) => +nameOf(i).dataset.true);
       const total = +nameOf('total').dataset.true;
       const sum = comps.reduce((a, b) => a + b, 0);
       if (Math.abs(sum - total) > total * 1e-9)

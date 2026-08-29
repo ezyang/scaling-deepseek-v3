@@ -2596,8 +2596,14 @@ export class Dsv3Layer extends HTMLElement {
       const subHOf = (j) => partIdxsOf(j).length * rowH * easeOf(j);
       const subAbove = (i) => openRows.reduce((t2, j) => t2 + (j < i ? subHOf(j) : 0), 0);
       const subHTot = openRows.reduce((t2, j) => t2 + subHOf(j), 0);
-      const yOf = (i) => topY + i * rowH + subAbove(i) + (i === nR - 1 ? 4 : 0);
-      const axisY = topY + nR * rowH + subHTot + 5 + 4;
+      // snapshots drop the off components' rows outright — a dimmed name you
+      // can't click is a dead affordance in a figure (interactive views keep
+      // them: they're the solo/restore legend). The total keeps full mass.
+      const SNAP2 = this.hasAttribute('snapshot');
+      let vp = 0;
+      const posOf = rowsB.map((r2, i2) => SNAP2 && !r2.on && i2 !== nR - 1 ? -1 : vp++);
+      const yOf = (i) => topY + posOf[i] * rowH + subAbove(i) + (i === nR - 1 ? 4 : 0);
+      const axisY = topY + vp * rowH + subHTot + 5 + 4;
       const B = [`<text class="grplabel" x="2" y="9">this rank, whole stage (logarithmic):</text>`];
       // unit swatch legend floats right in the header
       B.push(`<rect x="${x0 + bw - 96}" y="3" width="5" height="4" fill="#898781"/>` +
@@ -2607,6 +2613,7 @@ export class Dsv3Layer extends HTMLElement {
       for (const [e, lab] of [[30, '1 GiB'], [33, '8 GiB'], [36, '64 GiB'], [40, '1 TiB'], [43, '8 TiB']])
         B.push(`<text class="dims" x="${(px(2 ** e) + 3).toFixed(1)}" y="${axisY + 8}">${lab}</text>`);
       for (const [i, r] of rowsB.entries()) {
+        if (posOf[i] < 0) continue;
         const y2 = yOf(i);
         const dim = r.on ? '' : ' opacity="0.35"';
         // gutter: the name alone (whole-row hitbox; click to solo)
