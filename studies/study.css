@@ -20,7 +20,12 @@
        exactly (the diagramlint pre-upgrade tier enforces both). */
     dsv3-anatomy, dsv3-layer { display: block; margin: 14px 0 26px; }
     dsv3-pp-schedule { display: block; margin: 14px 0; }
-    dsv3-beat-deck { display: block; margin: 14px 0 26px; }
+    /* the deck pops as a CARD: the slideshow is the thing to keep in your
+       viewport, so it reads as one framed stage (site-card border + white
+       ground on the warm page) rather than prose-adjacent furniture */
+    dsv3-beat-deck { display: block; margin: 14px 0 26px; padding: 12px 16px 10px;
+      border: 1px solid #d5d4cb; border-radius: 8px; background: #fff;
+      box-shadow: 0 1px 6px rgba(11, 11, 11, 0.05); }
 
 /* series navigation (injected by series.js) */
 .series-strip { font-size: 13px; color: #52514e; margin: 0 0 6px; }

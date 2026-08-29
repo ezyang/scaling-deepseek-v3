@@ -18,19 +18,19 @@
       its own scenario. Linking/sidebar TBD.</p>
 
     <h2>everything (sidebar candidate)</h2>
-    <dsv3-layer id="bars-all" style="min-height:324px" barsonly local cumulative lens="param-bytes" recipe="bf16"
+    <dsv3-layer id="bars-all" style="min-height:340px" barsonly local cumulative lens="param-bytes" recipe="bf16"
       recompute="none" controls="static" detail nocaption></dsv3-layer>
 
     <h2>pipeline discussion: knobs="pipeline"</h2>
-    <dsv3-layer id="bars-pp" style="min-height:210px" barsonly knobs="pipeline" local cumulative lens="param-bytes"
+    <dsv3-layer id="bars-pp" style="min-height:226px" barsonly knobs="pipeline" local cumulative lens="param-bytes"
       recipe="bf16" recompute="none" controls="static" detail nocaption></dsv3-layer>
 
     <h2>sharding discussion: knobs="mesh,zero"</h2>
-    <dsv3-layer id="bars-shard" style="min-height:207px" barsonly knobs="mesh,zero" local cumulative
+    <dsv3-layer id="bars-shard" style="min-height:223px" barsonly knobs="mesh,zero" local cumulative
       lens="param-bytes" recipe="bf16" recompute="none" controls="static" detail nocaption></dsv3-layer>
 
     <h2>AC/precision discussion: knobs="prec"</h2>
-    <dsv3-layer id="bars-prec" style="min-height:170px" barsonly knobs="prec" local cumulative lens="param-bytes"
+    <dsv3-layer id="bars-prec" style="min-height:186px" barsonly knobs="prec" local cumulative lens="param-bytes"
       recipe="bf16" recompute="none" controls="static" detail nocaption></dsv3-layer>
   </main>
   <script type="module">

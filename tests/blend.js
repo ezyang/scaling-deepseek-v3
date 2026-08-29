@@ -16,10 +16,17 @@ T.check('retarget starts from on-screen geometry (no jump)',
   Math.abs(wAfter - wMid) < 25, `${wMid.toFixed(1)} → ${wAfter.toFixed(1)}`);
 await T.tick(700);
 
-// (b) ghosts FADE in during a slide (enter rule), landing at 0.7
-next.click(); await T.tick(60);
+// (b) TWO PHASES: the ghosts plant themselves first (quick fade/slide over
+// the opening share) while the bars hold still; then the bars pour
+const wBefore = totW();
+next.click(); await T.tick(50);             // inside the ghost phase
 const gOp = [...dl().querySelectorAll('.lv-bar rect[data-ghost]')].map((g) => +g.getAttribute('opacity'));
-T.check('ghosts mid-fade during the slide', gOp.length > 0 && gOp.some((o) => o > 0 && o < 0.65), gOp.join('|'));
+T.check('ghosts mid-fade during the ghost phase', gOp.length > 0 && gOp.some((o) => o > 0 && o < 0.7), gOp.join('|'));
+T.check('bars hold still until the ghosts have planted', Math.abs(totW() - wBefore) < 1,
+  `${wBefore.toFixed(1)} → ${totW().toFixed(1)}`);
+await T.tick(250);                          // well into the bar phase
+T.check('bars pour after the ghost phase', Math.abs(totW() - wBefore) > 5,
+  `${wBefore.toFixed(1)} → ${totW().toFixed(1)}`);
 await T.tick(700);
 const gOp2 = [...dl().querySelectorAll('.lv-bar rect[data-ghost]')].map((g) => +g.getAttribute('opacity'));
 T.check('ghosts land at 0.7', gOp2.every((o) => o === 0.7), gOp2.join('|'));

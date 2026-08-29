@@ -130,10 +130,22 @@ const fitColor = (a, b, t) => {
   return '#' + [1, 3, 5].map((i) =>
     Math.round(fitLerp(c(a, i), c(b, i), t)).toString(16).padStart(2, '0')).join('');
 };
-function blendFit(A, B, t) {
-  if (!A || t >= 1) return B;
+const fitEase = (p) => 1 - (1 - p) ** 3;   // ease-out cubic: response motion starts NOW
+function blendFit(A, B, p) {
+  if (!A || p >= 1) return B;
   const rowsA = new Map(A.rows.map((r) => [r.key, r]));
   const rowsB = new Map(B.rows.map((r) => [r.key, r]));
+  // TWO PHASES when the save's ghosts move or appear: the baseline plants
+  // itself FIRST (a quick ease-out over the opening share), THEN the bars
+  // pour — "here is where you were… now watch it change". Same total
+  // duration; no ghost change → single phase (a knob click answers NOW).
+  const GS = 0.3;   // the ghosts' share of the tween
+  const gChanged = B.rows.some((r) => {
+    const g1 = rowsA.get(r.key)?.ghost, g2 = r.ghost;
+    return !!g1 !== !!g2 || (g1 && g2 && Math.abs(g1.px - g2.px) > 0.5);
+  }) || A.rows.some((r) => r.ghost && !rowsB.has(r.key));
+  const tG = fitEase(gChanged ? Math.min(1, p / GS) : p);
+  const t = fitEase(gChanged ? Math.max(0, (p - GS) / (1 - GS)) : p);
   const parentY = (r, L) => {
     const m = /^part:(\d+):/.exec(r.key);
     const par = m && L.rows.find((q) => q.key === `seg:${m[1]}`);
@@ -148,17 +160,17 @@ function blendFit(A, B, t) {
   const seg = (a, b) => ({ ...b,
     x0: fitLerp(a.x0, b.x0, t), x1: fitLerp(a.x1, b.x1, t),
     op: fitLerp(a.op, b.op, t), color: fitColor(a.color, b.color, t) });
-  const mark = (a, b, keys) => !a && !b ? null : (() => {
+  const mark = (a, b, keys, t2) => !a && !b ? null : (() => {
     const m1 = a ?? { ...b, op: 0 }, m2 = b ?? { ...a, op: 0 };
-    const out = { ...m2, op: fitLerp(m1.op, m2.op, t) };
-    for (const k of keys) out[k] = fitLerp(m1[k], m2[k], t);
+    const out = { ...m2, op: fitLerp(m1.op, m2.op, t2) };
+    for (const k of keys) out[k] = fitLerp(m1[k], m2[k], t2);
     return out;
   })();
   const row = (a, b) => ({ ...b,
     y: fitLerp(a.y, b.y, t), op: fitLerp(a.op, b.op, t), nameOp: fitLerp(a.nameOp, b.nameOp, t),
     segs: b.segs.map((sb) => seg(a.segs.find((s) => s.key === sb.key) ?? { ...sb, op: 0 }, sb)),
-    ghost: mark(a.ghost, b.ghost, ['px']),
-    val: mark(a.val, b.val, ['x']) });
+    ghost: mark(a.ghost, b.ghost, ['px'], tG),
+    val: mark(a.val, b.val, ['x'], t) });
   const rows = B.rows.map((b) => row(rowsA.get(b.key) ?? faded(b, A), b));
   for (const a of A.rows) if (!rowsB.has(a.key)) rows.push(row(a, faded(a, B)));
   return { ...B, axisY: fitLerp(A.axisY, B.axisY, t), HB: fitLerp(A.HB, B.HB, t), rows };
@@ -220,9 +232,20 @@ function fitSvg(L) {
     // bar end: the ABSOLUTE value (+ the vs-save badge when saved)
     if (r.val) B.push(`<text class="dims" data-role="val:${r.id}" data-true="${r.val.true}" data-pin="${r.val.pin}" x="${f1(r.val.x)}" y="${f1(y + 7)}"${op(r.val.op)}>${r.val.text}</text>`);
   }
-  // the pinned-label line is always reserved (no reflow on pin) — except in
-  // pinless snapshots, which are static figures with nothing to reserve
-  if (L.lbl) B.push(`<text class="dims" x="${x0 + bw}" y="${f1(aY + 18)}" text-anchor="end">${L.lbl}</text>`);
+  // map-style DISTANCES legend: on a log axis a span IS a factor, so anchor
+  // the important ones — the mesh dims (DP 2048 · EP 64 · PP 16) and a
+  // halving — as one true-scale ruler below the axis
+  const dy = aY + 18;
+  const dpx = (f) => x0 + Math.log2(f) / (HI - LO) * bw;
+  B.push(`<text class="dims" x="2" y="${f1(dy + 3)}">a span is a factor:</text>`);
+  B.push(`<line x1="${x0}" y1="${f1(dy)}" x2="${f1(dpx(2048))}" y2="${f1(dy)}" stroke="#898781" stroke-width="1"/>`);
+  for (const [f, lab] of [[1, ''], [2, '×2'], [16, '×16 (PP)'], [64, '×64 (EP)'], [2048, '×2048 (DP)']]) {
+    B.push(`<line x1="${f1(dpx(f))}" y1="${f1(dy - 4)}" x2="${f1(dpx(f))}" y2="${f1(dy + 4)}" stroke="#898781" stroke-width="1"/>`);
+    if (lab) B.push(`<text class="dims" x="${f1(dpx(f))}" y="${f1(dy + 13)}" text-anchor="middle">${lab}</text>`);
+  }
+  // the pinned save label shares the legend band, right-aligned (its line is
+  // always present now, so pinning still never reflows)
+  if (L.lbl) B.push(`<text class="dims" x="${x0 + bw}" y="${f1(dy + 3)}" text-anchor="end">${L.lbl}</text>`);
   // the scrub overlay: cursor affordance AND arming region live exactly on
   // the bars band — not the captions, not below the axis
   B.push(`<rect class="scrub" x="${x0}" y="${topY - 2}" width="${bw}" height="${f1(aY - topY + 1)}" ` +
@@ -1011,7 +1034,7 @@ export class Dsv3Layer extends HTMLElement {
     const step = () => {
       if (this._frameGen !== gen) return;   // superseded by a newer tween
       f++; const p = Math.min(1, f / FRAMES);
-      if (this._ftween) this._ftween.t = ease(p);
+      if (this._ftween) this._ftween.t = p;   // RAW progress: the blend eases per phase
       onFrame(ease(p));
       this.render(); this.changed(false);     // linked widgets tween along
       if (p < 1) setTimeout(step, 16);
@@ -1125,8 +1148,11 @@ export class Dsv3Layer extends HTMLElement {
       rul.style.display = 'block';
       rul.style.left = `${(r2.left - host.left + u1 * k).toFixed(1)}px`;
       rul.style.width = `${((u2 - u1) * k).toFixed(1)}px`;
-      rul.style.top = '10px';
-      rul.style.height = `${r2.height - 22}px`;
+      // the ruler spans exactly the bars band (the scrub rect), never the
+      // axis labels or the distances legend below it
+      const sc = barSlot.querySelector('.scrub').getBoundingClientRect();
+      rul.style.top = `${(sc.top - host.top).toFixed(1)}px`;
+      rul.style.height = `${sc.height.toFixed(1)}px`;
       // a span on a log axis IS a factor
       const f = 2 ** ((u2 - u1) / BAR_GEO.bw * (BAR_GEO.hi - BAR_GEO.lo));
       rlab.textContent = `×${fmtF(f)} (${fmtBytes(bytesAt(u1))} → ${fmtBytes(bytesAt(u2))})`;
@@ -1609,7 +1635,9 @@ export class Dsv3Layer extends HTMLElement {
         const plab = (t2) => { const sp = el('span'); sp.style.cssText = 'color:#52514e;font-size:11px;margin-left:8px;'; sp.textContent = t2; return sp; };
         if (KN('prec')) mini2.append(plab('precision:'), preset, plab('recompute:'), rsel, tl);
       }
-      if (this.hasAttribute('snapshot'))
+      // snapshot knobs are READOUTS — unless the host opts into 'live'
+      // (the beat deck: fiddling is a marked DETOUR, rewound on step)
+      if (this.hasAttribute('snapshot') && !this.hasAttribute('live'))
         for (const c2 of [...mini.querySelectorAll('button, select'), ...mini2.querySelectorAll('button, select')])
           c2.disabled = true;
       root.append(mini);
@@ -2840,12 +2868,11 @@ export class Dsv3Layer extends HTMLElement {
             true: totalN, pin: pinTotal || '' } });
       }
       const SHOWLBL = pin && !(SNAP2 && this.getAttribute('knobs'));
-      const canLabel = !SNAP2 || SHOWLBL;   // the pinned-label line is reserved unless a pinless snapshot
       const L1 = {
         // header: PP1 needs no locus (the prose owns the framing); a
         // pipelined chart names whose bytes these are — one GPU's stage
         hdr: PPn === 1 ? 'logarithmic:' : `one GPU, stage ${STG} of PP${PPn} (logarithmic):`,
-        axisY, HB: axisY + (canLabel ? 22 : 10), capPx: px(cap),
+        axisY, HB: axisY + 38, capPx: px(cap),   // +38: the distances legend band (shared with the save label)
         unit: !this.hasAttribute('barsonly') && !SNAP2 ? `= ${fmtBytes(PB_UNIT * 2)} / square` : null,
         lbl: SHOWLBL ? `saved: ${pin.label}` : null, rows,
       };
@@ -3430,6 +3457,7 @@ dsv3-beat-deck { display: block; margin: 14px 0 26px; }
 .deck-nav button:disabled { color: #dedcd3; cursor: default; }
 .deck-step { font: 11px ui-monospace, monospace; color: #52514e; }
 .deck-hyp { font: italic 11px system-ui; color: #898781; }
+.deck-mod { font: italic 11px system-ui; color: #b05f00; }
 .deck-cap { max-width: 760px; font-size: 13.5px; color: #1c1c1a; line-height: 1.5; }
 .deck-cap p { margin: 6px 0; }
 `;
@@ -3450,21 +3478,30 @@ class Dsv3BeatDeck extends HTMLElement {
     this._next = btn2('next ›', 'deck-next'); this._last = btn2('end »', 'deck-last');
     this._ind = el('span', 'deck-step');
     this._hyp = el('span', 'deck-hyp');   // hypothetical callout: lives in the FIXED nav row
-    nav.append(this._first, this._prev, this._ind, this._next, this._last, this._hyp);
+    this._mod = el('span', 'deck-mod');   // detour callout: knobs fiddled off the slide
+    nav.append(this._first, this._prev, this._ind, this._next, this._last, this._hyp, this._mod);
     this._first.onclick = () => this.go(0);
     this._prev.onclick = () => this.go(this._i - 1);
     this._next.onclick = () => this.go(this._i + 1);
     this._last.onclick = () => this.go(this._steps.length - 1);
-    // the chart: a snapshot-mode layer (measure-only, no knobs, no URL state
-    // of its own) that the deck drives programmatically
+    // the chart: a snapshot-mode layer (no URL state of its own) that the
+    // deck drives programmatically. Its knobs are LIVE: the reader may
+    // fiddle mid-slide — a marked DETOUR that stepping rewinds first
     const l = this._layer = document.createElement('dsv3-layer');
-    l._tweenFrames = 28;   // ~450 ms: slower than a knob tweak, faster than a lag
-    for (const [k, v] of [['snapshot', ''], ['local', ''], ['cumulative', ''], ['lens', 'param-bytes'],
+    for (const [k, v] of [['snapshot', ''], ['live', ''], ['local', ''], ['cumulative', ''], ['lens', 'param-bytes'],
       ['recipe', 'bf16'], ['recompute', 'none'], ['controls', 'static'], ['detail', ''], ['nocaption', ''],
-      ['knobs', 'cluster,pipeline,mesh,zero']])   // the per-slide config READOUT
+      ['knobs', 'cluster,pipeline,mesh,zero']])   // the per-slide config panel
       l.setAttribute(k, v);
+    // any layer change (knob fiddles included) re-syncs the detour indicator
+    const changed0 = l.changed?.bind(l) ?? (() => {});
+    l.changed = (w) => { changed0(w); this._syncMod(); };
     this._cap = el('div', 'deck-cap');
     this.append(style, nav, l, this._cap);
+    // reserve the TALLEST caption: slides must never change the deck's
+    // height (the reader is mid-story — nothing below may shift)
+    let capH = 0;
+    for (const st2 of this._steps) { this._cap.innerHTML = st2.cap; capH = Math.max(capH, this._cap.offsetHeight); }
+    this._cap.style.minHeight = `${capH}px`;
     this.tabIndex = -1; this.style.outline = 'none';
     this.addEventListener('keydown', (e) => {
       const d = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
@@ -3487,9 +3524,35 @@ class Dsv3BeatDeck extends HTMLElement {
     return { world: 2048, pp: 1, ep: 1, zero: 0, sched: '1f1b', vpp: 1,
       fold: 'reflect', recipe: 'bf16', recompute: 'none', ...c };
   }
+  // the slide's exact config vs the layer's knobs: any difference is a
+  // reader DETOUR (the caption no longer describes the chart)
+  _fiddled() {
+    if (!(this._i >= 0)) return false;   // pre-init renders fire changed() too
+    const c = this._full(this._steps[this._i].cfg);
+    const l = this._layer;
+    const stg = c.stage ?? peakStage(c.pp, c.ep, c.zero ?? 1, c.world, c.sched, c.vpp, c.fold);
+    return l.pp !== c.pp || l.ep !== c.ep || (l.zero ?? 0) !== c.zero || l.world !== c.world
+      || (l.sched ?? '1f1b') !== c.sched || (l.vpp ?? 1) !== c.vpp
+      || (l.fold ?? 'reflect') !== c.fold || l.stage !== stg;
+  }
+  _syncMod() {
+    const f = this._fiddled();
+    this._mod.textContent = f ? '✎ detour — the caption describes the slide, not your knobs; stepping rewinds first' : '';
+    this._cap.style.opacity = f ? 0.55 : '';   // the caption visibly detaches
+  }
   go(i, instant = false) {
     if (i < 0 || i >= this._steps.length || i === this._i) return;
     const st = this._steps[i], l = this._layer, base = this._baseOf(i);
+    // a detour rewinds FIRST (quick pour back to this slide's config), so the
+    // step's delta always animates from the config its caption describes
+    if (!instant && this._fiddled()) {
+      const prevF = l._snapLocal();
+      l._applyCfg(this._full(this._steps[this._i].cfg));
+      l._tweenFrames = 14; l._tweenLocal(prevF); l._tweenFrames = 12;
+      this._syncMod();
+      setTimeout(() => this.go(i, instant), 14 * 16 + 40);
+      return;
+    }
     // fixed focus: the deck ALWAYS shows every bar and every sub-bar —
     // rows appearing/disappearing between slides reads as a scene change,
     // and the story is one scene (data-solo is accepted but ignored)
@@ -3502,14 +3565,17 @@ class Dsv3BeatDeck extends HTMLElement {
       l._applyCfg(this._full(base.cfg)); l.render(); l._saveBaseline();
     } else l._pinCfg = null;
     l._applyCfg(this._full(st.cfg));
-    if (prev && !instant) { l._fitL = Ldisp; l._tweenLocal(prev); }   // the pour — forward, backward, or jump
-    else l.render();
+    this._i = i;   // before the tween: per-frame changed() reads it for the detour sync
+    if (prev && !instant) {
+      // slides narrate (~450 ms); knob fiddles stay at knob tempo (12)
+      l._fitL = Ldisp; l._tweenFrames = 28; l._tweenLocal(prev); l._tweenFrames = 12;
+    } else l.render();
     this._cap.innerHTML = st.cap;
-    this._i = i;
     this._ind.textContent = `step ${i + 1} / ${this._steps.length}`;
     this._hyp.textContent = st.hyp != null ? (st.hyp || 'hypothetical — not what DSv3 did') : '';
     this._first.disabled = this._prev.disabled = i === 0;
     this._last.disabled = this._next.disabled = i === this._steps.length - 1;
+    this._syncMod();
     if (this.id) writeUrlState('d:' + this.id, { i });
     this.focus({ preventScroll: true });
   }
