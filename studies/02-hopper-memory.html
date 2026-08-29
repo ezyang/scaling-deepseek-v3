@@ -34,35 +34,14 @@
     (same amount of memory as any H100), as we'll see, memory is pretty tight
     in this setting!</p>
 
-    <p>This post is organized as follows: <s>first, we'll recap at a high level
-    what memory is used for in LLM training.  Next, we will individually
-    discuss each knob you have for adjusting memory usage, using simplified
-    models to build intuition for how these knobs affect memory.</s>  Then we'll
-    put it all together to reproduce DeepSeek-V3's 2048 GPU Hopper training
-    configuration.  Credit where credit is due: this analysis is based off of
-    an unpublished analysis done by Daniel Haziza.</p>
+    The plan:
 
-    TODO: we need to step through the tricky parts of the model, without having
-    overwhelmingly too much text
-
-    <pre>
-    TODO: Pedagogical goals:
-    - Feel like we fully understand the model, no magic parts, everything
-      works well.  Some especially magic parts:
-      - AC
-      - Low precision
-      - PP microbatches (gradients)
-    - Some factors are very round (e.g., EP directly acts on expert weights),
-      we want to step through them
-    - Maaaaybe want to talk through FLOPs implications for some policy
-      decisions, similarly..
-    - Need to do some forward references for warnings: ZeRO-3 can't be hidden
-      (not applicable here but maybe other places: global batch size run out DP)
-    - Stretch: help people understand how this model generalizes to a family
-      of models that are tweaking arch sizes like hidden
-    - Stretch: understand why things like TP/ETP are inapplicable (how come we
-      don't need to model CP here?)
-    </pre>
+    The meta-plan:
+    - How do I know the model is right?
+      - 01
+        - cross-check via official checkpoint parameter count
+        - cross-check via source code analysis of training codebases
+        - high level intuition what it should look like
 
     <h2>What is memory used for in training?</h2>
 
@@ -162,6 +141,21 @@
     — backward is ~2× the FLOPs). Reading across a row at steady state: stage
     <em>s</em> has admitted PP−<em>s</em> forwards whose backwards haven't
     arrived yet — the in-flight law the diagram charges for.</p>
+
+    <dsv3-layer style="min-height:184px" snapshot solo="optim" sandbox="local-diagram"
+      from='{"world":2048,"pp":16,"ep":64,"zero":0}' to='{"zero":1}'
+      local cumulative lens="param-bytes" recipe="bf16" recompute="none" controls="static" detail
+      nocaption></dsv3-layer>
+
+    <p class="note">[demo of the snapshot story-beat widget — a non-interactive
+    figure: the authored <code>from</code> config is the saved baseline (ghost
+    bars), <code>to</code> is the live bars with change badges, and
+    <code>solo</code> picks the component under discussion (its breakdown
+    accordions open; the total goes stacked grey+color). Here: turning on
+    ZeRO-1 at PP16·EP64 shards non-expert optimizer states over DP&nbsp;128
+    but expert ones only over EDP&nbsp;2 — blended ▼×4.6, the EP-cancellation
+    story in one figure. The link jumps to the full widget with this exact
+    scenario loaded (baseline saved, change tweened in).]</p>
 
     <strong>Full tally</strong>
     show the tally bar
@@ -308,6 +302,39 @@
       forward FLOPs replayed in backward: the Hopper-era activation-checkpointing pressure in one number.
       <b>(3) The in-flight law:</b> DualPipe's two-chunk schedule halves the naive (2·PP+1) in-flight count
       per layer, so the activation column is 8.5×, not 17×.</p>
+
+    <h3>SCRAP HEAP</h3>
+
+    <p>This post is organized as follows: <s>first, we'll recap at a high level
+    what memory is used for in LLM training.  Next, we will individually
+    discuss each knob you have for adjusting memory usage, using simplified
+    models to build intuition for how these knobs affect memory.</s>  Then we'll
+    put it all together to reproduce DeepSeek-V3's 2048 GPU Hopper training
+    configuration.  Credit where credit is due: this analysis is based off of
+    an unpublished analysis done by Daniel Haziza.</p>
+
+    TODO: we need to step through the tricky parts of the model, without having
+    overwhelmingly too much text
+
+    <pre>
+    TODO: Pedagogical goals:
+    - Feel like we fully understand the model, no magic parts, everything
+      works well.  Some especially magic parts:
+      - AC
+      - Low precision
+      - PP microbatches (gradients)
+    - Some factors are very round (e.g., EP directly acts on expert weights),
+      we want to step through them
+    - Maaaaybe want to talk through FLOPs implications for some policy
+      decisions, similarly..
+    - Need to do some forward references for warnings: ZeRO-3 can't be hidden
+      (not applicable here but maybe other places: global batch size run out DP)
+    - Stretch: help people understand how this model generalizes to a family
+      of models that are tweaking arch sizes like hidden
+    - Stretch: understand why things like TP/ETP are inapplicable (how come we
+      don't need to model CP here?)
+    </pre>
+
 
     <div class="fnotes">
       <p class="note">Disclosure: the widget-caption notes in this draft are

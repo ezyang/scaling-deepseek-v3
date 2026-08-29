@@ -700,7 +700,7 @@ export class Dsv3Layer extends HTMLElement {
     this.urlKey = 'l:' + (this.id || 'layer');
     this._origRecipe = this.getAttribute('recipe') ?? 'nv-mxfp8';
     this._origRecompute = this.getAttribute('recompute') ?? 'dsv3';
-    const st = readUrlState(this.urlKey);
+    const st = this.hasAttribute('snapshot') ? null : readUrlState(this.urlKey);
     if (st?.recipe) this.setAttribute('recipe', st.recipe);
     this.matmuls = st?.matmuls ?? resolveMatmuls({ recipe: this.getAttribute('recipe') ?? 'nv-mxfp8' });
     this.marks = st?.marks ?? { ...RECOMPUTE_PRESETS[this.getAttribute('recompute') ?? 'dsv3'] };
@@ -737,6 +737,22 @@ export class Dsv3Layer extends HTMLElement {
     // column differs (kind="dense" pins the dense-FFN variant, default MoE)
     this.kind = st?.kind ?? (this.getAttribute('kind') === 'dense' ? 'dense' : 'moe');
     this.render();
+    if (this.hasAttribute('snapshot')) {
+      // a SNAPSHOT is a non-interactive story beat: 'from' renders as the
+      // saved baseline (ghosts), 'to' as the live bars with change badges;
+      // 'solo' picks the component under discussion (total goes stacked).
+      // Static by design: no knobs, no URL state, no chart interactions.
+      const from = JSON.parse(this.getAttribute('from') ?? '{}');
+      const to = JSON.parse(this.getAttribute('to') ?? '{}');
+      this._snapCfg = { from, to };
+      const soloOf = { weights: 'showWeights', grads: 'showGrads', optim: 'showOptim', acts: 'showActs' }[this.getAttribute('solo')];
+      if (soloOf) for (const p2 of this._compProps()) this[p2] = p2 === soloOf;
+      this._applyCfg(from);
+      this.render();
+      this._saveBaseline();
+      this._applyCfg({ ...from, ...to });
+      this.render();
+    }
     queueMicrotask(() => this.changed(false)); // push initial recipe + marks to linked widgets
   }
   changed(write = true) {
@@ -752,7 +768,7 @@ export class Dsv3Layer extends HTMLElement {
       recipe: null, matmuls: detail.matmuls, recompute: 'none', saved: detail.saved,
       transposedStash: this.transposed,
     });
-    if (write) writeUrlState(this.urlKey, {
+    if (write && !this.hasAttribute('snapshot')) writeUrlState(this.urlKey, {
       recipe: this.getAttribute('recipe'), matmuls: this.matmuls, marks: this.marks,
       view: this.view, dispLayers: this.dispLayers, dispInflight: this.dispInflight,
       transposed: this.transposed, detail: this.detail, flatDims: this.flatDims,
@@ -840,6 +856,41 @@ export class Dsv3Layer extends HTMLElement {
       if (this[p2] !== want) { this[p2] = want; changed.add(p2); }
     }
     if (changed.size) this._compTween(changed);
+  }
+  // lock in the CURRENT config as the chart's baseline (ghost bars + factor
+  // badges render vs this) — the save button, and snapshot mode's 'from'
+  _saveBaseline() {
+    this._pinCfg = {
+      segs: [...(this._segTotals ?? [])],
+      parts: (this._segParts ?? []).map((p2) => [...p2]),
+      scalars: { ...(this._scalars ?? {}) },
+      state: { ep: this.ep, pp: this.pp, stage: this.stage, world: this.world,
+        zero: this.zero, sched: this.sched, vpp: this.vpp, fold: this.fold,
+        cumulative: this.cumulative, partSel: this.partSel ?? null,
+        showWeights: this.showWeights, showGrads: this.showGrads,
+        showOptim: this.showOptim, showActs: this.showActs,
+        transposed: this.transposed, marks: { ...this.marks }, matmuls: { ...this.matmuls } },
+      label: `EP${this.ep}·PP${this.pp}${(this.vpp ?? 1) > 1 ? `·VPP${this.vpp}${this.fold === 'wrap' ? 'w' : 'V'}` : ''}·stage ${this.stage}·ZeRO-${this.zero ? this.zero : 'off'}·${this.sched === 'one' ? '×1mb' : '1F1B'}·${this.world} GPUs`,
+    };
+  }
+  // apply an authored config patch (snapshot 'from'/'to', sandbox jumps):
+  // plain state keys plus recipe/recompute presets
+  _applyCfg(patch) {
+    const { recipe, recompute, stage, ...rest } = patch;
+    Object.assign(this, rest);
+    if (recipe) { this.setAttribute('recipe', recipe); this.matmuls = resolveMatmuls({ recipe }); }
+    if (recompute) { this.setAttribute('recompute', recompute); this.marks = { ...RECOMPUTE_PRESETS[recompute] }; }
+    this.stage = stage ?? peakStage(this.pp, this.ep, this.zero ?? 1,
+      this.world ?? LOCAL_PAR.world, this.sched, this.vpp, this.fold);
+  }
+  // jump target for snapshots' "open in the full widget" links: land on the
+  // snapshot's exact story — its 'from' as the save, its 'to' live, tweened
+  _loadScenario(from, to) {
+    this._applyCfg(from); this.render(); this._saveBaseline();
+    const prev = this._snapLocal();
+    this._applyCfg({ ...from, ...to });
+    this._tweenLocal(prev);
+    this.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
   _snapLocal() {
     return { ep: this.ep, pp: this.pp, stage: this.stage,
@@ -1065,8 +1116,8 @@ export class Dsv3Layer extends HTMLElement {
       const mini = el('div', 'lv-head');
       // article instances disclose a SUBSET of the knob groups:
       // knobs="cluster,pipeline,mesh,zero,save,prec,blocks" (absent = all)
-      const knAttr = this.getAttribute('knobs');
-      const KN = (k) => !knAttr || knAttr.split(/[ ,]+/).includes(k);
+      const knAttr = this.hasAttribute('snapshot') ? '' : this.getAttribute('knobs');
+      const KN = (k) => knAttr == null || knAttr.split(/[ ,]+/).includes(k);
       // local gets TWO control rows: parallelism (with the fit bar right
       // under it — the headline effect) and a second row for the misc bits
       const mini2 = this.hasAttribute('local') ? el('div', 'lv-head') : mini;
@@ -1246,7 +1297,7 @@ export class Dsv3Layer extends HTMLElement {
           leg.style.cssText += 'display:inline-flex;align-items:center;gap:3px;';
           leg.innerHTML = `${sw('#2a78d6')} <span>= ${fmtBytes(unit)}</span>`;
         }
-        mini2.append(leg);
+        if (KN('legend')) mini2.append(leg);
       }
       if (this.hasAttribute('local')) {
         // pin a baseline config: the log bars then carry ticks at the pinned
@@ -1263,18 +1314,7 @@ export class Dsv3Layer extends HTMLElement {
         // change), reset returns TO the save, reset-all is factory
         const saveBox = el('span', 'savebox');
         saveBox.append(mkBtn('save', 'lock in this config: the chart shows deltas vs the save (re-save to lock in a change)', () => {
-          this._pinCfg = {
-            segs: [...(this._segTotals ?? [])],
-            parts: (this._segParts ?? []).map((p2) => [...p2]),
-            scalars: { ...(this._scalars ?? {}) },
-            state: { ep: this.ep, pp: this.pp, stage: this.stage, world: this.world,
-              zero: this.zero, sched: this.sched, vpp: this.vpp, fold: this.fold,
-              cumulative: this.cumulative, partSel: this.partSel ?? null,
-              showWeights: this.showWeights, showGrads: this.showGrads,
-              showOptim: this.showOptim, showActs: this.showActs,
-              transposed: this.transposed, marks: { ...this.marks }, matmuls: { ...this.matmuls } },
-            label: `EP${this.ep}·PP${this.pp}${(this.vpp ?? 1) > 1 ? `·VPP${this.vpp}${this.fold === 'wrap' ? 'w' : 'V'}` : ''}·stage ${this.stage}·ZeRO-${this.zero ? this.zero : 'off'}·${this.sched === 'one' ? '×1mb' : '1F1B'}·${this.world} GPUs`,
-          };
+          this._saveBaseline();
           this.render();
         }));
         // always present (disabled until a save exists) so saving never reflows
@@ -1310,6 +1350,24 @@ export class Dsv3Layer extends HTMLElement {
     if (barSlot && this._barHtml) {
       barSlot.innerHTML = this._barHtml;
       this._barHtml = null;
+      if (this.hasAttribute('snapshot')) {
+        // a snapshot's chart is a figure, not a widget — no scrub, no solo
+        barSlot.style.pointerEvents = 'none';
+        const sb = this.getAttribute('sandbox');
+        if (sb) {
+          const a = document.createElement('a');
+          a.textContent = 'play with this scenario in the full widget ↗';
+          a.href = '#'; a.style.cssText = 'font-size:11.5px;';
+          // resolve the target lazily: anatomy-wrapped layers don't exist yet
+          // when snapshots upgrade (bare layers upgrade first)
+          a.onclick = (ev) => {
+            ev.preventDefault();
+            document.getElementById(sb)?._loadScenario?.(this._snapCfg.from, this._snapCfg.to);
+          };
+          const nd = el('div', 'lv-note'); nd.append(a);
+          barSlot.after(nd);
+        }
+      } else {
       // scrub cursor: one vertical line you click/drag along the axis — the
       // readout is the value there and its factor vs the 80 GiB capacity
       // (a log axis makes that distance a multiplier). Click ON it to clear.
@@ -1372,8 +1430,9 @@ export class Dsv3Layer extends HTMLElement {
       };
       document.addEventListener('mousedown', this._rulDismiss);
       drawR();
+      }
     }
-    if (!this.hasAttribute('barsonly')) root.append(scroller);
+    if (!this.hasAttribute('barsonly') && !this.hasAttribute('snapshot')) root.append(scroller);
     const note = el('div', 'lv-note');
     const M2 = this.view === 'combined' ? this.dispLayers * this.dispInflight * 4096 : 1;
     const parts = [
