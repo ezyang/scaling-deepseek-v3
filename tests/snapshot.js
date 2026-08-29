@@ -2,7 +2,7 @@
 // snapshot story beats: from = saved baseline (ghosts), to = live bars with
 // badges, solo picks the row, zero interactivity, sandbox link loads the
 // scenario into the full widget
-const snap = () => document.querySelector('dsv3-layer[sandbox]');   // the ZeRO beat
+const snap = () => document.querySelector('dsv3-layer[sandbox][to]');   // the ZeRO demo (the fit beat has sandbox but no to)
 // the opening tally beats: weights · optim · acts · grads · everything
 const beats = () => [...document.querySelectorAll('dsv3-layer[snapshot]:not([sandbox])')];
 T.check('tally beats render bars (the parts beat is optional — author-curated)', beats().length >= 4
@@ -27,8 +27,8 @@ else T.log('no parts tally beat on the page (author choice)', '');
 // snapshots are figures: the card shrink-wraps (no full-width right slack)
 T.check('cards shrink-wrap their chart', beats().every(b =>
   b.querySelector('.lv').getBoundingClientRect().width < 900), '');
-T.check('beats have no ghosts (no to= no baseline)',
-  beats().every(b => !b.querySelector('.lv-bar')?.textContent.includes('saved:')), '');
+T.check('no-to beats have no ghosts',
+  beats().filter(b => !b.hasAttribute('to')).every(b => !b.querySelector('.lv-bar')?.textContent.includes('saved:')), '');
 // intro beats drop the total (nototal); the tally beat lands the full mass
 T.check('intro beats have no total row', beats().filter(b => b.hasAttribute('nototal')).every(b => !b.textContent.includes('total')), '');
 if (tally) T.check('the tally beat totals 8.65 TiB', tally.textContent.includes('total8.65 TiB'), '');
