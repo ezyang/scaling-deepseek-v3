@@ -9,23 +9,27 @@ T.check('five tally beats render bars', beats().length === 5
   && beats().every(b => b.querySelector('.lv-bar svg') && !b.querySelector('.lv-scroll')), beats().length);
 T.check('beat 1: whole-model weights 1.22 TiB + breakdown', beats()[0].textContent.includes('weights1.22 TiB')
   && beats()[0].textContent.includes('· experts'), '');
-T.check('beat 2: optimizer soloed at 8 B/param, accordion open', beats()[1].textContent.includes('optimizer states4.88 TiB')
-  && beats()[1].textContent.includes('· experts') && !/weights\d/.test(beats()[1].textContent), '');
-T.check('beat 3: activations soloed (no param accordion)', beats()[2].textContent.includes('activations ×1mb106.4 GiB')
-  && !beats()[2].textContent.includes('· experts'), '');
-T.check('beat 4: gradients soloed at fp32, accordion open', beats()[3].textContent.includes('gradients (fp32)2.44 TiB')
-  && beats()[3].textContent.includes('· experts'), '');
-T.check('beat 5: all four components, ALL param accordions open', ['weights', 'gradients', 'optimizer', 'activations', 'total']
-  .every(t => beats()[4].textContent.includes(t))
-  && [...beats()[4].querySelectorAll('text')].filter(t => t.textContent === '· experts').length === 3, '');
+// beats found by attribute, not position — the author reorders them freely
+const beat = (sel) => beats().find(b => (b.getAttribute('solo') ?? b.getAttribute('comps')) === sel)
+  ?? beats().find(b => b.hasAttribute('parts'));
+T.check('optim beat: soloed at 8 B/param, accordion open', beat('optim').textContent.includes('optimizer states4.88 TiB')
+  && beat('optim').textContent.includes('· experts') && !/weights\d/.test(beat('optim').textContent), '');
+T.check('acts beat: soloed (no param accordion)', beat('acts').textContent.includes('activations ×1mb106.4 GiB')
+  && !beat('acts').textContent.includes('· experts'), '');
+T.check('grads beat: soloed at fp32, accordion open', beat('grads').textContent.includes('gradients (fp32)2.44 TiB')
+  && beat('grads').textContent.includes('· experts'), '');
+const tally = beats().find(b => b.hasAttribute('parts'));
+T.check('tally beat: all four components, ALL param accordions open', ['weights', 'gradients', 'optimizer', 'activations', 'total']
+  .every(t => tally.textContent.includes(t))
+  && [...tally.querySelectorAll('text')].filter(t => t.textContent === '· experts').length === 3, '');
 // snapshots are figures: the card shrink-wraps (no full-width right slack)
 T.check('cards shrink-wrap their chart', beats().every(b =>
   b.querySelector('.lv').getBoundingClientRect().width < 900), '');
 T.check('beats have no ghosts (no to= no baseline)',
   beats().every(b => !b.querySelector('.lv-bar')?.textContent.includes('saved:')), '');
 // intro beats drop the total (nototal); the tally beat lands the full mass
-T.check('intro beats have no total row', beats().slice(0, 4).every(b => !b.textContent.includes('total')), '');
-T.check('the tally beat totals 8.65 TiB', beats()[4].textContent.includes('total8.65 TiB'), '');
+T.check('intro beats have no total row', beats().filter(b => b.hasAttribute('nototal')).every(b => !b.textContent.includes('total')), '');
+T.check('the tally beat totals 8.65 TiB', beats().find(b => b.hasAttribute('parts')).textContent.includes('total8.65 TiB'), '');
 const bar = () => snap().querySelector('.lv-bar');
 const txt = () => bar().textContent;
 
