@@ -155,6 +155,7 @@ export function analyze(nodes, marks, transposedStash = false) {
   neededSaved.add('x0');
   if (!neededBy.has('x0')) neededBy.set('x0', new Set(['replay anchor']));
   const buckets = { mla: 0, moe: 0, residual: 0 };
+  const savedById = {};                              // per-tensor stash bytes (incl. fp8ᵀ dual copies and aux artifacts)
   let savedBytes = 0;
   const dual = new Set();                            // stashes kept in both fp8 orientations
   for (const id of neededSaved) {
@@ -166,16 +167,21 @@ export function analyze(nodes, marks, transposedStash = false) {
       bytes *= 2;
     }
     buckets[n.bucket] += bytes;
+    savedById[id] = (savedById[id] ?? 0) + bytes;
     savedBytes += bytes;
   }
   for (const n of nodes) {         // aux artifacts (rstd, lse): a replay regenerates them
-    if (n.aux && !replayed.has(n.id)) { buckets[n.bucket] += n.aux.bytes; savedBytes += n.aux.bytes; }
+    if (n.aux && !replayed.has(n.id)) {
+      buckets[n.bucket] += n.aux.bytes;
+      savedById[n.id] = (savedById[n.id] ?? 0) + n.aux.bytes;
+      savedBytes += n.aux.bytes;
+    }
   }
   const replayFlopsTok = [...replayed].reduce((t, id) => t + byId[id].flopsTok, 0);
   const fwdFlopsTok = nodes.reduce((t, n) => t + n.flopsTok, 0);
   const replayComm = ['dispatch', 'combine'].filter(id => replayed.has(id));
   return {
-    buckets, savedBytes, replayFlopsTok, fwdFlopsTok,
+    buckets, savedBytes, savedById, replayFlopsTok, fwdFlopsTok,
     replayFrac: fwdFlopsTok ? replayFlopsTok / fwdFlopsTok : 0,
     neededSaved, replayed, replayComm, neededBy, byId, dual,
   };

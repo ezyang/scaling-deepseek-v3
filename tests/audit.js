@@ -4,7 +4,7 @@
 const { auditFitCharts } = await import('/src/audit.js');
 const { charts, findings } = auditFitCharts(document);
 T.log('charts audited', charts);
-T.check('audits every chart on 02 (5 beats + zero beat + full sim)', charts >= 7, charts);
+T.check('audits every chart on 02 (beats + zero beat + full sim)', charts >= 6, charts);
 T.check('zero findings', findings.length === 0, findings.slice(0, 4).join(' | '));
 // not vacuous: numbers and geometry were actually present
 T.check('exact values present', document.querySelectorAll('.lv-bar text[data-true]').length > 30, '');

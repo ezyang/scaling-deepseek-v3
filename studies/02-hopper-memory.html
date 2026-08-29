@@ -14,25 +14,17 @@
     <p class="sub">How to fit it on 80 GiB.</p>
 
     <p>GPU memory is kind of like oxygen: you don't really think about it
-    until you run out, at which point you care about nothing else.
-    Fortunately, it is comparatively simpler to debug OOMs in LLM pretraining,
-    because the memory usage of your trainer doesn't depend on doing distributed
-    communications at scale (assuming your memory allocations and deallocations are
-    deterministic--a very good idea!)  In modern PyTorch, you can use <strong>fake
-    ProcessGroup (fake PG)</strong> to do a very high fidelity simulation of
-    the memory usage of any given rank in an arbitrarily large training config
-    on a single GPU.</p>
-
-    <p>However, it's good to have an expectation about how much memory your
-    model <em>should</em> be using, given choices on parallelism, activation
-    checkpointing and low precision, so you can tell if your implementation is
-    buggy and using more memory than it should be.  It's also helpful to know
-    what levers you have available for reducing memory usage: you will often
-    be in a regime where your hero run can just barely fit your model in
-    memory, and you're trying to make it fit without sacrificing too much MFU.
-    For example, the original DeepSeek-V3 pretrain was done on 2048 H800 GPUs
-    (same amount of memory as any H100), as we'll see, memory is pretty tight
-    in this setting!</p>
+    until you run out, at which point you care about nothing else.  If you are
+    in this situation, it's good to have an expectation about how much memory
+    your model <em>should</em> be using, given choices on parallelism,
+    activation checkpointing and low precision, so you can tell if your
+    implementation is buggy and using more memory than it should be.  It's
+    also helpful to know what levers you have available for reducing memory
+    usage: you will often be in a regime where your hero run can just barely
+    fit your model in memory, and you're trying to make it fit without
+    sacrificing too much MFU.  For example, the original DeepSeek-V3 pretrain
+    was done on 2048 H800 GPUs (same amount of memory as any H100), as we'll
+    see, memory is pretty tight in this setting!</p>
 
     TODO: describe the plan (after we've done it)
 
@@ -40,36 +32,51 @@
 
     <p>While your exact memory usage depends on implementation details of your
     training framework, it's still possible to reason through what the major
-    consumers of memory will be.  Now, exactly how much memory you will need
-    on a single GPU depends on both parallelization choices (how we are
-    distributing things across ranks) as well as our direct memory adjustment
-    knobs (activation checkpointing, low precision).  But let's first set the
-    stage with a naive, global (across all ranks) memory accounting of
-    DeepSeek-V3 training assuming everything in bfloat16 and no activation
-    checkpointing.</p>
+    consumers of memory will be.  Even then, this still depends on both
+    parallelization choices (how we are distributing things across ranks) as
+    well as our direct memory adjustment knobs (activation checkpointing, low
+    precision).  But let's first set the stage with a naive, global (across
+    all ranks) memory accounting of DeepSeek-V3 training assuming compute
+    being done in BF16 (accounting for memory usage in FP8 gives rise to
+    additional complications, which I'd like to address in a dedicated
+    section) and no activation checkpointing.</p>
 
     <p><strong>Parameters.</strong>  In <a
     href="./01-deepseek-diagram.html">the previous post</a>, we did a tally of
-    DSv3's parameters.  But because we are assuming the parameters are
-    bfloat16 (this is <em>not</em> a good assumption, but we want to start
-    somewhere), we can tally up the overall memory usage of the entire
-    model.</p>
+    DSv3's parameters.  To do compute in BF16, we will want the parameters
+    to be available in BF16.  This gives us the following memory usage:</p>
 
     <dsv3-layer style="min-height:117px" snapshot nototal comps="weights"
       from='{"world":2048,"pp":1,"ep":1,"zero":0}'
       local cumulative lens="param-bytes" recipe="bf16" recompute="none" controls="static" detail
       nocaption></dsv3-layer>
 
-    <p>This bar chart needs some explanation.  Most notably, the x-axis is in
-    logarithmic scale, because many of the interventions we do involve
-    dividing a quantity by some factor: for example, when we distribute
+    <p>This bar chart needs some explanation.  Notably, the x-axis is in
+    logarithmic scale, and the light blue bars are a decomposition of the
+    weights into three categories: expert weights, non-expert weights (in the
+    transformer block), and non-transformer block "vocab" weights (this is the
+    initial embedding, the LM head and the final RMSNorm.)  Though it's not
+    evident from log scale, these three categories cover all the weights in
+    the model.  Similary, don't be deceived into thinking that the non-expert
+    weights are "half" of the expert weights: there are more than 40x expert
+    weights than non-expert weights!</p>
+
+    <p>Why logarithmic? Many of the interventions we do involve
+    dividing a quantity by some factor. As a short preview, when we distribute
     parameters for expert parallelism, we'll divide the expert weights exactly
     by the EP factor.  A log scale lets us express the change from applying
-    EP64 by shortening a bar by six ticks (each tick is a factor of two), no
-    matter what the original starting quantity was, and allows us to keep
-    a consistent x-scale across all the diagrams in this essay.</p>
+    EP64 by shortening a expert weights bar by six ticks (each tick is a
+    factor of two), no matter what the original starting quantity was, and
+    allows us to keep a consistent x-scale across all the diagrams in this
+    essay.</p>
 
-    <p>At the bottom of the chart 
+    <p><strong>Gradients.</strong>  </p>
+
+    <dsv3-layer style="min-height:117px" snapshot nototal solo="grads"
+      from='{"world":2048,"pp":1,"ep":1,"zero":0}'
+      local cumulative lens="param-bytes" recipe="bf16" recompute="none" controls="static" detail
+      nocaption></dsv3-layer>
+
 
     <p><strong>Optimizer states.</strong>  DeepSeek-V3 was trained with AdamW
     with bfloat16 first and second moment and float32 master weights.  This means
@@ -84,31 +91,19 @@
 
     <p><strong>Activations.</strong></p>
 
-    <dsv3-layer style="min-height:81px" snapshot nototal solo="acts"
+    <dsv3-layer style="min-height:189px" snapshot nototal solo="acts"
       from='{"world":2048,"pp":1,"ep":1,"zero":0}'
       local cumulative lens="param-bytes" recipe="bf16" recompute="none" controls="static" detail
       nocaption></dsv3-layer>
 
-    <p class="note">[snapshot beat: everything saved for backward — bf16,
-    nothing recomputed — for ONE 4096-token microbatch through all 61
-    layers.]</p>
-
-    <p><strong>Gradients.</strong></p>
-
-    <dsv3-layer style="min-height:117px" snapshot nototal solo="grads"
-      from='{"world":2048,"pp":1,"ep":1,"zero":0}'
-      local cumulative lens="param-bytes" recipe="bf16" recompute="none" controls="static" detail
-      nocaption></dsv3-layer>
-
+    <!--
     <dsv3-layer style="min-height:237px" snapshot parts
       from='{"world":2048,"pp":1,"ep":1,"zero":0}'
       local cumulative lens="param-bytes" recipe="bf16" recompute="none" controls="static" detail
       nocaption></dsv3-layer>
+    -->
 
-    <p class="note">[snapshot beat: the full tally — weights, fp32 gradient
-    accumulators, optimizer states, and the saved activations of one
-    4096-token microbatch through all 61 layers, each parameter component
-    with its experts / non-expert / vocab breakdown open.]</p>
+    TODO transition here
 
     <dsv3-anatomy style="min-height:989px" lens="param-bytes" local cumulative recipe="bf16" recompute="none" layer="local-diagram" detail controls="static" nocaption></dsv3-anatomy>
 
@@ -367,6 +362,15 @@
         - a clear visual audit rule for every diagram (pull all these numbers,
           and then other numbers are related in this way)
     </pre>
+
+    <p>
+    Fortunately, it is comparatively simpler to debug OOMs in LLM pretraining,
+    because the memory usage of your trainer doesn't depend on doing distributed
+    communications at scale (assuming your memory allocations and deallocations are
+    deterministic--a very good idea!)  In modern PyTorch, you can use <strong>fake
+    ProcessGroup (fake PG)</strong> to do a very high fidelity simulation of
+    the memory usage of any given rank in an arbitrarily large training config
+    on a single GPU.</p>
 
 
     <div class="fnotes">

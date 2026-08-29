@@ -35,6 +35,29 @@ export const BYTE_COMPS = [
   { prop: 'showOptim', color: '#1baf7a', bpp: 8, zthresh: 1, label: 'optimizer states (8 B/param)' },
 ];
 
+// per-op activation buckets for the fit chart's acts breakdown — the same
+// stashes the wire chips draw, grouped Haziza-style. 'other' is a catch-all
+// remainder, so the list always PARTITIONS savedBytes (the visual audit's
+// decomposition rule enforces the sum exactly).
+export const ACT_BUCKETS = [
+  { label: 'x0, x1 (residual)', ids: ['x0', 'x1'] },
+  { label: 'norm outs', ids: ['norm1', 'norm2'] },
+  { label: 'mla latents', ids: ['qkv_down', 'q_norm', 'kv_norm'] },
+  { label: 'q · k,v', ids: ['q_up', 'kv_up'] },
+  { label: 'attention out', ids: ['attn'] },
+  { label: 'router state', ids: ['router'] },
+  { label: 'dispatched tokens', ids: ['dispatch'] },
+  { label: 'gate, up (routed+sh)', ids: ['gate_up'] },
+  { label: 'swiglu out', ids: ['swiglu'] },
+  { label: 'other', ids: [] },
+];
+// bucket an analysis's per-tensor stash bytes; the remainder lands in 'other'
+export const actBucketsOf = (ana2) => {
+  const named = ACT_BUCKETS.map((b) => b.ids.reduce((t, id) => t + (ana2.savedById?.[id] ?? 0), 0));
+  named[ACT_BUCKETS.length - 1] = ana2.savedBytes - named.reduce((a, b) => a + b, 0);
+  return named;
+};
+
 // fiat parallelism for the `local` variant (what one GPU holds): 2048 GPUs;
 // PP degree, EP width, and ZeRO-1 are the layer's knobs. Layers split over
 // the PP stages by a contiguous floor split: stage 0 gets the embedding (+
@@ -995,7 +1018,8 @@ export class Dsv3Layer extends HTMLElement {
       sched: this.sched ?? '1f1b', vpp: this.vpp ?? 1, fold: this.fold ?? 'reflect', cum: !!this.cumulative,
       // the pre-change analysis: stash-affecting knobs (precision, marks,
       // fp8ᵀ) lerp chip squares and the acts bar between old and new bytes
-      saved: this._anaMemo?.ana?.savedBytes, anaPrev: this._anaMemo?.ana };
+      saved: this._anaMemo?.ana?.savedBytes,
+      savedParts: this._anaMemo?.ana ? actBucketsOf(this._anaMemo.ana) : null, anaPrev: this._anaMemo?.ana };
   }
   _tweenLocal(prev) {
     this.changed(true);
@@ -2529,7 +2553,10 @@ export class Dsv3Layer extends HTMLElement {
       // breakdown and its pin factors ride these
       const partsFor = (S) => {
         const q = stageParts(S);
-        return COMPS.map((c) => [q.e * shardOf(S, c, 'e'), q.d * shardOf(S, c, 'd'), q.v * shardOf(S, c, 'd')]);
+        const actM = 4096 * q.layers * inflightOf(S.sched ?? '1f1b', S.stage, S.pp, S.vpp, S.fold);
+        const actP = (S.savedParts ?? actBucketsOf(ana)).map((b) => b * actM);
+        return COMPS.map((c) => [q.e * shardOf(S, c, 'e'), q.d * shardOf(S, c, 'd'), q.v * shardOf(S, c, 'd')])
+          .concat([actP]);
       };
       const segB = (S) => {
         const q = stageParts(S);
@@ -2580,10 +2607,10 @@ export class Dsv3Layer extends HTMLElement {
       // (subEase rides the solo tween both ways — open on solo, close on unsolo)
       let sIdx = -1, subEase = 0;
       const onCount = onB.reduce((t2, o2) => t2 + o2, 0);
-      if (onCount === 1 && onB.indexOf(1) < 3) { sIdx = onB.indexOf(1); subEase = chg ? tC : 1; }
+      if (onCount === 1 && onB.indexOf(1) <= 3) { sIdx = onB.indexOf(1); subEase = chg ? tC : 1; }
       else if (allOnTarget && chg) {
         const steady = [0, 1, 2, 3].filter((j) => onB[j] && !chg.has(propOf(j)));
-        if (steady.length === 1 && steady[0] < 3) { sIdx = steady[0]; subEase = 1 - tC; }
+        if (steady.length === 1 && steady[0] <= 3) { sIdx = steady[0]; subEase = 1 - tC; }
       }
       const parts2 = sIdx >= 0 ? this._segParts[sIdx] : null;
       // which param rows ride with their breakdown OPEN: the solo (tweened),
@@ -2591,7 +2618,7 @@ export class Dsv3Layer extends HTMLElement {
       const openRows = this.hasAttribute('snapshot') && this.hasAttribute('parts')
         ? [0, 1, 2].filter((j) => onB[j]) : sIdx >= 0 ? [sIdx] : [];
       const easeOf = (j) => j === sIdx ? subEase : 1;
-      const partIdxsOf = (j) => [0, 1, 2].filter((k) => (this._segParts[j] ?? [])[k] > 0);
+      const partIdxsOf = (j) => (this._segParts[j] ?? []).map((b, k) => b > 0 ? k : -1).filter((k) => k >= 0);
       const partIdxs = parts2 ? partIdxsOf(sIdx) : [];
       const subHOf = (j) => partIdxsOf(j).length * rowH * easeOf(j);
       const subAbove = (i) => openRows.reduce((t2, j) => t2 + (j < i ? subHOf(j) : 0), 0);
@@ -2678,14 +2705,17 @@ export class Dsv3Layer extends HTMLElement {
         // the accordion sub-rows open right below their component's row
         if (openRows.includes(i) && partIdxsOf(i).length && easeOf(i) > 0.02) {
           const prevParts = V ? partsFor(V.prev) : null;
-          const names2 = ['experts', 'non-expert', 'vocab'];
+          // param components break down by sharding class (clickable: the
+          // part filter); the acts row breaks down PER OP, like the chips
+          const names2 = i === 3 ? ACT_BUCKETS.map((b2) => b2.label) : ['experts', 'non-expert', 'vocab'];
+          const clickable = i < 3;
           for (const [k3, k2] of partIdxsOf(i).entries()) {
             const now2 = this._segParts[i][k2];
             const bT = prevParts ? geo(prevParts[i][k2], now2, V.t) : now2;
             const yS = yOf(i) + rowH + k3 * rowH * easeOf(i) + 2;
             const pinP = pin?.parts?.[i]?.[k2];
-            const pOp = easeOf(i) * (0.4 + 0.6 * (i === sIdx ? pvis(k2) : 1));   // dim unselected parts
-            B.push(`<g opacity="${pOp.toFixed(3)}" data-part="${k2}" style="cursor:pointer">` +
+            const pOp = easeOf(i) * (0.4 + 0.6 * (clickable && i === sIdx ? pvis(k2) : 1));   // dim unselected parts
+            B.push(`<g opacity="${pOp.toFixed(3)}"${clickable ? ` data-part="${k2}" style="cursor:pointer"` : ''}>` +
               `<rect x="0" y="${(yS - 2).toFixed(1)}" width="${x0 - 4}" height="${rowH - 2}" fill="transparent"/>` +
               `<text class="dims" x="12" y="${(yS + 5.5).toFixed(1)}">· ${names2[k2]}</text>` +
               `<rect data-bar="part:${i}:${k2}" data-true="${bT}" x="${x0}" y="${yS.toFixed(1)}" width="${Math.max(0.5, px(bT) - x0).toFixed(1)}" height="5" fill="${colors[i]}" opacity="0.55"/>` +
