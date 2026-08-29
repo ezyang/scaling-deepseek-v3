@@ -7,7 +7,9 @@
 // rounded components legitimately don't sum to the rounded total (1.22 + 2.44
 // + 4.88 TiB + 106.4 GiB reads 8.64, the true total rounds to 8.65), so the
 // audit runs on the exact values and checks the rounding separately.
-import { fmtBytes, facNum, BAR_GEO } from './viewer.js';
+import { fmtBytes, facNum, BAR_GEO, ppStage } from './viewer.js';
+import { PARAMS } from './params.js';
+import { DSV3 } from './model.js';
 
 export function auditFitCharts(root = document) {
   const out = [];
@@ -51,6 +53,24 @@ export function auditFitCharts(root = document) {
         if (Math.abs(psum - comps[i]) > comps[i] * 1e-9)
           bad(`comp ${i} = ${comps[i]} ≠ Σ open parts ${psum}`);
       }
+    }
+
+    // 3b) conservation: internal consistency can't catch an UNDERCOUNT (the
+    // rows and their parts share one decomposition), so re-derive it: summed
+    // over all stages of this chart's split, expert + non-expert + vocab
+    // params must equal the checkpoint-exact total — every RMSNorm, router
+    // bias, and the final norm included, nothing dropped, nothing doubled
+    if (host.hasAttribute('local')) {
+      const pp = host.pp ?? 1, vpp = host.vpp ?? 1, fold = host.fold ?? 'reflect';
+      const moeExp = PARAMS.expert * DSV3.routedExperts;
+      let t2 = 0;
+      for (let s2 = 0; s2 < pp; s2++) {
+        const g = ppStage(s2, pp, vpp, fold);
+        t2 += g.dense * PARAMS.denseBlock + g.moe * (PARAMS.moeBlock - moeExp) + g.moe * moeExp
+          + ((g.emb ? 1 : 0) + (g.head ? 1 : 0)) * PARAMS.embed + (g.head ? DSV3.hidden : 0);
+      }
+      if (t2 !== PARAMS.total)
+        bad(`conservation: Σ stages ${t2} ≠ model total ${PARAMS.total}`);
     }
 
     // 4) geometry: a bar's pixels must encode the same number as its label
