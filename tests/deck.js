@@ -17,13 +17,18 @@ T.check('step 2: pure DP — nothing moves: no ghosts, no badges (delta-only)',
 T.check('config readout panel shows and is inert', L().querySelector('.stp[data-knob="pp"] select.v').value === '1'
   && L().querySelector('.stp[data-knob="pp"] select.v').disabled
   && L().querySelector('.stp[data-knob="zero"]'), '');
+const deckBarY = L().querySelector('.lv-bar').getBoundingClientRect().top;
 next(); await T.tick(1000);
 T.check('step 3: ZeRO-1 ▼×2048, all bars still shown', L().zero === 1 && bar().includes('▼×2048')
   && bar().includes('weights1.22 TiB') && bar().includes('· dispatched tokens'), bar().slice(0, 120));
 next(); await T.tick(1000);
-T.check('step 4: hypothetical ZeRO-2 — dashed card + tag', L().zero === 2
+T.check('step 4: hypothetical ZeRO-2 — dashed card, tag in the nav row', L().zero === 2
   && getComputedStyle(L().querySelector('.lv')).borderTopStyle === 'dashed'
-  && L().querySelector('.lv-hyptag').textContent.includes('unsharded'), '');
+  && deck().querySelector('.deck-hyp').textContent.includes('unsharded')
+  && !L().querySelector('.lv-hyptag'), '');
+// the chart's y position NEVER changes slide to slide
+T.check('chart y is slide-invariant', Math.abs(L().querySelector('.lv-bar').getBoundingClientRect().top
+  - deckBarY) < 1, '');
 next(); await T.tick(1000);
 T.check('step 5: EP64 — the hypothetical reverted, solid card', L().zero === 1 && L().ep === 64
   && getComputedStyle(L().querySelector('.lv')).borderTopStyle === 'solid', `zero ${L().zero}`);

@@ -1493,7 +1493,7 @@ export class Dsv3Layer extends HTMLElement {
       barSlot.innerHTML = this._barHtml;
       this._barHtml = null;
       this._wireBars(barSlot);
-      if (this.hasAttribute('snapshot') && this.hasAttribute('hypothetical')) {
+      if (this.hasAttribute('snapshot') && this.hasAttribute('hypothetical') && !this.getAttribute('knobs')) {
         const ht = el('div', 'lv-hyptag');
         ht.textContent = this.getAttribute('hypothetical') || 'hypothetical — not what DSv3 did';
         barSlot.before(ht);
@@ -3345,6 +3345,7 @@ dsv3-beat-deck { display: block; margin: 14px 0 26px; }
 .deck-nav button:hover:not(:disabled) { background: #f3f2ee; }
 .deck-nav button:disabled { color: #dedcd3; cursor: default; }
 .deck-step { font: 11px ui-monospace, monospace; color: #52514e; }
+.deck-hyp { font: italic 11px system-ui; color: #898781; }
 .deck-cap { max-width: 760px; font-size: 13.5px; color: #1c1c1a; line-height: 1.5; }
 .deck-cap p { margin: 6px 0; }
 `;
@@ -3363,7 +3364,8 @@ class Dsv3BeatDeck extends HTMLElement {
     this._prev = document.createElement('button'); this._prev.textContent = '‹ back';
     this._next = document.createElement('button'); this._next.textContent = 'next ›';
     this._ind = el('span', 'deck-step');
-    nav.append(this._prev, this._ind, this._next);
+    this._hyp = el('span', 'deck-hyp');   // hypothetical callout: lives in the FIXED nav row
+    nav.append(this._prev, this._ind, this._next, this._hyp);
     this._prev.onclick = () => this.go(this._i - 1);
     this._next.onclick = () => this.go(this._i + 1);
     // the chart: a snapshot-mode layer (measure-only, no knobs, no URL state
@@ -3417,6 +3419,7 @@ class Dsv3BeatDeck extends HTMLElement {
     this._cap.innerHTML = st.cap;
     this._i = i;
     this._ind.textContent = `step ${i + 1} / ${this._steps.length}`;
+    this._hyp.textContent = st.hyp != null ? (st.hyp || 'hypothetical — not what DSv3 did') : '';
     this._prev.disabled = i === 0;
     this._next.disabled = i === this._steps.length - 1;
     if (this.id) writeUrlState('d:' + this.id, { i });
