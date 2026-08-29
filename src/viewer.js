@@ -691,6 +691,14 @@ dsv3-layer[snapshot] .lv-bar [data-part], dsv3-layer[snapshot] .lv-bar [data-pro
 /* hypothetical beats: a counterfactual 'to' — the dashed card border is the
    same not-real cue the ghost bars use, plus an explicit italic tag */
 dsv3-layer[hypothetical] .lv { border-style: dashed; }
+/* snapshot knob panels are READOUTS: values stay ink, ± steppers hide,
+   segment selections keep their face */
+dsv3-layer[snapshot] .lv-head button:disabled, dsv3-layer[snapshot] .lv-head select:disabled { opacity: 1; color: #0b0b0b; cursor: default; }
+dsv3-layer[snapshot] .lv-head .stp button.on:disabled { background: #f3f2ee; color: #0b0b0b; }
+dsv3-layer[snapshot] .lv-head .stp button:disabled:not(.on) { color: #c3c2b7; }
+dsv3-layer[snapshot] .lv-head .stp:has(select.v) button { display: none; }
+dsv3-layer[snapshot] .lv-head .stp:has(select.v) select.v { border-left: 1px solid #c3c2b7; border-right: 1px solid #c3c2b7; border-radius: 4px; }
+dsv3-layer[snapshot] .lv-head select:disabled { appearance: none; -webkit-appearance: none; background: #fff; }
 .lv-hyptag { font: italic 10.5px system-ui; color: #898781; padding-bottom: 4px; }
 .lv-bar svg { display: block; margin: 2px 0 6px; max-width: 100%; height: auto; }
 .lv-bar { position: relative; }
@@ -1243,7 +1251,7 @@ export class Dsv3Layer extends HTMLElement {
       const mini = el('div', 'lv-head');
       // article instances disclose a SUBSET of the knob groups:
       // knobs="cluster,pipeline,mesh,zero,save,prec,blocks" (absent = all)
-      const knAttr = this.hasAttribute('snapshot') ? '' : this.getAttribute('knobs');
+      const knAttr = this.getAttribute('knobs') ?? (this.hasAttribute('snapshot') ? '' : null);
       const KN = (k) => knAttr == null || knAttr.split(/[ ,]+/).includes(k);
       // local gets TWO control rows: parallelism (with the fit bar right
       // under it — the headline effect) and a second row for the misc bits
@@ -1462,6 +1470,9 @@ export class Dsv3Layer extends HTMLElement {
         const plab = (t2) => { const sp = el('span'); sp.style.cssText = 'color:#52514e;font-size:11px;margin-left:8px;'; sp.textContent = t2; return sp; };
         if (KN('prec')) mini2.append(plab('precision:'), preset, plab('recompute:'), rsel, tl);
       }
+      if (this.hasAttribute('snapshot'))
+        for (const c2 of [...mini.querySelectorAll('button, select'), ...mini2.querySelectorAll('button, select')])
+          c2.disabled = true;
       root.append(mini);
       if (this.hasAttribute('local')) { barSlot = el('div', 'lv-bar'); root.append(barSlot); }
       if (mini2 !== mini && mini2.childNodes.length) root.append(mini2);
@@ -2627,9 +2638,10 @@ export class Dsv3Layer extends HTMLElement {
       // which param rows ride with their breakdown OPEN: the solo (tweened),
       // or — snapshot 'parts' — every visible param component at once
       const openRows = this.hasAttribute('snapshot') && this.hasAttribute('parts')
-        ? [0, 1, 2].filter((j) => onB[j]) : sIdx >= 0 ? [sIdx] : [];
+        ? [0, 1, 2, 3].filter((j) => onB[j]) : sIdx >= 0 ? [sIdx] : [];
       const easeOf = (j) => j === sIdx ? subEase : 1;
-      const partIdxsOf = (j) => (this._segParts[j] ?? []).map((b, k) => b > 0 ? k : -1).filter((k) => k >= 0);
+      const partIdxsOf = (j) => (this._segParts[j] ?? [])
+        .map((b, k) => b > 0 || (this._pinCfg?.parts?.[j]?.[k] ?? 0) > 0 ? k : -1).filter((k) => k >= 0);
       const partIdxs = parts2 ? partIdxsOf(sIdx) : [];
       const subHOf = (j) => partIdxsOf(j).length * rowH * easeOf(j);
       const subAbove = (i) => openRows.reduce((t2, j) => t2 + (j < i ? subHOf(j) : 0), 0);
@@ -2707,7 +2719,10 @@ export class Dsv3Layer extends HTMLElement {
         // the save renders as a dotted GHOST bar (not a tick), so the value
         // label can always ride the live bar's end — hidden components hide
         // their ghosts too
-        if (pinB && r.on) B.push(`<rect data-ghost="${i === nR - 1 ? 'total' : i}" data-true="${pinB}" x="${x0}" y="${y2}" width="${Math.max(0.5, px(pinB) - x0).toFixed(1)}" height="${barH}" ` +
+        // a ghost only where there IS a delta — a coincident ghost just
+        // serrates an unchanged bar (same 5% log threshold as the badge)
+        const ghosted = pinB && r.on && Math.abs(Math.log2((r.abs || 1) / pinB)) >= 0.05;
+        if (ghosted) B.push(`<rect data-ghost="${i === nR - 1 ? 'total' : i}" data-true="${pinB}" x="${x0}" y="${y2}" width="${Math.max(0.5, px(pinB) - x0).toFixed(1)}" height="${barH}" ` +
           `fill="none" stroke="${i === nR - 1 ? '#898781' : r.color}" stroke-width="1" stroke-dasharray="2 2" opacity="0.7"/>`);
         // bar end: the ABSOLUTE value (+ the vs-save badge when saved);
         // hidden components show none
@@ -2724,7 +2739,8 @@ export class Dsv3Layer extends HTMLElement {
             const now2 = this._segParts[i][k2];
             const bT = prevParts ? geo(prevParts[i][k2], now2, V.t) : now2;
             const yS = yOf(i) + rowH + k3 * rowH * easeOf(i) + 2;
-            const pinP = pin?.parts?.[i]?.[k2];
+            const pinP0 = pin?.parts?.[i]?.[k2];
+            const pinP = pinP0 && Math.abs(Math.log2((now2 || 1) / pinP0)) >= 0.05 ? pinP0 : 0;
             const pOp = easeOf(i) * (0.4 + 0.6 * (clickable && i === sIdx ? pvis(k2) : 1));   // dim unselected parts
             B.push(`<g opacity="${pOp.toFixed(3)}"${clickable ? ` data-part="${k2}" style="cursor:pointer"` : ''}>` +
               `<rect x="0" y="${(yS - 2).toFixed(1)}" width="${x0 - 4}" height="${rowH - 2}" fill="transparent"/>` +
@@ -2736,7 +2752,8 @@ export class Dsv3Layer extends HTMLElement {
           }
         }
       }
-      if (pin) B.push(`<text class="dims" x="${x0 + bw}" y="${axisY + 18}" text-anchor="end">saved: ${pin.label}</text>`);
+      const SHOWLBL = pin && !(this.hasAttribute('snapshot') && this.getAttribute('knobs'));
+      if (SHOWLBL) B.push(`<text class="dims" x="${x0 + bw}" y="${axisY + 18}" text-anchor="end">saved: ${pin.label}</text>`);
       // the scrub overlay: cursor affordance AND arming region live exactly
       // on the bars band — not the captions, not below the axis
       B.push(`<rect class="scrub" x="${x0}" y="${topY - 2}" width="${bw}" height="${axisY - topY + 1}" ` +
@@ -2749,7 +2766,8 @@ export class Dsv3Layer extends HTMLElement {
       B.push(`<text class="dims" x="${cx2.toFixed(1)}" y="9" text-anchor="middle">80 GiB (H100)</text>`);
       // the pinned-label line is always reserved (no reflow on pin) — except
       // in pinless snapshots, which are static figures with nothing to reserve
-      const HB = axisY + (this.hasAttribute('snapshot') && !pin ? 10 : 22);
+      const canLabel = !this.hasAttribute('snapshot') || SHOWLBL;
+      const HB = axisY + (canLabel ? 22 : 10);
       this._barHtml = `<svg width="${BAR_GEO.w}" height="${HB}" viewBox="0 0 ${BAR_GEO.w} ${HB}">${B.join('')}</svg>`;
     }
     if (SCOPE === 'model') {   // the surrounding stack: ×61 rule, final norm, lm head, loss
@@ -3348,7 +3366,8 @@ class Dsv3BeatDeck extends HTMLElement {
     const l = this._layer = document.createElement('dsv3-layer');
     l._tweenFrames = 45;   // ~720 ms: slide transitions are watched, not operated
     for (const [k, v] of [['snapshot', ''], ['local', ''], ['cumulative', ''], ['lens', 'param-bytes'],
-      ['recipe', 'bf16'], ['recompute', 'none'], ['controls', 'static'], ['detail', ''], ['nocaption', '']])
+      ['recipe', 'bf16'], ['recompute', 'none'], ['controls', 'static'], ['detail', ''], ['nocaption', ''],
+      ['knobs', 'cluster,pipeline,mesh,zero']])   // the per-slide config READOUT
       l.setAttribute(k, v);
     this._cap = el('div', 'deck-cap');
     this.append(style, nav, l, this._cap);
@@ -3367,25 +3386,29 @@ class Dsv3BeatDeck extends HTMLElement {
     for (let j = i - 1; j >= 0; j--) if (!this._steps[j].hyp) return this._steps[j];
     return null;
   }
+  // every step is a FULL config: unlisted knobs mean the DEFAULT, not
+  // "whatever the previous slide left behind" — otherwise a hypothetical's
+  // sched/recipe would leak forward
+  _full(c) {
+    return { world: 2048, pp: 1, ep: 1, zero: 0, sched: '1f1b', vpp: 1,
+      fold: 'reflect', recipe: 'bf16', recompute: 'none', ...c };
+  }
   go(i, instant = false) {
     if (i < 0 || i >= this._steps.length || i === this._i) return;
     const st = this._steps[i], l = this._layer, base = this._baseOf(i);
-    const fwd = i === this._i + 1 && !instant;
-    // per-step view state: solo / all-on, all accordions, the not-real card
-    const P = { weights: 'showWeights', grads: 'showGrads', optim: 'showOptim', acts: 'showActs' };
-    for (const p of Object.values(P)) l[p] = st.solo ? p === P[st.solo] : true;
-    if (st.parts) l.setAttribute('parts', ''); else l.removeAttribute('parts');
+    // fixed focus: the deck ALWAYS shows every bar and every sub-bar —
+    // rows appearing/disappearing between slides reads as a scene change,
+    // and the story is one scene (data-solo is accepted but ignored)
+    for (const p of ['showWeights', 'showGrads', 'showOptim', 'showActs']) l[p] = true;
+    l.setAttribute('parts', '');
     if (st.hyp != null) l.setAttribute('hypothetical', st.hyp); else l.removeAttribute('hypothetical');
+    const prev = this._i >= 0 ? l._snapLocal() : null;   // where the reader is looking NOW
     if (base) {
-      l._applyCfg(base.cfg); l.render(); l._saveBaseline();
+      l._applyCfg(this._full(base.cfg)); l.render(); l._saveBaseline();
     } else l._pinCfg = null;
-    if (fwd && base) {
-      const prev = l._snapLocal();
-      l._applyCfg(st.cfg);
-      l._tweenLocal(prev);        // the pour: squares and bars animate to the new config
-    } else {
-      l._applyCfg(st.cfg); l.render();
-    }
+    l._applyCfg(this._full(st.cfg));
+    if (prev && !instant) l._tweenLocal(prev);   // the pour — forward, backward, or jump
+    else l.render();
     this._cap.innerHTML = st.cap;
     this._i = i;
     this._ind.textContent = `step ${i + 1} / ${this._steps.length}`;

@@ -10,11 +10,16 @@ const next = () => { deck().querySelector('.deck-nav button:last-of-type').click
 T.check('step 1 renders the debt', cap().includes('the debt') && bar().includes('total8.65 TiB'), '');
 T.check('back disabled at step 1', deck().querySelector('.deck-nav button').disabled, '');
 next(); await T.tick(1000);
-T.check('step 2: pure DP — baseline saved, nothing moves', bar().includes('saved:')
-  && !bar().includes('▼') && !bar().includes('▲'), '');
+T.check('step 2: pure DP — nothing moves: no ghosts, no badges (delta-only)',
+  L().querySelectorAll('.lv-bar rect[stroke-dasharray]').length === 0
+  && !bar().includes('▼') && !bar().includes('▲') && !bar().includes('saved:'), '');
+// the per-slide config READOUT: knob groups render, values in ink, disabled
+T.check('config readout panel shows and is inert', L().querySelector('.stp[data-knob="pp"] select.v').value === '1'
+  && L().querySelector('.stp[data-knob="pp"] select.v').disabled
+  && L().querySelector('.stp[data-knob="zero"]'), '');
 next(); await T.tick(1000);
-T.check('step 3: ZeRO-1 solo, ▼×2048', L().zero === 1 && bar().includes('▼×2048')
-  && !/weights\d/.test(bar()), bar().slice(0, 120));
+T.check('step 3: ZeRO-1 ▼×2048, all bars still shown', L().zero === 1 && bar().includes('▼×2048')
+  && bar().includes('weights1.22 TiB') && bar().includes('· dispatched tokens'), bar().slice(0, 120));
 next(); await T.tick(1000);
 T.check('step 4: hypothetical ZeRO-2 — dashed card + tag', L().zero === 2
   && getComputedStyle(L().querySelector('.lv')).borderTopStyle === 'dashed'
@@ -30,7 +35,7 @@ T.check('audit clean at step 5', auditFitCharts(deck()).findings.length === 0,
   auditFitCharts(deck()).findings[0]);
 // arrow keys navigate; backward snaps
 deck().dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true })); await T.tick(200);
-T.check('ArrowLeft goes back (snap)', L().zero === 2, '');
+T.check('ArrowLeft goes back (animated)', L().zero === 2, '');
 deck().dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })); await T.tick(1000);
 // walk to the end: the fit
 for (let i = 0; i < 6; i++) { next(); await T.tick(1000); }

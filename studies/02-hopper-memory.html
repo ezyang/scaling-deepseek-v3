@@ -111,7 +111,7 @@
     below carries a full config and its caption — edit captions in place;
     bracketed text is AI-drafted.]</p>
 
-    <dsv3-beat-deck id="fitdeck" style="min-height:230px">
+    <dsv3-beat-deck id="fitdeck" style="min-height:513px">
       <section data-config='{"world":2048,"pp":1,"ep":1,"zero":0}'>
         [<b>Step 1 — the debt.</b> The whole model on one imaginary GPU:
         8.65 TiB against an 80 GiB card — ×111 over budget, about seven
@@ -122,12 +122,12 @@
         every GPU: not a single bar moves. Replication isn&rsquo;t reduction —
         but it quietly built a 2048-wide replica group we can shard over.]
       </section>
-      <section data-config='{"world":2048,"pp":1,"ep":1,"zero":1}' data-solo="optim">
+      <section data-config='{"world":2048,"pp":1,"ep":1,"zero":1}'>
         [<b>Step 3 — ZeRO-1.</b> Biggest problem first: optimizer states are
         4.88 TiB, the tallest bar. Each replica keeps 1/2048th: ▼×2048, down
         to 2.4 GiB. Solved outright. Total: 8.65 → 3.77 TiB.]
       </section>
-      <section data-config='{"world":2048,"pp":1,"ep":1,"zero":2}' data-solo="grads"
+      <section data-config='{"world":2048,"pp":1,"ep":1,"zero":2}'
         data-hypothetical="hypothetical — DSv3 kept gradients unsharded">
         [<b>Step 4 — the ZeRO-2 temptation.</b> Greedy says gradients next
         (2.44 TiB), and on this chart ZeRO-2 works: ▼×2048. DeepSeek declined:
@@ -163,16 +163,16 @@
         every rank, vs 1F1B&rsquo;s staircase). Its payoff — pipeline bubbles —
         is off this chart. Second warning: this chart cannot see time.]
       </section>
-      <section data-config='{"world":2048,"pp":16,"ep":64,"zero":1,"vpp":2,"recompute":"dsv3"}' data-solo="acts">
+      <section data-config='{"world":2048,"pp":16,"ep":64,"zero":1,"vpp":2,"recompute":"dsv3"}'>
         [<b>Step 9 — activation checkpointing.</b> The only bar left. The
         dsv3 recompute policy trades FLOPs for stashes — the per-op rows show
         exactly which ones die. 127.7 → 77.1 GiB. It fits. Barely.]
       </section>
-      <section data-config='{"world":2048,"pp":16,"ep":64,"zero":1,"vpp":2,"recompute":"dsv3","recipe":"dsv3-fp8"}' data-solo="acts">
+      <section data-config='{"world":2048,"pp":16,"ep":64,"zero":1,"vpp":2,"recompute":"dsv3","recipe":"dsv3-fp8"}'>
         [<b>Step 10 — fp8 stashes.</b> The fp8 recipe halves what the GEMMs
         keep for backward: 69.0 GiB, and now there is headroom to spend.]
       </section>
-      <section data-config='{"world":2048,"pp":16,"ep":64,"zero":1,"vpp":2,"recompute":"dsv3","recipe":"dsv3-fp8"}' data-parts>
+      <section data-config='{"world":2048,"pp":16,"ep":64,"zero":1,"vpp":2,"recompute":"dsv3","recipe":"dsv3-fp8"}'>
         [<b>Step 11 — the destination.</b> Every bar inside the budget, every
         breakdown open: ~11 GiB of headroom, to be read against the
         what-we-don&rsquo;t-model list.]
