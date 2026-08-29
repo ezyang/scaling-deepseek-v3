@@ -871,6 +871,10 @@ export class Dsv3Layer extends HTMLElement {
     // (the beat deck) set _tweenFrames higher so the pour reads as a story
     const FRAMES = this._tweenFrames ?? 12; let f = 0;
     onFrame(0);
+    // paint t=0 NOW: between starting a tween and the first timer tick the
+    // DOM may hold some other synchronously-rendered state (the deck renders
+    // the baseline to build its pin) — one visible beat of it is a flash
+    this.render(); this.changed(false);
     // ease-out cubic: these tweens RESPOND to a click, and response motion
     // must start immediately (in-out's slow first beat reads as lag) and
     // decelerate into place. Time-easing only: values lerp geometrically,

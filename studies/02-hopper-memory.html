@@ -124,25 +124,22 @@
       <section data-config='{"world":2048,"pp":1,"ep":1,"zero":1}'>
         [<b>Step 2 — ZeRO-1.</b> Biggest problem first: optimizer states are
         4.88 TiB, the tallest bar. Each replica keeps 1/2048th: ▼×2048, down
-        to 2.4 GiB. Solved outright. Total: 8.65 → 3.77 TiB.]
-      </section>
-      <section data-config='{"world":2048,"pp":1,"ep":1,"zero":2}'
-        data-hypothetical="hypothetical — DSv3 kept gradients unsharded">
-        [<b>Step 3 — the ZeRO-2 temptation.</b> Greedy says gradients next
-        (2.44 TiB), and on this chart ZeRO-2 works: ▼×2048. DeepSeek declined:
-        fp32 accumulators live across all 64 microbatches, and sharding them
-        puts a reduce-scatter on every one. First warning: this chart cannot
-        see communication.]
+        to 2.4 GiB. Solved outright. Total: 8.65 → 3.77 TiB. The tempting
+        next move is the same trick on the new tallest bar — ZeRO-2 on the
+        gradients — and on this chart it would work just as well. DeepSeek
+        declined: fp32 accumulators live across all 64 microbatches, and
+        sharding them puts a reduce-scatter on every one. First warning:
+        this chart cannot see communication.]
       </section>
       <section data-config='{"world":2048,"pp":1,"ep":64,"zero":1}'>
-        [<b>Step 4 — EP64.</b> Weights and gradients are both param-shaped,
+        [<b>Step 3 — EP64.</b> Weights and gradients are both param-shaped,
         and expert parallelism cuts the expert share of both at once: ▼×24
         each. The optimizer bar does not move — smaller expert count, smaller
         sharding group, the effects cancel. Total: 261.6 GiB. Still ×3.3
         over.]
       </section>
       <section data-config='{"world":2048,"pp":16,"ep":64,"zero":1}'>
-        [<b>Step 5 — PP16, because we must.</b> Gradients alone are 101.8 GiB
+        [<b>Step 4 — PP16, because we must.</b> Gradients alone are 101.8 GiB
         — over the card by themselves, with every avoid-PP lever spent.
         Pipelining divides the layers per GPU: ▼×17 weights, ▼×16.7 grads…
         and ▼×1.02 activations. PP divides layers and multiplies microbatches
@@ -151,28 +148,28 @@
       </section>
       <section data-config='{"world":2048,"pp":16,"ep":64,"zero":1,"sched":"one"}'
         data-hypothetical="hypothetical — a 16-deep pipeline with one microbatch is 94% idle">
-        [<b>Step 6 — the one-microbatch dream.</b> If a single microbatch
+        [<b>Step 5 — the one-microbatch dream.</b> If a single microbatch
         flowed through the pipe, activations would be 7.0 GiB and we&rsquo;d be
         done at 24 GiB total. But a pipeline stays busy only if ~PP
         microbatches are in flight — see the schedule widget below.]
       </section>
       <section data-config='{"world":2048,"pp":16,"ep":64,"zero":1,"vpp":2}'>
-        [<b>Step 7 — DualPipeV, the schedule DeepSeek trained with.</b> Peak
+        [<b>Step 6 — DualPipeV, the schedule DeepSeek trained with.</b> Peak
         memory gets WORSE: ▲ to 127.7 GiB (a uniform PP+½ microbatches on
         every rank, vs 1F1B&rsquo;s staircase). Its payoff — pipeline bubbles —
         is off this chart. Second warning: this chart cannot see time.]
       </section>
       <section data-config='{"world":2048,"pp":16,"ep":64,"zero":1,"vpp":2,"recompute":"dsv3"}'>
-        [<b>Step 8 — activation checkpointing.</b> The only bar left. The
+        [<b>Step 7 — activation checkpointing.</b> The only bar left. The
         dsv3 recompute policy trades FLOPs for stashes — the per-op rows show
         exactly which ones die. 127.7 → 77.1 GiB. It fits. Barely.]
       </section>
       <section data-config='{"world":2048,"pp":16,"ep":64,"zero":1,"vpp":2,"recompute":"dsv3","recipe":"dsv3-fp8"}'>
-        [<b>Step 9 — fp8 stashes.</b> The fp8 recipe halves what the GEMMs
+        [<b>Step 8 — fp8 stashes.</b> The fp8 recipe halves what the GEMMs
         keep for backward: 69.0 GiB, and now there is headroom to spend.]
       </section>
       <section data-config='{"world":2048,"pp":16,"ep":64,"zero":1,"vpp":2,"recompute":"dsv3","recipe":"dsv3-fp8"}'>
-        [<b>Step 10 — the destination.</b> Every bar inside the budget, every
+        [<b>Step 9 — the destination.</b> Every bar inside the budget, every
         breakdown open: ~11 GiB of headroom, to be read against the
         what-we-don&rsquo;t-model list.]
       </section>
