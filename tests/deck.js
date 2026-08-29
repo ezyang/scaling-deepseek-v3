@@ -43,6 +43,12 @@ deck().querySelector('.deck-last').click(); await T.tick(1200);
 T.check('›| jumps to the destination', cap().includes('destination')
   && deck().querySelector('.deck-next').disabled && deck().querySelector('.deck-last').disabled, '');
 T.check('audit clean at the end', auditFitCharts(deck()).findings.length === 0, '');
+// the sub-row SET is fixed across slides: stashes killed by AC/fp8 keep
+// their labeled zero rows (their bars animated down; rows never vanish)
+T.check('dead buckets remain as zero rows at the end', bar().includes('norm outs0')
+  && bar().includes('swiglu out0'), '');
+T.check('sub-row count is slide-invariant', L().querySelectorAll('.lv-bar text[data-role^="val:part:"]').length === 18, 
+  L().querySelectorAll('.lv-bar text[data-role^="val:part:"]').length);
 // and |‹ back to the start
 deck().querySelector('.deck-first').click(); await T.tick(1200);
 T.check('|‹ jumps home, no baseline', cap().includes('the debt') && !bar().includes('▼'), '');

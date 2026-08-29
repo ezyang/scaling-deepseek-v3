@@ -870,6 +870,7 @@ export class Dsv3Layer extends HTMLElement {
     // 12 frames (~200 ms) for knob twiddling; hosts that NARRATE a change
     // (the beat deck) set _tweenFrames higher so the pour reads as a story
     const FRAMES = this._tweenFrames ?? 12; let f = 0;
+    const gen = this._frameGen = (this._frameGen ?? 0) + 1;
     onFrame(0);
     // paint t=0 NOW: between starting a tween and the first timer tick the
     // DOM may hold some other synchronously-rendered state (the deck renders
@@ -882,6 +883,7 @@ export class Dsv3Layer extends HTMLElement {
     // IS the perceived motion. Duration handles gravitas, not the curve.
     const ease = (p) => 1 - (1 - p) ** 3;
     const step = () => {
+      if (this._frameGen !== gen) return;   // superseded by a newer tween
       f++; const p = Math.min(1, f / FRAMES);
       onFrame(ease(p));
       this.render(); this.changed(false);     // linked widgets tween along
@@ -2651,8 +2653,11 @@ export class Dsv3Layer extends HTMLElement {
       const openRows = this.hasAttribute('snapshot') && this.hasAttribute('parts')
         ? [0, 1, 2, 3].filter((j) => onB[j]) : sIdx >= 0 ? [sIdx] : [];
       const easeOf = (j) => j === sIdx ? subEase : 1;
+      const ALLPARTS = this.hasAttribute('snapshot') && this.hasAttribute('parts');
       const partIdxsOf = (j) => (this._segParts[j] ?? [])
-        .map((b, k) => b > 0 || (this._pinCfg?.parts?.[j]?.[k] ?? 0) > 0 ? k : -1).filter((k) => k >= 0);
+        .map((b, k) => b > 0 || (this._pinCfg?.parts?.[j]?.[k] ?? 0) > 0
+          || (ALLPARTS && !(j === 3 && k === ACT_BUCKETS.length - 1)) ? k : -1)
+        .filter((k) => k >= 0);
       const partIdxs = parts2 ? partIdxsOf(sIdx) : [];
       const subHOf = (j) => partIdxsOf(j).length * rowH * easeOf(j);
       const subAbove = (i) => openRows.reduce((t2, j) => t2 + (j < i ? subHOf(j) : 0), 0);
@@ -2748,7 +2753,7 @@ export class Dsv3Layer extends HTMLElement {
           const clickable = i < 3;
           for (const [k3, k2] of partIdxsOf(i).entries()) {
             const now2 = this._segParts[i][k2];
-            const bT = prevParts ? geo(prevParts[i][k2], now2, V.t) : now2;
+            const bT = prevParts ? geo(prevParts[i][k2] || 1, now2 || 1, V.t) : now2;
             const yS = yOf(i) + rowH + k3 * rowH * easeOf(i) + 2;
             const pinP0 = pin?.parts?.[i]?.[k2];
             const pinP = pinP0 && Math.abs(Math.log2((now2 || 1) / pinP0)) >= 0.05 ? pinP0 : 0;
