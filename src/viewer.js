@@ -658,8 +658,10 @@ ${knobCss('.lv-head')}
 .lv svg { display: block; margin: 0 auto; }
 /* no scaling, ever: a diagram wider than its container scrolls horizontally */
 .lv-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
-/* snapshots are figures: the card shrink-wraps its chart */
+/* snapshots are figures: the card shrink-wraps its chart; the gutter legend
+   is not clickable there (config-static), only the measuring scrub is */
 dsv3-layer[snapshot] .lv { width: fit-content; max-width: 100%; }
+dsv3-layer[snapshot] .lv-bar [data-part], dsv3-layer[snapshot] .lv-bar [data-prop] { cursor: default !important; }
 .lv-bar svg { display: block; margin: 2px 0 6px; max-width: 100%; height: auto; }
 .lv-bar { position: relative; }
 .lv-ruler { display: none; position: absolute; background: rgba(237, 161, 0, 0.12);
@@ -904,6 +906,85 @@ export class Dsv3Layer extends HTMLElement {
     this._applyCfg({ ...from, ...to });
     this._tweenLocal(prev);
     this.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+  // ---- fit-chart interaction wiring: ONE seam for every view ---------------
+  // Capabilities compose per view, so mixed pages (full sim + barsonly panels
+  // + snapshot figures) each get exactly the interactions that make sense:
+  //   measure — the scrub cursor + drag ruler (READ-ONLY: a span on a log
+  //             axis is a factor); every view has it, snapshots included
+  //   mutate  — solo/part clicks on the gutter legend; off in snapshots,
+  //             which are config-static figures
+  _barCaps() {
+    return { measure: true, mutate: !this.hasAttribute('snapshot') };
+  }
+  _wireBars(barSlot) {
+    const caps = this._barCaps();
+    // scrub cursor: one vertical line you click/drag along the axis — the
+    // readout is the value there and its factor vs the 80 GiB capacity
+    // (a log axis makes that distance a multiplier). Click ON it to clear.
+    const svgEl2 = barSlot.querySelector('svg');
+    const toU = (ev) => {   // client → svg units, clamped to the axis
+      const r2 = svgEl2.getBoundingClientRect();
+      const u = (ev.clientX - r2.left) / r2.width * BAR_GEO.w;
+      return Math.max(BAR_GEO.x0, Math.min(BAR_GEO.x0 + BAR_GEO.bw, u));
+    };
+    const bytesAt = (u) => 2 ** (BAR_GEO.lo + (u - BAR_GEO.x0) / BAR_GEO.bw * (BAR_GEO.hi - BAR_GEO.lo));
+    const rul = el('div', 'lv-ruler');
+    const rlab = el('div', 'lv-ruler-lab');
+    rul.append(rlab);
+    barSlot.append(rul);
+    const fmtF = (f) => f >= 100 || Math.abs(f - Math.round(f)) < 0.02 * f ? String(Math.round(f)) : f.toFixed(1);
+    const drawR = () => {
+      const C = this._cursor;
+      // Perfetto behavior: nothing shows without an actual drag
+      if (!C || Math.abs(C.a - C.b) < 3) { rul.style.display = 'none'; return; }
+      // rect math, not offsetLeft: SVG elements have no offsetLeft, which
+      // left this at NaNpx (the line never met the cursor)
+      const r2 = svgEl2.getBoundingClientRect(), host = barSlot.getBoundingClientRect();
+      const k = r2.width / BAR_GEO.w;
+      const [u1, u2] = [Math.min(C.a, C.b), Math.max(C.a, C.b)];
+      rul.style.display = 'block';
+      rul.style.left = `${(r2.left - host.left + u1 * k).toFixed(1)}px`;
+      rul.style.width = `${((u2 - u1) * k).toFixed(1)}px`;
+      rul.style.top = '10px';
+      rul.style.height = `${r2.height - 22}px`;
+      // a span on a log axis IS a factor
+      const f = 2 ** ((u2 - u1) / BAR_GEO.bw * (BAR_GEO.hi - BAR_GEO.lo));
+      rlab.textContent = `×${fmtF(f)} (${fmtBytes(bytesAt(u1))} → ${fmtBytes(bytesAt(u2))})`;
+    };
+    barSlot.onmousedown = (ev) => {
+      if (caps.mutate) {
+        const tp = ev.target.closest?.('[data-part]');
+        if (tp) { this._cursor = null; drawR(); this.togglePart(+tp.dataset.part); return; }
+        const tog = ev.target.closest?.('[data-prop]');
+        if (tog) { this._cursor = null; drawR(); this.soloComp(tog.dataset.prop); return; }
+      }
+      if (!caps.measure) return;
+      // the ruler arms only on the scrub overlay (the bars band itself)
+      if (!ev.target.classList?.contains('scrub')) return;
+      const u0 = toU(ev);
+      this._cursor = { a: u0, b: u0 };
+      const move = (e2) => { this._cursor.b = toU(e2); drawR(); };
+      const up = () => {
+        document.removeEventListener('mousemove', move);
+        document.removeEventListener('mouseup', up);
+        if (this._cursor && Math.abs(this._cursor.a - this._cursor.b) < 3) { this._cursor = null; drawR(); }
+      };
+      document.addEventListener('mousemove', move);
+      document.addEventListener('mouseup', up);
+      drawR();
+      ev.preventDefault();
+    };
+    // ANY mousedown outside THIS chart's bars band dismisses its ruler
+    // (another chart's scrub included — with several charts per page, only
+    // the one being measured keeps a ruler). Deduped across renders.
+    if (this._rulDismiss) document.removeEventListener('mousedown', this._rulDismiss);
+    this._rulDismiss = (ev) => {
+      if (barSlot.contains(ev.target) && ev.target.classList?.contains('scrub')) return;
+      if (this._cursor) { this._cursor = null; drawR(); }
+    };
+    document.addEventListener('mousedown', this._rulDismiss);
+    drawR();
   }
   _snapLocal() {
     return { ep: this.ep, pp: this.pp, stage: this.stage,
@@ -1363,86 +1444,20 @@ export class Dsv3Layer extends HTMLElement {
     if (barSlot && this._barHtml) {
       barSlot.innerHTML = this._barHtml;
       this._barHtml = null;
-      if (this.hasAttribute('snapshot')) {
-        // a snapshot's chart is a figure, not a widget — no scrub, no solo
-        barSlot.style.pointerEvents = 'none';
-        const sb = this.getAttribute('sandbox');
-        if (sb) {
-          const a = document.createElement('a');
-          a.textContent = 'play with this scenario in the full widget ↗';
-          a.href = '#'; a.style.cssText = 'font-size:11.5px;';
-          // resolve the target lazily: anatomy-wrapped layers don't exist yet
-          // when snapshots upgrade (bare layers upgrade first)
-          a.onclick = (ev) => {
-            ev.preventDefault();
-            document.getElementById(sb)?._loadScenario?.(this._snapCfg.from, this._snapCfg.to);
-          };
-          const nd = el('div', 'lv-note'); nd.append(a);
-          barSlot.after(nd);
-        }
-      } else {
-      // scrub cursor: one vertical line you click/drag along the axis — the
-      // readout is the value there and its factor vs the 80 GiB capacity
-      // (a log axis makes that distance a multiplier). Click ON it to clear.
-      const svgEl2 = barSlot.querySelector('svg');
-      const toU = (ev) => {   // client → svg units, clamped to the axis
-        const r2 = svgEl2.getBoundingClientRect();
-        const u = (ev.clientX - r2.left) / r2.width * BAR_GEO.w;
-        return Math.max(BAR_GEO.x0, Math.min(BAR_GEO.x0 + BAR_GEO.bw, u));
-      };
-      const bytesAt = (u) => 2 ** (BAR_GEO.lo + (u - BAR_GEO.x0) / BAR_GEO.bw * (BAR_GEO.hi - BAR_GEO.lo));
-      const rul = el('div', 'lv-ruler');
-      const rlab = el('div', 'lv-ruler-lab');
-      rul.append(rlab);
-      barSlot.append(rul);
-      const fmtF = (f) => f >= 100 || Math.abs(f - Math.round(f)) < 0.02 * f ? String(Math.round(f)) : f.toFixed(1);
-      const drawR = () => {
-        const C = this._cursor;
-        // Perfetto behavior: nothing shows without an actual drag
-        if (!C || Math.abs(C.a - C.b) < 3) { rul.style.display = 'none'; return; }
-        // rect math, not offsetLeft: SVG elements have no offsetLeft, which
-        // left this at NaNpx (the line never met the cursor)
-        const r2 = svgEl2.getBoundingClientRect(), host = barSlot.getBoundingClientRect();
-        const k = r2.width / BAR_GEO.w;
-        const [u1, u2] = [Math.min(C.a, C.b), Math.max(C.a, C.b)];
-        rul.style.display = 'block';
-        rul.style.left = `${(r2.left - host.left + u1 * k).toFixed(1)}px`;
-        rul.style.width = `${((u2 - u1) * k).toFixed(1)}px`;
-        rul.style.top = '10px';
-        rul.style.height = `${r2.height - 22}px`;
-        // a span on a log axis IS a factor
-        const f = 2 ** ((u2 - u1) / BAR_GEO.bw * (BAR_GEO.hi - BAR_GEO.lo));
-        rlab.textContent = `×${fmtF(f)} (${fmtBytes(bytesAt(u1))} → ${fmtBytes(bytesAt(u2))})`;
-      };
-      barSlot.onmousedown = (ev) => {
-        const tp = ev.target.closest?.('[data-part]');
-        if (tp) { this._cursor = null; drawR(); this.togglePart(+tp.dataset.part); return; }
-        const tog = ev.target.closest?.('[data-prop]');
-        if (tog) { this._cursor = null; drawR(); this.soloComp(tog.dataset.prop); return; }
-        // the ruler arms only on the scrub overlay (the bars band itself)
-        if (!ev.target.classList?.contains('scrub')) return;
-        const u0 = toU(ev);
-        this._cursor = { a: u0, b: u0 };
-        const move = (e2) => { this._cursor.b = toU(e2); drawR(); };
-        const up = () => {
-          document.removeEventListener('mousemove', move);
-          document.removeEventListener('mouseup', up);
-          if (this._cursor && Math.abs(this._cursor.a - this._cursor.b) < 3) { this._cursor = null; drawR(); }
+      this._wireBars(barSlot);
+      const sb = this.hasAttribute('snapshot') && this.getAttribute('sandbox');
+      if (sb) {
+        const a = document.createElement('a');
+        a.textContent = 'play with this scenario in the full widget ↗';
+        a.href = '#'; a.style.cssText = 'font-size:11.5px;';
+        // resolve the target lazily: anatomy-wrapped layers don't exist yet
+        // when snapshots upgrade (bare layers upgrade first)
+        a.onclick = (ev) => {
+          ev.preventDefault();
+          document.getElementById(sb)?._loadScenario?.(this._snapCfg.from, this._snapCfg.to);
         };
-        document.addEventListener('mousemove', move);
-        document.addEventListener('mouseup', up);
-        drawR();
-        ev.preventDefault();
-      };
-      // ANY mousedown outside the bars band dismisses the ruler (legend
-      // clicks, captions, the rest of the page) — deduped across renders
-      if (this._rulDismiss) document.removeEventListener('mousedown', this._rulDismiss);
-      this._rulDismiss = (ev) => {
-        if (ev.target.classList?.contains('scrub')) return;
-        if (this._cursor) { this._cursor = null; drawR(); }
-      };
-      document.addEventListener('mousedown', this._rulDismiss);
-      drawR();
+        const nd = el('div', 'lv-note'); nd.append(a);
+        barSlot.after(nd);
       }
     }
     if (!this.hasAttribute('barsonly') && !this.hasAttribute('snapshot')) root.append(scroller);

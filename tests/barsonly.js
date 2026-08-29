@@ -21,4 +21,19 @@ const before = barTxt('bars-pp'), beforeAll = barTxt('bars-all');
 stp('bars-pp', 'pp').querySelectorAll('button')[1].click(); await T.tick(600);
 T.check('PP step moves bars-pp\'s chart', barTxt('bars-pp') !== before, '');
 T.check('bars-all unaffected (independent state)', barTxt('bars-all') === beforeAll, '');
+// barsonly keeps FULL interactivity: the drag ruler measures factors
+{
+  const scrub = L('bars-pp').querySelector('.scrub');
+  const r = scrub.getBoundingClientRect(), y = r.top + r.height / 2;
+  scrub.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: r.left + r.width * 0.2, clientY: y }));
+  document.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: r.left + r.width * 0.45, clientY: y }));
+  document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: r.left + r.width * 0.45, clientY: y }));
+  await T.tick(80);
+  const rul = L('bars-pp').querySelector('.lv-ruler');
+  T.check('barsonly: drag ruler works', getComputedStyle(rul).display === 'block' && /×[\d.]+/.test(rul.textContent), rul.textContent);
+  // and solo still mutates
+  L('bars-pp').querySelector('.lv-bar [data-prop]').dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+  await T.tick(300);
+  T.check('barsonly: gutter solo mutates', !L('bars-pp').showGrads || !L('bars-pp').showActs, '');
+}
 T.done();

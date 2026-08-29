@@ -33,7 +33,30 @@ const txt = () => bar().textContent;
 T.check('snapshot renders the fit chart only', !!bar().querySelector('svg')
   && !snap().querySelector('.lv-scroll'), '');
 T.check('no knobs anywhere', !snap().querySelector('.stp') && !snap().querySelector('.savebox'), '');
-T.check('chart is pointer-inert', getComputedStyle(bar()).pointerEvents === 'none', '');
+// snapshots are config-static but MEASURABLE: the drag ruler works…
+const dragRuler = async (host, fx0, fx1) => {
+  const scrub = host.querySelector('.scrub');
+  const r = scrub.getBoundingClientRect();
+  const y = r.top + r.height / 2;
+  scrub.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: r.left + r.width * fx0, clientY: y }));
+  document.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: r.left + r.width * fx1, clientY: y }));
+  document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: r.left + r.width * fx1, clientY: y }));
+  await T.tick(80);
+};
+await dragRuler(snap(), 0.2, 0.5);
+const rul = snap().querySelector('.lv-ruler');
+T.check('snapshot: drag ruler measures (read-only)', getComputedStyle(rul).display === 'block'
+  && /×[\d.]+/.test(rul.textContent), rul.textContent);
+// …a drag on ANOTHER chart dismisses this one's ruler (several per page)
+await dragRuler(document.querySelector('dsv3-layer[snapshot]'), 0.3, 0.6);
+T.check('another chart\'s drag dismisses the first ruler', getComputedStyle(rul).display === 'none', '');
+// …but mutating clicks do nothing: the gutter legend is dead in a snapshot
+{
+  const beat5 = document.querySelectorAll('dsv3-layer[snapshot]')[4];
+  const gut = beat5.querySelector('.lv-bar [data-prop]');
+  gut.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); await T.tick(300);
+  T.check('snapshot: solo click does nothing', beat5.showWeights && beat5.showGrads && beat5.showOptim && beat5.showActs, '');
+}
 T.check('baseline label names the from config', txt().includes('saved: EP64·PP16') && txt().includes('ZeRO-off'), '');
 // zero-1 shards optimizer over DP=128: a bold ▼×128 badge on the optim row
 T.check('optimizer shrink badge ▼×128', txt().includes('▼×128'), txt().slice(0, 160));
