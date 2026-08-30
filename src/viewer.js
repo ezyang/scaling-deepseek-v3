@@ -251,7 +251,7 @@ function fitSvg(L) {
   const dpx = (f) => x0 + Math.log2(f) / (HI - LO) * bw;
   B.push(`<text class="dims" x="2" y="${f1(dy + 3)}">a span is a factor:</text>`);
   B.push(`<line x1="${x0}" y1="${f1(dy)}" x2="${f1(dpx(2048))}" y2="${f1(dy)}" stroke="#898781" stroke-width="1"/>`);
-  for (const [f, lab] of [[1, ''], [2, '×2'], [8, '×8 (PP)'], [64, '×64 (EP)'], [2048, '×2048 (DP)']]) {
+  for (const [f, lab] of [[1, ''], [2, '×2'], [8, '×8 (PP)'], [64, '×64 (EP)'], [2048, '×2048 (GPUs)']]) {
     B.push(`<line data-fac="${f}" x1="${f1(dpx(f))}" y1="${f1(dy - 4)}" x2="${f1(dpx(f))}" y2="${f1(dy + 4)}" stroke="#898781" stroke-width="1"/>`);
     if (lab) B.push(`<text class="dims" x="${f1(dpx(f))}" y="${f1(dy + 13)}" text-anchor="middle">${lab}</text>`);
   }
