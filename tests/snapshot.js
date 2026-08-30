@@ -2,7 +2,6 @@
 // snapshot story beats: from = saved baseline (ghosts), to = live bars with
 // badges, solo picks the row, zero interactivity, sandbox link loads the
 // scenario into the full widget
-const snap = () => document.querySelector('dsv3-layer[sandbox][to]');   // the ZeRO demo (the fit beat has sandbox but no to)
 // the opening tally beats: weights · optim · acts · grads · everything
 const beats = () => [...document.querySelectorAll('dsv3-layer[snapshot]:not([sandbox])')]
   .filter(b => !b.closest('dsv3-beat-deck'));   // the deck drives its own layer
@@ -33,12 +32,6 @@ T.check('no-to beats have no ghosts',
 // intro beats drop the total (nototal); the tally beat lands the full mass
 T.check('intro beats have no total row', beats().filter(b => b.hasAttribute('nototal')).every(b => !b.textContent.includes('total')), '');
 if (tally) T.check('the tally beat totals 8.65 TiB', tally.textContent.includes('total8.65 TiB'), '');
-const bar = () => snap().querySelector('.lv-bar');
-const txt = () => bar().textContent;
-
-T.check('snapshot renders the fit chart only', !!bar().querySelector('svg')
-  && !snap().querySelector('.lv-scroll'), '');
-T.check('no knobs anywhere', !snap().querySelector('.stp') && !snap().querySelector('.savebox'), '');
 // snapshots are config-static but MEASURABLE: the drag ruler works…
 const dragRuler = async (host, fx0, fx1) => {
   const scrub = host.querySelector('.scrub');
@@ -49,39 +42,23 @@ const dragRuler = async (host, fx0, fx1) => {
   document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: r.left + r.width * fx1, clientY: y }));
   await T.tick(80);
 };
-await dragRuler(snap(), 0.2, 0.5);
-const rul = snap().querySelector('.lv-ruler');
+await dragRuler(beats()[1], 0.2, 0.5);
+const rul = beats()[1].querySelector('.lv-ruler');
 T.check('snapshot: drag ruler measures (read-only)', getComputedStyle(rul).display === 'block'
   && /×[\d.]+/.test(rul.textContent), rul.textContent);
 // …a drag on ANOTHER chart dismisses this one's ruler (several per page)
-await dragRuler(document.querySelector('dsv3-layer[snapshot]'), 0.3, 0.6);
+await dragRuler(beats()[0], 0.3, 0.6);
 T.check('another chart\'s drag dismisses the first ruler', getComputedStyle(rul).display === 'none', '');
 // …but mutating clicks do nothing: the gutter legend is dead in a snapshot
 {
-  const b5 = [...document.querySelectorAll('dsv3-layer[snapshot]')].at(-1);
+  const b5 = beats().at(-1);
   const P5 = ['showWeights', 'showGrads', 'showOptim', 'showActs'];
   const before = P5.map((k) => b5[k]);
   b5.querySelector('.lv-bar [data-prop]').dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
   await T.tick(300);
-  T.check('snapshot: solo click does nothing', P5.every((k, i) => b5[k] === before[i]), '');
+  T.check('snapshot: solo click does nothing', P5.every((k, i2) => b5[k] === before[i2]), '');
 }
-T.check('baseline label names the from config', txt().includes('saved: EP64·PP16') && txt().includes('ZeRO-off'), '');
-// zero-1 shards optimizer over DP=128: a bold ▼×128 badge on the optim row
-T.check('optimizer shrink badge ▼×128', txt().includes('▼×128'), txt().slice(0, 160));
-T.check('ghost bars drawn', bar().querySelectorAll('rect[stroke-dasharray]').length > 0, '');
-// solo="optim": the off components' rows are GONE (a dimmed unclickable
-// name is a dead affordance in a figure); total keeps the full mass
-T.check('solo: no weights/grads/acts rows at all', !txt().includes('weights')
-  && !txt().includes('gradients') && txt().includes('optimizer states'), '');
-T.check('total row present', txt().includes('total'), '');
+T.check('no knobs anywhere', beats().every((b) => !b.querySelector('.stp') && !b.querySelector('.savebox')), '');
 // snapshots keep no URL state
 T.check('no snapshot URL state', !location.hash.includes('l:layer'), location.hash);
-// the sandbox link loads the scenario into the full widget
-const link = [...snap().querySelectorAll('a')].find(a => a.textContent.includes('full widget'));
-T.check('sandbox link present', !!link, '');
-const full = document.getElementById('local-diagram');
-link.click(); await T.tick(600);
-T.check('full widget took the scenario', full.zero === 1 && full.pp === 16 && full.ep === 64, `${full.zero}/${full.pp}/${full.ep}`);
-T.check('full widget carries the baseline save (blended optim badge)', full._pinCfg?.state?.zero === 0
-  && (full.querySelector('.lv-bar')?.textContent ?? '').includes('▼×4.6'), full._pinCfg?.state?.zero);
 T.done();

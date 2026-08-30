@@ -1,6 +1,9 @@
 // @page studies/02-hopper-memory.html
 // visual audit: every rendered fit-chart number re-derives from its exact
 // value — rounding, badge factors, sums, and log-axis geometry
+// the deck's step-2 baseline provides the page's pinned chart (02 carries
+// no at-rest from/to beat anymore — author's call)
+document.querySelector('#fitdeck .deck-next').click(); await T.tick(1000);
 const { auditFitCharts } = await import('/src/audit.js');
 const { charts, findings } = auditFitCharts(document);
 T.log('charts audited', charts);

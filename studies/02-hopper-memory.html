@@ -134,7 +134,23 @@
 
     <p>First, pipeline parallelism means that every PP rank has a different program.  If
     we want to reason about the memory usage of our program, we technically have to do
-    the analysis for each PP rank.</p>
+    the analysis for each PP rank.  A bad pipeline schedule can have
+    dramatically different memory usage among different ranks.  It's out of
+    scope for this article to describe how to put together a good pipeline
+    schedule (consider checking out the <a
+    href="https://ezyang.github.io/pipeline-parallelism-tutor/">Pipeline
+    Schedule Tutor</a>), so we will look at the behavior of a few well-known
+    pipeline schedules. (We won't even look at the DualPipe schedule, which
+    is what DeepSeek-V3 was trained on, as it <a
+    href="https://hackmd.io/@ufotalent/r1lVXsa9Jg">dominated by
+    DualPipeV</a>.)</p>
+
+    Stage partitioning can be imbalanced
+
+    TODO: we need to solve the "peak changes which rank is the bottleneck" problem, resulting
+    in discontinuous animation
+
+    <p>Second, </p>
 
     SLOP BELOW
 
@@ -147,11 +163,6 @@
     — backward is ~2× the FLOPs). Reading across a row at steady state: stage
     <em>s</em> has admitted PP−<em>s</em> forwards whose backwards haven't
     arrived yet — the in-flight law the diagram charges for.</p>
-
-    <dsv3-layer style="min-height:164px" snapshot solo="optim" sandbox="local-diagram"
-      from='{"world":2048,"pp":16,"ep":64,"zero":0}' to='{"zero":1}'
-      local cumulative lens="param-bytes" recipe="bf16" recompute="none" controls="static" detail
-      nocaption></dsv3-layer>
 
     <h2>Activation checkpointing</h2>
 

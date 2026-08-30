@@ -17,6 +17,12 @@
       each keeps its OWN state (id-keyed URL hash), so every discussion can pin
       its own scenario. Linking/sidebar TBD.</p>
 
+    <h2>snapshot machinery (test host: from/to ghosts + sandbox jump)</h2>
+    <dsv3-layer id="snap-zero" style="min-height:164px" snapshot solo="optim" sandbox="bars-all"
+      from='{"world":2048,"pp":16,"ep":64,"zero":0}' to='{"zero":1}'
+      local cumulative lens="param-bytes" recipe="bf16" recompute="none" controls="static" detail
+      nocaption></dsv3-layer>
+
     <h2>everything (sidebar candidate)</h2>
     <dsv3-layer id="bars-all" style="min-height:340px" barsonly local cumulative lens="param-bytes" recipe="bf16"
       recompute="none" controls="static" detail nocaption></dsv3-layer>

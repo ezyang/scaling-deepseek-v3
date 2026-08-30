@@ -103,4 +103,18 @@ scr.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }
 scr.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true })); await T.tick(200);
 T.check('ArrowUp clamps at s0', l().stage === 0, l().stage);
 T.check('overscroll-x contained', getComputedStyle(scr).overscrollBehaviorX === 'none', '');
+// Perfetto-style panning: shift+drag scrubs the timeline; a shift-click
+// never picks a stage (it means pan)
+const stage0 = l().stage;
+const mev = (type, x, extra = {}) => scr.dispatchEvent(new MouseEvent(type, { clientX: x, bubbles: true, shiftKey: true, ...extra }));
+const gutter = scr.querySelector('rect.stghit[data-stage="1"]');
+mev('mousedown', 400);
+T.check('shift-drag arms the pan (grabbing cursor)', scr.classList.contains('panning'), '');
+document.dispatchEvent(new MouseEvent('mousemove', { clientX: 250, bubbles: true, shiftKey: true }));
+await T.tick(30);
+T.check('dragging left pans right', scr.scrollLeft > 60, scr.scrollLeft);   // clamped by runway
+document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+gutter.dispatchEvent(new MouseEvent('click', { bubbles: true, shiftKey: true })); await T.tick(200);
+T.check('shift-click does not pick a stage', l().stage === stage0 && !scr.classList.contains('panning'), l().stage);
+scr.scrollLeft = 0;
 T.done();

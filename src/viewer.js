@@ -3013,6 +3013,8 @@ ${knobCss('.pps .top')}
 .pps g.lane.pin rect[data-stash] { stroke-width: 1.6; }
 .pps .stghit:hover { opacity: 0.6; }
 .pps .scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; overscroll-behavior-x: none; }
+.pps .scroll.pannable { cursor: grab; }
+.pps .scroll.panning { cursor: grabbing; user-select: none; }
 .pps svg { display: block; }
 `;
 class Dsv3PpSchedule extends HTMLElement {
@@ -3031,7 +3033,29 @@ class Dsv3PpSchedule extends HTMLElement {
     // once clicked the strip holds focus, so ↑/↓ walk the stages
     this._scr.tabIndex = -1;
     this._scr.style.outline = 'none';
+    // Perfetto-style panning: shift+drag scrubs the timeline (the strip is
+    // usually wider than the column). Shift also parks the grab cursor, and
+    // a shift-click never picks a stage or pins a lane — it means PAN.
+    this._scr.addEventListener('mousemove', (e) => {
+      if (!this._scr.classList.contains('panning'))
+        this._scr.classList.toggle('pannable', e.shiftKey);
+    });
+    this._scr.addEventListener('mousedown', (e) => {
+      if (!e.shiftKey) return;
+      e.preventDefault();
+      const sx = e.clientX, sl = this._scr.scrollLeft;
+      this._scr.classList.add('panning');
+      const mv = (e2) => { this._scr.scrollLeft = sl - (e2.clientX - sx); };
+      const up = () => {
+        document.removeEventListener('mousemove', mv);
+        document.removeEventListener('mouseup', up);
+        this._scr.classList.remove('panning');
+      };
+      document.addEventListener('mousemove', mv);
+      document.addEventListener('mouseup', up);
+    });
     this._scr.addEventListener('click', (e) => {
+      if (e.shiftKey) return;   // that was a pan, not a pick
       const g = e.target.closest('g.lane');
       if (g) {   // clicking an in-flight bar lights up ITS two ops in the
         // schedule — the F that made the stash and the B that frees it — and
