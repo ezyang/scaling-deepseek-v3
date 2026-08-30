@@ -161,10 +161,7 @@
 
     <p>You may have noticed that there is a slight imbalance arising from the embedding and LM
     head (the dense transformer blocks and the MoE blocks end up having roughly the same parameter count
-    after you apply EP64).  One reasonable assignment of layers would be to
-    assign four layers for all of the intermediate stages, with the very first
-    stage taking care of the embedding, dense blocks and LM head.  The first
-    PP rank needs extra memory for the embedding and LM head weights, but it's
+    after you apply EP64).
     compensated for by needing less saved activations (because there are
     less--and cheaper--transformer blocks in this stage.)  This is nice, because </p>
 

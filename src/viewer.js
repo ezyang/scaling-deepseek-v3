@@ -3511,17 +3511,19 @@ class Dsv3PpFold extends HTMLElement {
     return Array.from({ length: 16 }, (_, c) => {
       const g = ppStage(c, 16, 1, 'reflect');
       const seg = g.segs[0];
-      const layerP = g.dense * PARAMS.denseBlock + g.moe * (PARAMS.moeBlock - moeExp + moeExp / this.ep);
-      const vocabP = (g.emb ? PARAMS.embed : 0) + (g.head ? PARAMS.embed + PARAMS.finalNorm : 0);
+      const moeLocal = PARAMS.moeBlock - moeExp + moeExp / this.ep;
+      const slotsP = [...(g.emb ? [PARAMS.embed] : []),
+        ...Array.from({ length: seg.hi - seg.lo }, (_, i) => seg.lo + i < 3 ? PARAMS.denseBlock : moeLocal),
+        ...(g.head ? [PARAMS.embed + PARAMS.finalNorm] : [])];
       return { c, lo: seg.lo, hi: seg.hi, dense: g.dense, moe: g.moe,
-        emb: g.emb, head: g.head, layerP, vocabP, p: layerP + vocabP };
+        emb: g.emb, head: g.head, slotsP, p: slotsP.reduce((a, b) => a + b, 0) };
     });
   }
   // EP moves: bars and axis TWEEN between shardings (linear pixel lerp;
   // labels snap to the new exact values, per the house convention)
   _setEP(v) {
     if (v === this.ep) return;
-    this._epFrom = this.chunks.map((k) => k.p);
+    this._epFrom = this.chunks.map((k) => [...k.slotsP]);
     this.ep = v;
     this.chunks = this._chunks();
     const N = 12; let f = 0;
@@ -3575,7 +3577,9 @@ class Dsv3PpFold extends HTMLElement {
     const GUT = RX0 + 8 * 1.6 + 22, LX = GUT + 6, X0 = LX + 64;
     const RH = 14, PV = 21, BW = 420;
     const H = 16 * PV + 24, W = X0 + BW + 152;   // + the linear axis band (caption rides past its end)
-    const pT = (c) => this._epFrom ? this._epFrom[c] + (this.chunks[c].p - this._epFrom[c]) * this._ept : this.chunks[c].p;
+    const pTs = (c) => this.chunks[c].slotsP.map((v, i) =>
+      this._epFrom ? this._epFrom[c][i] + (v - this._epFrom[c][i]) * this._ept : v);
+    const pT = (c) => pTs(c).reduce((a, b) => a + b, 0);
     const rankP = (r) => this.chunks[r].p + this.chunks[15 - r].p;   // labels/data: the exact NEW values
     const rankPT = (r) => pT(r) + pT(15 - r);                        // geometry: tweened
     const scale = BW / Math.max(...Array.from({ length: 8 }, (_, r) => rankPT(r)));
@@ -3636,15 +3640,24 @@ class Dsv3PpFold extends HTMLElement {
       const y = down ? yRow(c) : lerp(yRow(c), yRow(r));
       const w = wOf(k), fill = down ? '#9cc3ec' : '#2a78d6';
       const hot2 = hv != null && (folded ? this._rankOf(c) === hvRank : c === hv);
-      const vw = k.vocabP * scale;
       B.push(`<g data-chunk="${c}" data-params="${k.p}">`);
-      B.push(`<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${RH}" fill="${fill}"${hot2 ? ' stroke="#7a5200" stroke-width="1.2"' : ''}/>`);
-      if (k.vocabP) {
-        const vx = k.emb ? x : x + w - vw;
-        B.push(`<rect x="${vx.toFixed(1)}" y="${(y + 1).toFixed(1)}" width="${(vw - 1).toFixed(1)}" height="${RH - 2}" fill="#fff" opacity="0.35"/>`);
-        B.push(`<rect x="${vx.toFixed(1)}" y="${y.toFixed(1)}" width="${vw.toFixed(1)}" height="${RH}" fill="none" stroke="${down ? '#2a78d6' : '#0b3d75'}" stroke-dasharray="2.5 2"/>`);
-        if (vw > 30) B.push(`<text x="${(vx + vw / 2).toFixed(1)}" y="${y + RH - 4}" text-anchor="middle" font-size="8.5" fill="${down ? '#0b3d75' : '#fff'}">${k.emb ? 'emb' : 'head'}</text>`);
+      // one segment per SLOT (emb · layers · head), hairline gaps — the bar
+      // is the strip's span turned sideways: layers are countable, dense
+      // runs visibly wider than an EP-sharded MoE layer, and the vocab
+      // slots keep their dashed not-a-layer treatment
+      const ws = pTs(c).map((v) => v * scale);
+      let sx = x;
+      for (const [i2, w2] of ws.entries()) {
+        const vocab = (k.emb && i2 === 0) || (k.head && i2 === ws.length - 1);
+        B.push(`<rect x="${sx.toFixed(1)}" y="${y.toFixed(1)}" width="${Math.max(0.5, w2 - 1).toFixed(1)}" height="${RH}" fill="${fill}"/>`);
+        if (vocab) {
+          B.push(`<rect x="${sx.toFixed(1)}" y="${(y + 1).toFixed(1)}" width="${Math.max(0.5, w2 - 2).toFixed(1)}" height="${RH - 2}" fill="#fff" opacity="0.35"/>`);
+          B.push(`<rect x="${sx.toFixed(1)}" y="${y.toFixed(1)}" width="${Math.max(0.5, w2 - 1).toFixed(1)}" height="${RH}" fill="none" stroke="${down ? '#2a78d6' : '#0b3d75'}" stroke-dasharray="2.5 2"/>`);
+          if (w2 > 30) B.push(`<text x="${(sx + w2 / 2).toFixed(1)}" y="${y + RH - 4}" text-anchor="middle" font-size="8.5" fill="${down ? '#0b3d75' : '#fff'}">${k.emb && i2 === 0 ? 'emb' : 'head'}</text>`);
+        }
+        sx += w2;
       }
+      if (hot2) B.push(`<rect x="${(x - 1).toFixed(1)}" y="${(y - 1).toFixed(1)}" width="${(w + 1).toFixed(1)}" height="${RH + 2}" fill="none" stroke="#7a5200" stroke-width="1.2"/>`);
       B.push('</g>');
       B.push(`<text x="${(x + w + 4).toFixed(1)}" y="${(y + RH - 3).toFixed(1)}" font-size="9.5" fill="#898781" opacity="${(1 - t).toFixed(2)}">${fmtP(k.p)}</text>`);
       if (!down) B.push(`<text data-ranktotal="${r}" data-params="${rankP(r)}" x="${(x + w + 4).toFixed(1)}" y="${(y + RH - 3).toFixed(1)}" font-size="9.5" fill="#898781" opacity="${t.toFixed(2)}">${fmtP(rankP(r))}</text>`);
