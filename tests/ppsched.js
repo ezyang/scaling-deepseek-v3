@@ -11,6 +11,12 @@ const stps = () => ['gpus', 'pp', 'sched', 'ep', 'zero']
   const msel = [...w().querySelectorAll('select')].at(-1);
   msel.value = 'auto'; msel.dispatchEvent(new Event('change')); await T.tick(150);
 }
+// the strip OPENS on the default schedule — DualPipeV (the official program,
+// W cells and all); the plain-staircase geometry checks below run at VPP1
+T.check('opens on DualPipeV (W cells drawn)', w().querySelectorAll('rect[data-cell^="W"]').length > 0,
+  w().querySelectorAll('rect[data-cell^="W"]').length);
+w().querySelector('.stp[data-knob="vpp"] button').click(); await T.tick(500);
+T.check('VPP− drops to the plain pipeline', l().vpp === 1, l().vpp);
 const pp = l().pp, m = pp + 4;
 T.log('pp', pp);
 T.check('one F cell per (stage, mb)', cells('F').length === pp * m, cells('F').length);

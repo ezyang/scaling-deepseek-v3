@@ -63,6 +63,11 @@ export const actBucketsOf = (ana2) => {
 // the PP stages by a contiguous floor split: stage 0 gets the embedding (+
 // the dense blocks while they last), the last stage gets final norm + lm head.
 export const LOCAL_PAR = { world: 2048, pp: 16 };   // .pp = the default degree
+// an AUTHORED config (snapshot from/to, deck steps) is complete by fiat:
+// unlisted knobs mean these neutral nothing-applied defaults, never
+// "whatever the widget's live defaults happen to be" — a published figure
+// must not drift when the interactive defaults do
+const CFG_DEFAULTS = { world: 2048, pp: 1, ep: 1, zero: 0, sched: '1f1b', vpp: 1, fold: 'reflect' };
 // virtual-stage placement: with VPP = vpp chunks per rank the chain is
 // vpp·pp virtual stages deep; 'wrap' places stage v on rank v mod pp
 // (Megatron interleaving), 'reflect' bounces each pass (ZB-V / DualPipeV:
@@ -912,7 +917,7 @@ export class Dsv3Layer extends HTMLElement {
     this.zero = st?.zero ?? (st?.zero1 === false ? 0 : 1);   // ZeRO level 0–3 (1 = DSv3)
     this.world = st?.world ?? LOCAL_PAR.world;               // cluster size (GPUs)
     this.sched = st?.sched === 'dpv' ? '1f1b' : st?.sched ?? '1f1b';   // admission: '1f1b' | 'one' (a single microbatch)
-    this.vpp = st?.sched === 'dpv' ? 2 : st?.vpp ?? 1;       // virtual-pipeline degree (chunks per rank)
+    this.vpp = st?.sched === 'dpv' ? 2 : st?.vpp ?? 2;       // virtual-pipeline degree; the default is DSv3's own schedule (VPP2·reflect = DualPipeV)
     this.fold = st?.fold ?? 'reflect';                       // chunk placement: 'reflect' (V/DualPipeV) | 'wrap' (Megatron)
     // default to the PEAK stage — the fully loaded rank is the story; the
     // selector is there to peek at the lighter ones
@@ -944,11 +949,11 @@ export class Dsv3Layer extends HTMLElement {
         const on = comps.split(/[ ,]+/).map((k) => P2[k]);
         for (const p2 of this._compProps()) this[p2] = on.includes(p2);
       }
-      this._applyCfg(from);
+      this._applyCfg({ ...CFG_DEFAULTS, ...from });
       this.render();
       if (this.hasAttribute('to')) {   // no 'to' = a single-config figure: no ghosts, no badges
         this._saveBaseline();
-        this._applyCfg({ ...from, ...to });
+        this._applyCfg({ ...CFG_DEFAULTS, ...from, ...to });
         this.render();
       }
     }
@@ -1103,9 +1108,9 @@ export class Dsv3Layer extends HTMLElement {
   // jump target for snapshots' "open in the full widget" links: land on the
   // snapshot's exact story — its 'from' as the save, its 'to' live, tweened
   _loadScenario(from, to) {
-    this._applyCfg(from); this.render(); this._saveBaseline();
+    this._applyCfg({ ...CFG_DEFAULTS, ...from }); this.render(); this._saveBaseline();
     const prev = this._snapLocal();
-    this._applyCfg({ ...from, ...to });
+    this._applyCfg({ ...CFG_DEFAULTS, ...from, ...to });
     this._tweenLocal(prev);
     this.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
@@ -3525,8 +3530,7 @@ class Dsv3BeatDeck extends HTMLElement {
   // "whatever the previous slide left behind" — otherwise a hypothetical's
   // sched/recipe would leak forward
   _full(c) {
-    return { world: 2048, pp: 1, ep: 1, zero: 0, sched: '1f1b', vpp: 1,
-      fold: 'reflect', recipe: 'bf16', recompute: 'none', ...c };
+    return { ...CFG_DEFAULTS, recipe: 'bf16', recompute: 'none', ...c };
   }
   // the slide's exact config vs the layer's knobs: any difference is a
   // reader DETOUR (the caption no longer describes the chart)

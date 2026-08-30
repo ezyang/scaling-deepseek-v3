@@ -13,33 +13,29 @@
     <h1>Memory: a Hopper case study</h1>
     <p class="sub">How to fit it on 80 GiB.</p>
 
-    <p>GPU memory is kind of like oxygen: you don't really think about it
-    until you run out, at which point you care about nothing else.  If you are
-    in this situation, it's good to have an expectation about how much memory
-    your model <em>should</em> be using, given choices on parallelism,
-    activation checkpointing and low precision, so you can tell if your
+    <p>GPU memory is like oxygen: you don't really think about it
+    until you run out, at which point you care about nothing else.  If your
+    model is OOMing, it's good to have an expectation about how much memory
+    your model <em>should</em> be using--given a choice of parallelism,
+    activation checkpointing and low precision--so you can tell if your
     implementation is buggy and using more memory than it should be.  It's
-    also helpful to know what levers you have available for reducing memory
-    usage: you will often be in a regime where your hero run can just barely
-    fit your model in memory, and you're trying to make it fit without
+    also helpful to know what levers you have for reducing memory
+    usage: you will often be in a regime where your hero run just barely doesn't
+    fit in memory, and you're trying to make it fit without
     sacrificing too much MFU.  For example, the original DeepSeek-V3 pretrain
-    was done on 2048 H800 GPUs (same amount of memory as any H100), as we'll
+    was done on 2048 H800 GPUs (same amount of memory as any H100)--as we'll
     see, memory is pretty tight in this setting!</p>
-
-    TODO: describe the plan (after we've done it)
 
     <h2>What is memory used for in training?</h2>
 
     <p>While your exact memory usage depends on implementation details of your
     training framework, it's still possible to reason through what the major
-    consumers of memory will be.  Even then, this still depends on both
-    parallelization choices (how we are distributing things across ranks) as
-    well as our direct memory adjustment knobs (activation checkpointing, low
-    precision).  But let's first set the stage with a naive, global (across
-    all ranks) memory accounting of DeepSeek-V3 training assuming compute
-    being done in BF16 (accounting for memory usage in FP8 gives rise to
-    additional complications, which I'd like to address in a dedicated
-    section) and no activation checkpointing.</p>
+    consumers of memory will be for a given configuration of choices.  Let's
+    first set the stage with a naive, global (across all ranks) memory
+    accounting of DeepSeek-V3 training assuming compute being done in BF16
+    (accounting for memory usage in FP8 gives rise to additional
+    complications, which I'd like to address in a dedicated section) and no
+    activation checkpointing.</p>
 
     <p><strong>Parameters.</strong>  In <a
     href="./01-deepseek-diagram.html">the previous post</a>, we did a tally of
@@ -53,10 +49,10 @@
 
     <p>This bar chart needs some explanation.  Notably, the x-axis is in
     logarithmic scale, and the light blue bars are a decomposition of the
-    weights into three categories: expert weights, non-expert weights (in the
+    weights into three subcategories: expert weights, non-expert weights (in the
     transformer block), and non-transformer block "vocab" weights (this is the
     initial embedding, the LM head and the final RMSNorm.)  Though it's not
-    evident from log scale, these three categories cover all the weights in
+    evident from log scale, these three subcategories cover all the weights in
     the model.  Similary, don't be deceived into thinking that the non-expert
     weights are "half" of the expert weights: there are more than 40x expert
     weights than non-expert weights!</p>
@@ -70,7 +66,19 @@
     allows us to keep a consistent x-scale across all the diagrams in this
     essay.</p>
 
-    <p><strong>Gradients.</strong>  </p>
+    <p><strong>Gradients.</strong>  We need memory to store computed gradients
+    before we update parameters with them.  As a simplifying assumption, we will
+    assume that the memory for gradients stays live for the entirety of the model;
+    while you can avoid this in non-PP settings (since you can try to all-reduce
+    the gradient as soon as possible and then update the weights ASAP so you can
+    reuse the gradient memory for something else), with PP--or really any
+    microbatching--you will need to keep the gradients separate as you accumulate
+    microbatches into it before you do a parameter update.</p>
+
+    <p>Separately, in the DeepSeek-V3 paper, it was described that they used
+    FP32 gradients for training stability reasons, so we preserve this choice
+    here--thereby doubling the memory usage of gradients relative to parameters.
+    (In log scale, this uniformly shifts all of these bars to the right one tick.)</p>
 
     <dsv3-layer style="min-height:145px" snapshot nototal solo="grads"
       from='{"world":2048,"pp":1,"ep":1,"zero":0}'
@@ -79,131 +87,48 @@
 
 
     <p><strong>Optimizer states.</strong>  DeepSeek-V3 was trained with AdamW
-    with bfloat16 first and second moment and float32 master weights.  This means
-    we additionally need another eight bytes for every parameter.  We'll add this
-    to our diagram, with the optimizer states colored in green, opposed to the
-    parameter's blue.</p>
+    with BF16 first and second moment and FP32 master weights.  This means
+    we additionally need another eight bytes for every parameter--double the
+    size of the gradients.</p>
 
     <dsv3-layer style="min-height:145px" snapshot nototal solo="optim"
       from='{"world":2048,"pp":1,"ep":1,"zero":0}'
       local cumulative lens="param-bytes" recipe="bf16" recompute="none" controls="static" detail
       nocaption></dsv3-layer>
 
-    <p><strong>Activations.</strong></p>
+    <p><strong>Activations.</strong>  Intermediate activations that are saved
+    for backwards typically contribute to the high watermark memory usage
+    (which typically occurs at the end of forwards / beginning of backwards).
+    We tally up all of the saved for backwards activations, which here are
+    assumed to be saved in the compute precision BF16.</p>
 
     <dsv3-layer style="min-height:217px" snapshot nototal solo="acts"
       from='{"world":2048,"pp":1,"ep":1,"zero":0}'
       local cumulative lens="param-bytes" recipe="bf16" recompute="none" controls="static" detail
       nocaption></dsv3-layer>
 
-    <!--
-    <dsv3-layer style="min-height:237px" snapshot parts
+    <p><strong>Putting it together.</strong>  Our current accounting requires more than 100x
+    more memory than a single H100 has.  We cannot even fit all of the activations we
+    want to save for backwards.</p>
+
+    <dsv3-layer style="min-height:373px" snapshot parts
       from='{"world":2048,"pp":1,"ep":1,"zero":0}'
       local cumulative lens="param-bytes" recipe="bf16" recompute="none" controls="static" detail
       nocaption></dsv3-layer>
-    -->
 
-    <h2>[scaffolding] Fitting it, biggest problem first</h2>
+    <p>There are two obvious things we can do here: ZeRO (depending on the
+    level, reducing optimizer (ZeRO-1), gradient (ZeRO-2) or parameter (ZeRO-3, aka FSDP) sizes by a
+    factor of DP) and expert parallelism (reducing expert weights by a factor
+    of EP).  However, we cannot do full ZeRO-3 (sharding weights), as it
+    turns out a communication roofline show we will be communication bound (we
+    leave this analysis to a future post).  And with only ZeRO-1 and EP, we
+    still cannot fit, so we need to bring out the big guns.</p>
 
-    <p class="note">[section 2 scaffolding, now a SLIDESHOW: one chart, the
-    reader advances beat by beat, every transition animates, ghosts + ▲/▼
-    badges show each step against the last real step. Each &lt;section&gt;
-    below carries a full config and its caption — edit captions in place;
-    bracketed text is AI-drafted.]</p>
+    <h2>Pipeline parallelism</h2>
 
-    <dsv3-beat-deck id="fitdeck" style="min-height:648px">
-      <section data-config='{"world":2048,"pp":1,"ep":1,"zero":0}'>
-        [<b>Step 1 — the debt.</b> The whole model on one imaginary GPU:
-        8.65 TiB against an 80 GiB card — ×111 over budget, about seven
-        halvings on this axis. And note what we already have: 2048 real GPUs
-        running pure data parallelism, which copies all of this to every one
-        of them — replication isn&rsquo;t reduction, no bar would move — but it
-        quietly builds the 2048-wide replica group everything below shards
-        over.]
-      </section>
-      <section data-config='{"world":2048,"pp":1,"ep":1,"zero":1}'>
-        [<b>Step 2 — ZeRO-1.</b> Biggest problem first: optimizer states are
-        4.88 TiB, the tallest bar. Each replica keeps 1/2048th: ▼×2048, down
-        to 2.4 GiB. Solved outright. Total: 8.65 → 3.77 TiB. The tempting
-        next move is the same trick on the new tallest bar — ZeRO-2 on the
-        gradients — and on this chart it would work just as well. DeepSeek
-        declined: fp32 accumulators live across all 64 microbatches, and
-        sharding them puts a reduce-scatter on every one. First warning:
-        this chart cannot see communication.]
-      </section>
-      <section data-config='{"world":2048,"pp":1,"ep":64,"zero":1}'>
-        [<b>Step 3 — EP64.</b> Weights and gradients are both param-shaped,
-        and expert parallelism cuts the expert share of both at once: ▼×24
-        each. The optimizer bar does not move — smaller expert count, smaller
-        sharding group, the effects cancel. Total: 261.6 GiB. Still ×3.3
-        over.]
-      </section>
-      <section data-config='{"world":2048,"pp":16,"ep":64,"zero":1,"vpp":2}'>
-        [<b>Step 4 — pipeline it, with DualPipeV.</b> Gradients alone are
-        101.8 GiB — over the card by themselves, with every avoid-PP lever
-        spent. Pipelining divides the layers per GPU (▼×14 weights, ▼×14
-        grads) but NOT the activations: a pipeline only stays busy with ~PP
-        microbatches in flight, and DeepSeek&rsquo;s DualPipeV schedule holds a
-        uniform PP+½ on every rank (see the schedule widget below), so the
-        stash even grows ▲×1.1. Total: 127.7 GiB — the tallest bar is now the one
-        pipelining cannot touch, and DualPipeV&rsquo;s actual payoff, pipeline
-        bubbles, is off this chart. Second warning: this chart cannot see
-        time.]
-      </section>
-      <section data-config='{"world":2048,"pp":16,"ep":64,"zero":1,"vpp":2,"recompute":"dsv3"}'>
-        [<b>Step 5 — activation checkpointing.</b> The only bar left. The
-        dsv3 recompute policy trades FLOPs for stashes — the per-op rows show
-        exactly which ones die. 127.7 → 77.1 GiB. It fits. Barely.]
-      </section>
-      <section data-config='{"world":2048,"pp":16,"ep":64,"zero":1,"vpp":2,"recompute":"dsv3","recipe":"dsv3-fp8"}'>
-        [<b>Step 6 — fp8 stashes.</b> The fp8 recipe halves what the GEMMs
-        keep for backward: 69.0 GiB, and now there is headroom to spend.]
-      </section>
-    </dsv3-beat-deck>
+    SLOP BELOW
 
-    TODO transition here
-
-    <dsv3-anatomy style="min-height:1005px" lens="param-bytes" local cumulative recipe="bf16" recompute="none" layer="local-diagram" detail controls="static" nocaption></dsv3-anatomy>
-
-    <p class="note">The same picture per GPU, under a fiat parallelism (we
-    can't justify it without talking about comms — later chapters): 2048 GPUs,
-    PP16 over a contiguous split of the 61 layers, EP32/EP64 selectable, and
-    ZeRO-1 (optimizer states shard over each parameter's replication group —
-    dense params over DP, expert params over expert-DP. The two effects cancel
-    for experts: fewer local experts × a smaller sharding group means the
-    per-rank optimizer bytes are a uniform 8&nbsp;B ÷ DP per global parameter,
-    independent of EP — the green looks big on experts only because the
-    weights DO divide by EP).
-    EP, the PP degree, the ZeRO level (1 shards optimizer states, 2 also
-    gradients, 3 also weights), and the cluster size are all knobs; the stage
-    selector names every PP rank's layer assignment and defaults to the
-    <em>peak</em> stage (the fully loaded rank — peek at the others to see
-    they carry less). Stage 0 holds the embedding (and the dense blocks while
-    they last); the last stage adds the final norm and lm head. Saved
-    activations follow the pipeline schedule: under 1F1B, stage <em>s</em>
-    holds PP−<em>s</em> forward microbatches at steady state — which is why
-    the peak rank is an <em>early</em> stage, not the parameter-heavy last
-    one. The schedule is itself a set of knobs: ×1 mb is the single-microbatch
-    fiction this section started with; VPP splits every rank into that many
-    chunks of a deeper virtual pipeline, placed either <em>wrap</em>-around
-    (Megatron-style interleaving) or <em>V</em>-reflected (the fold DeepSeek
-    actually trained with — VPP 2 + V is DualPipeV, where the embedding
-    <em>and</em> the lm head both live on rank 0 and every rank uniformly
-    holds 2·PP+1 resident chunk-halves = PP+½ microbatches' worth of
-    activations). The logarithmic bars
-    under the controls put every component (and the grey total) against the
-    shaded infeasible region past 80&nbsp;GiB — each gridline is exactly ×2,
-    so distance-to-fit reads as countable halvings (drag on the bars to
-    measure any span as a factor). Click a row name to solo a component; a
-    soloed parameter component opens its experts / non-expert / vocab
-    breakdown, and those rows filter the diagram too. The precision and
-    recompute knobs from the earlier sections also apply here (FLOPs are
-    deliberately not shown). <em>Save</em> locks in a config: ghost bars and
-    red&nbsp;▲ / bold&nbsp;▼ factor badges then show every change against it,
-    <em>reset</em> returns to the save, and <em>reset all</em> is the
-    whole-model-on-one-GPU starting point.</p>
-
-    <dsv3-pp-schedule style="min-height:592px" layer="local-diagram"></dsv3-pp-schedule>
+    <dsv3-pp-schedule style="min-height:879px" layer="local-diagram"></dsv3-pp-schedule>
 
     <p class="note">The pipeline schedule behind the activation numbers, one
     row per PP stage of the widget above (it follows the PP and schedule
@@ -218,26 +143,9 @@
       local cumulative lens="param-bytes" recipe="bf16" recompute="none" controls="static" detail
       nocaption></dsv3-layer>
 
-    <p class="note">[demo of the snapshot story-beat widget — a non-interactive
-    figure: the authored <code>from</code> config is the saved baseline (ghost
-    bars), <code>to</code> is the live bars with change badges, and
-    <code>solo</code> picks the component under discussion (its breakdown
-    accordions open; the total goes stacked grey+color). Here: turning on
-    ZeRO-1 at PP16·EP64 shards non-expert optimizer states over DP&nbsp;128
-    but expert ones only over EDP&nbsp;2 — blended ▼×4.6, the EP-cancellation
-    story in one figure. The link jumps to the full widget with this exact
-    scenario loaded (baseline saved, change tweened in).]</p>
-
-    <strong>Full tally</strong>
-    show the tally bar
-
-
-
-    SLOP BELOW
-
     <h2>Activation checkpointing</h2>
 
-    <p></p>
+    THIS SECTION IS SLOP
 
     <p>At the end of the forward pass you are at (or near) the memory high-water
     mark, because autograd is keeping alive every intermediate activation that
@@ -290,6 +198,7 @@
       case study below.</li>
     </ul>
 
+
     <h2>Low precision</h2>
 
     <p>The second lever is to store the bytes you do keep in a smaller format.
@@ -315,6 +224,173 @@
     requantize exactly across a transpose, so Blackwell keeps one copy.  (The
     kernel-level story of how these GEMMs actually run can wait; it doesn't
     matter for memory.)</p>
+
+
+    <h2>Fitting it</h2>
+
+    <p>We can now step through an iterative process by which we can get
+    DeepSeek-V3 to fit on 2048 H100s without OOMing.</p>
+
+    <dsv3-beat-deck id="fitdeck" style="min-height:648px">
+      <section data-config='{"world":2048,"pp":1,"ep":1,"zero":0}'>
+        [<b>Step 1 — the debt.</b> The whole model on one imaginary GPU:
+        8.65 TiB against an 80 GiB card — ×111 over budget, about seven
+        halvings on this axis. And note what we already have: 2048 real GPUs
+        running pure data parallelism, which copies all of this to every one
+        of them — replication isn&rsquo;t reduction, no bar would move — but it
+        quietly builds the 2048-wide replica group everything below shards
+        over.]
+      </section>
+      <section data-config='{"world":2048,"pp":1,"ep":1,"zero":1}'>
+        [<b>Step 2 — ZeRO-1.</b> Biggest problem first: optimizer states are
+        4.88 TiB, the tallest bar. Each replica keeps 1/2048th: ▼×2048, down
+        to 2.4 GiB. Solved outright. Total: 8.65 → 3.77 TiB. The tempting
+        next move is the same trick on the new tallest bar — ZeRO-2 on the
+        gradients — and on this chart it would work just as well. DeepSeek
+        declined: fp32 accumulators live across all 64 microbatches, and
+        sharding them puts a reduce-scatter on every one. First warning:
+        this chart cannot see communication.]
+      </section>
+      <section data-config='{"world":2048,"pp":1,"ep":64,"zero":1}'>
+        [<b>Step 3 — EP64.</b> Weights and gradients are both param-shaped,
+        and expert parallelism cuts the expert share of both at once: ▼×24
+        each. The optimizer bar does not move — smaller expert count, smaller
+        sharding group, the effects cancel. Total: 261.6 GiB. Still ×3.3
+        over.]
+      </section>
+      <section data-config='{"world":2048,"pp":16,"ep":64,"zero":1,"vpp":2}'>
+        [<b>Step 4 — pipeline it, with DualPipeV.</b> Gradients alone are
+        101.8 GiB — over the card by themselves, with every avoid-PP lever
+        spent. Pipelining divides the layers per GPU (▼×14 weights, ▼×14
+        grads) but NOT the activations: a pipeline only stays busy with ~PP
+        microbatches in flight, and DeepSeek&rsquo;s DualPipeV schedule holds a
+        uniform PP+½ on every rank (see the schedule widget below), so the
+        stash even grows ▲×1.1. Total: 127.7 GiB — the tallest bar is now the one
+        pipelining cannot touch, and DualPipeV&rsquo;s actual payoff, pipeline
+        bubbles, is off this chart. Second warning: this chart cannot see
+        time.]
+      </section>
+      <section data-config='{"world":2048,"pp":16,"ep":64,"zero":1,"vpp":2,"recompute":"dsv3"}'>
+        [<b>Step 5 — activation checkpointing.</b> The only bar left. The
+        dsv3 recompute policy trades FLOPs for stashes — the per-op rows show
+        exactly which ones die. 127.7 → 77.1 GiB. It fits. Barely.]
+      </section>
+      <section data-config='{"world":2048,"pp":16,"ep":64,"zero":1,"vpp":2,"recompute":"dsv3","recipe":"dsv3-fp8"}'>
+        [<b>Step 6 — fp8 stashes.</b> The fp8 recipe halves what the GEMMs
+        keep for backward: 69.0 GiB, and now there is headroom to spend.]
+      </section>
+    </dsv3-beat-deck>
+
+    <dsv3-anatomy style="min-height:981px" lens="param-bytes" local cumulative recipe="bf16" recompute="none" layer="local-diagram" detail controls="static" nocaption></dsv3-anatomy>
+
+    <p class="note">[demo of the snapshot story-beat widget — a non-interactive
+    figure: the authored <code>from</code> config is the saved baseline (ghost
+    bars), <code>to</code> is the live bars with change badges, and
+    <code>solo</code> picks the component under discussion (its breakdown
+    accordions open; the total goes stacked grey+color). Here: turning on
+    ZeRO-1 at PP16·EP64 shards non-expert optimizer states over DP&nbsp;128
+    but expert ones only over EDP&nbsp;2 — blended ▼×4.6, the EP-cancellation
+    story in one figure. The link jumps to the full widget with this exact
+    scenario loaded (baseline saved, change tweened in).]</p>
+
+    SLOP BELOW
+
+    <h2>SCRAP HEAP</h2>
+
+    <p>This post is organized as follows: <s>first, we'll recap at a high level
+    what memory is used for in LLM training.  Next, we will individually
+    discuss each knob you have for adjusting memory usage, using simplified
+    models to build intuition for how these knobs affect memory.</s>  Then we'll
+    put it all together to reproduce DeepSeek-V3's 2048 GPU Hopper training
+    configuration.  Credit where credit is due: this analysis is based off of
+    an unpublished analysis done by Daniel Haziza.</p>
+
+    TODO: we need to step through the tricky parts of the model, without having
+    overwhelmingly too much text
+
+    <pre>
+    TODO: Pedagogical goals:
+    - Feel like we fully understand the model, no magic parts, everything
+      works well.  Some especially magic parts:
+      - AC
+      - Low precision
+      - PP microbatches (gradients)
+    - Some factors are very round (e.g., EP directly acts on expert weights),
+      we want to step through them
+    - Maaaaybe want to talk through FLOPs implications for some policy
+      decisions, similarly..
+    - Need to do some forward references for warnings: ZeRO-3 can't be hidden
+      (not applicable here but maybe other places: global batch size run out DP)
+    - Stretch: help people understand how this model generalizes to a family
+      of models that are tweaking arch sizes like hidden
+    - Stretch: understand why things like TP/ETP are inapplicable (how come we
+      don't need to model CP here?)
+
+
+    The plan:
+
+    The meta-plan:
+    - How do I know the model is right?
+      - 01
+        - cross-check via official checkpoint parameter count
+        - cross-check via source code analysis of training codebases
+        - high level intuition what it should look like
+      - 02
+        - every piece of the model is examinable, no magic. complexity is
+          explained
+        - a clear visual audit rule for every diagram (pull all these numbers,
+          and then other numbers are related in this way)
+    </pre>
+
+    <p>
+    Fortunately, it is comparatively simpler to debug OOMs in LLM pretraining,
+    because the memory usage of your trainer doesn't depend on doing distributed
+    communications at scale (assuming your memory allocations and deallocations are
+    deterministic--a very good idea!)  In modern PyTorch, you can use <strong>fake
+    ProcessGroup (fake PG)</strong> to do a very high fidelity simulation of
+    the memory usage of any given rank in an arbitrarily large training config
+    on a single GPU.</p>
+
+    SLOP
+
+
+    <p class="note">The same picture per GPU, under a fiat parallelism (we
+    can't justify it without talking about comms — later chapters): 2048 GPUs,
+    PP16 over a contiguous split of the 61 layers, EP32/EP64 selectable, and
+    ZeRO-1 (optimizer states shard over each parameter's replication group —
+    dense params over DP, expert params over expert-DP. The two effects cancel
+    for experts: fewer local experts × a smaller sharding group means the
+    per-rank optimizer bytes are a uniform 8&nbsp;B ÷ DP per global parameter,
+    independent of EP — the green looks big on experts only because the
+    weights DO divide by EP).
+    EP, the PP degree, the ZeRO level (1 shards optimizer states, 2 also
+    gradients, 3 also weights), and the cluster size are all knobs; the stage
+    selector names every PP rank's layer assignment and defaults to the
+    <em>peak</em> stage (the fully loaded rank — peek at the others to see
+    they carry less). Stage 0 holds the embedding (and the dense blocks while
+    they last); the last stage adds the final norm and lm head. Saved
+    activations follow the pipeline schedule: under 1F1B, stage <em>s</em>
+    holds PP−<em>s</em> forward microbatches at steady state — which is why
+    the peak rank is an <em>early</em> stage, not the parameter-heavy last
+    one. The schedule is itself a set of knobs: ×1 mb is the single-microbatch
+    fiction this section started with; VPP splits every rank into that many
+    chunks of a deeper virtual pipeline, placed either <em>wrap</em>-around
+    (Megatron-style interleaving) or <em>V</em>-reflected (the fold DeepSeek
+    actually trained with — VPP 2 + V is DualPipeV, where the embedding
+    <em>and</em> the lm head both live on rank 0 and every rank uniformly
+    holds 2·PP+1 resident chunk-halves = PP+½ microbatches' worth of
+    activations). The logarithmic bars
+    under the controls put every component (and the grey total) against the
+    shaded infeasible region past 80&nbsp;GiB — each gridline is exactly ×2,
+    so distance-to-fit reads as countable halvings (drag on the bars to
+    measure any span as a factor). Click a row name to solo a component; a
+    soloed parameter component opens its experts / non-expert / vocab
+    breakdown, and those rows filter the diagram too. The precision and
+    recompute knobs from the earlier sections also apply here (FLOPs are
+    deliberately not shown). <em>Save</em> locks in a config: ghost bars and
+    red&nbsp;▲ / bold&nbsp;▼ factor badges then show every change against it,
+    <em>reset</em> returns to the save, and <em>reset all</em> is the
+    whole-model-on-one-GPU starting point.</p>
 
     <h2>Parallelism</h2>
 
@@ -374,61 +450,7 @@
       <b>(3) The in-flight law:</b> DualPipe's two-chunk schedule halves the naive (2·PP+1) in-flight count
       per layer, so the activation column is 8.5×, not 17×.</p>
 
-    <h3>SCRAP HEAP</h3>
 
-    <p>This post is organized as follows: <s>first, we'll recap at a high level
-    what memory is used for in LLM training.  Next, we will individually
-    discuss each knob you have for adjusting memory usage, using simplified
-    models to build intuition for how these knobs affect memory.</s>  Then we'll
-    put it all together to reproduce DeepSeek-V3's 2048 GPU Hopper training
-    configuration.  Credit where credit is due: this analysis is based off of
-    an unpublished analysis done by Daniel Haziza.</p>
-
-    TODO: we need to step through the tricky parts of the model, without having
-    overwhelmingly too much text
-
-    <pre>
-    TODO: Pedagogical goals:
-    - Feel like we fully understand the model, no magic parts, everything
-      works well.  Some especially magic parts:
-      - AC
-      - Low precision
-      - PP microbatches (gradients)
-    - Some factors are very round (e.g., EP directly acts on expert weights),
-      we want to step through them
-    - Maaaaybe want to talk through FLOPs implications for some policy
-      decisions, similarly..
-    - Need to do some forward references for warnings: ZeRO-3 can't be hidden
-      (not applicable here but maybe other places: global batch size run out DP)
-    - Stretch: help people understand how this model generalizes to a family
-      of models that are tweaking arch sizes like hidden
-    - Stretch: understand why things like TP/ETP are inapplicable (how come we
-      don't need to model CP here?)
-
-
-    The plan:
-
-    The meta-plan:
-    - How do I know the model is right?
-      - 01
-        - cross-check via official checkpoint parameter count
-        - cross-check via source code analysis of training codebases
-        - high level intuition what it should look like
-      - 02
-        - every piece of the model is examinable, no magic. complexity is
-          explained
-        - a clear visual audit rule for every diagram (pull all these numbers,
-          and then other numbers are related in this way)
-    </pre>
-
-    <p>
-    Fortunately, it is comparatively simpler to debug OOMs in LLM pretraining,
-    because the memory usage of your trainer doesn't depend on doing distributed
-    communications at scale (assuming your memory allocations and deallocations are
-    deterministic--a very good idea!)  In modern PyTorch, you can use <strong>fake
-    ProcessGroup (fake PG)</strong> to do a very high fidelity simulation of
-    the memory usage of any given rank in an arbitrarily large training config
-    on a single GPU.</p>
 
 
     <div class="fnotes">

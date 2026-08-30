@@ -15,7 +15,7 @@ T.check('saved label shows config', barTxt().includes('saved: EP64·PP16'), barT
 T.check('reset enabled after saving', btn('reset')?.disabled === false, '');
 // change EP; deltas appear; reset returns to the save
 stepBtn(3, -1).click(); await T.tick(700);
-T.check('delta badge vs save (▲×1.4 blended weights)', barTxt().includes('▲×1.4'), barTxt().slice(60, 220));
+T.check('delta badge vs save (▲×1.2 blended weights)', barTxt().includes('▲×1.2'), barTxt().slice(60, 220));
 const gu = layer().querySelector('g[data-op="ffn_gate_up"] text.dims:not([text-anchor])')?.textContent ?? '';
 T.check('diagram numbers wear delta badges', gu.includes('×1.6'), gu);
 btn('reset').click(); await T.tick(700);

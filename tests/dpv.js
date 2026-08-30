@@ -8,11 +8,13 @@ const plan = () => l().closest('.anat-grid').querySelector('dsv3-anatomy-plan');
 T.check('layer has VPP stepper + fold segments', !!knob('vpp') && !!knob('fold'), '');
 const stageSel = () => l().parentElement.querySelector('select[data-knob="stage"]');
 const selW = stageSel().getBoundingClientRect().width;
-knob('vpp').querySelectorAll('button')[1].click(); await T.tick(500);   // VPP 1 -> 2
+// DualPipeV IS the default — the widget opens on DSv3's own schedule
+T.check('default schedule is DualPipeV (VPP2 · reflect)', l().vpp === 2 && (l().fold ?? 'reflect') === 'reflect',
+  `${l().vpp}/${l().fold}`);
+knob('vpp').querySelectorAll('button')[1].click(); await T.tick(500);   // VPP 2 -> 4
 T.check('stage select width is fixed (no resize on knob moves)',
   stageSel().getBoundingClientRect().width === selW, `${selW} -> ${stageSel().getBoundingClientRect().width}`);
-T.check('VPP steps to 2, fold defaults to reflect', l().vpp === 2 && (l().fold ?? 'reflect') === 'reflect',
-  `${l().vpp}/${l().fold}`);
+knob('vpp').querySelectorAll('button')[0].click(); await T.tick(500);   // back to VPP2
 
 const pp = l().pp;
 T.log('pp', pp);
