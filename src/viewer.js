@@ -3530,7 +3530,7 @@ class Dsv3PpFold extends HTMLElement {
     const SL = 8, STW = 16, BRX = SL + STW + 2, RX0 = BRX + 8;
     const GUT = RX0 + 8 * 1.6 + 22, LX = GUT + 6, X0 = LX + 64;
     const RH = 14, PV = 21, BW = 420;
-    const H = 16 * PV + 24, W = X0 + BW + 96;   // + the linear axis band (caption rides past its end)
+    const H = 16 * PV + 24, W = X0 + BW + 152;   // + the linear axis band (caption rides past its end)
     const rankP = (r) => this.chunks[r].p + this.chunks[15 - r].p;
     const scale = BW / Math.max(...Array.from({ length: 8 }, (_, r) => rankP(r)));
     const wOf = (k) => k.p * scale;
