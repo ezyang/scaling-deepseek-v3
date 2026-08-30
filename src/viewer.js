@@ -3616,7 +3616,7 @@ class Dsv3PpFold extends HTMLElement {
         B.push(`<line x1="${x.toFixed(1)}" y1="${ay}" x2="${x.toFixed(1)}" y2="${ay + 4}" stroke="#c3c2b7" stroke-width="1"/>`);
         B.push(`<text x="${x.toFixed(1)}" y="${ay + 14}" text-anchor="middle" font-size="9" fill="#898781">${v === 0 ? '0' : fmtP(v)}</text>`);
       }
-      B.push(`<text x="${X0 + BW + 10}" y="${ay + 14}" font-size="9" fill="#52514e">params · LINEAR</text>`);
+      B.push(`<text x="${X0 + BW + 10}" y="${ay + 14}" font-size="9" fill="#52514e">params · LINEAR${this.ep > 1 ? ` · experts ÷${this.ep}` : ''}</text>`);
     }
     // whole-row hitboxes (stack, label, and bar band alike — easy hovering)
     for (let row = 0; row < 16; row++)
