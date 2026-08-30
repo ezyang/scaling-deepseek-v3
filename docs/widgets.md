@@ -87,6 +87,27 @@ reset button and a dimmed caption — the reset pours back to the slide's
 config in place, and stepping first rewinds the detour the same way, then
 animates the step's own delta. The visual audit covers every step.
 
+## `<dsv3-pp-fold ep=… view=…>` — the V-fold stage map
+
+Built for 02's PP section (drafted on studies/scratch-fold.html; not yet
+placed): how the DualPipeV stage split distributes PARAMETERS over ranks.
+Two views of the same 16-chunk contiguous split (`ppStage(c, 16, 1,
+'reflect')` — the exact split the memory model charges): `virtual` unrolls
+the chunks as a 16-deep chain; `physical` folds chunk v onto rank
+min(v, 15−v) beside its partner — the V. The toggle ANIMATES the fold
+(frame-stepped; each chunk segment flies to its rank; physical rows are
+double-pitch so total height is reserved — no reflow). Bars are linear
+(the imbalance IS the story), down-pass chunks light blue / up-pass dark
+(the strip's chunk shading), vocab shares (emb / head+norm) wear a dashed
+outline — at EP64 they dominate rank 0, the fold's signature. A model-stack
+MINIMAP on the left (emb cap · 61 layer cells, dense ×3 distinct · norm+head
+cap) lights the hovered bar's layers — hovering s0 folded lights BOTH ends
+of the model at once — with a reserved-height readout line naming the
+hovered rank's composition and exact param count (`data-params` carries
+exact values; rank totals = pairwise chunk sums, tested). `ep` (default 64)
+divides the expert share; `view="physical"` opens folded. Attributes are
+figure-authoring only; no URL state.
+
 ## The visual audit (src/audit.js)
 
 The audit keys on the VISUAL LANGUAGE, never the model: each pattern the

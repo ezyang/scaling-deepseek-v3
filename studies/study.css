@@ -19,7 +19,7 @@
        when it mounts. Display AND margins must match the widget-injected CSS
        exactly (the diagramlint pre-upgrade tier enforces both). */
     dsv3-anatomy, dsv3-layer { display: block; margin: 14px 0 26px; }
-    dsv3-pp-schedule { display: block; margin: 14px 0; }
+    dsv3-pp-schedule, dsv3-pp-fold { display: block; margin: 14px 0; }
     /* the deck pops as a CARD: the slideshow is the thing to keep in your
        viewport, so it reads as one framed stage (site-card border + white
        ground on the warm page) rather than prose-adjacent furniture */

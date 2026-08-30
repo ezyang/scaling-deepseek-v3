@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>scratch: the V-fold stage map for 02</title>
+  <link rel="stylesheet" href="./study.css">
+</head>
+
+<body>
+  <main>
+    <h1>scratch: the V-fold stage map</h1>
+    <p class="note">Draft widget for 02's PP section (TODO(fable)): how the
+      DualPipeV stage split distributes parameters over ranks. Two views with
+      an animated fold between them; hovering a bar lights that rank's layers
+      on the model-stack minimap. Not part of the series.</p>
+
+    <dsv3-pp-fold style="min-height:423px"></dsv3-pp-fold>
+
+    <p class="note">Same, opening folded, EP1 (whole experts — the imbalance
+      story without expert parallelism):</p>
+
+    <dsv3-pp-fold style="min-height:423px" view="physical" ep="1"></dsv3-pp-fold>
+  </main>
+  <script type="module" src="../src/viewer.js"></script>
+</body>
+
+</html>

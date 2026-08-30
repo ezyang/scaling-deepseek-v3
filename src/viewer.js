@@ -3438,6 +3438,189 @@ class Dsv3PpSchedule extends HTMLElement {
     this._scr.innerHTML = P.join('');
   }
 }
+
+// ---- <dsv3-pp-fold> custom element -----------------------------------------
+// How the V-fold distributes PARAMETERS over ranks. Two views of the same
+// 16-chunk contiguous split of the stack (DualPipeV at PP8): 'virtual' lays
+// the chunks out as if each were a rank of a 16-deep chain; 'folded' pairs
+// chunk v with chunk 15−v on physical rank min(v, 15−v) — the V. The toggle
+// ANIMATES the fold (each chunk segment flies to its rank; total height is
+// reserved, so nothing reflows). A model-stack MINIMAP on the left lights
+// the hovered rank's layers — on rank 0 BOTH ends of the model light at
+// once, the fold's signature (emb AND head on one rank). Parameter counts
+// are exact (ppStage over the 16-chunk split; experts ÷ EP — the essay
+// arrives here with EP64 already applied; ep="" overrides).
+const PPF_CSS = `
+dsv3-pp-fold { display: block; margin: 14px 0; }
+.pf { font: 12px system-ui, -apple-system, "Segoe UI", sans-serif; color: #0b0b0b;
+  border: 1px solid #e1e0d9; border-radius: 6px; background: #fcfcfb; padding: 8px 10px; }
+.pf .top { display: flex; align-items: center; gap: 12px; padding-bottom: 6px; }
+${knobCss('.pf .top')}
+.pf .cols { display: flex; gap: 16px; align-items: flex-start; }
+.pf svg { display: block; }
+.pf .ro { font-size: 11.5px; color: #52514e; min-height: 17px; margin-top: 2px; }
+.pf .mmlab { font-size: 10px; fill: #52514e; }
+`;
+class Dsv3PpFold extends HTMLElement {
+  connectedCallback() {
+    this.ep = +(this.getAttribute('ep') ?? 64);
+    this.view = this.getAttribute('view') === 'physical' ? 'physical' : 'virtual';
+    this._t = this.view === 'physical' ? 1 : 0;
+    this._hover = null;
+    const style = document.createElement('style'); style.textContent = PPF_CSS;
+    this._root = el('div', 'pf');
+    this._top = el('div', 'top');
+    this._cols = el('div', 'cols');
+    this._mm = el('div');        // the model-stack minimap
+    this._bars = el('div');      // the rank bars
+    this._ro = el('div', 'ro');  // hover readout (height reserved)
+    this._cols.append(this._mm, this._bars);
+    this._root.append(this._top, this._cols, this._ro);
+    this.append(style, this._root);
+    // the 16 chunks: exact params from the SAME split the memory model uses
+    const moeExp = PARAMS.expert * DSV3.routedExperts;
+    this.chunks = Array.from({ length: 16 }, (_, c) => {
+      const g = ppStage(c, 16, 1, 'reflect');
+      const seg = g.segs[0];
+      const layerP = g.dense * PARAMS.denseBlock + g.moe * (PARAMS.moeBlock - moeExp + moeExp / this.ep);
+      const vocabP = (g.emb ? PARAMS.embed : 0) + (g.head ? PARAMS.embed + PARAMS.finalNorm : 0);
+      return { c, lo: seg.lo, hi: seg.hi, dense: g.dense, moe: g.moe,
+        emb: g.emb, head: g.head, layerP, vocabP, p: layerP + vocabP };
+    });
+    this._controls();
+    this.render();
+  }
+  _controls() {
+    this._top.innerHTML = '';
+    const g = el('span', 'pargrp');
+    const lab = el('div', 'parlab'); lab.textContent = 'view'; g.append(lab);
+    const row = el('div', 'parrow');
+    const w2 = el('span', 'stp');
+    for (const [k, t] of [['virtual', '16 chunks, unrolled'], ['physical', 'folded onto 8 ranks']]) {
+      const b = document.createElement('button');
+      b.textContent = t; b.type = 'button'; b.dataset.view = k;
+      if (this.view === k) b.classList.add('on');
+      else b.onclick = () => this._go(k);
+      w2.append(b);
+    }
+    row.append(w2); g.append(row); this._top.append(g);
+  }
+  // deterministic frame-stepped fold/unfold (nothing reflows: height fixed)
+  _go(view) {
+    if (view === this.view) return;
+    this.view = view;
+    this._controls();
+    const from = this._t, to = view === 'physical' ? 1 : 0;
+    const N = 14; let f = 0;
+    const gen = this._gen = (this._gen ?? 0) + 1;
+    const step = () => {
+      if (this._gen !== gen) return;
+      f++; const q = fitEase(Math.min(1, f / N));
+      this._t = from + (to - from) * q;
+      this.render();
+      if (f < N) setTimeout(step, 16);
+    };
+    setTimeout(step, 16);
+  }
+  _rankOf(c) { return Math.min(c, 15 - c); }
+  render() {
+    const t = this._t, EP = this.ep;
+    const X0 = 30, BW = 470, RH = 14, PV = 21;           // gutter · bar band · bar height · virtual pitch
+    const H = 16 * PV, W = X0 + BW + 74;                  // height reserved across both views
+    const rankP = (r) => this.chunks[r].p + this.chunks[15 - r].p;
+    const scale = BW / Math.max(...Array.from({ length: 8 }, (_, r) => rankP(r)));
+    const wOf = (k) => k.p * scale;
+    const lerp = (a, b) => a + (b - a) * t;
+    const hv = this._hover;   // {c} — highlights the chunk (virtual) or its whole rank (folded)
+    const hvRank = hv == null ? null : this._rankOf(hv);
+    const hot = (c) => hv != null && (t > 0.5 ? this._rankOf(c) === hvRank : c === hv);
+    const B = [`<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" font-family="system-ui">`];
+    // row tint + labels: the v-axis and s-axis crossfade
+    if (hv != null) {
+      const y = t > 0.5 ? hvRank * 2 * PV : hv * PV;
+      const h2 = t > 0.5 ? 2 * PV : PV;
+      B.push(`<rect x="0" y="${lerp(hv * PV, hvRank * 2 * PV).toFixed(1)}" width="${W}" height="${h2}" fill="#fff3d1"/>`);
+    }
+    for (let c = 0; c < 16; c++)
+      B.push(`<text x="${X0 - 5}" y="${c * PV + RH}" text-anchor="end" font-size="9.5" fill="#898781" opacity="${(1 - t).toFixed(2)}">v${c}</text>`);
+    for (let r = 0; r < 8; r++)
+      B.push(`<text x="${X0 - 5}" y="${r * 2 * PV + PV + 4}" text-anchor="end" font-size="9.5" font-weight="600" fill="#52514e" opacity="${t.toFixed(2)}">s${r}</text>`);
+    // chunk segments: down-pass light, up-pass dark; vocab shares wear a
+    // dashed outline (the fold's imbalance driver: emb + head land on s0)
+    for (const k of this.chunks) {
+      const c = k.c, down = c < 8, r = this._rankOf(c);
+      const xV = X0, yV = c * PV + (PV - RH) / 2;
+      const xP = down ? X0 : X0 + wOf(this.chunks[15 - c]) + 3;
+      const yP = r * 2 * PV + PV - RH / 2;
+      const x = lerp(xV, xP), y = lerp(yV, yP), w = wOf(k);
+      const fill = down ? '#9cc3ec' : '#2a78d6';
+      const vw = k.vocabP * scale;
+      B.push(`<g data-chunk="${c}" data-params="${k.p}" style="cursor:default">`);
+      B.push(`<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${RH}" fill="${fill}"${hot(c) ? ' stroke="#7a5200" stroke-width="1.2"' : ''}/>`);
+      if (k.vocabP) {   // emb at the chunk's front, head+norm at its back
+        const vx = k.emb ? x : x + w - vw;
+        B.push(`<rect x="${vx.toFixed(1)}" y="${(y + 1).toFixed(1)}" width="${(vw - 1).toFixed(1)}" height="${RH - 2}" fill="#fff" opacity="0.35"/>`);
+        B.push(`<rect x="${vx.toFixed(1)}" y="${y.toFixed(1)}" width="${vw.toFixed(1)}" height="${RH}" fill="none" stroke="${down ? '#2a78d6' : '#0b3d75'}" stroke-dasharray="2.5 2"/>`);
+        if (vw > 30) B.push(`<text x="${(vx + vw / 2).toFixed(1)}" y="${y + RH - 4}" text-anchor="middle" font-size="8.5" fill="${down ? '#0b3d75' : '#fff'}">${k.emb ? 'emb' : 'head'}</text>`);
+      }
+      B.push('</g>');
+      // per-chunk value (virtual) fades against the per-rank total (folded)
+      B.push(`<text x="${(x + w + 4).toFixed(1)}" y="${y + RH - 3}" font-size="9.5" fill="#898781" opacity="${(1 - t).toFixed(2)}">${fmtP(k.p)}</text>`);
+      if (!down) B.push(`<text data-ranktotal="${r}" data-params="${rankP(r)}" x="${(x + w + 4).toFixed(1)}" y="${y + RH - 3}" font-size="9.5" fill="#898781" opacity="${t.toFixed(2)}">${fmtP(rankP(r))}</text>`);
+    }
+    B.push('</svg>');
+    this._bars.innerHTML = B.join('');
+    this._bars.querySelector('svg').addEventListener('mouseover', (e) => {
+      const g2 = e.target.closest('g[data-chunk]');
+      if (g2 && +g2.dataset.chunk !== this._hover) { this._hover = +g2.dataset.chunk; this.render(); }
+    });
+    this._bars.querySelector('svg').addEventListener('mouseleave', () => { this._hover = null; this.render(); });
+    this._minimap();
+    this._readout();
+  }
+  _minimap() {
+    const CW = 78, CH = 4, capH = 13, LW = 66;   // strip · cell pitch · cap height · label room
+    const hv = this._hover, t = this._t;
+    const cs = hv == null ? [] : t > 0.5 ? [this.chunks[this._rankOf(hv)], this.chunks[15 - this._rankOf(hv)]] : [this.chunks[hv]];
+    const inHot = (l) => cs.some((k) => l >= k.lo && l < k.hi);
+    const embHot = cs.some((k) => k.emb), headHot = cs.some((k) => k.head);
+    const H = capH * 2 + 61 * CH + 8;
+    const M = [`<svg width="${CW + LW}" height="${H}" viewBox="0 0 ${CW + LW} ${H}" font-family="system-ui">`];
+    const cap = (y, label, hot2) => M.push(
+      `<rect x="0" y="${y}" width="${CW}" height="${capH - 2}" rx="2" fill="${hot2 ? '#eda100' : '#e1e0d9'}"/>`
+      + `<text class="mmlab" x="${CW + 5}" y="${y + capH - 4}"${hot2 ? ' font-weight="600"' : ''}>${label}</text>`);
+    cap(0, 'embedding', embHot);
+    for (let l = 0; l < 61; l++) {
+      const dense = l < 3;
+      M.push(`<rect data-layer="${l}" x="0" y="${capH + 2 + l * CH}" width="${CW}" height="${CH - 1}" fill="${inHot(l) ? '#eda100' : dense ? '#c3c2b7' : '#e8e6df'}"/>`);
+    }
+    M.push(`<text class="mmlab" x="${CW + 5}" y="${capH + 2 + 3 * CH}">dense ×3</text>`);
+    M.push(`<text class="mmlab" x="${CW + 5}" y="${capH + 34 * CH}">MoE ×58</text>`);
+    cap(capH + 4 + 61 * CH, 'norm · head', headHot);
+    M.push('</svg>');
+    this._mm.innerHTML = M.join('');
+  }
+  _readout() {
+    const hv = this._hover, t = this._t;
+    const rng = (k) => `L${k.lo}–${k.hi - 1}`;
+    if (hv == null) {
+      this._ro.textContent = 'hover a bar — the minimap shows which layers live on it · dashed = the vocab share (emb / head)';
+    } else if (t > 0.5) {
+      const r = this._rankOf(hv), a = this.chunks[r], b = this.chunks[15 - r];
+      this._ro.textContent = `s${r} = v${r} + v${15 - r} = `
+        + `${a.emb ? 'emb + ' : ''}${rng(a)} · ${rng(b)}${b.head ? ' + final norm + lm head' : ''}`
+        + ` — ${fmtP(a.p + b.p)} params on this rank${r === 0 ? ' (the fold\u2019s heaviest: both ends of the model)' : ''}`;
+    } else {
+      const k = this.chunks[hv];
+      this._ro.textContent = `v${hv} = ${k.emb ? 'emb + ' : ''}${rng(k)}${k.head ? ' + final norm + lm head' : ''}`
+        + ` (${k.dense ? `${k.dense} dense + ` : ''}${k.moe} MoE) — ${fmtP(k.p)} params`;
+    }
+  }
+}
+if (typeof customElements !== 'undefined' && !customElements.get('dsv3-pp-fold')) {
+  customElements.define('dsv3-pp-fold', Dsv3PpFold);
+}
+
 if (typeof customElements !== 'undefined' && !customElements.get('dsv3-pp-schedule')) {
   customElements.define('dsv3-pp-schedule', Dsv3PpSchedule);
 }
