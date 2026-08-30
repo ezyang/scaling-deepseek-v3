@@ -3461,10 +3461,11 @@ const PPF_CSS = `
 dsv3-pp-fold { display: block; margin: 14px 0; }
 .pf { font: 12px system-ui, -apple-system, "Segoe UI", sans-serif; color: #0b0b0b;
   border: 1px solid #e1e0d9; border-radius: 6px; background: #fcfcfb; padding: 8px 10px; }
-.pf .top { display: flex; align-items: center; gap: 12px; padding-bottom: 6px; }
-.pf .top button { font: 12px ui-monospace, monospace; padding: 3px 12px; border: 1px solid #c3c2b7;
+.pf .top { display: flex; align-items: flex-end; gap: 14px; padding-bottom: 6px; }
+${knobCss('.pf .top')}
+.pf .top button.cyc { font: 12px ui-monospace, monospace; padding: 3px 12px; border: 1px solid #c3c2b7;
   border-radius: 4px; background: #fff; cursor: pointer; }
-.pf .top button:hover { background: #f3f2ee; }
+.pf .top button.cyc:hover { background: #f3f2ee; }
 .pf svg { display: block; }
 .pf .ro { font-size: 11.5px; color: #52514e; min-height: 17px; margin-top: 2px; }
 `;
@@ -3478,19 +3479,24 @@ class Dsv3PpFold extends HTMLElement {
     this._root = el('div', 'pf');
     this._top = el('div', 'top');
     this._btn = document.createElement('button');   // ONE button — click to cycle
-    this._btn.type = 'button';
+    this._btn.type = 'button'; this._btn.className = 'cyc';
     this._btn.onclick = () => this._go(this.view === 'virtual' ? 'physical' : 'virtual');
     this._top.append(this._btn);
     this._bars = el('div');
     this._ro = el('div', 'ro');   // hover readout (height reserved)
     this._root.append(this._top, this._bars, this._ro);
     this.append(style, this._root);
-    // EP stepper: rank-RESIDENT params depend on the expert sharding — make
-    // that a knob instead of fine print (default 64, the essay's state here)
-    const eg = el('span', 'stp'); eg.dataset.knob = 'ep'; eg.style.marginLeft = '10px';
+    // EP knob in the HOUSE style (the mesh group's pattern): a labeled
+    // group, 'EP' text, and the standard −/value/+ stepper — rank-RESIDENT
+    // params depend on the sharding, so it's a knob, not fine print
+    const grp = el('span', 'pargrp');
+    const lab = el('div', 'parlab'); lab.textContent = 'expert sharding'; grp.append(lab);
+    const row = el('div', 'parrow');
+    const txt = el('span'); txt.style.cssText = 'color:#52514e;font-size:11px;'; txt.textContent = 'EP';
+    const eg = el('span', 'stp'); eg.dataset.knob = 'ep';
     const OPTS = [1, 2, 4, 8, 16, 32, 64];
     const sel = document.createElement('select'); sel.className = 'v';
-    for (const o of OPTS) sel.append(new Option(`experts ÷${o}`, o));
+    for (const o of OPTS) sel.append(new Option(o, o));
     const ebtn = (t, di) => {
       const b = document.createElement('button');
       b.textContent = t; b.type = 'button'; b.dataset.dir = di;
@@ -3499,8 +3505,9 @@ class Dsv3PpFold extends HTMLElement {
     };
     sel.onchange = () => this._setEP(+sel.value);
     eg.append(ebtn('−', -1), sel, ebtn('+', +1));
+    row.append(txt, eg); grp.append(row);
     this._epUI = { sel, eg };
-    this._top.append(eg);
+    this._top.append(grp);
     this.chunks = this._chunks();
     this.render();
   }
@@ -3655,10 +3662,10 @@ class Dsv3PpFold extends HTMLElement {
         const dense = !vocab && layer < 3;
         const segFill = dense ? (down ? '#6fa3d9' : '#1a5cad') : fill;
         B.push(`<rect x="${sx.toFixed(1)}" y="${y.toFixed(1)}" width="${Math.max(0.5, w2 - 1).toFixed(1)}" height="${RH}" fill="${segFill}"/>`);
-        // every segment names itself when it has the room (emb/head label
-        // below; layers here) — the bar is fully legible without the gutter
-        if (!vocab && w2 > 20)
-          B.push(`<text x="${(sx + w2 / 2).toFixed(1)}" y="${y + RH - 4}" text-anchor="middle" font-size="8.5" fill="${down ? '#0b3d75' : '#eaf2fb'}">L${layer}</text>`);
+        // only the ODD segments name themselves: emb/head (below) and the
+        // dense blocks — ordinary MoE layers stay blank (they're the norm)
+        if (dense && w2 > 30)
+          B.push(`<text x="${(sx + w2 / 2).toFixed(1)}" y="${y + RH - 4}" text-anchor="middle" font-size="8.5" fill="${down ? '#0b3d75' : '#eaf2fb'}">dense</text>`);
         if (vocab) {
           B.push(`<rect x="${sx.toFixed(1)}" y="${(y + 1).toFixed(1)}" width="${Math.max(0.5, w2 - 2).toFixed(1)}" height="${RH - 2}" fill="#fff" opacity="0.35"/>`);
           B.push(`<rect x="${sx.toFixed(1)}" y="${y.toFixed(1)}" width="${Math.max(0.5, w2 - 1).toFixed(1)}" height="${RH}" fill="none" stroke="${down ? '#2a78d6' : '#0b3d75'}" stroke-dasharray="2.5 2"/>`);

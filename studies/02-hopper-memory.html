@@ -157,13 +157,12 @@
     PP rank, with roughly four transformer blocks per chunk--click
     "fold onto the 8 ranks" to see the mapping:</p>
 
-    <dsv3-pp-fold style="min-height:429px"></dsv3-pp-fold>
+    <dsv3-pp-fold style="min-height:447px"></dsv3-pp-fold>
 
-    <p>You may have noticed that there is a slight imbalance arising from the embedding and LM
-    head (the dense transformer blocks and the MoE blocks end up having roughly the same parameter count
-    after you apply EP64).
-    compensated for by needing less saved activations (because there are
-    less--and cheaper--transformer blocks in this stage.)  This is nice, because </p>
+    <p>You may have noticed that there is a slight imbalance arising from the special cases at
+    the beginning and end of the model (embedding, dense blocks, LM head).  It will turn out that this will be compensated for by the
+    fact that the first PP rank doesn't need to save as many activations for backwards
+    (because there are less transformer blocks assigned to it.)</p>
 
 
     <p>Assuming we have kept the number of GPUs and the global batch size constant,
