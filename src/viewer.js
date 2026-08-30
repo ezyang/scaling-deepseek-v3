@@ -3126,14 +3126,24 @@ class Dsv3PpSchedule extends HTMLElement {
     // microbatches DRAWN — strip-local (the memory model needs no m; its
     // law assumes m ≥ pp): a real step's worth by default, 'auto' = just
     // enough to reach steady state (depth + 4)
+    const MBS = ['auto', 4, 8, 16, 32, 64, 128];
+    const wrap = el('span', 'stp');
     const msel = document.createElement('select'); msel.className = 'v';
-    msel.style.borderLeft = msel.style.borderRight = '1px solid #c3c2b7';
-    msel.style.borderRadius = '4px';
-    for (const o of ['auto', 4, 8, 16, 32, 64, 128]) msel.append(new Option(o, o));
+    for (const o of MBS) msel.append(new Option(o, o));
     msel.value = String(this._m);
-    msel.onchange = () => { this._m = msel.value === 'auto' ? 'auto' : +msel.value; this._sig = ''; this.sync(); };
-    msel.dataset.knob = 'mb';
-    g.append(row(txt('mb'), msel));
+    const setM = (v) => { this._m = v === 'auto' ? 'auto' : +v; this._sig = ''; this.sync(); };
+    msel.onchange = () => setM(msel.value);
+    const mi = MBS.indexOf(this._m === 'auto' ? 'auto' : this._m);
+    const mbtn = (t, j) => {   // ± walks the option list ('auto' is a stop too)
+      const b = document.createElement('button');
+      b.textContent = t; b.type = 'button';
+      b.disabled = j < 0 || j >= MBS.length;
+      if (!b.disabled) b.onclick = () => setM(String(MBS[j]));
+      return b;
+    };
+    wrap.append(mbtn('−', mi - 1), msel, mbtn('+', mi + 1));
+    msel.dataset.knob = 'mb';   // on the select, as before — tests drive it directly
+    g.append(row(txt('mb'), wrap));
     this._ctl.append(g);
   }
   cfg() {

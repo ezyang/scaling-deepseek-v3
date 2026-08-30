@@ -18,6 +18,14 @@ T.check('opens on the official DualPipeV program (W cells drawn)', cells('W').le
 T.check('the mb knob is the strip\'s ONLY control (no PP/sched/VPP replicas)',
   !w().querySelector('[data-knob="pp"]') && !w().querySelector('[data-knob="sched"]')
   && !w().querySelector('[data-knob="vpp"]') && !!w().querySelector('[data-knob="mb"]'), '');
+// mb wears ± steppers that walk the option list ('auto' is the first stop)
+const mbW = () => w().querySelector('[data-knob="mb"]').closest('.stp');
+mbW().querySelectorAll('button')[1].click(); await T.tick(300);   // auto → 4
+T.check('mb + steps auto → 4', w().querySelector('[data-knob="mb"]').value === '4'
+  && cells('F').length === 2 * l().pp * 4, w().querySelector('[data-knob="mb"]').value);
+mbW().querySelectorAll('button')[0].click(); await T.tick(300);   // back to auto
+T.check('mb − steps back to auto, − then disabled', w().querySelector('[data-knob="mb"]').value === 'auto'
+  && mbW().querySelectorAll('button')[0].disabled, '');
 // highlight row follows the layer's stage
 const hl = () => w().querySelector('rect.stghl');
 const rowY = (s) => s * 16;
