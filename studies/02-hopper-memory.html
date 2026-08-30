@@ -127,33 +127,28 @@
 
     <h2>Pipeline parallelism</h2>
 
-    <p>The primary benefit of pipeline parallelism is that it lets us further reduce the
-    cost of parameters, gradients and optimizer states by splitting stages of transformer
-    blocks across the PP axis.  However, besides being complicated to implement, there
-    are some subtleties on how exactly PP interacts with the memory usage of your model.
-    To simplify our discussion below, we'll discuss solely the DualPipeV</p>
+    <p>The primary benefit of pipeline parallelism is that it lets us further
+    reduce the cost of parameters, gradients and optimizer states by splitting
+    stages of transformer blocks across the PP axis.  However, besides being
+    complicated to implement, there are some subtleties on how exactly PP
+    interacts with the memory usage of your model.  The art of building a
+    pipeline schedule is surprisingly deep, so to keep this section short
+    we'll focus specifically on <a
+    href="https://hackmd.io/@ufotalent/r1lVXsa9Jg">DualPipeV</a>, a variation
+    of the DualPipe schedule that DeepSeek-V3 was trained on.</p>
 
-    <p>First, pipeline parallelism means that every PP rank has a different program.  If
-    we want to reason about the memory usage of our program, we technically have to do
-    the analysis for each PP rank.  A bad pipeline schedule can have
-    dramatically different memory usage among different ranks.  It's out of
-    scope for this article to describe how to put together a good pipeline
-    schedule (consider checking out the <a
-    href="https://ezyang.github.io/pipeline-parallelism-tutor/">Pipeline
-    Schedule Tutor</a>), so we will look at the behavior of a few well-known
-    pipeline schedules. (We won't even look at the DualPipe schedule, which
-    is what DeepSeek-V3 was trained on, as it <a
-    href="https://hackmd.io/@ufotalent/r1lVXsa9Jg">dominated by
-    DualPipeV</a>.)</p>
+    <p>I'm going to skip the basic exposition about what DualPipeV is and where it comes
+    from, to focus specifically on subtleties a</p>
 
-    Stage partitioning can be imbalanced
+    <dsv3-pp-fold style="min-height:409px"></dsv3-pp-fold>
 
-    TODO: we need to solve the "peak changes which rank is the bottleneck" problem, resulting
-    in discontinuous animation
+    TODO(fable): diagram showing how the the pipeline stage splits affects how parameters are
+    distributed over PP ranks.  It should support two views with animations between them:
+    virtual ranks (16 "ranks") and physical ranks (8 ranks).  To the left there is a
+    replica of the embedding - dense block - moe block - etc diagram and Mousing over a bar
+    changes this diagram to show what's on this particular rank.
 
-    <p>Second, </p>
-
-    SLOP BELOW
+    <p>The second is microbatch execution and saved activations....</p>
 
     <dsv3-pp-schedule style="min-height:505px" layer="local-diagram"></dsv3-pp-schedule>
 

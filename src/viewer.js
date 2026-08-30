@@ -3455,11 +3455,11 @@ dsv3-pp-fold { display: block; margin: 14px 0; }
 .pf { font: 12px system-ui, -apple-system, "Segoe UI", sans-serif; color: #0b0b0b;
   border: 1px solid #e1e0d9; border-radius: 6px; background: #fcfcfb; padding: 8px 10px; }
 .pf .top { display: flex; align-items: center; gap: 12px; padding-bottom: 6px; }
-${knobCss('.pf .top')}
-.pf .cols { display: flex; gap: 16px; align-items: flex-start; }
+.pf .top button { font: 12px ui-monospace, monospace; padding: 3px 12px; border: 1px solid #c3c2b7;
+  border-radius: 4px; background: #fff; cursor: pointer; }
+.pf .top button:hover { background: #f3f2ee; }
 .pf svg { display: block; }
 .pf .ro { font-size: 11.5px; color: #52514e; min-height: 17px; margin-top: 2px; }
-.pf .mmlab { font-size: 10px; fill: #52514e; }
 `;
 class Dsv3PpFold extends HTMLElement {
   connectedCallback() {
@@ -3470,12 +3470,13 @@ class Dsv3PpFold extends HTMLElement {
     const style = document.createElement('style'); style.textContent = PPF_CSS;
     this._root = el('div', 'pf');
     this._top = el('div', 'top');
-    this._cols = el('div', 'cols');
-    this._mm = el('div');        // the model-stack minimap
-    this._bars = el('div');      // the rank bars
-    this._ro = el('div', 'ro');  // hover readout (height reserved)
-    this._cols.append(this._mm, this._bars);
-    this._root.append(this._top, this._cols, this._ro);
+    this._btn = document.createElement('button');   // ONE button — click to cycle
+    this._btn.type = 'button';
+    this._btn.onclick = () => this._go(this.view === 'virtual' ? 'physical' : 'virtual');
+    this._top.append(this._btn);
+    this._bars = el('div');
+    this._ro = el('div', 'ro');   // hover readout (height reserved)
+    this._root.append(this._top, this._bars, this._ro);
     this.append(style, this._root);
     // the 16 chunks: exact params from the SAME split the memory model uses
     const moeExp = PARAMS.expert * DSV3.routedExperts;
@@ -3487,29 +3488,12 @@ class Dsv3PpFold extends HTMLElement {
       return { c, lo: seg.lo, hi: seg.hi, dense: g.dense, moe: g.moe,
         emb: g.emb, head: g.head, layerP, vocabP, p: layerP + vocabP };
     });
-    this._controls();
     this.render();
-  }
-  _controls() {
-    this._top.innerHTML = '';
-    const g = el('span', 'pargrp');
-    const lab = el('div', 'parlab'); lab.textContent = 'view'; g.append(lab);
-    const row = el('div', 'parrow');
-    const w2 = el('span', 'stp');
-    for (const [k, t] of [['virtual', '16 chunks, unrolled'], ['physical', 'folded onto 8 ranks']]) {
-      const b = document.createElement('button');
-      b.textContent = t; b.type = 'button'; b.dataset.view = k;
-      if (this.view === k) b.classList.add('on');
-      else b.onclick = () => this._go(k);
-      w2.append(b);
-    }
-    row.append(w2); g.append(row); this._top.append(g);
   }
   // deterministic frame-stepped fold/unfold (nothing reflows: height fixed)
   _go(view) {
     if (view === this.view) return;
     this.view = view;
-    this._controls();
     const from = this._t, to = view === 'physical' ? 1 : 0;
     const N = 14; let f = 0;
     const gen = this._gen = (this._gen ?? 0) + 1;
@@ -3524,88 +3508,90 @@ class Dsv3PpFold extends HTMLElement {
   }
   _rankOf(c) { return Math.min(c, 15 - c); }
   render() {
-    const t = this._t, EP = this.ep;
-    const X0 = 30, BW = 470, RH = 14, PV = 21;           // gutter · bar band · bar height · virtual pitch
-    const H = 16 * PV, W = X0 + BW + 74;                  // height reserved across both views
+    const t = this._t;
+    this._btn.textContent = this.view === 'virtual' ? 'fold onto the 8 ranks ⤵' : 'unroll into 16 chunks ⤴';
+    // ONE svg, sixteen UNIFORM rows — each row IS a span of layers: the
+    // grouped stack on the left (emb cap · layer cells, dense dark · head
+    // cap), the parameter bar beside it. Folding never re-pitches the rows:
+    // the up-pass bars POP onto their partner's row (v ↔ 15−v) and rows
+    // 0–7 relabel s0–s7; the vacated rows keep their spans (the stack stays
+    // readable — the fold moves COST, not layers).
+    const GUT = 26, SL = GUT + 6, CELL = 8, SW = 5 * CELL + 62, X0 = SL + SW + 12;   // span cells + label room (emb·L0–2 / L57–60·head fit)
+    const RH = 14, PV = 21, BW = 430;
+    const H = 16 * PV + 4, W = X0 + BW + 60;
     const rankP = (r) => this.chunks[r].p + this.chunks[15 - r].p;
     const scale = BW / Math.max(...Array.from({ length: 8 }, (_, r) => rankP(r)));
     const wOf = (k) => k.p * scale;
     const lerp = (a, b) => a + (b - a) * t;
-    const hv = this._hover;   // {c} — highlights the chunk (virtual) or its whole rank (folded)
+    const hv = this._hover;
     const hvRank = hv == null ? null : this._rankOf(hv);
-    const hot = (c) => hv != null && (t > 0.5 ? this._rankOf(c) === hvRank : c === hv);
+    const folded = t > 0.5;
+    const hotRow = (row) => hv != null && (folded ? this._rankOf(row) === hvRank : row === hv);
+    const yRow = (row) => row * PV + (PV - RH) / 2;
     const B = [`<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" font-family="system-ui">`];
-    // row tint + labels: the v-axis and s-axis crossfade
-    if (hv != null) {
-      const y = t > 0.5 ? hvRank * 2 * PV : hv * PV;
-      const h2 = t > 0.5 ? 2 * PV : PV;
-      B.push(`<rect x="0" y="${lerp(hv * PV, hvRank * 2 * PV).toFixed(1)}" width="${W}" height="${h2}" fill="#fff3d1"/>`);
+    for (let row = 0; row < 16; row++) {
+      const k = this.chunks[row];
+      if (hotRow(row)) B.push(`<rect x="0" y="${row * PV}" width="${W}" height="${PV}" fill="#fff3d1"/>`);
+      // axis: v-labels crossfade into s-labels on rows 0–7; the vacated
+      // rows keep their v-labels, dimmed (the chunks still live THERE)
+      const sOp = row < 8 ? t : 0, vOp = row < 8 ? 1 - t : 1 - 0.65 * t;
+      B.push(`<text x="${GUT - 4}" y="${yRow(row) + RH - 3}" text-anchor="end" font-size="9.5" fill="#898781" opacity="${vOp.toFixed(2)}">v${row}</text>`);
+      if (row < 8) B.push(`<text x="${GUT - 4}" y="${yRow(row) + RH - 3}" text-anchor="end" font-size="9.5" font-weight="600" fill="#52514e" opacity="${sOp.toFixed(2)}">s${row}</text>`);
+      // the grouped stack: this row's span — emb/head caps + one cell per
+      // layer (dense dark), then the range label
+      let x = SL;
+      const hot2 = hotRow(row) ? ' stroke="#7a5200" stroke-width="1"' : '';
+      if (k.emb) { B.push(`<rect x="${x}" y="${yRow(row)}" width="${CELL + 2}" height="${RH}" rx="2" fill="${hotRow(row) ? '#eda100' : '#c3c2b7'}"/>`); x += CELL + 4; }
+      for (let l = k.lo; l < k.hi; l++) {
+        B.push(`<rect data-layer="${l}" x="${x}" y="${yRow(row)}" width="${CELL - 1.5}" height="${RH}" fill="${hotRow(row) ? '#eda100' : l < 3 ? '#8f8d86' : '#dcdad2'}"/>`);
+        x += CELL;
+      }
+      if (k.head) { x += 2; B.push(`<rect x="${x}" y="${yRow(row)}" width="${CELL + 2}" height="${RH}" rx="2" fill="${hotRow(row) ? '#eda100' : '#c3c2b7'}"/>`); }
+      B.push(`<text x="${SL + 5 * CELL + 10}" y="${yRow(row) + RH - 3}" font-size="9" fill="#898781">${k.emb ? 'emb·' : ''}L${k.lo}–${k.hi - 1}${k.head ? '·head' : ''}</text>`);
     }
-    for (let c = 0; c < 16; c++)
-      B.push(`<text x="${X0 - 5}" y="${c * PV + RH}" text-anchor="end" font-size="9.5" fill="#898781" opacity="${(1 - t).toFixed(2)}">v${c}</text>`);
-    for (let r = 0; r < 8; r++)
-      B.push(`<text x="${X0 - 5}" y="${r * 2 * PV + PV + 4}" text-anchor="end" font-size="9.5" font-weight="600" fill="#52514e" opacity="${t.toFixed(2)}">s${r}</text>`);
-    // chunk segments: down-pass light, up-pass dark; vocab shares wear a
-    // dashed outline (the fold's imbalance driver: emb + head land on s0)
+    // chunk bars: down-pass rows keep their bar; up-pass bars FLY to their
+    // partner's row and dock after its bar. Vocab shares wear a dashed
+    // outline (emb at the front, head at the back — the s0 imbalance)
     for (const k of this.chunks) {
       const c = k.c, down = c < 8, r = this._rankOf(c);
-      const xV = X0, yV = c * PV + (PV - RH) / 2;
-      const xP = down ? X0 : X0 + wOf(this.chunks[15 - c]) + 3;
-      const yP = r * 2 * PV + PV - RH / 2;
-      const x = lerp(xV, xP), y = lerp(yV, yP), w = wOf(k);
-      const fill = down ? '#9cc3ec' : '#2a78d6';
+      const x = down ? X0 : lerp(X0, X0 + wOf(this.chunks[r]) + 3);
+      const y = down ? yRow(c) : lerp(yRow(c), yRow(r));
+      const w = wOf(k), fill = down ? '#9cc3ec' : '#2a78d6';
+      const hot2 = hv != null && (folded ? this._rankOf(c) === hvRank : c === hv);
       const vw = k.vocabP * scale;
-      B.push(`<g data-chunk="${c}" data-params="${k.p}" style="cursor:default">`);
-      B.push(`<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${RH}" fill="${fill}"${hot(c) ? ' stroke="#7a5200" stroke-width="1.2"' : ''}/>`);
-      if (k.vocabP) {   // emb at the chunk's front, head+norm at its back
+      B.push(`<g data-chunk="${c}" data-params="${k.p}">`);
+      B.push(`<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${RH}" fill="${fill}"${hot2 ? ' stroke="#7a5200" stroke-width="1.2"' : ''}/>`);
+      if (k.vocabP) {
         const vx = k.emb ? x : x + w - vw;
         B.push(`<rect x="${vx.toFixed(1)}" y="${(y + 1).toFixed(1)}" width="${(vw - 1).toFixed(1)}" height="${RH - 2}" fill="#fff" opacity="0.35"/>`);
         B.push(`<rect x="${vx.toFixed(1)}" y="${y.toFixed(1)}" width="${vw.toFixed(1)}" height="${RH}" fill="none" stroke="${down ? '#2a78d6' : '#0b3d75'}" stroke-dasharray="2.5 2"/>`);
         if (vw > 30) B.push(`<text x="${(vx + vw / 2).toFixed(1)}" y="${y + RH - 4}" text-anchor="middle" font-size="8.5" fill="${down ? '#0b3d75' : '#fff'}">${k.emb ? 'emb' : 'head'}</text>`);
       }
       B.push('</g>');
-      // per-chunk value (virtual) fades against the per-rank total (folded)
-      B.push(`<text x="${(x + w + 4).toFixed(1)}" y="${y + RH - 3}" font-size="9.5" fill="#898781" opacity="${(1 - t).toFixed(2)}">${fmtP(k.p)}</text>`);
-      if (!down) B.push(`<text data-ranktotal="${r}" data-params="${rankP(r)}" x="${(x + w + 4).toFixed(1)}" y="${y + RH - 3}" font-size="9.5" fill="#898781" opacity="${t.toFixed(2)}">${fmtP(rankP(r))}</text>`);
+      B.push(`<text x="${(x + w + 4).toFixed(1)}" y="${(y + RH - 3).toFixed(1)}" font-size="9.5" fill="#898781" opacity="${(1 - t).toFixed(2)}">${fmtP(k.p)}</text>`);
+      if (!down) B.push(`<text data-ranktotal="${r}" data-params="${rankP(r)}" x="${(x + w + 4).toFixed(1)}" y="${(y + RH - 3).toFixed(1)}" font-size="9.5" fill="#898781" opacity="${t.toFixed(2)}">${fmtP(rankP(r))}</text>`);
     }
+    // whole-row hitboxes (stack, label, and bar band alike — easy hovering)
+    for (let row = 0; row < 16; row++)
+      B.push(`<rect data-row="${row}" x="0" y="${row * PV}" width="${W}" height="${PV}" fill="transparent"/>`);
     B.push('</svg>');
     this._bars.innerHTML = B.join('');
-    this._bars.querySelector('svg').addEventListener('mouseover', (e) => {
-      const g2 = e.target.closest('g[data-chunk]');
-      if (g2 && +g2.dataset.chunk !== this._hover) { this._hover = +g2.dataset.chunk; this.render(); }
+    const svg = this._bars.querySelector('svg');
+    svg.addEventListener('mouseover', (e) => {
+      const r2 = e.target.closest('[data-row], g[data-chunk]');
+      if (!r2) return;
+      const c = r2.dataset.row != null ? +r2.dataset.row : +r2.dataset.chunk;
+      if (c !== this._hover) { this._hover = c; this.render(); }
     });
-    this._bars.querySelector('svg').addEventListener('mouseleave', () => { this._hover = null; this.render(); });
-    this._minimap();
+    svg.addEventListener('mouseleave', () => { this._hover = null; this.render(); });
     this._readout();
   }
-  _minimap() {
-    const CW = 78, CH = 4, capH = 13, LW = 66;   // strip · cell pitch · cap height · label room
-    const hv = this._hover, t = this._t;
-    const cs = hv == null ? [] : t > 0.5 ? [this.chunks[this._rankOf(hv)], this.chunks[15 - this._rankOf(hv)]] : [this.chunks[hv]];
-    const inHot = (l) => cs.some((k) => l >= k.lo && l < k.hi);
-    const embHot = cs.some((k) => k.emb), headHot = cs.some((k) => k.head);
-    const H = capH * 2 + 61 * CH + 8;
-    const M = [`<svg width="${CW + LW}" height="${H}" viewBox="0 0 ${CW + LW} ${H}" font-family="system-ui">`];
-    const cap = (y, label, hot2) => M.push(
-      `<rect x="0" y="${y}" width="${CW}" height="${capH - 2}" rx="2" fill="${hot2 ? '#eda100' : '#e1e0d9'}"/>`
-      + `<text class="mmlab" x="${CW + 5}" y="${y + capH - 4}"${hot2 ? ' font-weight="600"' : ''}>${label}</text>`);
-    cap(0, 'embedding', embHot);
-    for (let l = 0; l < 61; l++) {
-      const dense = l < 3;
-      M.push(`<rect data-layer="${l}" x="0" y="${capH + 2 + l * CH}" width="${CW}" height="${CH - 1}" fill="${inHot(l) ? '#eda100' : dense ? '#c3c2b7' : '#e8e6df'}"/>`);
-    }
-    M.push(`<text class="mmlab" x="${CW + 5}" y="${capH + 2 + 3 * CH}">dense ×3</text>`);
-    M.push(`<text class="mmlab" x="${CW + 5}" y="${capH + 34 * CH}">MoE ×58</text>`);
-    cap(capH + 4 + 61 * CH, 'norm · head', headHot);
-    M.push('</svg>');
-    this._mm.innerHTML = M.join('');
-  }
   _readout() {
-    const hv = this._hover, t = this._t;
+    const hv = this._hover, folded = this._t > 0.5;
     const rng = (k) => `L${k.lo}–${k.hi - 1}`;
     if (hv == null) {
-      this._ro.textContent = 'hover a bar — the minimap shows which layers live on it · dashed = the vocab share (emb / head)';
-    } else if (t > 0.5) {
+      this._ro.textContent = 'hover a row — left: the span of layers it holds · dashed = the vocab share (emb / head)';
+    } else if (folded) {
       const r = this._rankOf(hv), a = this.chunks[r], b = this.chunks[15 - r];
       this._ro.textContent = `s${r} = v${r} + v${15 - r} = `
         + `${a.emb ? 'emb + ' : ''}${rng(a)} · ${rng(b)}${b.head ? ' + final norm + lm head' : ''}`
