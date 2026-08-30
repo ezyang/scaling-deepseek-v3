@@ -37,7 +37,7 @@ T.check('dropdown jump EP4: 85.8 GiB', dims() === '85.8 GiB', dims());
 epSel.value = '64'; epSel.dispatchEvent(new Event('change')); await T.tick(600);
 T.check('dropdown back EP64: 7.0 GiB', dims() === '7.0 GiB', dims());
 T.check('EP shows 64, PP shows 8', stpVal(3) === '64' && stpVal(1) === '8', `${stpVal(3)}/${stpVal(1)}`);
-T.check('default = peak stage under DualPipeV (1: two chunks, 8.5 mb in flight)', sels()[0].selectedOptions[0].textContent.includes('L3–6+L54–57') && sels()[0].selectedOptions[0].textContent.includes('peak'), sels()[0].selectedOptions[0].textContent);
+T.check('default = peak stage under DualPipeV (1: two chunks, 8.5 mb in flight)', sels()[0].selectedOptions[0].textContent.includes('L3–6+L55–58') && sels()[0].selectedOptions[0].textContent.includes('peak'), sels()[0].selectedOptions[0].textContent);
 const chart = () => layer().querySelector('.lv-bar')?.textContent ?? '';
 T.check('chart row shows the DPV in-flight count (PP+½)', chart().includes('activations ×8.5mb'), chart().slice(0,120));
 // schedule knob: ×1 mb shrinks the acts (legend re-labels ×1)

@@ -87,16 +87,14 @@ export const ppStage = (s, pp = LOCAL_PAR.pp, vpp = 1, fold = 'reflect') => {
   const D = vpp * pp;
   // SLOT model (author's fiat): the embedding and the lm head each count a
   // layer's worth when balancing, so 63 slots (emb + 61 layers + head) are
-  // split contiguously with the +1 remainders handed out from the ENDS
-  // inward — chunk 0 = emb + 3 layers, the last = 3 layers + head, and the
-  // one short chunk lands mid-chain (at D=16). Every slot is in exactly one
-  // chunk, so the partition stays exact.
+  // split contiguously with the +1 remainders handed out FRONT-first — at
+  // D=16 that is exact with no odd chunk out: chunk 0 = emb + 3 layers,
+  // fourteen interiors × 4, and the last = 2 layers + head (the head's
+  // chunk gives up the layer). Every slot is in exactly one chunk, so the
+  // partition stays exact.
   const sizes = Array(D).fill(Math.floor(63 / D));
   let rem = 63 - Math.floor(63 / D) * D;
-  for (let k = 0; k < D && rem > 0; k++) {
-    const i = k % 2 === 0 ? k >> 1 : D - 1 - (k >> 1);   // 0, D−1, 1, D−2, …
-    sizes[i]++; rem--;
-  }
+  for (let k = 0; k < D && rem > 0; k++) { sizes[k]++; rem--; }
   const bounds = [0];
   for (const z of sizes) bounds.push(bounds[bounds.length - 1] + z);
   const seg = (i) => {
