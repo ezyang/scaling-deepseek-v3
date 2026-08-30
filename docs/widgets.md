@@ -152,7 +152,20 @@ with `vstagesOf` placement, each rank interleaving its chunk queues greedily
 wear deeper shades. The official program's drawn peak residency is STILL
 exactly 2pp+1 half-rank chunks — the law survives the real schedule. The drawn peak residency reproduces the modeled law exactly
 (2pp+1 half-rank chunks under VPP2+reflect), and cells carry data-v/t0/t1 so
-tests count it. Below the schedule, an IN-FLIGHT section (same svg, so the
+tests count it. A `program` knob (data-knob="prog") picks the drawing
+ENGINE — DSv3 (the official program, offered when the config is
+DualPipeV-shaped) vs greedy — and ✎ opens the PROGRAM EDITOR: the drawn
+schedule serialized in a compact notation (one line per rank; `F0`/`F1`
+forward of a chunk in vstagesOf order, `B1` full backward, `b1`+`W1` the
+zero-bubble halves, `F0&B1` a fused block, `tokxN`/`(…)xN` repeats;
+microbatch indices are implicit — each stream counts up). Apply parses,
+runs it through the SAME timing resolver, and draws it (`custom` joins the
+seg). Programs are audited softly: parse errors block, but incomplete or
+stalling programs draw as far as they go with the gap NAMED (`⚠ incomplete
+program: weight grads N/M`), and if the drawn peak differs from the modeled
+law the peak label appends `— the model charges N`. Program choice is
+strip-local (the memory model is untouched); any pipeline-shape change
+invalidates a custom program (its counts are for the old shape). Below the schedule, an IN-FLIGHT section (same svg, so the
 horizontal scroll is shared) shows the selected stage's stashes as lifetime
 lanes — the F cell that stashes a microbatch, an amber tail while it's held,
 and the B cell that frees it (data-stash) — so the braid's thickness IS the
