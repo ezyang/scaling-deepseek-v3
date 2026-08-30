@@ -3485,9 +3485,30 @@ class Dsv3PpFold extends HTMLElement {
     this._ro = el('div', 'ro');   // hover readout (height reserved)
     this._root.append(this._top, this._bars, this._ro);
     this.append(style, this._root);
-    // the 16 chunks: exact params from the SAME split the memory model uses
+    // EP stepper: rank-RESIDENT params depend on the expert sharding — make
+    // that a knob instead of fine print (default 64, the essay's state here)
+    const eg = el('span', 'stp'); eg.dataset.knob = 'ep'; eg.style.marginLeft = '10px';
+    const OPTS = [1, 2, 4, 8, 16, 32, 64];
+    const sel = document.createElement('select'); sel.className = 'v';
+    for (const o of OPTS) sel.append(new Option(`experts ÷${o}`, o));
+    const ebtn = (t, di) => {
+      const b = document.createElement('button');
+      b.textContent = t; b.type = 'button'; b.dataset.dir = di;
+      b.onclick = () => { const j = OPTS.indexOf(this.ep) + di; if (OPTS[j] != null) this._setEP(OPTS[j]); };
+      return b;
+    };
+    sel.onchange = () => this._setEP(+sel.value);
+    eg.append(ebtn('−', -1), sel, ebtn('+', +1));
+    this._epUI = { sel, eg };
+    this._top.append(eg);
+    this.chunks = this._chunks();
+    this.render();
+  }
+  // the 16 chunks: exact params from the SAME split the memory model uses,
+  // experts ÷ the current EP (rank-RESIDENT parameters, not whole-model)
+  _chunks() {
     const moeExp = PARAMS.expert * DSV3.routedExperts;
-    this.chunks = Array.from({ length: 16 }, (_, c) => {
+    return Array.from({ length: 16 }, (_, c) => {
       const g = ppStage(c, 16, 1, 'reflect');
       const seg = g.segs[0];
       const layerP = g.dense * PARAMS.denseBlock + g.moe * (PARAMS.moeBlock - moeExp + moeExp / this.ep);
@@ -3495,7 +3516,25 @@ class Dsv3PpFold extends HTMLElement {
       return { c, lo: seg.lo, hi: seg.hi, dense: g.dense, moe: g.moe,
         emb: g.emb, head: g.head, layerP, vocabP, p: layerP + vocabP };
     });
-    this.render();
+  }
+  // EP moves: bars and axis TWEEN between shardings (linear pixel lerp;
+  // labels snap to the new exact values, per the house convention)
+  _setEP(v) {
+    if (v === this.ep) return;
+    this._epFrom = this.chunks.map((k) => k.p);
+    this.ep = v;
+    this.chunks = this._chunks();
+    const N = 12; let f = 0;
+    const gen = this._gen = (this._gen ?? 0) + 1;
+    this._ept = 0; this.render();
+    const step = () => {
+      if (this._gen !== gen) return;
+      f++; this._ept = fitEase(Math.min(1, f / N));
+      this.render();
+      if (f < N) setTimeout(step, 16);
+      else { this._epFrom = null; this.render(); }
+    };
+    setTimeout(step, 16);
   }
   // deterministic frame-stepped fold/unfold (nothing reflows: height fixed)
   _go(view) {
@@ -3517,6 +3556,11 @@ class Dsv3PpFold extends HTMLElement {
   render() {
     const t = this._t;
     this._btn.textContent = this.view === 'virtual' ? 'fold onto the 8 ranks ⤵' : 'unroll into 16 chunks ⤴';
+    this._epUI.sel.value = String(this.ep);
+    for (const b of this._epUI.eg.querySelectorAll('button')) {
+      const j = [1, 2, 4, 8, 16, 32, 64].indexOf(this.ep) + +b.dataset.dir;
+      b.disabled = j < 0 || j > 6;
+    }
     // ONE svg, sixteen UNIFORM rows — each row IS a span of layers: the
     // grouped stack on the left (emb cap · layer cells, dense dark · head
     // cap), the parameter bar beside it. Folding never re-pitches the rows:
@@ -3531,9 +3575,11 @@ class Dsv3PpFold extends HTMLElement {
     const GUT = RX0 + 8 * 1.6 + 22, LX = GUT + 6, X0 = LX + 64;
     const RH = 14, PV = 21, BW = 420;
     const H = 16 * PV + 24, W = X0 + BW + 152;   // + the linear axis band (caption rides past its end)
-    const rankP = (r) => this.chunks[r].p + this.chunks[15 - r].p;
-    const scale = BW / Math.max(...Array.from({ length: 8 }, (_, r) => rankP(r)));
-    const wOf = (k) => k.p * scale;
+    const pT = (c) => this._epFrom ? this._epFrom[c] + (this.chunks[c].p - this._epFrom[c]) * this._ept : this.chunks[c].p;
+    const rankP = (r) => this.chunks[r].p + this.chunks[15 - r].p;   // labels/data: the exact NEW values
+    const rankPT = (r) => pT(r) + pT(15 - r);                        // geometry: tweened
+    const scale = BW / Math.max(...Array.from({ length: 8 }, (_, r) => rankPT(r)));
+    const wOf = (k) => pT(k.c) * scale;
     const lerp = (a, b) => a + (b - a) * t;
     const hv = this._hover;
     const hvRank = hv == null ? null : this._rankOf(hv);

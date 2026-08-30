@@ -25,9 +25,9 @@ T.check('virtual hover: chunk 0 lights its own range only', hot().length > 0 && 
   && f.querySelector('.ro').textContent.includes('v0'), f.querySelector('.ro').textContent);
 // fold it (ONE cycle button): the animation runs, height is reserved
 const h0 = f.getBoundingClientRect().height;
-const btn = f.querySelector('.top button');
-T.check('single cycle button, labeled with the action', f.querySelectorAll('.top button').length === 1
-  && btn.textContent.includes('fold'), btn.textContent);
+const btn = [...f.querySelectorAll('.top button')].find((b) => b.textContent.includes('fold') || b.textContent.includes('unroll'));
+T.check('one cycle button + the EP stepper in the top row', !!btn && btn.textContent.includes('fold')
+  && !!f.querySelector('[data-knob="ep"]'), btn.textContent);
 btn.click();
 await T.tick(150);   // mid-fold
 T.check('mid-fold: height reserved (no reflow)', Math.abs(f.getBoundingClientRect().height - h0) < 1, '');
@@ -51,10 +51,15 @@ f.querySelector('rect[data-row="12"]').dispatchEvent(new MouseEvent('mouseover',
 await T.tick(50);
 T.check('row hitbox hover: row 12 lights rank 3 (v3 + v12)',
   f.querySelector('.ro').textContent.includes('s3 = v3 + v12'), f.querySelector('.ro').textContent);
-// the second instance opens folded with EP1: experts whole, bars near-uniform
-const f2 = document.querySelectorAll('dsv3-pp-fold')[1];
-const p2 = [...f2.querySelectorAll('g[data-chunk]')].map((g) => +g.dataset.params);
-T.check('EP1 instance holds whole experts (chunks ≫ EP64 chunks)', p2[4] > p[4] * 10, `${p2[4]} vs ${p[4]}`);
+// the EP knob: dial the sharding down to 1 — whole experts, exact values
+// snap, geometry tweens; the axis caption drops its ÷ disclosure
+const epSel = f.querySelector('[data-knob="ep"] select.v');
+epSel.value = '1'; epSel.dispatchEvent(new Event('change')); await T.tick(400);
+const p1 = [...f.querySelectorAll('g[data-chunk]')].map((g) => +g.dataset.params);
+T.check('EP1: chunks hold whole experts (≫ EP64 values)', p1[4] > p[4] * 10, `${p1[4]} vs ${p[4]}`);
+T.check('axis caption drops the ÷ at EP1', !f.querySelector('svg').textContent.includes('÷'), '');
+epSel.value = '64'; epSel.dispatchEvent(new Event('change')); await T.tick(400);
+T.check('back to EP64, caption discloses again', f.querySelector('svg').textContent.includes('experts ÷64'), '');
 
 // the standalone noflight strip: a PURE figure — no braid, and therefore
 // no stage machinery at all (no tint, no gutter hitboxes, keys inert)

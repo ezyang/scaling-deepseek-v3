@@ -104,9 +104,12 @@ MINIMAP on the left (emb cap · 61 layer cells, dense ×3 distinct · norm+head
 cap) lights the hovered bar's layers — hovering s0 folded lights BOTH ends
 of the model at once — with a reserved-height readout line naming the
 hovered rank's composition and exact param count (`data-params` carries
-exact values; rank totals = pairwise chunk sums, tested). `ep` (default 64)
-divides the expert share; `view="physical"` opens folded. Attributes are
-figure-authoring only; no URL state.
+exact values; rank totals = pairwise chunk sums, tested). The expert sharding is a KNOB on the figure (an
+EP stepper, default 64 — honesty over fine print: rank-resident params
+depend on it; bars/axis tween between shardings, exact values snap, and
+the axis caption's 'experts ÷N' follows). `ep` seeds the default;
+`view="physical"` opens folded. Attributes are figure-authoring only; no
+URL state.
 
 ## The visual audit (src/audit.js)
 

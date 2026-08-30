@@ -129,10 +129,9 @@
 
     <p>The primary benefit of pipeline parallelism is that it lets us further
     reduce the per-device footprint of parameters, gradients and optimizer
-    states by splitting stages of transformer blocks across the PP axis,
-    but in a cheaper way than ZeRO-3 (as we only send/recv activations, rather than
-    the entire sharded weights).
-    However, besides being
+    states by splitting stages of transformer blocks across the PP axis (but
+    in a cheaper way than ZeRO-3, as we only send/recv activations across PP
+    ranks, rather than the entire sharded weights).  However, besides being
     complicated to implement, there are some subtleties on how exactly PP
     interacts with the memory usage of your model.  The art of building a
     pipeline schedule is surprisingly deep, so to keep this section short
@@ -152,17 +151,30 @@
 
     <dsv3-pp-schedule style="min-height:169px" noflight pp="8" vpp="2" fold="reflect" sched="one"></dsv3-pp-schedule>
 
-    <p>One more thing.  We have to account for imbalance that arises from the embedding and the LM
-    head, as well the imbalance that arises from DeepSeek-V3's three initial
-    dense transformer blocks.  One reasonable assignment of layers would be to
+    <p>OK, so how does pipeline parallelism affect the memory usage of our model?
+    First, we split parameters/gradients/optimizer state across PP ranks.  Because
+    we're looking at a V schedule, we assign two model chunks to each physical
+    PP rank, with roughly four transformer blocks per chunk--click
+    "fold onto the 8 ranks" to see the mapping:</p>
+
+    <dsv3-pp-fold style="min-height:429px"></dsv3-pp-fold>
+
+    <p>You may have noticed that there is a slight imbalance arising from the embedding and LM
+    head (the dense transformer blocks and the MoE blocks end up having roughly the same parameter count
+    after you apply EP64).  One reasonable assignment of layers would be to
     assign four layers for all of the intermediate stages, with the very first
     stage taking care of the embedding, dense blocks and LM head.  The first
     PP rank needs extra memory for the embedding and LM head weights, but it's
     compensated for by needing less saved activations (because there are
     less--and cheaper--transformer blocks in this stage.)  This is nice, because </p>
 
-    <dsv3-pp-fold style="min-height:429px"></dsv3-pp-fold>
 
+    <p>Assuming we have kept the number of GPUs and the global batch size constant,
+    what happens to our memory usage when we increase PP (correspondingly decreasing
+    DP)?  It's well known that increasing PP doesn't change the amount of memory you
+    save for activations.  This is because the increase in PP (which reduces the layers
+    you have to save activations for) correspondingly decreases DP (which increases your
+    local batch size).</p>
 
     <dsv3-pp-schedule style="min-height:505px" layer="local-diagram"></dsv3-pp-schedule>
 
