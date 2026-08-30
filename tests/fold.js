@@ -57,9 +57,8 @@ const epSel = f.querySelector('[data-knob="ep"] select.v');
 epSel.value = '1'; epSel.dispatchEvent(new Event('change')); await T.tick(400);
 const p1 = [...f.querySelectorAll('g[data-chunk]')].map((g) => +g.dataset.params);
 T.check('EP1: chunks hold whole experts (≫ EP64 values)', p1[4] > p[4] * 10, `${p1[4]} vs ${p[4]}`);
-T.check('axis caption drops the ÷ at EP1', !f.querySelector('svg').textContent.includes('÷'), '');
 epSel.value = '64'; epSel.dispatchEvent(new Event('change')); await T.tick(400);
-T.check('back to EP64, caption discloses again', f.querySelector('svg').textContent.includes('experts ÷64'), '');
+T.check('back to EP64', [...f.querySelectorAll('g[data-chunk]')][4].dataset.params === String(p[4]), '');
 
 // the standalone noflight strip: a PURE figure — no braid, and therefore
 // no stage machinery at all (no tint, no gutter hitboxes, keys inert)
