@@ -3651,9 +3651,14 @@ class Dsv3PpFold extends HTMLElement {
         const vocab = (k.emb && i2 === 0) || (k.head && i2 === ws.length - 1);
         // dense layers wear a darker shade of their pass color (the strip's
         // dense-vs-MoE distinction, carried into the bar)
-        const dense = !vocab && k.lo + (i2 - (k.emb ? 1 : 0)) < 3;
+        const layer = k.lo + (i2 - (k.emb ? 1 : 0));
+        const dense = !vocab && layer < 3;
         const segFill = dense ? (down ? '#6fa3d9' : '#1a5cad') : fill;
         B.push(`<rect x="${sx.toFixed(1)}" y="${y.toFixed(1)}" width="${Math.max(0.5, w2 - 1).toFixed(1)}" height="${RH}" fill="${segFill}"/>`);
+        // every segment names itself when it has the room (emb/head label
+        // below; layers here) — the bar is fully legible without the gutter
+        if (!vocab && w2 > 20)
+          B.push(`<text x="${(sx + w2 / 2).toFixed(1)}" y="${y + RH - 4}" text-anchor="middle" font-size="8.5" fill="${down ? '#0b3d75' : '#eaf2fb'}">L${layer}</text>`);
         if (vocab) {
           B.push(`<rect x="${sx.toFixed(1)}" y="${(y + 1).toFixed(1)}" width="${Math.max(0.5, w2 - 2).toFixed(1)}" height="${RH - 2}" fill="#fff" opacity="0.35"/>`);
           B.push(`<rect x="${sx.toFixed(1)}" y="${y.toFixed(1)}" width="${Math.max(0.5, w2 - 1).toFixed(1)}" height="${RH}" fill="none" stroke="${down ? '#2a78d6' : '#0b3d75'}" stroke-dasharray="2.5 2"/>`);
