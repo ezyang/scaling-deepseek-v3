@@ -301,20 +301,6 @@ export const peakStage = (pp, ep, zero, world = LOCAL_PAR.world, sched = '1f1b',
   return best;
 };
 
-// compact stage-option label: '0: L0\u20132 \u00b7 3d+emb', '15: L57\u201360 \u00b7 head \u00b7 peak',
-// a rank's hosted chunks joined: '0: L0\u20132+L58\u201360 \u00b7 3d+emb+head \u00b7 peak'
-// (l = the local-lens layer whose knobs pick the split)
-export const stageLabelOf = (o, l) => {
-  const pp = l.pp ?? LOCAL_PAR.pp, world = l.world ?? LOCAL_PAR.world;
-  const g = ppStage(o, pp, l.vpp ?? 1, l.fold);
-  const rng = (s) => s.lo >= s.hi ? '' : s.lo === s.hi - 1 ? `L${s.lo}` : `L${s.lo}\u2013${s.hi - 1}`;
-  const range = g.segs.map(rng).filter(Boolean).join('+') || '\u2014';
-  const tags = [g.dense ? `${g.dense}d` : '', g.emb ? 'emb' : '',
-    g.head ? 'head' : ''].filter(Boolean).join('+');
-  const pk = o === peakStage(pp, l.ep, l.zero ?? 1, world, l.sched, l.vpp ?? 1, l.fold) ? ' \u00b7 peak' : '';
-  return `${o}: ${range}${tags ? ` \u00b7 ${tags}` : ''}${pk}`;
-};
-
 // parameter-count formatter for the dims parentheticals ('(29M \u00d7256)' / '(7.5B)')
 // change-badge magnitude formatting (▲×N / ▼×N), shared with the visual audit
 export const facNum = (v) => v >= 100 || Math.abs(v - Math.round(v)) < 0.02 * v ? String(Math.round(v)) : v.toFixed(1);
@@ -1108,7 +1094,7 @@ export class Dsv3Layer extends HTMLElement {
         showWeights: this.showWeights, showGrads: this.showGrads,
         showOptim: this.showOptim, showActs: this.showActs,
         transposed: this.transposed, marks: { ...this.marks }, matmuls: { ...this.matmuls } },
-      label: `EP${this.ep}·PP${this.pp}·stage ${this.stage}·ZeRO-${this.zero ? this.zero : 'off'}·${this.sched === 'one' ? '×1mb' : this.pp > 1 ? 'DualPipeV' : '1F1B'}·${this.world} GPUs`,
+      label: `EP${this.ep}·PP${this.pp}·rank ${this.stage}·ZeRO-${this.zero ? this.zero : 'off'}·${this.sched === 'one' ? '×1mb' : this.pp > 1 ? 'DualPipeV' : '1F1B'}·${this.world} GPUs`,
     };
   }
   // apply an authored config patch (snapshot 'from'/'to', sandbox jumps):
@@ -1453,18 +1439,10 @@ export class Dsv3Layer extends HTMLElement {
         else mini2.append('block: ', mkKindSel(), ...(sizeCtl.length ? [' · '] : []), ...sizeCtl, ...cumCtl);
       }
       if (this.hasAttribute('local')) {
-        // the fiat parallelism: 2048 GPUs fixed; EP width (or off), PP degree
-        // (powers of two), the PP stage, and ZeRO-1 are the knobs. The kind
-        // follows the stage; each stage option names its layer assignment.
-        const mkSel = (opts, val, label, set) => {
-          const s = document.createElement('select');
-          for (const o of opts) s.append(new Option(label(o), o));
-          s.value = String(val);
-          s.onchange = () => { const prev = this._snapLocal(); set(+s.value); this._tweenLocal(prev); };
-          return s;
-        };
+        // the fiat parallelism: cluster size, PP {1,8}, the rank picker,
+        // EP width, and the ZeRO level are the knobs. The kind follows the
+        // selected rank.
         const pp = this.pp ?? LOCAL_PAR.pp;
-        const stageLabel = (o) => stageLabelOf(o, this);
         // EP/PP step by powers of two: a segmented − value + control
         const POW2 = [1, 2, 4, 8, 16, 32, 64];
         const mkStep = (get, set, fmt, max = 64, opts = POW2, min = 1) => {
@@ -1513,15 +1491,30 @@ export class Dsv3Layer extends HTMLElement {
         gCluster.append(row2(txt2('GPUs'), knob('gpus', mkStep(() => world,
           (v) => { this.world = v; this.ep = Math.min(this.ep, v / this.pp); },
           String, 16384, [128, 256, 512, 1024, 2048, 4096, 8192, 16384], 128))));
+        const seg2 = (opts, get, set) => {
+          const w2 = el('span', 'stp');
+          for (const [k, lab] of opts) {
+            const b = document.createElement('button');
+            b.textContent = lab; b.type = 'button';
+            if (get() === k) b.classList.add('on');
+            else b.onclick = () => { const prev = this._snapLocal(); set(k); this._tweenLocal(prev); };
+            w2.append(b);
+          }
+          return w2;
+        };
         const gPipe = grp2('pipeline');
+        // the RANK picker collapsed to a two-way segment: under the slot
+        // split every interior rank (1…pp−1) holds the same 8 MoE layers —
+        // only rank 0 differs (emb + head + the dense front). 'rank', not
+        // 'stage': DualPipeV's stages are the 2·pp chunks.
+        const pkR = peakStage(pp, this.ep, this.zero ?? 1, world, this.sched, this.vpp ?? 1, this.fold);
+        const rankSeg = pp === 1 ? null : knob('rank', seg2(
+          [[0, `r0 · emb+head${pkR === 0 ? ' · peak' : ''}`], [1, `r1–${pp - 1}${pkR !== 0 ? ' · peak' : ''}`]],
+          () => this.stage === 0 ? 0 : 1,
+          (k) => { this.stage = k === 0 ? 0 : pkR || 1; }));
         gPipe.append(
           row2(txt2('PP'), knob('pp', mkStep(() => this.pp, (v) => this._setPP(v), String, 64, PP_CHOICES)),
-            txt2('stage'), knob('stage', Object.assign(
-              // fixed width: option labels change with every PP/ZeRO/VPP move
-              // (ranges, the roaming ' · peak' tag) and the select must not
-              // resize with them — worst-case VPP4 labels clip when closed
-              mkSel([...Array(pp).keys()], this.stage, stageLabel, (v) => { this.stage = v; }),
-              { style: 'width: 212px' }))));
+            ...(rankSeg ? [txt2('rank'), rankSeg] : [])));
         const gMesh = grp2('SPMD mesh');
         const txtR = (t3) => {   // right-aligned row labels, so the mesh rows line up
           const sp = txt2(t3);
@@ -1548,17 +1541,6 @@ export class Dsv3Layer extends HTMLElement {
         // admission is the one schedule knob left: DualPipeV steady state
         // (uniform PP+½ in flight, emb+head on rank 0) vs a single
         // microbatch. VPP/fold are derived — the schedule IS DualPipeV.
-        const seg2 = (opts, get, set) => {
-          const w2 = el('span', 'stp');
-          for (const [k, lab] of opts) {
-            const b = document.createElement('button');
-            b.textContent = lab; b.type = 'button';
-            if (get() === k) b.classList.add('on');
-            else b.onclick = () => { const prev = this._snapLocal(); set(k); this._tweenLocal(prev); };
-            w2.append(b);
-          }
-          return w2;
-        };
         const sw2 = knob('sched', seg2([['1f1b', 'DualPipeV'], ['one', '×1 mb']],
           () => this.sched ?? '1f1b', (k) => { this.sched = k; }));
         gPipe.append(row2(txt2('sched'), sw2));
@@ -2876,7 +2858,7 @@ export class Dsv3Layer extends HTMLElement {
       const L1 = {
         // header: PP1 needs no locus (the prose owns the framing); a
         // pipelined chart names whose bytes these are — one GPU's stage
-        hdr: PPn === 1 ? 'logarithmic:' : `one GPU, stage ${STG} of PP${PPn} (logarithmic):`,
+        hdr: PPn === 1 ? 'logarithmic:' : `one GPU, rank ${STG} of PP${PPn} (logarithmic):`,
         axisY, HB: axisY + 38, capPx: px(cap),   // +38: the distances legend band (shared with the save label)
         unit: !this.hasAttribute('barsonly') && !SNAP2 ? `= ${fmtBytes(PB_UNIT * 2)} / square` : null,
         lbl: SHOWLBL ? `saved: ${pin.label}` : null, rows,

@@ -14,28 +14,27 @@ T.log('pp', pp);
 // the in-flight law under the V: uniform pp + 0.5 on every stage
 const barTxt = () => [...l().querySelectorAll('text')].map(t => t.textContent).join('|');
 T.check('fit chart shows uniform PP+0.5 in flight', barTxt().includes(`activations ×${pp + 0.5}mb`), barTxt().slice(0, 120));
-// stage select: stage 0 hosts two chunks + emb + head
-const opts = () => [...l().parentElement.querySelectorAll('select')].flatMap(s => [...s.options].map(o => o.textContent));
-const s0 = opts().find(t => t.startsWith('0: '));
-T.check('stage 0 label = two ranges + emb+head', /\+L\d+/.test(s0) && s0.includes('emb+head'), s0);
-T.check('last stage label has no head tag', !opts().find(t => t.startsWith(`${pp - 1}: `)).includes('head'), '');
-// visit stage 0: the plan shows embedding AND lm head resident
-l().setLocal(() => { l().stage = 0; }); await T.tick(500);
-T.check('stage 0 plan: lm head resident', !plan().textContent.includes('(last stage only)'), '');
-l().setLocal(() => { l().stage = l().pp - 1; }); await T.tick(500);
-T.check('last stage plan: head placeholder points at stage 0',
-  plan().textContent.includes('(stage 0 only)'), '');
+// the RANK picker is a two-way segment: interiors are all the same rank
+const rseg = () => [...knob('rank').querySelectorAll('button')];
+T.check('rank segment: r0 names emb+head, interiors carry the peak tag',
+  rseg()[0].textContent.includes('r0 · emb+head') && rseg()[1].textContent.includes(`r1–${pp - 1} · peak`),
+  rseg().map((b) => b.textContent).join('|'));
+// visit rank 0: the plan shows embedding AND lm head resident
+rseg()[0].click(); await T.tick(500);
+T.check('rank 0 on: plan shows the lm head resident', l().stage === 0
+  && !plan().textContent.includes('(last stage only)'), '');
+rseg()[1].click(); await T.tick(500);
+T.check('interior rank again: head placeholder points at rank 0', l().stage !== 0
+  && plan().textContent.includes('(stage 0 only)'), '');
 // PP1: the derivation degenerates to one trivial chunk (no V at depth 1)
-const stageSel = () => l().parentElement.querySelector('select[data-knob="stage"]');
-const selW = stageSel().getBoundingClientRect().width;
 knob('pp').querySelector('select.v').value = '1';
 knob('pp').querySelector('select.v').dispatchEvent(new Event('change')); await T.tick(700);
-T.check('PP1 → VPP1 (derived)', l().pp === 1 && l().vpp === 1, `${l().pp}/${l().vpp}`);
+T.check('PP1 → VPP1 (derived), no rank picker', l().pp === 1 && l().vpp === 1 && !knob('rank'),
+  `${l().pp}/${l().vpp}`);
 T.check('PP1 charges ×1 in flight', barTxt().includes('activations ×1mb'), '');
 knob('pp').querySelector('select.v').value = '8';
 knob('pp').querySelector('select.v').dispatchEvent(new Event('change')); await T.tick(700);
-T.check('PP8 → VPP2 again, stage select width fixed', l().vpp === 2
-  && stageSel().getBoundingClientRect().width === selW, '');
+T.check('PP8 → VPP2 again, rank picker returns', l().vpp === 2 && !!knob('rank'), '');
 
 // ---- the strip draws the official program; residency counted off the cells
 const w = document.querySelector('dsv3-pp-schedule');

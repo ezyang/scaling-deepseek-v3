@@ -137,12 +137,18 @@
     href="https://hackmd.io/@ufotalent/r1lVXsa9Jg">DualPipeV</a>, a variation
     of the DualPipe schedule that DeepSeek-V3 was trained on.</p>
 
-    <p>I'm going to skip the basic exposition about what DualPipeV is and
-    where it comes from, to focus specifically on subtleties related to memory
-    usage.  The first subtlety is that while pipeline parallelism would prefer
+    <p>Let's briefly recap the important facts about DualPipeV.
+    </p>
+
+    <p>The first subtlety is that while pipeline parallelism would prefer
     for every stage to have exactly the same work, we have to account for imbalance
     that arises from the embedding and the LM head, as well as in DeepSeek-V3 the
-    imbalance that arises from the three initial dense transformer blocks.</p>
+    imbalance that arises from the three initial dense transformer blocks.  One reasonable
+    assignment of layers would be to assign four layers for all of the intermediate stages,
+    with the very first stage taking care of the embedding, dense blocks and LM head.
+    The first PP rank needs extra memory for the embedding and LM head weights, but it's
+    compensated for by needing less saved activations (because there are less--and cheaper--transformer
+    blocks in this stage.)</p>
 
     <dsv3-pp-fold style="min-height:409px"></dsv3-pp-fold>
 

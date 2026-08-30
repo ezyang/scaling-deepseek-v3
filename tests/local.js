@@ -9,7 +9,9 @@ const stps = () => ['gpus', 'pp', 'sched', 'ep', 'zero']
 const stepBtn = (i, dir) => stps()[i].querySelectorAll('button')[dir < 0 ? 0 : 1];
 const stpVal = (i) => stps()[i].querySelector('select.v').value;
 const sels = () => [...layer().parentElement.querySelectorAll('select:not(.v)')];
-T.check('stepper groups + selects (stage/precision/recompute)', stps().length === 5 && sels().length === 3, `${stps().length}/${sels().length}`);
+T.check('stepper groups + selects (precision/recompute — the rank picker is a segment now)',
+  stps().length === 5 && sels().length === 2
+  && layer().parentElement.querySelector('.stp[data-knob="rank"]'), `${stps().length}/${sels().length}`);
 // AC knob: the dsv3 recompute preset shrinks activations and marks ↻ chips
 const rsel = () => sels().find(s2 => [...s2.options].some(o => o.value === 'dsv3' && [...s2.options].some(o2 => o2.value === 'attn-replay')));
 const actsVal = () => layer().querySelector('.lv-bar')?.textContent ?? '';   // whole chart text: values live at bar ends
@@ -37,7 +39,10 @@ T.check('dropdown jump EP4: 85.8 GiB', dims() === '85.8 GiB', dims());
 epSel.value = '64'; epSel.dispatchEvent(new Event('change')); await T.tick(600);
 T.check('dropdown back EP64: 7.0 GiB', dims() === '7.0 GiB', dims());
 T.check('EP shows 64, PP shows 8', stpVal(3) === '64' && stpVal(1) === '8', `${stpVal(3)}/${stpVal(1)}`);
-T.check('default = peak stage under DualPipeV (1: two chunks, 8.5 mb in flight)', sels()[0].selectedOptions[0].textContent.includes('L3–6+L55–58') && sels()[0].selectedOptions[0].textContent.includes('peak'), sels()[0].selectedOptions[0].textContent);
+const rankSeg = () => layer().parentElement.querySelector('.stp[data-knob="rank"]');
+T.check('default = the interior/peak rank (two-way segment, r1–7 on)',
+  [...rankSeg().querySelectorAll('button')].find((b) => b.classList.contains('on')).textContent.includes('r1–7 · peak')
+  && layer().stage !== 0, rankSeg().textContent);
 const chart = () => layer().querySelector('.lv-bar')?.textContent ?? '';
 T.check('chart row shows the DPV in-flight count (PP+½)', chart().includes('activations ×8.5mb'), chart().slice(0,120));
 // schedule knob: ×1 mb shrinks the acts (legend re-labels ×1)
@@ -78,7 +83,7 @@ T.check('EP64 again: 7.0 GiB', dims() === '7.0 GiB', dims());
 stepBtn(1, -1).click(); await T.tick(600);
 T.log('PP1 dims', dims());
 T.check('PP1: the whole model (EP64): 39.6 GiB', dims() === '39.6 GiB', dims());
-T.check('PP1 label = one stage with everything', sels()[0].selectedOptions[0].textContent.includes('3d+emb+head'), sels()[0].selectedOptions[0].textContent);
+T.check('PP1: no rank picker (nothing to choose)', !rankSeg(), '');
 T.check('PP − disabled at 1', stepBtn(1, -1).disabled, '');
 stepBtn(1, +1).click(); await T.tick(600);
 T.check('PP8 again: 7.0 GiB, + disabled', dims() === '7.0 GiB' && stepBtn(1, +1).disabled, dims());
