@@ -147,21 +147,11 @@
     then "up" in a V shape.
     </p>
 
-    TODO(fable) diagram: the single mb pipeline schedule, showing the V shape
+    <dsv3-pp-schedule style="min-height:169px" noflight pp="8" vpp="2" fold="reflect" sched="one" stage="0"></dsv3-pp-schedule>
 
-    <p>When we're computing the memory usage of DeepSeek-V3 with DualPipeV,
-    we have to account for imbalance that arises from the embedding and the LM
-    head, as well the imbalance that arises from DeepSeek-V3's three initial
-    dense transformer blocks.  One reasonable assignment of layers would be to
-    assign four layers for all of the intermediate stages, with the very first
-    stage taking care of the embedding, dense blocks and LM head.  The first
-    PP rank needs extra memory for the embedding and LM head weights, but it's
-    compensated for by needing less saved activations (because there are
-    less--and cheaper--transformer blocks in this stage.)</p>
-
-    <dsv3-pp-fold style="min-height:429px"></dsv3-pp-fold>
-
-    <p>The second is microbatch execution and saved activations....</p>
+    <p>The motivation behind the V shape is to reduce the amount of saved activations
+    we have to maintain for microbatches.  While pipeline parallelism clearly reduces
+    the memory usage of parameters, ...</p>
 
     <dsv3-pp-schedule style="min-height:505px" layer="local-diagram"></dsv3-pp-schedule>
 
@@ -172,6 +162,18 @@
     — backward is ~2× the FLOPs). Reading across a row at steady state: stage
     <em>s</em> has admitted PP−<em>s</em> forwards whose backwards haven't
     arrived yet — the in-flight law the diagram charges for.</p>
+
+
+    <p>One more thing.  We have to account for imbalance that arises from the embedding and the LM
+    head, as well the imbalance that arises from DeepSeek-V3's three initial
+    dense transformer blocks.  One reasonable assignment of layers would be to
+    assign four layers for all of the intermediate stages, with the very first
+    stage taking care of the embedding, dense blocks and LM head.  The first
+    PP rank needs extra memory for the embedding and LM head weights, but it's
+    compensated for by needing less saved activations (because there are
+    less--and cheaper--transformer blocks in this stage.)  This is nice, because </p>
+
+    <dsv3-pp-fold style="min-height:429px"></dsv3-pp-fold>
 
     <h2>Activation checkpointing</h2>
 

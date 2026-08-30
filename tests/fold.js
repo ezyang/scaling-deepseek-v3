@@ -64,7 +64,8 @@ T.check('EP1 instance holds whole experts (chunks ≫ EP64 chunks)', p2[4] > p[4
   w.querySelector('rect.stghit[data-stage="3"]').dispatchEvent(new MouseEvent('click', { bubbles: true }));
   await T.tick(300);
   T.check('unbound gutter click moves the tint to s3', hlY() === 3 * 16, hlY());
-  T.check('braid follows the local pick', w.textContent.includes('in flight on s3'), '');
+  T.check('noflight: the pure-schedule figure draws no braid', !w.querySelector('rect[data-stash]')
+    && !w.textContent.includes('in flight'), '');
   w.querySelector('.scroll').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
   await T.tick(300);
   T.check('arrows walk the local selection', hlY() === 2 * 16, hlY());

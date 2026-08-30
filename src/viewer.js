@@ -3351,9 +3351,12 @@ class Dsv3PpSchedule extends HTMLElement {
     for (const [, d] of evts) peakN = Math.max(peakN, live += d);
 
     const RH2 = 12, HDR = 18;                   // lane height / section header
+    // 'noflight' drops the in-flight braid — a pure-schedule figure (the
+    // single-microbatch V doesn't need a one-lane braid narrating it)
+    const FLIGHT = !this.hasAttribute('noflight');
     const schedH = pp * (RH + GAP) - GAP;
     const laneY0 = schedH + 10 + HDR;
-    const H = laneY0 + laneEnd.length * (RH2 + GAP) - GAP + 4;
+    const H = FLIGHT ? laneY0 + laneEnd.length * (RH2 + GAP) - GAP + 4 : schedH + 4;
     const W = GUT + T * U + 1;
     const rowY = (s) => s * (RH + GAP);
     const laneY = (ln) => laneY0 + ln * (RH2 + GAP);
@@ -3391,6 +3394,7 @@ class Dsv3PpSchedule extends HTMLElement {
     }
     // ---- the in-flight section (same svg → the horizontal scroll is shared)
     const IFm = peakN / vpp;
+    if (FLIGHT) {
     const law = inflightOf(sched, stage, pp, vpp, fold);
     const lawTag = Math.abs(IFm - law) > 1e-9 ? ` — the model charges ${law} (its 1F1B law)` : '';
     P.push(`<text x="0" y="${laneY0 - 7}" font-size="10" fill="#52514e">in flight on s${Math.min(stage, pp - 1)}`
@@ -3422,6 +3426,7 @@ class Dsv3PpSchedule extends HTMLElement {
     const by0 = laneY(0) + 1, by1 = laneY(peakN - 1) + RH2 - 1;
     P.push(`<path d="M ${bx - 4} ${by0} h 8 M ${bx} ${by0} V ${by1} M ${bx - 4} ${by1} h 8" stroke="#0b0b0b" stroke-width="1.2" fill="none" pointer-events="none"/>`);
     P.push(`<text data-peak="${IFm}" x="${bx + 7}" y="${(by0 + by1) / 2 + 3.5}" font-size="10" font-weight="600" fill="#0b0b0b" stroke="#fcfcfb" stroke-width="3" paint-order="stroke" pointer-events="none">${IFm} mb in flight (peak)${vpp > 1 ? ` = ${peakN} chunks` : ''}${lawTag}</text>`);
+    }
     P.push('</svg>');
     const ppTag = this._layer ? '' : `PP${pp} · `;   // the knob group already names PP
     const vppTag = OFFICIAL
