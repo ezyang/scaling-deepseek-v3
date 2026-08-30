@@ -62,7 +62,14 @@ export const actBucketsOf = (ana2) => {
 // PP degree, EP width, and ZeRO-1 are the layer's knobs. Layers split over
 // the PP stages by a contiguous floor split: stage 0 gets the embedding (+
 // the dense blocks while they last), the last stage gets final norm + lm head.
-export const LOCAL_PAR = { world: 2048, pp: 16 };   // .pp = the default degree
+// PP is {1, 8} ONLY: PP8 under DualPipeV = 16 virtual chunks — the
+// DualPipeV-equivalent of DSv3's published 16 pipeline stages (half the
+// ranks, same virtual depth). Intermediate depths are jettisoned: a good
+// zero-bubble partition is sensitive to the front-of-pipe imbalance
+// (dense layers, emb/head), so "the PP4 schedule" isn't even well-defined
+// without choices this essay doesn't want to defend.
+export const PP_CHOICES = [1, 8];
+export const LOCAL_PAR = { world: 2048, pp: 8 };   // .pp = the default degree
 // an AUTHORED config (snapshot from/to, deck steps) is complete by fiat:
 // unlisted knobs mean these neutral nothing-applied defaults, never
 // "whatever the widget's live defaults happen to be" — a published figure
@@ -244,7 +251,7 @@ function fitSvg(L) {
   const dpx = (f) => x0 + Math.log2(f) / (HI - LO) * bw;
   B.push(`<text class="dims" x="2" y="${f1(dy + 3)}">a span is a factor:</text>`);
   B.push(`<line x1="${x0}" y1="${f1(dy)}" x2="${f1(dpx(2048))}" y2="${f1(dy)}" stroke="#898781" stroke-width="1"/>`);
-  for (const [f, lab] of [[1, ''], [2, '×2'], [16, '×16 (PP)'], [64, '×64 (EP)'], [2048, '×2048 (DP)']]) {
+  for (const [f, lab] of [[1, ''], [2, '×2'], [8, '×8 (PP)'], [64, '×64 (EP)'], [2048, '×2048 (DP)']]) {
     B.push(`<line data-fac="${f}" x1="${f1(dpx(f))}" y1="${f1(dy - 4)}" x2="${f1(dpx(f))}" y2="${f1(dy + 4)}" stroke="#898781" stroke-width="1"/>`);
     if (lab) B.push(`<text class="dims" x="${f1(dpx(f))}" y="${f1(dy + 13)}" text-anchor="middle">${lab}</text>`);
   }
@@ -1453,13 +1460,17 @@ export class Dsv3Layer extends HTMLElement {
           for (const o of opts.filter((o) => o <= max && o >= min)) val.append(new Option(fmt(o), o));
           val.value = String(get());
           val.onchange = () => { const prev = this._snapLocal(); set(+val.value); this._tweenLocal(prev); };
+          // step by OPTION INDEX, not ×2: PP's choices are {1, 8} (for the
+          // power-of-two knobs the two are the same thing)
           const btn = (txt, dir, max) => {
             const b = document.createElement('button');
             b.textContent = txt; b.type = 'button';
-            b.disabled = dir < 0 ? get() <= min : get() >= max;
-            b.onclick = () => {
+            const ok = opts.filter((o) => o <= max && o >= min);
+            const j = ok.indexOf(get()) + dir;
+            b.disabled = j < 0 || j >= ok.length;
+            if (!b.disabled) b.onclick = () => {
               const prev = this._snapLocal();
-              set(dir < 0 ? get() / 2 : get() * 2);
+              set(ok[j]);
               this._tweenLocal(prev);
             };
             return b;
@@ -1490,7 +1501,7 @@ export class Dsv3Layer extends HTMLElement {
           String, 16384, [128, 256, 512, 1024, 2048, 4096, 8192, 16384], 128))));
         const gPipe = grp2('pipeline');
         gPipe.append(
-          row2(txt2('PP'), knob('pp', mkStep(() => this.pp, (v) => this._setPP(v), String, 64)),
+          row2(txt2('PP'), knob('pp', mkStep(() => this.pp, (v) => this._setPP(v), String, 64, PP_CHOICES)),
             txt2('stage'), knob('stage', Object.assign(
               // fixed width: option labels change with every PP/ZeRO/VPP move
               // (ranges, the roaming ' · peak' tag) and the select must not
@@ -3125,7 +3136,7 @@ class Dsv3PpSchedule extends HTMLElement {
       w2.append(btn('−', i - 1), val, btn('+', i + 1));
       return w2;
     };
-    const stp = mkstp([1, 2, 4, 8, 16, 32, 64], pp, (v) => l.setLocal(() => l._setPP(v)));
+    const stp = mkstp(PP_CHOICES, pp, (v) => l.setLocal(() => l._setPP(v)));
     const seg = (opts, cur, set) => {
       const w2 = el('span', 'stp');
       for (const [k, t] of opts) {

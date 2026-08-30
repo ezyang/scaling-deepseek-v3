@@ -54,20 +54,15 @@ T.check('header describes the wave', hdr.includes('wave'), hdr);
   T.check('second click releases', cellsOf(3).every(r => r.style.opacity === '')
     && !lane7.classList.contains('pin'), '');
 }
-// PP step: stage-row count follows
-const ppPlus = stps()[1].querySelectorAll('button')[1];
-ppPlus.click(); await T.tick(600);
-T.check('PP step doubles the stage rows', w().querySelectorAll('rect.stghit').length === l().pp,
-  `${w().querySelectorAll('rect.stghit').length} vs pp ${l().pp}`);
-
 // ---- the widget's own replicated controls drive the LAYER (two-way link)
 const wctl = () => w().querySelector('.pargrp');
 const wstp = () => wctl().querySelector('.stp');
 T.check('widget wears the pipeline knob group', !!wctl() && wctl().textContent.includes('PP'), '');
-const ppBefore = l().pp;
-wstp().querySelectorAll('button')[0].click(); await T.tick(600);   // widget's PP −
-T.check('widget PP− halves the layer', l().pp === ppBefore / 2, l().pp);
-T.check('still the official program at the new depth', cells('W').length > 0, '');
+wstp().querySelectorAll('button')[0].click(); await T.tick(600);   // widget's PP − (8 → 1: {1,8} only)
+T.check('widget PP− drops the layer to PP1', l().pp === 1, l().pp);
+T.check('PP1 draws the trivial single-row strip', w().querySelectorAll('rect.stghit').length === 1, '');
+wstp().querySelectorAll('button')[1].click(); await T.tick(600);   // back to PP8
+T.check('back to PP8: the official program again', l().pp === 8 && cells('W').length > 0, '');
 // the sX axis is the stage picker: click a gutter row
 T.check('no stage dropdown on the strip (axis picks)', !wctl().querySelector('[data-knob="stage"]'), '');
 w().querySelector('rect.stghit[data-stage="0"]').dispatchEvent(new MouseEvent('click', { bubbles: true }));

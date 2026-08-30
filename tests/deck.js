@@ -22,7 +22,7 @@ T.check('step 2: ZeRO-1 ▼×2048, all bars still shown', L().zero === 1 && bar(
 next(); await T.tick(1000);
 T.check('step 3: EP64', L().zero === 1 && L().ep === 64, `zero ${L().zero}`);
 next(); await T.tick(1000);   // PP16 + DualPipeV in one beat
-T.check('step 4: PP16 arrives WITH DualPipeV', L().pp === 16 && L().vpp === 2 && L().fold === 'reflect'
+T.check('step 4: PP8 arrives WITH DualPipeV (16 virtual stages)', L().pp === 8 && L().vpp === 2 && L().fold === 'reflect'
   && cap().includes('DualPipeV'), `pp ${L().pp} vpp ${L().vpp}`);
 T.check('step 4 baseline is EP64/PP1', L()._pinCfg.state.ep === 64 && L()._pinCfg.state.pp === 1, '');
 T.check('chart y is slide-invariant', Math.abs(L().querySelector('.lv-bar').getBoundingClientRect().top
@@ -45,7 +45,7 @@ T.check('↩ reset returns to the slide, notice clears', L().ep === 64
   && deck().querySelector('.deck-rst').style.display === 'none', '');
 L().querySelector('.stp[data-knob="ep"]').querySelectorAll('button')[0].click(); await T.tick(400);   // detour again
 next(); await T.tick(150);    // rewind phase: back on the slide's config, not yet advanced
-T.check('stepping rewinds the detour first', L().ep === 64 && L().pp === 16
+T.check('stepping rewinds the detour first', L().ep === 64 && L().pp === 8
   && deck().querySelector('.deck-step').textContent.includes('4 /'), deck().querySelector('.deck-step').textContent);
 await T.tick(1000);           // then the real step lands
 T.check('…then advances with a clean caption', deck().querySelector('.deck-step').textContent.includes('5 /')

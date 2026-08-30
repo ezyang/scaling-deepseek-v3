@@ -155,7 +155,7 @@
 
     SLOP BELOW
 
-    <dsv3-pp-schedule style="min-height:879px" layer="local-diagram"></dsv3-pp-schedule>
+    <dsv3-pp-schedule style="min-height:527px" layer="local-diagram"></dsv3-pp-schedule>
 
     <p class="note">The pipeline schedule behind the activation numbers, one
     row per PP stage of the widget above (it follows the PP and schedule
@@ -280,30 +280,32 @@
         sharding group, the effects cancel. Total: 261.6 GiB. Still ×3.3
         over.]
       </section>
-      <section data-config='{"world":2048,"pp":16,"ep":64,"zero":1,"vpp":2}'>
+      <section data-config='{"world":2048,"pp":8,"ep":64,"zero":1}'>
         [<b>Step 4 — pipeline it, with DualPipeV.</b> Gradients alone are
         101.8 GiB — over the card by themselves, with every avoid-PP lever
-        spent. Pipelining divides the layers per GPU (▼×14 weights, ▼×14
-        grads) but NOT the activations: a pipeline only stays busy with ~PP
-        microbatches in flight, and DeepSeek&rsquo;s DualPipeV schedule holds a
-        uniform PP+½ on every rank (see the schedule widget below), so the
-        stash even grows ▲×1.1. Total: 127.7 GiB — the tallest bar is now the one
+        spent. Eight ranks each run two chunks of the V: DSv3&rsquo;s published
+        16 pipeline stages. Pipelining divides the layers per GPU (▼×8.4
+        weights, ▼×8.4 grads) but NOT the activations: a pipeline only stays
+        busy with ~PP microbatches in flight, and DualPipeV holds a uniform
+        PP+½ on every rank (see the schedule widget above), so the stash even
+        grows ▲×1.1. Total: 139.6 GiB — the tallest bar is now the one
         pipelining cannot touch, and DualPipeV&rsquo;s actual payoff, pipeline
         bubbles, is off this chart. Second warning: this chart cannot see
         time.]
       </section>
-      <section data-config='{"world":2048,"pp":16,"ep":64,"zero":1,"vpp":2,"recompute":"dsv3"}'>
+      <section data-config='{"world":2048,"pp":8,"ep":64,"zero":1,"recompute":"dsv3"}'>
         [<b>Step 5 — activation checkpointing.</b> The only bar left. The
         dsv3 recompute policy trades FLOPs for stashes — the per-op rows show
-        exactly which ones die. 127.7 → 77.1 GiB. It fits. Barely.]
+        exactly which ones die. 139.6 → 87.5 GiB. Still 7.5 GiB over.]
       </section>
-      <section data-config='{"world":2048,"pp":16,"ep":64,"zero":1,"vpp":2,"recompute":"dsv3","recipe":"dsv3-fp8"}'>
-        [<b>Step 6 — fp8 stashes.</b> The fp8 recipe halves what the GEMMs
-        keep for backward: 69.0 GiB, and now there is headroom to spend.]
+      <section data-config='{"world":2048,"pp":8,"ep":64,"zero":1,"recompute":"dsv3","recipe":"dsv3-fp8"}'>
+        [<b>Step 6 — fp8 stashes.</b> The fp8 recipe cuts what the GEMMs
+        keep for backward: 87.5 → 63.9 GiB. It fits, with headroom to
+        spend.]
       </section>
     </dsv3-beat-deck>
 
-    <dsv3-anatomy style="min-height:981px" lens="param-bytes" local cumulative recipe="bf16" recompute="none" layer="local-diagram" detail controls="static" nocaption></dsv3-anatomy>
+    <dsv3-anatomy style="min-height:1017px" lens="param-bytes" local cumulative recipe="bf16" recompute="none" layer="local-diagram" detail controls="static" nocaption></dsv3-anatomy>
 
     <p class="note">[demo of the snapshot story-beat widget — a non-interactive
     figure: the authored <code>from</code> config is the saved baseline (ghost
@@ -378,7 +380,7 @@
 
     <p class="note">The same picture per GPU, under a fiat parallelism (we
     can't justify it without talking about comms — later chapters): 2048 GPUs,
-    PP16 over a contiguous split of the 61 layers, EP32/EP64 selectable, and
+    PP8 (DualPipeV&rsquo;s two chunks per rank = DSv3&rsquo;s 16 virtual stages) over a contiguous split of the 61 layers, EP32/EP64 selectable, and
     ZeRO-1 (optimizer states shard over each parameter's replication group —
     dense params over DP, expert params over expert-DP. The two effects cancel
     for experts: fewer local experts × a smaller sharding group means the

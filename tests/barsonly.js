@@ -18,7 +18,7 @@ T.check('bars-prec: no steppers, has precision select', !stp('bars-prec', 'pp')
 // knobs still drive the chart, and instances are independent
 const barTxt = (id) => L(id).querySelector('.lv-bar')?.textContent ?? '';
 const before = barTxt('bars-pp'), beforeAll = barTxt('bars-all');
-stp('bars-pp', 'pp').querySelectorAll('button')[1].click(); await T.tick(600);
+stp('bars-pp', 'pp').querySelectorAll('button')[0].click(); await T.tick(600);   // PP 8 → 1 ({1,8} only)
 T.check('PP step moves bars-pp\'s chart', barTxt('bars-pp') !== before, '');
 T.check('bars-all unaffected (independent state)', barTxt('bars-all') === beforeAll, '');
 // barsonly keeps FULL interactivity: the drag ruler measures factors

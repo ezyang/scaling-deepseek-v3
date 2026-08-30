@@ -7,7 +7,7 @@ const knob = (k) => l().parentElement.querySelector(`.stp[data-knob="${k}"]`);
 const plan = () => l().closest('.anat-grid').querySelector('dsv3-anatomy-plan');
 
 T.check('no VPP or fold knobs anywhere', !knob('vpp') && !knob('fold'), '');
-T.check('DualPipeV derived at PP16 (VPP2 · reflect)', l().vpp === 2 && l().fold === 'reflect',
+T.check('DualPipeV derived at PP8 (VPP2 · reflect)', l().vpp === 2 && l().fold === 'reflect',
   `${l().vpp}/${l().fold}`);
 const pp = l().pp;
 T.log('pp', pp);
@@ -32,9 +32,9 @@ knob('pp').querySelector('select.v').value = '1';
 knob('pp').querySelector('select.v').dispatchEvent(new Event('change')); await T.tick(700);
 T.check('PP1 → VPP1 (derived)', l().pp === 1 && l().vpp === 1, `${l().pp}/${l().vpp}`);
 T.check('PP1 charges ×1 in flight', barTxt().includes('activations ×1mb'), '');
-knob('pp').querySelector('select.v').value = '16';
+knob('pp').querySelector('select.v').value = '8';
 knob('pp').querySelector('select.v').dispatchEvent(new Event('change')); await T.tick(700);
-T.check('PP16 → VPP2 again, stage select width fixed', l().vpp === 2
+T.check('PP8 → VPP2 again, stage select width fixed', l().vpp === 2
   && stageSel().getBoundingClientRect().width === selW, '');
 
 // ---- the strip draws the official program; residency counted off the cells
