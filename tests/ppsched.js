@@ -1,7 +1,7 @@
 // @page studies/02-hopper-memory.html
 // pipeline-schedule strip: always DualPipeV — follows the local diagram's
 // PP / sched / stage; gutter stage picking, lane pinning, panning
-const w = () => document.querySelector('dsv3-pp-schedule');
+const w = () => document.querySelector('dsv3-pp-schedule[layer]')   // 02 also carries a standalone ×1mb strip;
 const l = () => document.getElementById('local-diagram');
 const cells = (ph) => [...w().querySelectorAll(`rect[data-cell^="${ph}"]`)];
 const stps = () => ['gpus', 'pp', 'sched', 'ep', 'zero']

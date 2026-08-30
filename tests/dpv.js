@@ -37,7 +37,7 @@ knob('pp').querySelector('select.v').dispatchEvent(new Event('change')); await T
 T.check('PP8 → VPP2 again, rank picker returns', l().vpp === 2 && !!knob('rank'), '');
 
 // ---- the strip draws the official program; residency counted off the cells
-const w = document.querySelector('dsv3-pp-schedule');
+const w = document.querySelector('dsv3-pp-schedule[layer]')   // 02 also carries a standalone ×1mb strip;
 {
   const msel = w.querySelector('[data-knob="mb"]');
   msel.value = 'auto'; msel.dispatchEvent(new Event('change')); await T.tick(150);

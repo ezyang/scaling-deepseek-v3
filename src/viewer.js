@@ -3071,18 +3071,16 @@ class Dsv3PpSchedule extends HTMLElement {
         return;
       }
       const t = e.target.closest('[data-stage]');
-      if (!t || !this._layer) return;
+      if (!t) return;
       this._scr.focus({ preventScroll: true });
-      const l = this._layer, v = +t.dataset.stage;
-      if (l.stage !== v) l.setLocal(() => { l.stage = v; });
+      this._pick(+t.dataset.stage);
     });
     this._scr.addEventListener('keydown', (e) => {
       const d = e.key === 'ArrowDown' ? 1 : e.key === 'ArrowUp' ? -1 : 0;
-      const l = this._layer;
-      if (!d || !l) return;
+      if (!d) return;
       e.preventDefault();
-      const v = Math.min(l.pp - 1, Math.max(0, l.stage + d));
-      if (l.stage !== v) l.setLocal(() => { l.stage = v; });
+      const { pp, stage } = this.cfg();
+      this._pick(Math.min(pp - 1, Math.max(0, stage + d)));
     });
     this._root.append(this._top, this._scr);
     this.append(style, this._root);
@@ -3094,6 +3092,13 @@ class Dsv3PpSchedule extends HTMLElement {
       else setTimeout(bind, 30);
     };
     bind();
+  }
+  // stage picking: bound strips drive the LAYER (both widgets move); a
+  // standalone strip keeps its own selection and just redraws
+  _pick(v) {
+    const l = this._layer;
+    if (l) { if (l.stage !== v) l.setLocal(() => { l.stage = v; }); }
+    else if (this._stage !== v) { this._stage = v; this._sig = ''; this.sync(); }
   }
   _hl(mb, v) {
     const svg = this._scr.querySelector('svg');
@@ -3147,7 +3152,7 @@ class Dsv3PpSchedule extends HTMLElement {
     return {
       pp: l?.pp ?? +(this.getAttribute('pp') ?? LOCAL_PAR.pp),
       sched: l?.sched ?? (this.getAttribute('sched') ?? '1f1b'),
-      stage: l?.stage ?? +(this.getAttribute('stage') ?? 0),
+      stage: l?.stage ?? this._stage ?? +(this.getAttribute('stage') ?? 0),
       vpp: l?.vpp ?? +(this.getAttribute('vpp') ?? 1),
       fold: l?.fold ?? (this.getAttribute('fold') ?? 'reflect'),
     };

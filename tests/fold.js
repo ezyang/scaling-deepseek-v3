@@ -55,4 +55,18 @@ T.check('row hitbox hover: row 12 lights rank 3 (v3 + v12)',
 const f2 = document.querySelectorAll('dsv3-pp-fold')[1];
 const p2 = [...f2.querySelectorAll('g[data-chunk]')].map((g) => +g.dataset.params);
 T.check('EP1 instance holds whole experts (chunks ≫ EP64 chunks)', p2[4] > p[4] * 10, `${p2[4]} vs ${p[4]}`);
+
+// the standalone (unbound) strip on this page: gutter picking and arrows
+// work strip-locally — no layer to drive, the selection is its own
+{
+  const w = document.querySelector('dsv3-pp-schedule');
+  const hlY = () => +w.querySelector('rect.stghl').getAttribute('y');
+  w.querySelector('rect.stghit[data-stage="3"]').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  await T.tick(300);
+  T.check('unbound gutter click moves the tint to s3', hlY() === 3 * 16, hlY());
+  T.check('braid follows the local pick', w.textContent.includes('in flight on s3'), '');
+  w.querySelector('.scroll').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
+  await T.tick(300);
+  T.check('arrows walk the local selection', hlY() === 2 * 16, hlY());
+}
 T.done();
