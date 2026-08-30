@@ -23,18 +23,27 @@
 // data-true is the bridge between them.
 import { fmtBytes, facNum, BAR_GEO } from './viewer.js';
 
+// Besides pass/fail (findings), the audit narrates WHAT it verified: each
+// chart's report lists every checked implication with its exact arithmetic
+// (the overlay mode renders these; sel points at the pattern's element).
 export function auditFitCharts(root = document) {
   const out = [];
+  const reports = [];
   const px = (b) => BAR_GEO.x0
     + Math.max(0, Math.min(1, (Math.log2(Math.max(b, 1)) - BAR_GEO.lo) / (BAR_GEO.hi - BAR_GEO.lo))) * BAR_GEO.bw;
+  const B = (n) => `${Math.round(n).toLocaleString('en-US')} B`;
   let charts = 0;
-  for (const host of root.querySelectorAll('dsv3-layer')) {
+  const hosts = root.matches?.('dsv3-layer') ? [root] : [...root.querySelectorAll('dsv3-layer')];
+  for (const host of hosts) {
     const svg = host.querySelector('.lv-bar svg');
     if (!svg) continue;
     charts++;
     const id = host.id || host.getAttribute('solo') || host.getAttribute('comps')
       || (host.hasAttribute('parts') ? 'parts' : `chart${charts}`);
-    const bad = (msg) => out.push(`${id}: ${msg}`);
+    const report = { host, checks: [], findings: [] };
+    reports.push(report);
+    const bad = (msg) => { out.push(`${id}: ${msg}`); report.findings.push(msg); };
+    const ok = (sel, msg) => report.checks.push({ sel, msg });
 
     const vals = [...svg.querySelectorAll('text[data-role^="val:"]')];
     const bars = [...svg.querySelectorAll('rect')].filter((r) => {
@@ -49,11 +58,13 @@ export function auditFitCharts(root = document) {
       // 1) the rendered number is its exact value, rounded
       if (!t.textContent.startsWith(fmtBytes(b)))
         bad(`${t.dataset.role} shows "${t.textContent}" but ${b} rounds to "${fmtBytes(b)}"`);
+      else ok(`[data-role="${t.dataset.role}"]`, `“${fmtBytes(b)}” is exactly ${B(b)}, rounded`);
       // 3a) the ▲/▼ badge is the exact ratio vs the saved value
       const badge = t.textContent.slice(fmtBytes(b).length).trim();
       const want = !pinB || !b || Math.abs(Math.log2(b / pinB)) < 0.05 ? ''
         : b > pinB ? `▲×${facNum(b / pinB)}` : `▼×${facNum(pinB / b)}`;
       if (badge !== want) bad(`${t.dataset.role} badge "${badge}" ≠ recomputed "${want}"`);
+      else if (want) ok(`[data-role="${t.dataset.role}"]`, `badge ${want} is the exact live-vs-saved ratio (${B(b)} vs ${B(pinB)})`);
       // pair this value with the bars drawn on ITS row — pure geometry
       const row = bars.filter((r) => onRow(t, r));
       const solid = row.filter((r) => !r.getAttribute('stroke-dasharray'));
@@ -63,6 +74,7 @@ export function auditFitCharts(root = document) {
         const edge = Math.max(...solid.map((r) => +r.getAttribute('x') + +r.getAttribute('width')));
         if (Math.abs(edge - px(b)) > 1.6)   // stacked segments carry ±1px seams
           bad(`${t.dataset.role} bar edge ${edge.toFixed(1)} ≠ px(${b}) = ${px(b).toFixed(1)}`);
+        else ok(`[data-role="${t.dataset.role}"]`, `rightmost solid edge sits at px(${B(b)}) on the log₂ axis`);
       }
       // 3b) a dashed twin means a saved baseline drawn at px(saved)
       for (const g of dashed) {
@@ -70,6 +82,7 @@ export function auditFitCharts(root = document) {
         if (!pinB) bad(`${t.dataset.role} has a ghost but no saved value to imply`);
         else if (Math.abs(edge - px(pinB)) > 0.6)
           bad(`${t.dataset.role} ghost edge ${edge.toFixed(1)} ≠ px(saved ${pinB}) = ${px(pinB).toFixed(1)}`);
+        else ok(`[data-role="${t.dataset.role}"]`, `dashed ghost ends at px(saved ${B(pinB)}) — the twin IS the baseline`);
       }
     }
 
@@ -87,6 +100,8 @@ export function auditFitCharts(root = document) {
       const sum = kids.reduce((a2, t) => a2 + +t.dataset.true, 0);
       if (Math.abs(sum - parent) > parent * 1e-9)
         bad(`decomposition under "${nm.textContent}": Σ children ${sum} ≠ ${parent}`);
+      else ok(`[data-role="${nm.dataset.role}"]`,
+        `the ${kids.length} “·” rows sum EXACTLY to ${nm.textContent} (Σ = ${B(parent)}; rounded digits wouldn't add up)`);
     }
 
     // 5) the distances ruler: a tick claiming ×N sits at exactly log₂(N)
@@ -96,7 +111,8 @@ export function auditFitCharts(root = document) {
       const want = BAR_GEO.x0 + Math.log2(f) / (BAR_GEO.hi - BAR_GEO.lo) * BAR_GEO.bw;
       if (Math.abs(+tk.getAttribute('x1') - want) > 0.15)
         bad(`distances tick ×${f} at ${tk.getAttribute('x1')} ≠ ${want.toFixed(1)}`);
+      else if (f > 1) ok(`line[data-fac="${f}"]`, `ruler tick ×${f} sits exactly ${Math.log2(f)} doublings from the origin`);
     }
   }
-  return { charts, findings: out };
+  return { charts, findings: out, reports };
 }

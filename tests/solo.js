@@ -7,8 +7,8 @@ const rowLabels = () => [...layer().querySelectorAll('.lv-bar g[data-prop]')];
 // solo weights -> sub-bars ease into the freed rows
 md(rowLabels()[0]); await T.tick(700);
 const txt = () => chart().textContent;
-T.check('sub-bars: experts / non-expert / vocab', txt().includes('· experts') && txt().includes('· non-expert'), txt().slice(-200));
-T.check('no vocab sub-bar on a mid stage', !txt().includes('· vocab'), '');
+T.check('sub-bars: experts / non-expert / emb+lm head', txt().includes('· experts') && txt().includes('· non-expert'), txt().slice(-200));
+T.check('no emb+lm head sub-bar on a mid stage', !txt().includes('· emb + lm head'), '');
 // pin, then EP 64->32: ONLY the experts sub-bar gets a red x2 badge
 const saveBtn = [...layer().querySelector('.savebox').querySelectorAll('button')].find(b => b.textContent === 'save');
 saveBtn.click(); await T.tick();

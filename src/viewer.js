@@ -853,6 +853,15 @@ dsv3-layer[snapshot] .lv-head select:disabled { appearance: none; -webkit-appear
 .lv-hyptag { font: italic 10.5px system-ui; color: #898781; padding-bottom: 4px; }
 .lv-bar svg { display: block; margin: 2px 0 6px; max-width: 100%; height: auto; }
 .lv-bar { position: relative; }
+/* the audit overlay: the visual language, verified in text — one line per
+   checked implication, hover lights the pattern it re-derived */
+.lv-audit { font: 11px ui-monospace, monospace; color: #52514e; margin: 0 0 6px;
+  overflow: hidden; border-left: 2px solid #e1e0d9; padding-left: 8px; }
+.lv-audit .aud-hd { color: #898781; font-style: italic; margin: 2px 0; }
+.lv-audit .aud-ln { line-height: 1.55; }
+.lv-audit .aud-ln:hover { color: #0b0b0b; }
+.lv-audit .aud-ln.bad { color: #d03b3b; }
+.lv-head button.audit.on { background: #f3f2ee; }
 .lv-ruler { display: none; position: absolute; background: rgba(237, 161, 0, 0.12);
   border-left: 1px solid #0b0b0b; border-right: 1px solid #0b0b0b; pointer-events: none; }
 .lv-ruler-lab { position: absolute; top: -2px; left: 100%; margin-left: 5px; white-space: nowrap;
@@ -1187,6 +1196,65 @@ export class Dsv3Layer extends HTMLElement {
     };
     document.addEventListener('mousedown', this._rulDismiss);
     drawR();
+  }
+  // ---- the audit overlay: the chart's visual language, verified in text.
+  // One line per checked implication (src/audit.js narrates what it proved);
+  // hovering a line lights the pattern it re-derived and dims the rest.
+  // Rebuilt at every at-rest render; during a tween the previous report is
+  // kept (mid-blend geometry is intentionally between two truths).
+  async _renderAudit(animate = false, slot = null) {
+    // mid-render the new root isn't attached yet — the caller passes its slot
+    const barSlot = slot ?? this.querySelector('.lv-bar');
+    if (!barSlot) return;
+    const old = barSlot.querySelector('.lv-audit');
+    if (!this._auditOpen) {
+      this._audNode = null;
+      if (old && animate) this._slideAudit(old, false, () => old.remove());
+      else old?.remove();
+      return;
+    }
+    const { auditFitCharts } = await import('./audit.js');
+    const rep = auditFitCharts(this).reports[0];
+    if (!rep) return;
+    const div = el('div', 'lv-audit');
+    const hd = el('div', 'aud-hd');
+    hd.textContent = rep.findings.length
+      ? `the audit found ${rep.findings.length} lie(s) on this chart:`
+      : `${rep.checks.length} implications verified — every number and pattern re-derived from its exact value:`;
+    div.append(hd);
+    for (const f of rep.findings) { const d2 = el('div', 'aud-ln bad'); d2.textContent = `✗ ${f}`; div.append(d2); }
+    for (const c of rep.checks) {
+      const d2 = el('div', 'aud-ln'); d2.textContent = `✓ ${c.msg}`; d2.dataset.sel = c.sel; div.append(d2);
+    }
+    // hover a line → light exactly the pattern it verified (plus the row's
+    // bar/ghost twins when the line anchors on a value text)
+    const marks = () => [...(div.closest('.lv-bar')?.querySelectorAll('svg [data-role], svg [data-bar], svg [data-ghost], svg [data-fac]') ?? [])];
+    div.onmouseover = (ev) => {
+      const sel = ev.target.closest?.('.aud-ln')?.dataset.sel;
+      const svg = div.closest('.lv-bar')?.querySelector('svg');
+      if (!sel || !svg) return;
+      const m = /^\[data-role="val:(.+)"\]$/.exec(sel);
+      const full = m ? `${sel}, [data-bar="${m[1]}"], [data-ghost="${m[1]}"]` : sel;
+      const hit = new Set(svg.querySelectorAll(full));
+      for (const n of marks()) n.style.opacity = hit.has(n) ? '' : 0.2;
+    };
+    div.onmouseout = () => { for (const n of marks()) n.style.opacity = ''; };
+    old?.remove();
+    barSlot.append(div);
+    this._audNode = div;
+    if (animate) this._slideAudit(div, true);
+  }
+  // deterministic frame-stepped reflow (a toggle must never jump the layout)
+  _slideAudit(node, open, done) {
+    const H = node.scrollHeight; let f = 0; const N = 12;
+    node.style.height = open ? '0px' : `${H}px`;
+    const step = () => {
+      f++; const t = fitEase(Math.min(1, f / N));
+      node.style.height = `${(open ? t * H : (1 - t) * H).toFixed(1)}px`;
+      if (f < N) setTimeout(step, 16);
+      else { node.style.height = open ? '' : '0px'; done?.(); }
+    };
+    setTimeout(step, 16);
   }
   _snapLocal() {
     return { ep: this.ep, pp: this.pp, stage: this.stage,
@@ -1630,6 +1698,19 @@ export class Dsv3Layer extends HTMLElement {
         // head; the static head never displays it, so they move here)
         const plab = (t2) => { const sp = el('span'); sp.style.cssText = 'color:#52514e;font-size:11px;margin-left:8px;'; sp.textContent = t2; return sp; };
         if (KN('prec')) mini2.append(plab('precision:'), preset, plab('recompute:'), rsel, tl);
+        // the audit overlay toggle (misc row, right-aligned — the knob row
+        // is width-critical at 1366): the visual language, verified in text
+        const audW = el('span'); audW.style.cssText = 'margin-left:auto;';
+        const aud = mkBtn('audit', 'show what the visual audit verifies on this chart — every number and pattern re-derived from its exact value', () => {
+          this._auditOpen = !this._auditOpen;
+          aud.classList.toggle('on', this._auditOpen);
+          this._renderAudit(true);
+        });
+        aud.classList.add('audit');
+        if (this._auditOpen) aud.classList.add('on');
+        // only where a misc row already renders (adding a row would cost
+        // every snapshot/barsonly instance reserved height for a debug tool)
+        if (mini2.childNodes.length) { audW.append(aud); mini2.append(audW); }
       }
       // snapshot knobs are READOUTS — unless the host opts into 'live'
       // (the beat deck: fiddling is a marked DETOUR, rewound on step)
@@ -1653,6 +1734,12 @@ export class Dsv3Layer extends HTMLElement {
       barSlot.innerHTML = this._barHtml;
       this._barHtml = null;
       this._wireBars(barSlot);
+      if (this._auditOpen) {
+        // keep the report steady mid-tween (blended geometry is between two
+        // truths); re-derive it at every at-rest render
+        if (this._ftween && this._audNode) barSlot.append(this._audNode);
+        else this._renderAudit(false, barSlot);
+      }
       if (this.hasAttribute('snapshot') && this.hasAttribute('hypothetical') && !this.getAttribute('knobs')) {
         const ht = el('div', 'lv-hyptag');
         ht.textContent = this.getAttribute('hypothetical') || 'hypothetical — not what DSv3 did';
@@ -1823,7 +1910,7 @@ export class Dsv3Layer extends HTMLElement {
     const cmult = (prop) => this._ctween?.props?.has(prop)
       ? (this[prop] ? this._ctween.t : 1 - this._ctween.t)
       : (this[prop] ? 1 : 0);
-    // sub-part filter visibility (experts / non-expert / vocab), lerped
+    // sub-part filter visibility (experts / non-expert / emb+lm head), lerped
     const psel = (state2, k) => state2 == null || state2 === k ? 1 : 0;
     const pvis = (k) => this._ptween
       ? psel(this._ptween.prev, k) + (psel(this.partSel ?? null, k) - psel(this._ptween.prev, k)) * this._ptween.t
@@ -2711,7 +2798,7 @@ export class Dsv3Layer extends HTMLElement {
     if (LOCAL) {   // the fit bar renders in its own row under the controls (this._barHtml)
       const cap = 80 * 2 ** 30;
       const moeExp = PARAMS.expert * DSV3.routedExperts;
-      const stageParts = (S) => {   // this rank's params by class: experts / non-expert blocks / vocab
+      const stageParts = (S) => {   // this rank's params by class: experts / non-expert blocks / emb+lm head (+final norm)
         const g = ppStage(Math.min(S.stage, S.pp - 1), S.pp, S.vpp, S.fold);
         return {
           e: g.moe * moeExp / S.ep,
@@ -2723,7 +2810,7 @@ export class Dsv3Layer extends HTMLElement {
       };
       const shardOf = (S, c, cls) =>
         (S.zero ?? 1) >= c.zthresh ? c.bpp / (cls === 'e' ? (S.world ?? LOCAL_PAR.world) / S.pp / S.ep : (S.world ?? LOCAL_PAR.world) / S.pp) : c.bpp;
-      // per component: [experts, non-expert blocks, vocab] bytes — the solo
+      // per component: [experts, non-expert blocks, emb+lm head] bytes — the solo
       // breakdown and its pin factors ride these
       const partsFor = (S) => {
         const q = stageParts(S);
@@ -2810,7 +2897,7 @@ export class Dsv3Layer extends HTMLElement {
         // param components break down by sharding class (clickable — the
         // part filter); the acts row breaks down PER OP, like the chips
         if (openRows.includes(i) && partIdxsOf(i).length) {
-          const names2 = i === 3 ? ACT_BUCKETS.map((b2) => b2.label) : ['experts', 'non-expert', 'vocab'];
+          const names2 = i === 3 ? ACT_BUCKETS.map((b2) => b2.label) : ['experts', 'non-expert', 'emb + lm head'];
           const clickable = i < 3;
           for (const [k3, k2] of partIdxsOf(i).entries()) {
             const bP = this._segParts[i][k2];

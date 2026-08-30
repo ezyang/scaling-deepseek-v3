@@ -50,8 +50,9 @@
     <p>This bar chart needs some explanation.  Notably, the x-axis is in
     logarithmic scale, and the light blue bars are a decomposition of the
     weights into three subcategories: expert weights, non-expert weights (in the
-    transformer block), and non-transformer block "vocab" weights (this is the
-    initial embedding, the LM head and the final RMSNorm.)  Though it's not
+    transformer block), and non-transformer-block weights, labeled "emb + lm
+    head" (the initial embedding, the LM head, and — riding along — the final
+    RMSNorm.)  Though it's not
     evident from log scale, these three subcategories cover all the weights in
     the model.  Similary, don't be deceived into thinking that the non-expert
     weights are "half" of the expert weights: there are more than 40x expert
