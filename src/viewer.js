@@ -3571,7 +3571,10 @@ class Dsv3PpFold extends HTMLElement {
       const l = sl - 1;
       const inHot = hv != null && [this.chunks[folded ? hvRank : hv], folded ? this.chunks[15 - hvRank] : null]
         .some((k) => k && sl >= chunkSlots(k).s0 && sl < chunkSlots(k).s1);
-      const fill = inHot ? '#eda100' : cap ? '#8f8d86' : l < 3 ? '#aba89f' : '#dcdad2';
+      // highlight keeps each cell KIND's relative darkness (caps darkest,
+      // dense mid, MoE light) — amber says "selected", shade still says what
+      const fill = inHot ? (cap ? '#8a5f00' : l < 3 ? '#d19023' : '#f6cd74')
+        : cap ? '#8f8d86' : l < 3 ? '#aba89f' : '#dcdad2';
       B.push(`<rect${cap ? '' : ` data-layer="${l}"`} x="${SL}" y="${slotY(sl).toFixed(1)}" width="${STW}" height="${(SH - 1).toFixed(1)}"${cap ? ' rx="2"' : ''} fill="${fill}"/>`);
     }
     for (const k of this.chunks) {

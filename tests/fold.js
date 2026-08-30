@@ -4,7 +4,8 @@
 const f = document.querySelector('dsv3-pp-fold');
 const segs = () => [...f.querySelectorAll('g[data-chunk]')];
 const mm = () => f.querySelectorAll('rect[data-layer]');
-const hot = () => [...mm()].filter((r) => r.getAttribute('fill') === '#eda100').map((r) => +r.dataset.layer);
+// highlighted cells keep their kind's darkness: dense mid-amber, MoE light
+const hot = () => [...mm()].filter((r) => ['#d19023', '#f6cd74'].includes(r.getAttribute('fill'))).map((r) => +r.dataset.layer);
 
 T.check('16 chunk segments drawn', segs().length === 16, segs().length);
 T.check('61 minimap layer cells', mm().length === 61, mm().length);
