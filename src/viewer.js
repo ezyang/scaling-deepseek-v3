@@ -67,7 +67,7 @@ export const LOCAL_PAR = { world: 2048, pp: 16 };   // .pp = the default degree
 // unlisted knobs mean these neutral nothing-applied defaults, never
 // "whatever the widget's live defaults happen to be" — a published figure
 // must not drift when the interactive defaults do
-const CFG_DEFAULTS = { world: 2048, pp: 1, ep: 1, zero: 0, sched: '1f1b', vpp: 1, fold: 'reflect' };
+const CFG_DEFAULTS = { world: 2048, pp: 1, ep: 1, zero: 0, sched: '1f1b' };   // vpp/fold are derived from pp
 // virtual-stage placement: with VPP = vpp chunks per rank the chain is
 // vpp·pp virtual stages deep; 'wrap' places stage v on rank v mod pp
 // (Megatron interleaving), 'reflect' bounces each pass (ZB-V / DualPipeV:
@@ -911,8 +911,11 @@ export class Dsv3Layer extends HTMLElement {
     this.zero = st?.zero ?? (st?.zero1 === false ? 0 : 1);   // ZeRO level 0–3 (1 = DSv3)
     this.world = st?.world ?? LOCAL_PAR.world;               // cluster size (GPUs)
     this.sched = st?.sched === 'dpv' ? '1f1b' : st?.sched ?? '1f1b';   // admission: '1f1b' | 'one' (a single microbatch)
-    this.vpp = st?.sched === 'dpv' ? 2 : st?.vpp ?? 2;       // virtual-pipeline degree; the default is DSv3's own schedule (VPP2·reflect = DualPipeV)
-    this.fold = st?.fold ?? 'reflect';                       // chunk placement: 'reflect' (V/DualPipeV) | 'wrap' (Megatron)
+    // the schedule IS DualPipeV: VPP and fold are derived, never knobs
+    // (pp > 1 → the V: 2 chunks/rank, reflect; pp 1 → trivially one chunk).
+    // The law functions stay general (wrap/VPP4 live on for a later post).
+    this.vpp = this.pp > 1 ? 2 : 1;
+    this.fold = 'reflect';
     // default to the PEAK stage — the fully loaded rank is the story; the
     // selector is there to peek at the lighter ones
     this.stage = Math.min(st?.stage ?? peakStage(this.pp, this.ep, this.zero, this.world, this.sched, this.vpp, this.fold), this.pp - 1);
@@ -974,7 +977,6 @@ export class Dsv3Layer extends HTMLElement {
       showWeights: this.showWeights, showOptim: this.showOptim,
       showGrads: this.showGrads, showActs: this.showActs,
       ep: this.ep, stage: this.stage, pp: this.pp, zero: this.zero, world: this.world, sched: this.sched,
-      vpp: this.vpp, fold: this.fold,
     });
   }
   applyPreset(recipe, recompute, transposed = false) {
@@ -1001,6 +1003,7 @@ export class Dsv3Layer extends HTMLElement {
   _setPP(v) {
     const world = this.world ?? LOCAL_PAR.world;
     this.pp = v;
+    this.vpp = v > 1 ? 2 : 1;   // the schedule is DualPipeV wherever a pipeline exists
     this.ep = Math.min(this.ep, world / v);
     this.stage = peakStage(v, this.ep, this.zero ?? 1, world, this.sched, this.vpp, this.fold);   // stage indices don't survive a resplit — jump to the new peak
   }
@@ -1084,7 +1087,7 @@ export class Dsv3Layer extends HTMLElement {
         showWeights: this.showWeights, showGrads: this.showGrads,
         showOptim: this.showOptim, showActs: this.showActs,
         transposed: this.transposed, marks: { ...this.marks }, matmuls: { ...this.matmuls } },
-      label: `EP${this.ep}·PP${this.pp}${(this.vpp ?? 1) > 1 ? `·VPP${this.vpp}${this.fold === 'wrap' ? 'w' : 'V'}` : ''}·stage ${this.stage}·ZeRO-${this.zero ? this.zero : 'off'}·${this.sched === 'one' ? '×1mb' : '1F1B'}·${this.world} GPUs`,
+      label: `EP${this.ep}·PP${this.pp}·stage ${this.stage}·ZeRO-${this.zero ? this.zero : 'off'}·${this.sched === 'one' ? '×1mb' : this.pp > 1 ? 'DualPipeV' : '1F1B'}·${this.world} GPUs`,
     };
   }
   // apply an authored config patch (snapshot 'from'/'to', sandbox jumps):
@@ -1092,6 +1095,7 @@ export class Dsv3Layer extends HTMLElement {
   _applyCfg(patch) {
     const { recipe, recompute, stage, ...rest } = patch;
     Object.assign(this, rest);
+    this.vpp = this.pp > 1 ? 2 : 1; this.fold = 'reflect';   // derived — authored vpp/fold keys are ignored
     if (recipe) { this.setAttribute('recipe', recipe); this.matmuls = resolveMatmuls({ recipe }); }
     if (recompute) { this.setAttribute('recompute', recompute); this.marks = { ...RECOMPUTE_PRESETS[recompute] }; }
     this.stage = stage ?? peakStage(this.pp, this.ep, this.zero ?? 1,
@@ -1516,11 +1520,9 @@ export class Dsv3Layer extends HTMLElement {
           };
           zw.append(b);
         }
-        // the schedule, decomposed: admission (1F1B steady state vs a single
-        // microbatch), VPP degree (chunks per rank), and chunk placement —
-        // reflect (the V: ZB-V/DualPipeV) vs wrap (Megatron interleaving).
-        // DualPipeV ≡ VPP2 + reflect: uniform PP+½ in flight, emb+head on
-        // rank 0. The schedule is an assumption worth breaking open.
+        // admission is the one schedule knob left: DualPipeV steady state
+        // (uniform PP+½ in flight, emb+head on rank 0) vs a single
+        // microbatch. VPP/fold are derived — the schedule IS DualPipeV.
         const seg2 = (opts, get, set) => {
           const w2 = el('span', 'stp');
           for (const [k, lab] of opts) {
@@ -1532,15 +1534,9 @@ export class Dsv3Layer extends HTMLElement {
           }
           return w2;
         };
-        const sw2 = knob('sched', seg2([['1f1b', '1F1B'], ['one', '×1 mb']],
+        const sw2 = knob('sched', seg2([['1f1b', 'DualPipeV'], ['one', '×1 mb']],
           () => this.sched ?? '1f1b', (k) => { this.sched = k; }));
-        const vw2 = knob('vpp', mkStep(() => this.vpp ?? 1,
-          (v) => { this.vpp = v; this.stage = peakStage(this.pp, this.ep, this.zero ?? 1, world, this.sched, v, this.fold); },
-          String, 4, [1, 2, 4]));
-        const fw2 = knob('fold', seg2([['wrap', 'wrap'], ['reflect', 'V']],
-          () => this.fold ?? 'reflect',
-          (k) => { this.fold = k; this.stage = peakStage(this.pp, this.ep, this.zero ?? 1, world, this.sched, this.vpp ?? 1, k); }));
-        gPipe.append(row2(txt2('sched'), sw2, txt2('VPP'), vw2, fw2));
+        gPipe.append(row2(txt2('sched'), sw2));
         const gZ = grp2('ZeRO');
         gZ.classList.add('center');   // spans the mesh rows, like PP: it applies universally
         gZ.append(row2(zw));
@@ -3021,7 +3017,6 @@ class Dsv3PpSchedule extends HTMLElement {
   connectedCallback() {
     this._sig = '';
     this._m = this.getAttribute('mb') === 'auto' ? 'auto' : +(this.getAttribute('mb') ?? 64);
-    this._prog = 'official';   // schedule family (strip-local; the model is untouched)
     const style = document.createElement('style'); style.textContent = PPS_CSS;
     this._root = el('div', 'pps');
     this._top = el('div', 'top');
@@ -3142,14 +3137,7 @@ class Dsv3PpSchedule extends HTMLElement {
       }
       return w2;
     };
-    const world = l.world ?? LOCAL_PAR.world;
-    const sw = seg([['1f1b', '1F1B'], ['one', '×1 mb']], sched, (k) => l.setLocal(() => { l.sched = k; }));
-    const vw = mkstp([1, 2, 4], vpp, (v) => l.setLocal(() => {
-      l.vpp = v; l.stage = peakStage(l.pp, l.ep, l.zero ?? 1, world, l.sched, v, l.fold);
-    }));
-    const fw = seg([['wrap', 'wrap'], ['reflect', 'V']], fold, (k) => l.setLocal(() => {
-      l.fold = k; l.stage = peakStage(l.pp, l.ep, l.zero ?? 1, world, l.sched, l.vpp ?? 1, k);
-    }));
+    const sw = seg([['1f1b', 'DualPipeV'], ['one', '×1 mb']], sched, (k) => l.setLocal(() => { l.sched = k; }));
     // microbatches DRAWN — a strip-local knob (the memory model needs no m;
     // its 1F1B law assumes m ≥ pp): a real step's worth by default, 'auto'
     // = just enough to reach steady state (depth + 4)
@@ -3159,40 +3147,11 @@ class Dsv3PpSchedule extends HTMLElement {
     for (const o of ['auto', 4, 8, 16, 32, 64, 128]) msel.append(new Option(o, o));
     msel.value = String(this._m);
     msel.onchange = () => { this._m = msel.value === 'auto' ? 'auto' : +msel.value; this._sig = ''; this.sync(); };
-    // the schedule FAMILY (drawing engine, strip-local — the memory model
-    // charges the in-flight law regardless): the plain pipeline offers the
-    // textbook set (1F1B · GPipe · a ZB1P-style zero-bubble split); the
-    // DualPipeV shape offers DSv3's official program vs the greedy engine
-    const { canOff, mode, plain } = this._mode(pp, sched, vpp, fold);
-    const opts = canOff ? [['official', 'DSv3'], ['greedy', 'greedy']]
-      : plain ? [['greedy', '1F1B'], ['zbh1', 'ZB-H1'], ['gpipe', 'GPipe']] : [];
-    const TITLES = {
-      official: 'the official DualPipeV program (deepseek-ai/DualPipe): zero-bubble b/W split, fused F&B steady state',
-      greedy: canOff ? 'plain engine: each rank greedily runs its chunk queues, 1F1B admission per virtual stage'
-        : 'the textbook 1F1B (PipeDream-flush): pp−s warmup forwards, then strict one-forward-one-backward',
-      zbh1: 'the published ZB-H1 program (sail-sg zero-bubble, zb-h1-quick-start): ranks > 0 split backward into input-grad b + weight-grad W delayed by exactly `rank` microbatches — 1F1B activation memory, the warmup/cooldown bubbles filled with W',
-      gpipe: 'the GPipe textbook baseline: all forwards, flush, all backwards — every stage stashes ALL m microbatches',
-    };
-    for (const [n, e2] of [['pp', stp], ['sched', sw], ['vpp', vw], ['fold', fw], ['mb', msel]])
+    for (const [n, e2] of [['pp', stp], ['sched', sw], ['mb', msel]])
       e2.dataset.knob = n;
     g.append(row(txt('PP'), stp),
-      row(txt('sched'), sw, txt('VPP'), vw, fw, txt('mb'), msel));
-    if (opts.length) {
-      const pw2 = seg(opts, mode, (k) => { this._prog = k; this._sig = ''; this.sync(); });
-      for (const [b2, [k]] of [...pw2.children].map((x, i2) => [x, opts[i2]])) b2.title = TITLES[k];
-      pw2.dataset.knob = 'prog';
-      g.append(row(txt('program'), pw2));
-    }
+      row(txt('sched'), sw, txt('mb'), msel));
     this._ctl.append(g);
-  }
-  // which engines this shape supports, and which one is active
-  _mode(pp, sched, vpp, fold) {
-    const m = sched === 'one' ? 1 : this._m === 'auto' ? vpp * pp + 4 : this._m;
-    const canOff = sched === '1f1b' && vpp === 2 && fold === 'reflect' && pp > 1 && m >= 2 * pp;
-    const plain = sched === '1f1b' && vpp === 1 && pp > 1;
-    const mode = canOff ? (this._prog === 'greedy' ? 'greedy' : 'official')
-      : plain && ['gpipe', 'zbh1'].includes(this._prog) ? this._prog : 'greedy';
-    return { canOff, plain, mode, m };
   }
   cfg() {
     const l = this._layer;
@@ -3315,37 +3274,6 @@ class Dsv3PpSchedule extends HTMLElement {
     const stalled = prog.reduce((t, q) => t + (q.ops.length - q.i), 0);
     return { cells, stalled };
   }
-  // The published ZB-H1 program (sail-sg/zero-bubble-pipeline-parallelism,
-  // zb-h1-quick-start patch to Megatron's 1F1B), ported step-for-step:
-  // 1F1B warmup counts unchanged; ranks > 0 split backward into b (input
-  // grads) + W (weight grads) for the first `rank` steady iterations plus
-  // the last, delaying each W by exactly `rank` microbatches (one pop at
-  // the last steady iteration once i ≥ rank, one per cooldown step once
-  // the counter reaches rank), then pop_all drains the store. Rank 0 never
-  // splits (the patch keeps its backward fused for p2p-batching reasons).
-  _zbh1Prog(pp, m) {
-    const prog = [];
-    for (let r = 0; r < pp; r++) {
-      const ops = [], wq = [];
-      const pop = () => { const mb = wq.shift(); if (mb !== undefined) ops.push({ ph: 'W', v: r, mb }); };
-      const wu = Math.min(pp - r - 1, m), rem = m - wu;
-      for (let j = 0; j < wu; j++) ops.push({ ph: 'F', v: r, mb: j });
-      for (let i = 0; i < rem; i++) {                       // steady 1F1B
-        ops.push({ ph: 'F', v: r, mb: wu + i });
-        const split = (i < r || i === rem - 1) && r > 0;
-        ops.push({ ph: 'B', v: r, mb: i, zb: split });
-        if (split) wq.push(i);
-        if (i === rem - 1 && i >= r && r > 0) pop();        // delay W by rank
-      }
-      for (let i = 0; i < wu; i++) {                        // cooldown
-        ops.push({ ph: 'B', v: r, mb: rem + i, zb: r > 0 });
-        if (r > 0) { wq.push(rem + i); if (rem + i >= r) pop(); }
-      }
-      while (wq.length) pop();                              // pop_all
-      prog.push({ ops, i: 0 });
-    }
-    return this._resolveProg(prog, pp, pp).cells;
-  }
   draw(pp, sched, stage, vpp = 1, fold = 'reflect') {
     this._pinHl = null;
     // one chain of VIRTUAL stages with 1F1B admission per stage, vpp·pp deep;
@@ -3358,25 +3286,23 @@ class Dsv3PpSchedule extends HTMLElement {
     const D = vpp * pp;
     const m = sched === 'one' ? 1 : this._m === 'auto' ? D + 4 : this._m;
     const stagesOf = Array.from({ length: pp }, (_, r) => vstagesOf(r, pp, vpp, fold));
-    // which ENGINE draws — a strip-local choice; the memory model charges
-    // the law (inflightOf) regardless, and the braid shows what the DRAWING
-    // holds (the peak label calls out any difference)
-    const { mode } = this._mode(pp, sched, vpp, fold);
-    const OFFICIAL = mode === 'official';
-    // queue admission per virtual stage: 1F1B interleaves after pp−s warmup
-    // forwards; GPipe admits ALL m forwards, flushes, then all backwards
+    // the schedule IS DualPipeV: the official program whenever it exists
+    // (pp > 1, steady state reachable); the greedy engine covers the rest
+    // (the ×1 mb wave, m < 2·PP, PP1) on the same virtual chain. The braid
+    // shows what the DRAWING holds; the peak label calls out any
+    // drawn-vs-law gap.
+    const OFFICIAL = sched === '1f1b' && pp > 1 && m >= 2 * pp;
     const qs = OFFICIAL ? [] : Array.from({ length: D }, (_, v) => {
-      const wu = mode === 'gpipe' ? m : Math.min(D - 1 - v, m); const items = [];
+      const wu = Math.min(D - 1 - v, m); const items = [];
       for (let j = 0; j < wu; j++) items.push(['F', j]);
       for (let j = wu; j < m; j++) items.push(['F', j], ['B', j - wu]);
       for (let j = Math.max(m - wu, 0); j < m; j++) items.push(['B', j]);
       return { items, i: 0 };
     });
     const done = new Map();
-    let cells = OFFICIAL ? this._officialDPV(pp, m)
-      : mode === 'zbh1' ? this._zbh1Prog(pp, m) : [];
+    let cells = OFFICIAL ? this._officialDPV(pp, m) : [];
     const rankT = Array(pp).fill(0);
-    let progress = mode === 'greedy' || mode === 'gpipe';
+    let progress = !OFFICIAL;
     while (progress) {
       progress = false;
       for (let r = 0; r < pp; r++) {
@@ -3507,22 +3433,15 @@ class Dsv3PpSchedule extends HTMLElement {
     const vppTag = OFFICIAL
       ? 'DualPipeV (official program) · down-pass chunk light, up-pass dark · F and B drawn touching = one'
         + ' overlapped F&B block · pale dashed W = deferred weight grads (B alone = input grads)'
-      : mode === 'gpipe'
-      ? 'GPipe — all forwards, a flush, all backwards: every stage stashes ALL m microbatches'
-      : mode === 'zbh1'
-      ? 'ZB-H1 (published program) — ranks > 0 split backward: b = input grads (one slot), pale dashed W ='
-        + ' weight grads delayed by `rank` microbatches to fill the bubbles · rank 0 keeps its backward fused'
-        + ' (as in the authors\u2019 patch) · same stash residency as 1F1B'
       : vpp > 1
-        ? `VPP${vpp} ${fold === 'wrap' ? 'wrap (Megatron interleaving)' : 'reflect'}`
-          + ` · each rank runs ${vpp} chunks, later passes darker · chunks scheduled 1F1B`
-          + (fold === 'reflect' && vpp === 2 ? ' (official DualPipeV needs ≥ 2·PP microbatches)' : '')
+        ? `DualPipeV, greedy fill-in (the official program needs ≥ 2·PP microbatches)`
+          + ' · each rank runs 2 chunks, up-pass darker · chunks scheduled 1F1B'
         : '';
     this._hd.textContent = sched === 'one'
       ? `${ppTag}one microbatch at a time — an F wave down the stages, then a B wave back up`
-      : vpp > 1 || mode === 'gpipe' || mode === 'zbh1'
+      : vpp > 1
         ? `${ppTag}${m} microbatches shown · ${vppTag}`
-        : `${ppTag}1F1B · ${m} microbatches shown — F = forward (one slot), B = backward (two: ~2× the FLOPs)`;
+        : `${ppTag}${m} microbatches shown — F = forward (one slot), B = backward (two: ~2× the FLOPs)`;
     this._scr.innerHTML = P.join('');
   }
 }
@@ -3623,10 +3542,10 @@ class Dsv3BeatDeck extends HTMLElement {
     if (!(this._i >= 0)) return false;   // pre-init renders fire changed() too
     const c = this._full(this._steps[this._i].cfg);
     const l = this._layer;
-    const stg = c.stage ?? peakStage(c.pp, c.ep, c.zero ?? 1, c.world, c.sched, c.vpp, c.fold);
+    // vpp/fold are DERIVED from pp — never knobs, never a detour
+    const stg = c.stage ?? peakStage(c.pp, c.ep, c.zero ?? 1, c.world, c.sched, c.pp > 1 ? 2 : 1, 'reflect');
     return l.pp !== c.pp || l.ep !== c.ep || (l.zero ?? 0) !== c.zero || l.world !== c.world
-      || (l.sched ?? '1f1b') !== c.sched || (l.vpp ?? 1) !== c.vpp
-      || (l.fold ?? 'reflect') !== c.fold || l.stage !== stg;
+      || (l.sched ?? '1f1b') !== c.sched || l.stage !== stg;
   }
   _syncMod() {
     const f = this._fiddled();

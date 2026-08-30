@@ -9,7 +9,7 @@ for (const id of ['bars-all', 'bars-pp', 'bars-shard', 'bars-prec']) {
 }
 T.check('bars-all: all knob groups', !!stp('bars-all', 'gpus') && !!stp('bars-all', 'pp')
   && !!stp('bars-all', 'ep') && !!stp('bars-all', 'zero'), '');
-T.check('bars-pp: pipeline only', !!stp('bars-pp', 'pp') && !!stp('bars-pp', 'vpp')
+T.check('bars-pp: pipeline only', !!stp('bars-pp', 'pp') && !!stp('bars-pp', 'sched') && !stp('bars-pp', 'vpp')
   && !stp('bars-pp', 'ep') && !stp('bars-pp', 'zero') && !stp('bars-pp', 'gpus'), '');
 T.check('bars-shard: mesh+zero only', !!stp('bars-shard', 'ep') && !!stp('bars-shard', 'zero')
   && !stp('bars-shard', 'pp'), '');

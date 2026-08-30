@@ -130,7 +130,8 @@
     <p>The primary benefit of pipeline parallelism is that it lets us further reduce the
     cost of parameters, gradients and optimizer states by splitting stages of transformer
     blocks across the PP axis.  However, besides being complicated to implement, there
-    are some subtleties on how exactly PP interacts with the memory usage of your model.</p>
+    are some subtleties on how exactly PP interacts with the memory usage of your model.
+    To simplify our discussion below, we'll discuss solely the DualPipeV</p>
 
     <p>First, pipeline parallelism means that every PP rank has a different program.  If
     we want to reason about the memory usage of our program, we technically have to do
@@ -154,7 +155,7 @@
 
     SLOP BELOW
 
-    <dsv3-pp-schedule style="min-height:903px" layer="local-diagram"></dsv3-pp-schedule>
+    <dsv3-pp-schedule style="min-height:879px" layer="local-diagram"></dsv3-pp-schedule>
 
     <p class="note">The pipeline schedule behind the activation numbers, one
     row per PP stage of the widget above (it follows the PP and schedule

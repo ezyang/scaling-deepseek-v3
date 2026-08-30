@@ -22,5 +22,5 @@ const full = document.getElementById('bars-all');
 link.click(); await T.tick(600);
 T.check('target took the scenario', full.zero === 1 && full.pp === 16 && full.ep === 64, `${full.zero}/${full.pp}/${full.ep}`);
 T.check('target carries the baseline save (blended optim badge)', full._pinCfg?.state?.zero === 0
-  && (full.querySelector('.lv-bar')?.textContent ?? '').includes('▼×4.6'), full._pinCfg?.state?.zero);
+  && (full.querySelector('.lv-bar')?.textContent ?? '').includes('▼×10.5'), full._pinCfg?.state?.zero);
 T.done();

@@ -1,24 +1,17 @@
 // @page studies/02-hopper-memory.html
-// VPP × fold decomposition: DualPipeV ≡ VPP2 + reflect (V-fold stage map,
-// emb+head on rank 0, uniform PP+1/2 in flight); wrap = Megatron interleaving
+// DualPipeV is THE schedule: VPP2·reflect derived from PP (never knobs) —
+// V-fold stage map, emb+head on rank 0, uniform PP+½ in flight; PP1
+// degenerates to one trivial chunk
 const l = () => document.getElementById('local-diagram');
 const knob = (k) => l().parentElement.querySelector(`.stp[data-knob="${k}"]`);
 const plan = () => l().closest('.anat-grid').querySelector('dsv3-anatomy-plan');
 
-T.check('layer has VPP stepper + fold segments', !!knob('vpp') && !!knob('fold'), '');
-const stageSel = () => l().parentElement.querySelector('select[data-knob="stage"]');
-const selW = stageSel().getBoundingClientRect().width;
-// DualPipeV IS the default — the widget opens on DSv3's own schedule
-T.check('default schedule is DualPipeV (VPP2 · reflect)', l().vpp === 2 && (l().fold ?? 'reflect') === 'reflect',
+T.check('no VPP or fold knobs anywhere', !knob('vpp') && !knob('fold'), '');
+T.check('DualPipeV derived at PP16 (VPP2 · reflect)', l().vpp === 2 && l().fold === 'reflect',
   `${l().vpp}/${l().fold}`);
-knob('vpp').querySelectorAll('button')[1].click(); await T.tick(500);   // VPP 2 -> 4
-T.check('stage select width is fixed (no resize on knob moves)',
-  stageSel().getBoundingClientRect().width === selW, `${selW} -> ${stageSel().getBoundingClientRect().width}`);
-knob('vpp').querySelectorAll('button')[0].click(); await T.tick(500);   // back to VPP2
-
 const pp = l().pp;
 T.log('pp', pp);
-// the in-flight law under reflect: uniform pp + 0.5 on every stage
+// the in-flight law under the V: uniform pp + 0.5 on every stage
 const barTxt = () => [...l().querySelectorAll('text')].map(t => t.textContent).join('|');
 T.check('fit chart shows uniform PP+0.5 in flight', barTxt().includes(`activations ×${pp + 0.5}mb`), barTxt().slice(0, 120));
 // stage select: stage 0 hosts two chunks + emb + head
@@ -32,24 +25,23 @@ T.check('stage 0 plan: lm head resident', !plan().textContent.includes('(last st
 l().setLocal(() => { l().stage = l().pp - 1; }); await T.tick(500);
 T.check('last stage plan: head placeholder points at stage 0',
   plan().textContent.includes('(stage 0 only)'), '');
+// PP1: the derivation degenerates to one trivial chunk (no V at depth 1)
+const stageSel = () => l().parentElement.querySelector('select[data-knob="stage"]');
+const selW = stageSel().getBoundingClientRect().width;
+knob('pp').querySelector('select.v').value = '1';
+knob('pp').querySelector('select.v').dispatchEvent(new Event('change')); await T.tick(700);
+T.check('PP1 → VPP1 (derived)', l().pp === 1 && l().vpp === 1, `${l().pp}/${l().vpp}`);
+T.check('PP1 charges ×1 in flight', barTxt().includes('activations ×1mb'), '');
+knob('pp').querySelector('select.v').value = '16';
+knob('pp').querySelector('select.v').dispatchEvent(new Event('change')); await T.tick(700);
+T.check('PP16 → VPP2 again, stage select width fixed', l().vpp === 2
+  && stageSel().getBoundingClientRect().width === selW, '');
 
-// ---- wrap placement (Megatron interleaving): concentrated at rank 0,
-// in-flight = pp(vpp+1)/2 − s; head back on the LAST stage
-const wrapBtn = [...knob('fold').querySelectorAll('button')].find(b => b.textContent === 'wrap');
-wrapBtn.click(); await T.tick(600);
-T.check('wrap: staircase in-flight pp·3/2 − s on the picked stage',
-  barTxt().includes(`activations ×${pp * 1.5 - l().stage}mb`), `stage ${l().stage}`);
-T.check('wrap: stage 0 keeps emb, loses head', opts().find(t => t.startsWith('0: ')).includes('emb')
-  && !opts().find(t => t.startsWith('0: ')).includes('head'), opts().find(t => t.startsWith('0: ')));
-T.check('wrap: head on the last stage', opts().find(t => t.startsWith(`${pp - 1}: `)).includes('head'), '');
-[...knob('fold').querySelectorAll('button')].find(b => b.textContent === 'V').click(); await T.tick(500);
-
-// ---- the strip draws the fold; residency counted off the drawn cells
+// ---- the strip draws the official program; residency counted off the cells
 const w = document.querySelector('dsv3-pp-schedule');
 {
   const msel = w.querySelector('[data-knob="mb"]');
   msel.value = 'auto'; msel.dispatchEvent(new Event('change')); await T.tick(150);
-  T.check('strip VPP replica shows 2', w.querySelector('.stp[data-knob="vpp"] select.v').value === '2', '');
   const PP = l().pp, D = 2 * PP, M = D + 4;
   const all = [...w.querySelectorAll('rect[data-cell]')];
   const nOf = (ph) => all.filter(r => r.dataset.cell.startsWith(ph)).length;
@@ -86,7 +78,4 @@ const w = document.querySelector('dsv3-pp-schedule');
   T.log('drawn peak residency (rank 1, half-chunks)', `${peak} vs modeled ${2 * PP + 1}`);
   T.check('drawn residency matches the law', Math.abs(peak - (2 * PP + 1)) <= 1, peak);
 }
-// back to VPP1 from the strip: plain 1F1B staircase returns
-w.querySelector('.stp[data-knob="vpp"] button').click(); await T.tick(500);
-T.check('strip VPP− returns the layer to VPP1', l().vpp === 1 && w.querySelectorAll('rect[data-cell]').length > 0, '');
 T.done();

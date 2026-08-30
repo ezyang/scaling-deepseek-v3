@@ -1,5 +1,6 @@
 // @page studies/02-hopper-memory.html
-// pipeline-schedule strip: follows the local diagram's PP / sched / stage
+// pipeline-schedule strip: always DualPipeV — follows the local diagram's
+// PP / sched / stage; gutter stage picking, lane pinning, panning
 const w = () => document.querySelector('dsv3-pp-schedule');
 const l = () => document.getElementById('local-diagram');
 const cells = (ph) => [...w().querySelectorAll(`rect[data-cell^="${ph}"]`)];
@@ -8,27 +9,14 @@ const stps = () => ['gpus', 'pp', 'sched', 'ep', 'zero']
 
 // pin the drawn-microbatch knob to 'auto' (= depth+4, steady state reached)
 {
-  const msel = [...w().querySelectorAll('select')].at(-1);
+  const msel = w().querySelector('[data-knob="mb"]');
   msel.value = 'auto'; msel.dispatchEvent(new Event('change')); await T.tick(150);
 }
-// the strip OPENS on the default schedule — DualPipeV (the official program,
-// W cells and all); the plain-staircase geometry checks below run at VPP1
-T.check('opens on DualPipeV (W cells drawn)', w().querySelectorAll('rect[data-cell^="W"]').length > 0,
-  w().querySelectorAll('rect[data-cell^="W"]').length);
-w().querySelector('.stp[data-knob="vpp"] button').click(); await T.tick(500);
-T.check('VPP− drops to the plain pipeline', l().vpp === 1, l().vpp);
-const pp = l().pp, m = pp + 4;
+const pp = l().pp;
 T.log('pp', pp);
-T.check('one F cell per (stage, mb)', cells('F').length === pp * m, cells('F').length);
-T.check('one B cell per (stage, mb)', cells('B').length === pp * m, cells('B').length);
-const f = cells('F')[0], b = cells('B').find(c => c.dataset.cell === 'B0@' + (pp - 1));
-// widths are slots*U − 3 (the 2.5px inter-op gap): F = U−3, B = 2U−3
-T.check('B cells are two slots wide', +b.getAttribute('width') + 3 === 2 * (+f.getAttribute('width') + 3),
-  `F ${f.getAttribute('width')} B ${b.getAttribute('width')}`);
-// steady state on stage 0: between F(pp-1) end and its B0, pp forwards are stashed
-T.check('warmup on stage 0 = pp forwards before first B',
-  cells('F').filter(c => c.dataset.cell.endsWith('@0')).slice(0, pp)
-    .every(c => +c.getAttribute('x') < +w().querySelector('rect[data-cell="B0@0"]').getAttribute('x')), '');
+T.check('opens on the official DualPipeV program (W cells drawn)', cells('W').length > 0, cells('W').length);
+T.check('no schedule-family or VPP knobs on the strip', !w().querySelector('[data-knob="prog"]')
+  && !w().querySelector('[data-knob="vpp"]') && !w().querySelector('[data-knob="fold"]'), '');
 // highlight row follows the layer's stage
 const hl = () => w().querySelector('rect.stghl');
 const rowY = (s) => s * 16;
@@ -37,17 +25,15 @@ T.check('tinted row = selected stage', +hl().getAttribute('y') === rowY(l().stag
 const schedBtns = stps().map(s => [...s.querySelectorAll('button')]).flat();
 const oneBtn = schedBtns.find(b => b.textContent.includes('1 mb'));
 oneBtn.click(); await T.tick(400);
-T.check('×1 mb: one F per stage', cells('F').length === l().pp, cells('F').length);
-T.check('×1 mb: one B per stage', cells('B').length === l().pp, cells('B').length);
+T.check('×1 mb: one F per virtual stage (2·PP chunks)', cells('F').length === 2 * l().pp, cells('F').length);
+T.check('×1 mb: one B per virtual stage', cells('B').length === 2 * l().pp, cells('B').length);
 const hdr = w().querySelector('.hd').textContent;
 T.check('header describes the wave', hdr.includes('wave'), hdr);
 // in-flight section: one lane per concurrently-held stash, peak = the law
 {
-  const back1 = [...w().querySelectorAll('.stp[data-knob="sched"] button')].find(b => b.textContent === '1F1B');
+  const back1 = [...w().querySelectorAll('.stp[data-knob="sched"] button')].find(b => b.textContent === 'DualPipeV');
   back1.click(); await T.tick(500);
-  const lanes = new Set([...w().querySelectorAll('rect[data-stash^="F"]')].map(r => r.getAttribute('y'))).size;
-  const expect = l().pp - l().stage;   // 1F1B staircase on the selected stage
-  T.check('in-flight lanes = PP − stage', lanes === expect, `${lanes} vs ${expect}`);
+  const expect = l().pp + 0.5;   // uniform PP+½ under the V
   T.check('peak label matches the law', +w().querySelector('text[data-peak]').dataset.peak === expect, '');
   T.check('stash bars carry F and B cells', w().querySelectorAll('rect[data-stash^="B"]').length
     === w().querySelectorAll('rect[data-stash^="F"]').length, '');
@@ -67,13 +53,12 @@ T.check('header describes the wave', hdr.includes('wave'), hdr);
   lane7.dispatchEvent(new MouseEvent('click', { bubbles: true })); await T.tick(50);
   T.check('second click releases', cellsOf(3).every(r => r.style.opacity === '')
     && !lane7.classList.contains('pin'), '');
-  [...w().querySelectorAll('.stp[data-knob="sched"] button')].find(b => b.textContent === '×1 mb').click();
-  await T.tick(400);   // restore ×1 mb for the checks below
 }
-// PP step: row count follows
+// PP step: stage-row count follows
 const ppPlus = stps()[1].querySelectorAll('button')[1];
 ppPlus.click(); await T.tick(600);
-T.check('PP step doubles the rows', cells('F').length === l().pp, `${cells('F').length} vs pp ${l().pp}`);
+T.check('PP step doubles the stage rows', w().querySelectorAll('rect.stghit').length === l().pp,
+  `${w().querySelectorAll('rect.stghit').length} vs pp ${l().pp}`);
 
 // ---- the widget's own replicated controls drive the LAYER (two-way link)
 const wctl = () => w().querySelector('.pargrp');
@@ -82,13 +67,7 @@ T.check('widget wears the pipeline knob group', !!wctl() && wctl().textContent.i
 const ppBefore = l().pp;
 wstp().querySelectorAll('button')[0].click(); await T.tick(600);   // widget's PP −
 T.check('widget PP− halves the layer', l().pp === ppBefore / 2, l().pp);
-T.check('layer stage select follows (options = pp)',
-  stps()[1].parentElement.querySelectorAll('select')[1].options.length === l().pp
-  || l().parentElement.querySelectorAll('select').length > 0, '');
-const schedBtn = [...wctl().querySelectorAll('.stp button')].find(b => b.textContent === '1F1B');
-schedBtn.click(); await T.tick(600);                               // widget's sched → 1F1B
-T.check('widget sched flips the layer', l().sched === '1f1b', l().sched);
-T.check('strip redrew for 1F1B', cells('F').length === l().pp * (l().pp + 4), cells('F').length);
+T.check('still the official program at the new depth', cells('W').length > 0, '');
 // the sX axis is the stage picker: click a gutter row
 T.check('no stage dropdown on the strip (axis picks)', !wctl().querySelector('[data-knob="stage"]'), '');
 w().querySelector('rect.stghit[data-stage="0"]').dispatchEvent(new MouseEvent('click', { bubbles: true }));

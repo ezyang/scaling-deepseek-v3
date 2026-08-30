@@ -44,8 +44,8 @@ T.check('chart row shows the DPV in-flight count (PP+½)', chart().includes('act
 const sseg = (lv) => [...stps()[2].querySelectorAll('button')].find(b => b.textContent === lv);
 sseg('×1 mb').click(); await T.tick(600);
 T.check('sched ×1: chart row says ×1 mb', chart().includes('activations ×1mb'), '');
-sseg('1F1B').click(); await T.tick(600);
-T.check('sched back to 1F1B', chart().includes('activations ×16.5mb'), '');
+sseg('DualPipeV').click(); await T.tick(600);
+T.check('sched back to DualPipeV', chart().includes('activations ×16.5mb'), '');
 // fit bar: 4 segments + capacity tick + snapped total
 const bar = () => [...layer().querySelectorAll('.lv-bar rect[height="8"]')];
 T.log('bar rows', bar().length);
