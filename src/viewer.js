@@ -3071,13 +3071,13 @@ class Dsv3PpSchedule extends HTMLElement {
         return;
       }
       const t = e.target.closest('[data-stage]');
-      if (!t) return;
+      if (!t || this.hasAttribute('noflight')) return;   // no braid → nothing to pick for
       this._scr.focus({ preventScroll: true });
       this._pick(+t.dataset.stage);
     });
     this._scr.addEventListener('keydown', (e) => {
       const d = e.key === 'ArrowDown' ? 1 : e.key === 'ArrowUp' ? -1 : 0;
-      if (!d) return;
+      if (!d || this.hasAttribute('noflight')) return;
       e.preventDefault();
       const { pp, stage } = this.cfg();
       this._pick(Math.min(pp - 1, Math.max(0, stage + d)));
@@ -3361,11 +3361,12 @@ class Dsv3PpSchedule extends HTMLElement {
     const rowY = (s) => s * (RH + GAP);
     const laneY = (ln) => laneY0 + ln * (RH2 + GAP);
     const P = [`<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" font-family="system-ui">`];
-    if (pp > 1) P.push(`<rect class="stghl" x="0" y="${rowY(stage)}" width="${W}" height="${RH}" fill="#fff3d1"/>`);
+    if (FLIGHT && pp > 1) P.push(`<rect class="stghl" x="0" y="${rowY(stage)}" width="${W}" height="${RH}" fill="#fff3d1"/>`);
     for (let s = 0; s < pp; s++) {
+      const on = FLIGHT && s === stage;
       P.push(`<text x="${GUT - 6}" y="${rowY(s) + RH - 4}" text-anchor="end" font-size="9.5"`
-        + ` font-weight="${s === stage ? 600 : 400}" fill="${s === stage ? '#0b0b0b' : '#898781'}">s${s}</text>`);
-      P.push(`<rect class="stghit" data-stage="${s}" x="0" y="${rowY(s)}" width="${GUT - 2}" height="${RH}" fill="#fff3d1" opacity="0"/>`);
+        + ` font-weight="${on ? 600 : 400}" fill="${on ? '#0b0b0b' : '#898781'}">s${s}</text>`);
+      if (FLIGHT) P.push(`<rect class="stghit" data-stage="${s}" x="0" y="${rowY(s)}" width="${GUT - 2}" height="${RH}" fill="#fff3d1" opacity="0"/>`);
     }
     // later chunks wear progressively deeper shades of the same hues
     // (VPP2 reflect: light down pass, dark up pass); W = deferred weight

@@ -56,18 +56,17 @@ const f2 = document.querySelectorAll('dsv3-pp-fold')[1];
 const p2 = [...f2.querySelectorAll('g[data-chunk]')].map((g) => +g.dataset.params);
 T.check('EP1 instance holds whole experts (chunks ≫ EP64 chunks)', p2[4] > p[4] * 10, `${p2[4]} vs ${p[4]}`);
 
-// the standalone (unbound) strip on this page: gutter picking and arrows
-// work strip-locally — no layer to drive, the selection is its own
+// the standalone noflight strip: a PURE figure — no braid, and therefore
+// no stage machinery at all (no tint, no gutter hitboxes, keys inert)
 {
   const w = document.querySelector('dsv3-pp-schedule');
-  const hlY = () => +w.querySelector('rect.stghl').getAttribute('y');
-  w.querySelector('rect.stghit[data-stage="3"]').dispatchEvent(new MouseEvent('click', { bubbles: true }));
-  await T.tick(300);
-  T.check('unbound gutter click moves the tint to s3', hlY() === 3 * 16, hlY());
-  T.check('noflight: the pure-schedule figure draws no braid', !w.querySelector('rect[data-stash]')
+  T.check('noflight: no braid, no in-flight text', !w.querySelector('rect[data-stash]')
     && !w.textContent.includes('in flight'), '');
-  w.querySelector('.scroll').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
-  await T.tick(300);
-  T.check('arrows walk the local selection', hlY() === 2 * 16, hlY());
+  T.check('noflight: no tint, no gutter hitboxes', !w.querySelector('rect.stghl')
+    && !w.querySelector('rect.stghit'), '');
+  const before = w.querySelector('.scroll').innerHTML;
+  w.querySelector('.scroll').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+  await T.tick(200);
+  T.check('keys are inert on a pure figure', w.querySelector('.scroll').innerHTML === before, '');
 }
 T.done();

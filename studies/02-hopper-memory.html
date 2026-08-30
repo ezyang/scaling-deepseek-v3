@@ -128,14 +128,17 @@
     <h2>Pipeline parallelism</h2>
 
     <p>The primary benefit of pipeline parallelism is that it lets us further
-    reduce the cost of parameters, gradients and optimizer states by splitting
-    stages of transformer blocks across the PP axis.  However, besides being
+    reduce the per-device footprint of parameters, gradients and optimizer
+    states by splitting stages of transformer blocks across the PP axis,
+    but in a cheaper way than ZeRO-3 (as we only send/recv activations, rather than
+    the entire sharded weights).
+    However, besides being
     complicated to implement, there are some subtleties on how exactly PP
     interacts with the memory usage of your model.  The art of building a
     pipeline schedule is surprisingly deep, so to keep this section short
     we'll focus specifically on <a
-    href="https://hackmd.io/@ufotalent/r1lVXsa9Jg">DualPipeV</a>, a variation
-    of the DualPipe schedule that DeepSeek-V3 was trained on.</p>
+    href="https://hackmd.io/@ufotalent/r1lVXsa9Jg">DualPipeV</a>, a modernized
+    version of the DualPipe schedule that DeepSeek-V3 was originally trained on.</p>
 
     <p>Let's briefly recap the important facts about DualPipeV.  DualPipeV
     belongs to a family of what we call "zero bubble" schedules, where weight
@@ -147,22 +150,7 @@
     then "up" in a V shape.
     </p>
 
-    <dsv3-pp-schedule style="min-height:169px" noflight pp="8" vpp="2" fold="reflect" sched="one" stage="0"></dsv3-pp-schedule>
-
-    <p>The motivation behind the V shape is to reduce the amount of saved activations
-    we have to maintain for microbatches.  While pipeline parallelism clearly reduces
-    the memory usage of parameters, ...</p>
-
-    <dsv3-pp-schedule style="min-height:505px" layer="local-diagram"></dsv3-pp-schedule>
-
-    <p class="note">The pipeline schedule behind the activation numbers, one
-    row per PP stage of the widget above (it follows the PP and schedule
-    knobs; the tinted row is the selected stage). Amber F cells stash a
-    microbatch's activations; orange B cells consume them (and take two slots
-    — backward is ~2× the FLOPs). Reading across a row at steady state: stage
-    <em>s</em> has admitted PP−<em>s</em> forwards whose backwards haven't
-    arrived yet — the in-flight law the diagram charges for.</p>
-
+    <dsv3-pp-schedule style="min-height:169px" noflight pp="8" vpp="2" fold="reflect" sched="one"></dsv3-pp-schedule>
 
     <p>One more thing.  We have to account for imbalance that arises from the embedding and the LM
     head, as well the imbalance that arises from DeepSeek-V3's three initial
@@ -174,6 +162,9 @@
     less--and cheaper--transformer blocks in this stage.)  This is nice, because </p>
 
     <dsv3-pp-fold style="min-height:429px"></dsv3-pp-fold>
+
+
+    <dsv3-pp-schedule style="min-height:505px" layer="local-diagram"></dsv3-pp-schedule>
 
     <h2>Activation checkpointing</h2>
 
