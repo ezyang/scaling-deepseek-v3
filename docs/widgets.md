@@ -101,13 +101,18 @@ NOT re-derived here — the stage-split-partitions-the-exact-total check
 (catches dropped norms / doubled vocab across all 42 schedule geometries)
 lives in scripts/sanity.mjs; `data-true` is the bridge. Besides findings,
 `auditFitCharts` returns per-chart `reports` narrating every implication it
-verified (message + the pattern's selector) — the OVERLAY renders these: an
-`audit` button on the full sim's misc row (only where that row already
-renders — a debug affordance never costs reserved height) toggles a text
-panel under the chart listing each verification with its exact arithmetic;
-hovering a line lights the pattern it re-derived and dims the rest. The
-panel re-derives at every at-rest render and holds steady mid-tween
-(blended geometry is between two truths); open/close is frame-stepped.
+verified (message + the pattern's selector) — the page-wide OVERLAY renders
+these: Alt+A (hidden debug mode, persisted in the URL hash key `audit`)
+floats a ✓ N chip on EVERY fit chart (✗ N alarm-red if a lie survives);
+clicking a chip drops that chart's report as an overlay — one line per
+verification with its exact arithmetic — and hovering a line lights the
+pattern it re-derived, dimming the rest. Nothing reflows: chips and panels
+are absolutely positioned, and the mode costs no reserved height anywhere.
+Charts re-render wholesale, so a MutationObserver re-audits after the page
+has been quiet for a beat (never mid-tween: blended geometry is between two
+truths); pinned-open reports survive re-audits. All overlay code lives in
+src/audit.js next to the checks it renders — the battery and the overlay
+run the SAME auditFitCharts.
 Battery scenarios: tests/audit.js (02's charts + a corruption canary
 proving the audit can fail), tests/auditbars.js (after saves, knob turns,
 solos), tests/overlay.js (the overlay itself). Vision/LLM checks stay out
