@@ -155,17 +155,19 @@ exactly 2pp+1 half-rank chunks — the law survives the real schedule. The drawn
 tests count it. A `program` knob (data-knob="prog") picks the SCHEDULE
 FAMILY (strip-local; the memory model always charges its 1F1B law): the
 plain pipeline (VPP1, 1F1B admission) offers the textbook set — `1F1B`
-(PipeDream-flush), `ZB1P` (zero-bubble style: backward splits into
-input-grad `b`, one slot, scheduled like 1F1B's B, plus weight-grad `W`
-cells that run exactly where the rank would otherwise idle — same stash
-residency as 1F1B, visibly fewer bubbles), and `GPipe` (all forwards,
-flush, all backwards — every stage stashes ALL m) — while the
-DualPipeV shape offers `DSv3` (the official program) vs `greedy`. Whenever
-a drawn peak differs from the modeled law, the bracket label appends
-`— the model charges N (its 1F1B law)`; GPipe is the demonstration. The
-official DualPipeV and the textbook 1F1B/GPipe are exact; ZB1P is
-explicitly '-style' (the greedy engine with the zero-bubble split, not the
-paper's figure reproduced). Below the schedule, an IN-FLIGHT section (same svg, so the
+(PipeDream-flush), `ZB-H1` (the PUBLISHED zero-bubble program, ported
+step-for-step from sail-sg/zero-bubble-pipeline-parallelism's
+zb-h1-quick-start Megatron patch: 1F1B warmup unchanged; ranks > 0 split
+backward into one-slot input-grad `b` + weight-grad `W` delayed by exactly
+`rank` microbatches, popped one per step past the threshold, pop_all at
+the end; rank 0 keeps its backward fused, as the authors' patch does for
+p2p-batching reasons — same stash residency as 1F1B, visibly shorter),
+and `GPipe` (all forwards, flush, all backwards — every stage stashes ALL
+m) — while the DualPipeV shape offers `DSv3` (the official program) vs
+`greedy`. Whenever a drawn peak differs from the modeled law, the bracket
+label appends `— the model charges N (its 1F1B law)`; GPipe is the
+demonstration. Every named program is exact against its primary source
+(dualpipev.py; the zb-h1-quick-start patch); the greedy engine is ours. Below the schedule, an IN-FLIGHT section (same svg, so the
 horizontal scroll is shared) shows the selected stage's stashes as lifetime
 lanes — the F cell that stashes a microbatch, an amber tail while it's held,
 and the B cell that frees it (data-stash) — so the braid's thickness IS the

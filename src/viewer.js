@@ -3141,12 +3141,12 @@ class Dsv3PpSchedule extends HTMLElement {
     // DualPipeV shape offers DSv3's official program vs the greedy engine
     const { canOff, mode, plain } = this._mode(pp, sched, vpp, fold);
     const opts = canOff ? [['official', 'DSv3'], ['greedy', 'greedy']]
-      : plain ? [['greedy', '1F1B'], ['zb1p', 'ZB1P'], ['gpipe', 'GPipe']] : [];
+      : plain ? [['greedy', '1F1B'], ['zbh1', 'ZB-H1'], ['gpipe', 'GPipe']] : [];
     const TITLES = {
       official: 'the official DualPipeV program (deepseek-ai/DualPipe): zero-bubble b/W split, fused F&B steady state',
       greedy: canOff ? 'plain engine: each rank greedily runs its chunk queues, 1F1B admission per virtual stage'
         : 'the textbook 1F1B (PipeDream-flush): pp−s warmup forwards, then strict one-forward-one-backward',
-      zb1p: 'zero-bubble, ZB1P-style: backward splits into input-grad b (one slot) + weight-grad W, and W fills what would be bubbles — same stash residency as 1F1B',
+      zbh1: 'the published ZB-H1 program (sail-sg zero-bubble, zb-h1-quick-start): ranks > 0 split backward into input-grad b + weight-grad W delayed by exactly `rank` microbatches — 1F1B activation memory, the warmup/cooldown bubbles filled with W',
       gpipe: 'the GPipe textbook baseline: all forwards, flush, all backwards — every stage stashes ALL m microbatches',
     };
     for (const [n, e2] of [['pp', stp], ['sched', sw], ['vpp', vw], ['fold', fw], ['mb', msel]])
@@ -3167,7 +3167,7 @@ class Dsv3PpSchedule extends HTMLElement {
     const canOff = sched === '1f1b' && vpp === 2 && fold === 'reflect' && pp > 1 && m >= 2 * pp;
     const plain = sched === '1f1b' && vpp === 1 && pp > 1;
     const mode = canOff ? (this._prog === 'greedy' ? 'greedy' : 'official')
-      : plain && ['gpipe', 'zb1p'].includes(this._prog) ? this._prog : 'greedy';
+      : plain && ['gpipe', 'zbh1'].includes(this._prog) ? this._prog : 'greedy';
     return { canOff, plain, mode, m };
   }
   cfg() {
@@ -3291,6 +3291,37 @@ class Dsv3PpSchedule extends HTMLElement {
     const stalled = prog.reduce((t, q) => t + (q.ops.length - q.i), 0);
     return { cells, stalled };
   }
+  // The published ZB-H1 program (sail-sg/zero-bubble-pipeline-parallelism,
+  // zb-h1-quick-start patch to Megatron's 1F1B), ported step-for-step:
+  // 1F1B warmup counts unchanged; ranks > 0 split backward into b (input
+  // grads) + W (weight grads) for the first `rank` steady iterations plus
+  // the last, delaying each W by exactly `rank` microbatches (one pop at
+  // the last steady iteration once i ≥ rank, one per cooldown step once
+  // the counter reaches rank), then pop_all drains the store. Rank 0 never
+  // splits (the patch keeps its backward fused for p2p-batching reasons).
+  _zbh1Prog(pp, m) {
+    const prog = [];
+    for (let r = 0; r < pp; r++) {
+      const ops = [], wq = [];
+      const pop = () => { const mb = wq.shift(); if (mb !== undefined) ops.push({ ph: 'W', v: r, mb }); };
+      const wu = Math.min(pp - r - 1, m), rem = m - wu;
+      for (let j = 0; j < wu; j++) ops.push({ ph: 'F', v: r, mb: j });
+      for (let i = 0; i < rem; i++) {                       // steady 1F1B
+        ops.push({ ph: 'F', v: r, mb: wu + i });
+        const split = (i < r || i === rem - 1) && r > 0;
+        ops.push({ ph: 'B', v: r, mb: i, zb: split });
+        if (split) wq.push(i);
+        if (i === rem - 1 && i >= r && r > 0) pop();        // delay W by rank
+      }
+      for (let i = 0; i < wu; i++) {                        // cooldown
+        ops.push({ ph: 'B', v: r, mb: rem + i, zb: r > 0 });
+        if (r > 0) { wq.push(rem + i); if (rem + i >= r) pop(); }
+      }
+      while (wq.length) pop();                              // pop_all
+      prog.push({ ops, i: 0 });
+    }
+    return this._resolveProg(prog, pp, pp).cells;
+  }
   draw(pp, sched, stage, vpp = 1, fold = 'reflect') {
     this._pinHl = null;
     // one chain of VIRTUAL stages with 1F1B admission per stage, vpp·pp deep;
@@ -3318,15 +3349,10 @@ class Dsv3PpSchedule extends HTMLElement {
       return { items, i: 0 };
     });
     const done = new Map();
-    let cells = OFFICIAL ? this._officialDPV(pp, m) : [];
-    // ZB1P-style zero-bubble: backward splits into b (input grads, one slot,
-    // scheduled like 1F1B's B) + W (weight grads, one slot, NO cross-rank
-    // dep) — W runs exactly when the rank would otherwise sit idle, which is
-    // the zero-bubble idea in one sentence
-    const ZB = mode === 'zb1p';
-    const wPool = Array.from({ length: pp }, () => []);
+    let cells = OFFICIAL ? this._officialDPV(pp, m)
+      : mode === 'zbh1' ? this._zbh1Prog(pp, m) : [];
     const rankT = Array(pp).fill(0);
-    let progress = !OFFICIAL;
+    let progress = mode === 'greedy' || mode === 'gpipe';
     while (progress) {
       progress = false;
       for (let r = 0; r < pp; r++) {
@@ -3346,17 +3372,10 @@ class Dsv3PpSchedule extends HTMLElement {
             || (cand.ready === best.ready && cand.ph === 'B' && best.ph === 'F')
             || (cand.ready === best.ready && cand.ph === best.ph && cand.v > best.v)) best = cand;
         }
-        if (ZB && wPool[r].length && (!best || best.ready > rankT[r])) {
-          // the rank would idle: burn a deferred weight grad instead
-          const e = wPool[r].shift();
-          cells.push({ s: r, v: e.v, mb: e.mb, ph: 'W', chunk: Math.floor(e.v / pp), t0: rankT[r], t1: rankT[r] + 1 });
-          rankT[r] += 1; progress = true; continue;
-        }
         if (!best) continue;
-        const t0 = best.ready, t1 = t0 + (best.ph === 'F' || ZB ? 1 : 2);
+        const t0 = best.ready, t1 = t0 + (best.ph === 'F' ? 1 : 2);
         cells.push({ s: r, v: best.v, mb: best.mb, ph: best.ph, chunk: Math.floor(best.v / pp), t0, t1 });
         done.set(`${best.ph}${best.mb}@${best.v}`, t1);
-        if (ZB && best.ph === 'B') wPool[r].push({ v: best.v, mb: best.mb });
         rankT[r] = t1; best.q.i++; progress = true;
       }
     }
@@ -3466,9 +3485,10 @@ class Dsv3PpSchedule extends HTMLElement {
         + ' overlapped F&B block · pale dashed W = deferred weight grads (B alone = input grads)'
       : mode === 'gpipe'
       ? 'GPipe — all forwards, a flush, all backwards: every stage stashes ALL m microbatches'
-      : mode === 'zb1p'
-      ? 'zero-bubble (ZB1P-style) — backward split: b = input grads (one slot, scheduled like 1F1B), pale'
-        + ' dashed W = weight grads, run exactly where the rank would otherwise idle · same stash residency as 1F1B'
+      : mode === 'zbh1'
+      ? 'ZB-H1 (published program) — ranks > 0 split backward: b = input grads (one slot), pale dashed W ='
+        + ' weight grads delayed by `rank` microbatches to fill the bubbles · rank 0 keeps its backward fused'
+        + ' (as in the authors\u2019 patch) · same stash residency as 1F1B'
       : vpp > 1
         ? `VPP${vpp} ${fold === 'wrap' ? 'wrap (Megatron interleaving)' : 'reflect'}`
           + ` · each rank runs ${vpp} chunks, later passes darker · chunks scheduled 1F1B`
@@ -3476,7 +3496,7 @@ class Dsv3PpSchedule extends HTMLElement {
         : '';
     this._hd.textContent = sched === 'one'
       ? `${ppTag}one microbatch at a time — an F wave down the stages, then a B wave back up`
-      : vpp > 1 || mode === 'gpipe' || mode === 'zb1p'
+      : vpp > 1 || mode === 'gpipe' || mode === 'zbh1'
         ? `${ppTag}${m} microbatches shown · ${vppTag}`
         : `${ppTag}1F1B · ${m} microbatches shown — F = forward (one slot), B = backward (two: ~2× the FLOPs)`;
     this._scr.innerHTML = P.join('');
