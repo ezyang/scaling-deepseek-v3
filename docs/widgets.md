@@ -70,9 +70,10 @@ double-counted anywhere in the figure); supports `highlightOps`.
 
 One fit chart, stepped explicitly. Each `<section>` child is a beat: a FULL
 config in `data-config` (never a patch — stepping past a hypothetical
-reverts it automatically), optional `data-solo` / `data-parts` /
-`data-hypothetical` (the dashed not-real card + authorable tag), and the
-step's caption as its HTML (author prose lives in the page). A forward step
+reverts it automatically), an optional `data-hypothetical` (the dashed
+not-real card + authorable tag), and the step's caption as its HTML (author
+prose lives in the page). The deck always shows every bar and sub-bar
+(fixed focus: the story is one scene). A forward step
 saves the last REAL step as the baseline (hypotheticals are parentheses —
 never measured against) and pours the bars to the new config through the
 layout blend (ghosts plant FIRST, then the bars move — diagram-grammar rule

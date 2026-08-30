@@ -864,16 +864,10 @@ ${tokensCss('.lv')}
 .lv button.st { display: block; width: 100%; height: 18px; font: 10px system-ui; border-radius: 3px;
   cursor: pointer; text-align: left; padding: 0 5px; overflow: hidden; white-space: nowrap; }
 .lv .st-save { background: #fff8ea; border: 1px solid #eda100; color: #0b0b0b; }
-.lv .st-pin { background: #fff8ea; border: 1px solid #eda100; color: #52514e; cursor: default; }
 .lv .st-redo { background: #f3f2ee; border: 1px dashed #898781; color: #52514e; }
-.lv .st-idle { background: transparent; border: 1px dashed #e1e0d9; color: #898781; }
 .lv button.st.mode { width: 24px; padding: 0; text-align: center; height: 20px; }
 .lv button.st.dtb { width: 52px; padding: 0; text-align: center; height: 20px; font-weight: 600;
   background: #fff; border: 1px solid #c3c2b7; }
-.lv button.st.ktab { width: 100%; height: 24px; font: 600 11px system-ui; text-align: center;
-  background: #f3f2ee; border: 1px solid #e1e0d9; color: #898781; border-radius: 6px 6px 0 0; }
-.lv button.st.ktab.on { background: #fff; border-color: #c3c2b7; color: #0b0b0b; cursor: default; }
-.lv .ktsub { font-weight: 400; font-size: 10px; }
 .lv text.tensor { font: 10px system-ui; }
 .lv .tsave { fill: #7a5200; font-weight: 600; }
 .lv .tdim { fill: #898781; font-weight: 400; }
@@ -1030,12 +1024,10 @@ export class Dsv3Layer extends HTMLElement {
     // DOM may hold some other synchronously-rendered state (the deck renders
     // the baseline to build its pin) — one visible beat of it is a flash
     this.render(); this.changed(false);
-    // ease-out cubic: these tweens RESPOND to a click, and response motion
-    // must start immediately (in-out's slow first beat reads as lag) and
-    // decelerate into place. Time-easing only: values lerp geometrically,
-    // which on the log axis is exactly linear pixel motion, so this curve
-    // IS the perceived motion. Duration handles gravitas, not the curve.
-    const ease = (p) => 1 - (1 - p) ** 3;
+    // fitEase (ease-out cubic): these tweens RESPOND to a click, and
+    // response motion must start immediately (in-out's slow first beat reads
+    // as lag) and decelerate into place. Duration handles gravitas.
+    const ease = fitEase;
     const step = () => {
       if (this._frameGen !== gen) return;   // superseded by a newer tween
       f++; const p = Math.min(1, f / FRAMES);
@@ -1201,9 +1193,8 @@ export class Dsv3Layer extends HTMLElement {
       zero: this.zero ?? 1, world: this.world ?? LOCAL_PAR.world,
       sched: this.sched ?? '1f1b', vpp: this.vpp ?? 1, fold: this.fold ?? 'reflect', cum: !!this.cumulative,
       // the pre-change analysis: stash-affecting knobs (precision, marks,
-      // fp8ᵀ) lerp chip squares and the acts bar between old and new bytes
-      saved: this._anaMemo?.ana?.savedBytes,
-      savedParts: this._anaMemo?.ana ? actBucketsOf(this._anaMemo.ana) : null, anaPrev: this._anaMemo?.ana };
+      // fp8ᵀ) lerp the diagram's chip squares between old and new bytes
+      anaPrev: this._anaMemo?.ana };
   }
   _tweenLocal(prev) {
     this.changed(true);
@@ -1805,22 +1796,11 @@ export class Dsv3Layer extends HTMLElement {
       const fN = fEff(c, cls, Snow), V = this._vtween;
       return V ? fEff(c, cls, V.prev) + (fN - fEff(c, cls, V.prev)) * V.t : fN;
     };
-    const multT = (() => {
-      const mN = dLoc(Snow).mult, V = this._vtween;
-      return V ? dLoc(V.prev).mult + (mN - dLoc(V.prev).mult) * V.t : mN;
-    })();
     // activations multiplier (stage blocks × microbatches in flight), lerped
     const actsT = (() => {
       const aN = dLoc(Snow).acts, V = this._vtween;
       return V ? dLoc(V.prev).acts + (aN - dLoc(V.prev).acts) * V.t : aN;
     })();
-    const facStr = (cur, base, always = false) => {
-      if (!base || !cur) return '';
-      const r = cur / base;
-      if (!always && Math.abs(Math.log2(r)) < 0.05) return '';
-      const f = (v) => v >= 100 || Math.abs(v - Math.round(v)) < 0.02 * v ? String(Math.round(v)) : v.toFixed(1);
-      return r > 1 ? `×${f(r)}` : `×1/${f(1 / r)}`;   // ×1/N beats ÷N for scan-ability
-    };
     // CHANGE factors (vs a pinned baseline) wear an alert style: direction is
     // the arrow (magnitude always ≥ 1 — cleaner scan than ×1/N), grew = red
     // ▲ (memory alarm; red is unused by the components), shrank = bold ▼
@@ -2057,7 +2037,6 @@ export class Dsv3Layer extends HTMLElement {
     const HIDT = LOCAL ? 1 : CUMT;
     const T_ = ABS ? CUMT : 0;
     const stripMul = ABS ? 1 + (KMUL - 1) * T_ : 1;
-    const stripCount = (nParams) => !PBYTES || !nParams ? 0 : Math.round(nParams * stripMul / PB_UNIT);
     // per-component cells for one op, at the current tween state: a toggled
     // component's squares pour in/out (count scales with t) and everything
     // downstream reflows smoothly — the per-block-tween style, not a fade.
@@ -2749,14 +2728,14 @@ export class Dsv3Layer extends HTMLElement {
       const partsFor = (S) => {
         const q = stageParts(S);
         const actM = 4096 * q.layers * inflightOf(S.sched ?? '1f1b', S.stage, S.pp, S.vpp, S.fold);
-        const actP = (S.savedParts ?? actBucketsOf(ana)).map((b) => b * actM);
+        const actP = actBucketsOf(ana).map((b) => b * actM);
         return COMPS.map((c) => [q.e * shardOf(S, c, 'e'), q.d * shardOf(S, c, 'd'), q.v * shardOf(S, c, 'd')])
           .concat([actP]);
       };
       const segB = (S) => {
         const q = stageParts(S);
         return COMPS.map((c) => (q.d + q.v) * shardOf(S, c, 'd') + q.e * shardOf(S, c, 'e'))
-          .concat([(S.saved ?? ana.savedBytes) * 4096 * q.layers * inflightOf(S.sched ?? '1f1b', S.stage, S.pp, S.vpp, S.fold)]);
+          .concat([ana.savedBytes * 4096 * q.layers * inflightOf(S.sched ?? '1f1b', S.stage, S.pp, S.vpp, S.fold)]);
       };
       this._segParts = partsFor(Snow);
       const nowB = segB(Snow);
@@ -3446,9 +3425,9 @@ if (typeof customElements !== 'undefined' && !customElements.get('dsv3-pp-schedu
 // ---- <dsv3-beat-deck> custom element ----------------------------------------------
 // The optimization story as a SLIDESHOW over one fit chart. Each <section>
 // child is a step: a FULL config in data-config (never a patch — so stepping
-// past a hypothetical reverts it automatically), optional data-solo /
-// data-parts / data-hypothetical (dashed not-real card + tag), and the
-// step's caption as its HTML. The reader advances explicitly; a forward step
+// past a hypothetical reverts it automatically), an optional
+// data-hypothetical (dashed not-real card + tag), and the step's caption as
+// its HTML. The reader advances explicitly; a forward step
 // saves the last REAL step as the baseline and pours the bars to the new
 // config through the layer's own knob tween, so ghosts and ▲/▼ badges
 // narrate every move. Backward and jump navigation snap (no reverse fiction).
@@ -3471,8 +3450,6 @@ class Dsv3BeatDeck extends HTMLElement {
   connectedCallback() {
     this._steps = [...this.querySelectorAll('section')].map((sec) => ({
       cfg: JSON.parse(sec.dataset.config ?? '{}'),
-      solo: sec.dataset.solo ?? null,
-      parts: sec.dataset.parts != null,
       hyp: sec.dataset.hypothetical,
       cap: sec.innerHTML,
     }));
