@@ -85,10 +85,26 @@ export const vstagesOf = (r, pp, vpp = 1, fold = 'reflect') =>
     c * pp + (fold === 'reflect' && c % 2 ? pp - 1 - r : r));
 export const ppStage = (s, pp = LOCAL_PAR.pp, vpp = 1, fold = 'reflect') => {
   const D = vpp * pp;
+  // SLOT model (author's fiat): the embedding and the lm head each count a
+  // layer's worth when balancing, so 63 slots (emb + 61 layers + head) are
+  // split contiguously with the +1 remainders handed out from the ENDS
+  // inward — chunk 0 = emb + 3 layers, the last = 3 layers + head, and the
+  // one short chunk lands mid-chain (at D=16). Every slot is in exactly one
+  // chunk, so the partition stays exact.
+  const sizes = Array(D).fill(Math.floor(63 / D));
+  let rem = 63 - Math.floor(63 / D) * D;
+  for (let k = 0; k < D && rem > 0; k++) {
+    const i = k % 2 === 0 ? k >> 1 : D - 1 - (k >> 1);   // 0, D−1, 1, D−2, …
+    sizes[i]++; rem--;
+  }
+  const bounds = [0];
+  for (const z of sizes) bounds.push(bounds[bounds.length - 1] + z);
   const seg = (i) => {
-    const lo = Math.floor(61 * i / D), hi = Math.floor(61 * (i + 1) / D);
+    const s0 = bounds[i], s1 = bounds[i + 1];             // slot range
+    const lo = Math.max(0, s0 - 1), hi = Math.max(lo, Math.min(61, s1 - 1));   // layer range (slot 0 = emb, slot 62 = head)
     const dense = Math.max(0, Math.min(hi, 3) - Math.min(lo, 3));
-    return { lo, hi, layers: hi - lo, dense, moe: hi - lo - dense };
+    return { lo, hi, layers: hi - lo, dense, moe: hi - lo - dense,
+      emb: s0 === 0 && s1 > 0, head: s1 === 63 && s0 < 63 };
   };
   const vs = vstagesOf(s, pp, vpp, fold);
   const segs = vs.map(seg);
@@ -3516,8 +3532,13 @@ class Dsv3PpFold extends HTMLElement {
     // the up-pass bars POP onto their partner's row (v ↔ 15−v) and rows
     // 0–7 relabel s0–s7; the vacated rows keep their spans (the stack stays
     // readable — the fold moves COST, not layers).
-    const GUT = 26, SL = GUT + 6, CELL = 8, SW = 5 * CELL + 62, X0 = SL + SW + 12;   // span cells + label room (emb·L0–2 / L57–60·head fit)
-    const RH = 14, PV = 21, BW = 430;
+    // left → right: the CONTINUOUS model strip (63 slots: emb · 61 layers ·
+    // head, top to bottom — tokens flow down the page), chunk brackets,
+    // a routing fan of square-cornered leaders stringing each span to its
+    // bar row, then the v/s axis, range labels, and the bars
+    const SL = 8, STW = 16, BRX = SL + STW + 2, RX0 = BRX + 8;
+    const GUT = RX0 + 8 * 1.6 + 22, LX = GUT + 6, X0 = LX + 64;
+    const RH = 14, PV = 21, BW = 420;
     const H = 16 * PV + 4, W = X0 + BW + 60;
     const rankP = (r) => this.chunks[r].p + this.chunks[15 - r].p;
     const scale = BW / Math.max(...Array.from({ length: 8 }, (_, r) => rankP(r)));
@@ -3537,17 +3558,34 @@ class Dsv3PpFold extends HTMLElement {
       const sOp = row < 8 ? t : 0, vOp = row < 8 ? 1 - t : 1 - 0.65 * t;
       B.push(`<text x="${GUT - 4}" y="${yRow(row) + RH - 3}" text-anchor="end" font-size="9.5" fill="#898781" opacity="${vOp.toFixed(2)}">v${row}</text>`);
       if (row < 8) B.push(`<text x="${GUT - 4}" y="${yRow(row) + RH - 3}" text-anchor="end" font-size="9.5" font-weight="600" fill="#52514e" opacity="${sOp.toFixed(2)}">s${row}</text>`);
-      // the grouped stack: this row's span — emb/head caps + one cell per
-      // layer (dense dark), then the range label
-      let x = SL;
-      const hot2 = hotRow(row) ? ' stroke="#7a5200" stroke-width="1"' : '';
-      if (k.emb) { B.push(`<rect x="${x}" y="${yRow(row)}" width="${CELL + 2}" height="${RH}" rx="2" fill="${hotRow(row) ? '#eda100' : '#c3c2b7'}"/>`); x += CELL + 4; }
-      for (let l = k.lo; l < k.hi; l++) {
-        B.push(`<rect data-layer="${l}" x="${x}" y="${yRow(row)}" width="${CELL - 1.5}" height="${RH}" fill="${hotRow(row) ? '#eda100' : l < 3 ? '#8f8d86' : '#dcdad2'}"/>`);
-        x += CELL;
-      }
-      if (k.head) { x += 2; B.push(`<rect x="${x}" y="${yRow(row)}" width="${CELL + 2}" height="${RH}" rx="2" fill="${hotRow(row) ? '#eda100' : '#c3c2b7'}"/>`); }
-      B.push(`<text x="${SL + 5 * CELL + 10}" y="${yRow(row) + RH - 3}" font-size="9" fill="#898781">${k.emb ? 'emb·' : ''}L${k.lo}–${k.hi - 1}${k.head ? '·head' : ''}</text>`);
+      B.push(`<text x="${LX}" y="${yRow(row) + RH - 3}" font-size="9" fill="#898781">${k.emb ? 'emb·' : ''}L${k.lo}–${k.hi - 1}${k.head ? '·head' : ''}</text>`);
+    }
+    // the model strip: 63 slots top-to-bottom, UNBROKEN (verticality is the
+    // point — the fold moves cost, never the model). Chunk spans wear a
+    // bracket, and a square-cornered leader strings each span to its bar
+    // row; folded, a rank's TWO leaders share a routing lane, so both ends
+    // of the model visibly wire into s0.
+    const SH = (16 * PV - 4) / 63, TOPY = 2;
+    const slotY = (k2) => TOPY + k2 * SH;
+    const chunkSlots = (k) => ({ s0: k.c === 0 ? 0 : k.lo + 1, s1: k.head ? 63 : k.hi + 1 });
+    for (let sl = 0; sl < 63; sl++) {
+      const cap = sl === 0 || sl === 62;
+      const l = sl - 1;
+      const inHot = hv != null && [this.chunks[folded ? hvRank : hv], folded ? this.chunks[15 - hvRank] : null]
+        .some((k) => k && sl >= chunkSlots(k).s0 && sl < chunkSlots(k).s1);
+      const fill = inHot ? '#eda100' : cap ? '#8f8d86' : l < 3 ? '#aba89f' : '#dcdad2';
+      B.push(`<rect${cap ? '' : ` data-layer="${l}"`} x="${SL}" y="${slotY(sl).toFixed(1)}" width="${STW}" height="${(SH - 1).toFixed(1)}"${cap ? ' rx="2"' : ''} fill="${fill}"/>`);
+    }
+    for (const k of this.chunks) {
+      const { s0, s1 } = chunkSlots(k);
+      const y0 = slotY(s0) + 0.5, y1 = slotY(s1) - 1.5, ym = (y0 + y1) / 2;
+      const r = this._rankOf(k.c), down = k.c < 8;
+      const rx = RX0 + r * 1.6;                        // the pair shares a lane
+      const yb = lerp(yRow(k.c), yRow(down ? k.c : r)) + RH / 2;
+      const hot2 = hotRow(k.c);
+      const st = hot2 ? 'stroke="#7a5200" stroke-width="1.3"' : 'stroke="#c3c2b7" stroke-width="0.9"';
+      B.push(`<path d="M ${BRX} ${y0.toFixed(1)} h 3 V ${y1.toFixed(1)} h -3" fill="none" ${st}/>`);
+      B.push(`<path d="M ${BRX + 3} ${ym.toFixed(1)} H ${rx.toFixed(1)} V ${yb.toFixed(1)} H ${GUT - 12}" fill="none" ${st}${hot2 ? '' : ' opacity="0.75"'}/>`);
     }
     // chunk bars: down-pass rows keep their bar; up-pass bars FLY to their
     // partner's row and dock after its bar. Vocab shares wear a dashed

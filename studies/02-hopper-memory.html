@@ -137,8 +137,12 @@
     href="https://hackmd.io/@ufotalent/r1lVXsa9Jg">DualPipeV</a>, a variation
     of the DualPipe schedule that DeepSeek-V3 was trained on.</p>
 
-    <p>I'm going to skip the basic exposition about what DualPipeV is and where it comes
-    from, to focus specifically on subtleties a</p>
+    <p>I'm going to skip the basic exposition about what DualPipeV is and
+    where it comes from, to focus specifically on subtleties related to memory
+    usage.  The first subtlety is that while pipeline parallelism would prefer
+    for every stage to have exactly the same work, we have to account for imbalance
+    that arises from the embedding and the LM head, as well as in DeepSeek-V3 the
+    imbalance that arises from the three initial dense transformer blocks.</p>
 
     <dsv3-pp-fold style="min-height:409px"></dsv3-pp-fold>
 
