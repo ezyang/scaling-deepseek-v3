@@ -152,20 +152,20 @@ with `vstagesOf` placement, each rank interleaving its chunk queues greedily
 wear deeper shades. The official program's drawn peak residency is STILL
 exactly 2pp+1 half-rank chunks — the law survives the real schedule. The drawn peak residency reproduces the modeled law exactly
 (2pp+1 half-rank chunks under VPP2+reflect), and cells carry data-v/t0/t1 so
-tests count it. A `program` knob (data-knob="prog") picks the drawing
-ENGINE — DSv3 (the official program, offered when the config is
-DualPipeV-shaped) vs greedy — and ✎ opens the PROGRAM EDITOR: the drawn
-schedule serialized in a compact notation (one line per rank; `F0`/`F1`
-forward of a chunk in vstagesOf order, `B1` full backward, `b1`+`W1` the
-zero-bubble halves, `F0&B1` a fused block, `tokxN`/`(…)xN` repeats;
-microbatch indices are implicit — each stream counts up). Apply parses,
-runs it through the SAME timing resolver, and draws it (`custom` joins the
-seg). Programs are audited softly: parse errors block, but incomplete or
-stalling programs draw as far as they go with the gap NAMED (`⚠ incomplete
-program: weight grads N/M`), and if the drawn peak differs from the modeled
-law the peak label appends `— the model charges N`. Program choice is
-strip-local (the memory model is untouched); any pipeline-shape change
-invalidates a custom program (its counts are for the old shape). Below the schedule, an IN-FLIGHT section (same svg, so the
+tests count it. A `program` knob (data-knob="prog") picks the SCHEDULE
+FAMILY (strip-local; the memory model always charges its 1F1B law): the
+plain pipeline (VPP1, 1F1B admission) offers the textbook set — `1F1B`
+(PipeDream-flush), `ZB1P` (zero-bubble style: backward splits into
+input-grad `b`, one slot, scheduled like 1F1B's B, plus weight-grad `W`
+cells that run exactly where the rank would otherwise idle — same stash
+residency as 1F1B, visibly fewer bubbles), and `GPipe` (all forwards,
+flush, all backwards — every stage stashes ALL m) — while the
+DualPipeV shape offers `DSv3` (the official program) vs `greedy`. Whenever
+a drawn peak differs from the modeled law, the bracket label appends
+`— the model charges N (its 1F1B law)`; GPipe is the demonstration. The
+official DualPipeV and the textbook 1F1B/GPipe are exact; ZB1P is
+explicitly '-style' (the greedy engine with the zero-bubble split, not the
+paper's figure reproduced). Below the schedule, an IN-FLIGHT section (same svg, so the
 horizontal scroll is shared) shows the selected stage's stashes as lifetime
 lanes — the F cell that stashes a microbatch, an amber tail while it's held,
 and the B cell that frees it (data-stash) — so the braid's thickness IS the

@@ -3014,22 +3014,12 @@ ${knobCss('.pps .top')}
 .pps .stghit:hover { opacity: 0.6; }
 .pps .scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; overscroll-behavior-x: none; }
 .pps svg { display: block; }
-/* the program editor (✎): the schedule as compact text, one line per rank */
-.pps .ped { margin: 0 0 8px; }
-.pps .ped textarea { width: 100%; box-sizing: border-box; font: 11px ui-monospace, monospace;
-  color: #0b0b0b; border: 1px solid #c3c2b7; border-radius: 4px; padding: 4px 6px; resize: vertical; }
-.pps .pedb { display: flex; gap: 6px; align-items: center; margin-top: 2px; }
-.pps .pedb button { font: 11px ui-monospace, monospace; padding: 1px 10px; border: 1px solid #c3c2b7;
-  border-radius: 4px; background: #fff; cursor: pointer; }
-.pps .phint { font-size: 10.5px; color: #898781; }
-.pps .pwarn { font-size: 11px; color: #b05f00; }
-.pps .pwarn:not(:empty) { margin: 0 0 6px; }
 `;
 class Dsv3PpSchedule extends HTMLElement {
   connectedCallback() {
     this._sig = '';
     this._m = this.getAttribute('mb') === 'auto' ? 'auto' : +(this.getAttribute('mb') ?? 64);
-    this._prog = 'official';   // drawing engine: official DualPipeV | greedy | custom (strip-local; the model is untouched)
+    this._prog = 'official';   // schedule family (strip-local; the model is untouched)
     const style = document.createElement('style'); style.textContent = PPS_CSS;
     this._root = el('div', 'pps');
     this._top = el('div', 'top');
@@ -3068,10 +3058,7 @@ class Dsv3PpSchedule extends HTMLElement {
       const v = Math.min(l.pp - 1, Math.max(0, l.stage + d));
       if (l.stage !== v) l.setLocal(() => { l.stage = v; });
     });
-    this._ed = el('div', 'ped');       // the program editor (hidden until ✎)
-    this._ed.style.display = 'none';
-    this._warn = el('div', 'pwarn');   // custom-program gap callouts
-    this._root.append(this._top, this._ed, this._warn, this._scr);
+    this._root.append(this._top, this._scr);
     this.append(style, this._root);
     const lid = this.getAttribute('layer');
     if (!lid) { this.sync(); return; }
@@ -3148,62 +3135,40 @@ class Dsv3PpSchedule extends HTMLElement {
     for (const o of ['auto', 4, 8, 16, 32, 64, 128]) msel.append(new Option(o, o));
     msel.value = String(this._m);
     msel.onchange = () => { this._m = msel.value === 'auto' ? 'auto' : +msel.value; this._sig = ''; this.sync(); };
-    // the drawing PROGRAM: the official DualPipeV choreography (when the
-    // config is DualPipeV-shaped), the plain greedy engine, or a custom
-    // program written in the compact notation (✎). Strip-local: the memory
-    // model charges the in-flight law either way.
-    const D2 = vpp * pp, m2 = sched === 'one' ? 1 : this._m === 'auto' ? D2 + 4 : this._m;
-    const canOff = sched === '1f1b' && vpp === 2 && fold === 'reflect' && pp > 1 && m2 >= 2 * pp;
-    const cur = this._prog === 'custom' && this._custom ? 'custom'
-      : canOff && this._prog !== 'greedy' ? 'official' : 'greedy';
-    const opts = [...(canOff ? [['official', 'DSv3']] : []), ['greedy', 'greedy'],
-      ...(cur === 'custom' ? [['custom', 'custom']] : [])];
-    const pw2 = seg(opts, cur, (k) => { this._prog = k; this._sig = ''; this.sync(); });
-    for (const [b2, [k]] of [...pw2.children].map((x, i2) => [x, opts[i2]]))
-      b2.title = { official: 'the official DualPipeV program (deepseek-ai/DualPipe): zero-bubble B/W split, fused F&B steady state',
-        greedy: 'plain engine: each rank greedily runs its chunk queues, 1F1B admission per virtual stage',
-        custom: 'your program, as written in the editor' }[k];
-    const edb = document.createElement('button');
-    edb.textContent = '✎'; edb.type = 'button'; edb.dataset.knob = 'edit';
-    edb.title = 'edit this schedule as text — one line per rank; F0 F1 forwards, B1 full backward, b1+W1 the zero-bubble halves, F0&B1 an overlapped block, (…)xN repeats';
-    edb.onclick = () => this._toggleEditor();
-    for (const [n, e2] of [['pp', stp], ['sched', sw], ['vpp', vw], ['fold', fw], ['mb', msel], ['prog', pw2]])
+    // the schedule FAMILY (drawing engine, strip-local — the memory model
+    // charges the in-flight law regardless): the plain pipeline offers the
+    // textbook set (1F1B · GPipe · a ZB1P-style zero-bubble split); the
+    // DualPipeV shape offers DSv3's official program vs the greedy engine
+    const { canOff, mode, plain } = this._mode(pp, sched, vpp, fold);
+    const opts = canOff ? [['official', 'DSv3'], ['greedy', 'greedy']]
+      : plain ? [['greedy', '1F1B'], ['zb1p', 'ZB1P'], ['gpipe', 'GPipe']] : [];
+    const TITLES = {
+      official: 'the official DualPipeV program (deepseek-ai/DualPipe): zero-bubble b/W split, fused F&B steady state',
+      greedy: canOff ? 'plain engine: each rank greedily runs its chunk queues, 1F1B admission per virtual stage'
+        : 'the textbook 1F1B (PipeDream-flush): pp−s warmup forwards, then strict one-forward-one-backward',
+      zb1p: 'zero-bubble, ZB1P-style: backward splits into input-grad b (one slot) + weight-grad W, and W fills what would be bubbles — same stash residency as 1F1B',
+      gpipe: 'the GPipe textbook baseline: all forwards, flush, all backwards — every stage stashes ALL m microbatches',
+    };
+    for (const [n, e2] of [['pp', stp], ['sched', sw], ['vpp', vw], ['fold', fw], ['mb', msel]])
       e2.dataset.knob = n;
     g.append(row(txt('PP'), stp),
-      row(txt('sched'), sw, txt('VPP'), vw, fw, txt('mb'), msel),
-      row(txt('program'), pw2, edb));
+      row(txt('sched'), sw, txt('VPP'), vw, fw, txt('mb'), msel));
+    if (opts.length) {
+      const pw2 = seg(opts, mode, (k) => { this._prog = k; this._sig = ''; this.sync(); });
+      for (const [b2, [k]] of [...pw2.children].map((x, i2) => [x, opts[i2]])) b2.title = TITLES[k];
+      pw2.dataset.knob = 'prog';
+      g.append(row(txt('program'), pw2));
+    }
     this._ctl.append(g);
   }
-  _toggleEditor() {
-    const open = this._ed.style.display === 'none';
-    if (!open) { this._ed.style.display = 'none'; return; }
-    this._ed.innerHTML = '';
-    const { pp } = this.cfg();
-    const ta = document.createElement('textarea');
-    ta.value = this._progText(this._cells ?? [], this._stagesOf ?? []);
-    ta.rows = Math.min(10, Math.max(4, pp)); ta.spellcheck = false;
-    const err = el('div', 'pwarn');
-    const apply = document.createElement('button');
-    apply.textContent = 'apply'; apply.type = 'button';
-    apply.onclick = () => {
-      const r2 = this._parseProg(ta.value, pp, this._stagesOf ?? []);
-      if (r2.errs) { err.textContent = `⚠ ${r2.errs.slice(0, 3).join(' · ')}`; return; }
-      err.textContent = '';
-      this._custom = { prog: r2.prog, sig: this._cfgSig() };
-      this._prog = 'custom'; this._sig = ''; this.sync();
-    };
-    const close = document.createElement('button');
-    close.textContent = 'close'; close.type = 'button';
-    close.onclick = () => { this._ed.style.display = 'none'; };
-    const hint = el('span', 'phint');
-    hint.textContent = 'one line per rank · F0/F1 fwd of a chunk · B1 full bwd · b1 + W1 the zero-bubble halves · F0&B1 fused · (…)xN';
-    const btns = el('div', 'pedb'); btns.append(apply, close, hint);
-    this._ed.append(ta, btns, err);
-    this._ed.style.display = '';
-  }
-  _cfgSig() {
-    const { pp, sched, vpp, fold } = this.cfg();
-    return `${pp}|${sched}|${vpp}|${fold}|${this._m}`;
+  // which engines this shape supports, and which one is active
+  _mode(pp, sched, vpp, fold) {
+    const m = sched === 'one' ? 1 : this._m === 'auto' ? vpp * pp + 4 : this._m;
+    const canOff = sched === '1f1b' && vpp === 2 && fold === 'reflect' && pp > 1 && m >= 2 * pp;
+    const plain = sched === '1f1b' && vpp === 1 && pp > 1;
+    const mode = canOff ? (this._prog === 'greedy' ? 'greedy' : 'official')
+      : plain && ['gpipe', 'zb1p'].includes(this._prog) ? this._prog : 'greedy';
+    return { canOff, plain, mode, m };
   }
   cfg() {
     const l = this._layer;
@@ -3222,11 +3187,6 @@ class Dsv3PpSchedule extends HTMLElement {
     const grew = this._sig.split('|').slice(0, 2).join('|') !== `${pp}|${sched}`;
     const prevH = this._sig && grew ? this._scr.getBoundingClientRect().height : 0;
     this._sig = sig;
-    if (this._custom && this._custom.sig !== this._cfgSig()) {
-      this._custom = null;
-      if (this._prog === 'custom') this._prog = 'official';
-      this._ed.style.display = 'none';
-    }
     this.controls(pp, sched, stage, vpp, fold);
     this.draw(pp, sched, stage, vpp, fold);
     if (prevH) {   // animate the reflow: same deterministic 12-frame ease-out
@@ -3331,80 +3291,6 @@ class Dsv3PpSchedule extends HTMLElement {
     const stalled = prog.reduce((t, q) => t + (q.ops.length - q.i), 0);
     return { cells, stalled };
   }
-  // ---- the compact program notation -----------------------------------------
-  // One line per rank; each token is the NEXT microbatch of a chunk stream:
-  //   F0 F1 …  forward of chunk 0/1 (a rank's chunks, in vstagesOf order)
-  //   B1       full backward (two slots)
-  //   b1       zero-bubble input-grad half (one slot; queues its W)
-  //   W1       the deferred weight-grad half (one slot; pops that queue)
-  //   F0&B1    an overlapped F+B block (three slots, drawn flush)
-  //   tokx4 / (tok tok)x4   repetition
-  // Microbatch indices are implicit (each stream counts up), which is what
-  // keeps the notation compact — and honest: a program IS just an op order.
-  _progText(cells, stagesOf) {
-    const lines = [];
-    for (let r = 0; r < stagesOf.length; r++) {
-      const cs = cells.filter((c) => c.s === r).sort((a, b) => a.t0 - b.t0 || (a.fuse ?? 0) - (b.fuse ?? 0));
-      const toks = [];
-      for (let i = 0; i < cs.length; i++) {
-        const c = cs[i], ci = stagesOf[r].indexOf(c.v);
-        if (c.fuse === 1) { const b = cs[++i]; toks.push(`F${ci}&B${stagesOf[r].indexOf(b.v)}`); }
-        else if (c.ph === 'W') toks.push(`W${ci}`);
-        else if (c.ph === 'B') toks.push(`${c.t1 - c.t0 === 1 ? 'b' : 'B'}${ci}`);
-        else toks.push(`F${ci}`);
-      }
-      const rle = [];
-      for (const t of toks) {
-        const last = rle[rle.length - 1];
-        if (last && last.t === t) last.n++; else rle.push({ t, n: 1 });
-      }
-      lines.push(`s${r}: ` + rle.map((e) => e.n > 1 ? `${e.t}x${e.n}` : e.t).join(' '));
-    }
-    return lines.join('\n');
-  }
-  _parseProg(text, pp, stagesOf) {
-    const lines = text.split('\n').map((ln) => ln.replace(/^\s*s?\d+\s*:/, '').trim()).filter(Boolean);
-    if (lines.length !== pp) return { errs: [`${lines.length} rank lines for PP${pp} — one line per rank`] };
-    const errs = [], prog = [];
-    for (let r = 0; r < pp; r++) {
-      const ops = [], fC = [], bC = [], wq = stagesOf[r].map(() => []);
-      const vOf = (ci) => stagesOf[r][ci];
-      // expand (…)xN groups, then per-token xN
-      const flat = [];
-      const raw = lines[r].match(/\([^)]*\)x\d+|\S+/g) ?? [];
-      for (const tk of raw) {
-        const g = /^\((.*)\)x(\d+)$/.exec(tk);
-        if (g) { for (let i = 0; i < +g[2]; i++) flat.push(...g[1].trim().split(/\s+/)); }
-        else flat.push(tk);
-      }
-      for (const tk0 of flat) {
-        const m2 = /^([FbBW])(\d)?(?:&B(\d)?)?(?:x(\d+))?$/.exec(tk0);
-        if (!m2 || (m2[3] != null && m2[1] !== 'F')) { errs.push(`s${r}: can't read “${tk0}”`); continue; }
-        const [, ph, c0 = '0', cB, rep = '1'] = m2;
-        const ci = +c0;
-        if (vOf(ci) === undefined || (cB != null && vOf(+cB) === undefined)) {
-          errs.push(`s${r}: “${tk0}” names a chunk this rank doesn't host (it has ${stagesOf[r].length})`); continue;
-        }
-        for (let i = 0; i < +rep; i++) {
-          if (cB != null) {
-            ops.push({ ph: 'FB', vF: vOf(ci), mbF: fC[ci] = (fC[ci] ?? 0), vB: vOf(+cB), mbB: bC[+cB] = (bC[+cB] ?? 0) });
-            fC[ci]++; bC[+cB]++;
-          } else if (ph === 'F') ops.push({ ph: 'F', v: vOf(ci), mb: (fC[ci] = (fC[ci] ?? 0) + 1) - 1 });
-          else if (ph === 'W') {
-            const e = wq[ci].shift();
-            if (!e) { errs.push(`s${r}: W${ci} with no deferred weight grad pending (write b${ci} first)`); continue; }
-            ops.push({ ph: 'W', v: e.v, mb: e.mb });
-          } else {
-            const zb = ph === 'b', mb = (bC[ci] = (bC[ci] ?? 0) + 1) - 1;
-            ops.push({ ph: 'B', v: vOf(ci), mb, zb });
-            if (zb) wq[ci].push({ v: vOf(ci), mb });
-          }
-        }
-      }
-      prog.push({ ops, i: 0 });
-    }
-    return errs.length ? { errs } : { prog };
-  }
   draw(pp, sched, stage, vpp = 1, fold = 'reflect') {
     this._pinHl = null;
     // one chain of VIRTUAL stages with 1F1B admission per stage, vpp·pp deep;
@@ -3417,29 +3303,30 @@ class Dsv3PpSchedule extends HTMLElement {
     const D = vpp * pp;
     const m = sched === 'one' ? 1 : this._m === 'auto' ? D + 4 : this._m;
     const stagesOf = Array.from({ length: pp }, (_, r) => vstagesOf(r, pp, vpp, fold));
-    // which ENGINE draws: the official DualPipeV program (when the config is
-    // DualPipeV-shaped), the generic greedy engine, or a reader-written
-    // program — a strip-local choice; the memory model charges the law
-    // (inflightOf) regardless, and the braid shows what the DRAWING holds
-    const canOfficial = sched === '1f1b' && vpp === 2 && fold === 'reflect' && pp > 1 && m >= 2 * pp;
-    const mode = this._prog === 'custom' && this._custom ? 'custom'
-      : canOfficial && this._prog !== 'greedy' ? 'official' : 'greedy';
+    // which ENGINE draws — a strip-local choice; the memory model charges
+    // the law (inflightOf) regardless, and the braid shows what the DRAWING
+    // holds (the peak label calls out any difference)
+    const { mode } = this._mode(pp, sched, vpp, fold);
     const OFFICIAL = mode === 'official';
-    let stalled = 0;
-    const qs = mode !== 'greedy' ? [] : Array.from({ length: D }, (_, v) => {
-      const wu = Math.min(D - 1 - v, m); const items = [];
+    // queue admission per virtual stage: 1F1B interleaves after pp−s warmup
+    // forwards; GPipe admits ALL m forwards, flushes, then all backwards
+    const qs = OFFICIAL ? [] : Array.from({ length: D }, (_, v) => {
+      const wu = mode === 'gpipe' ? m : Math.min(D - 1 - v, m); const items = [];
       for (let j = 0; j < wu; j++) items.push(['F', j]);
       for (let j = wu; j < m; j++) items.push(['F', j], ['B', j - wu]);
       for (let j = Math.max(m - wu, 0); j < m; j++) items.push(['B', j]);
       return { items, i: 0 };
     });
     const done = new Map();
-    let cells = [];
-    if (OFFICIAL) cells = this._officialDPV(pp, m);
-    else if (mode === 'custom') ({ cells, stalled } = this._resolveProg(
-      this._custom.prog.map((q) => ({ ...q, i: 0 })), pp, D));
+    let cells = OFFICIAL ? this._officialDPV(pp, m) : [];
+    // ZB1P-style zero-bubble: backward splits into b (input grads, one slot,
+    // scheduled like 1F1B's B) + W (weight grads, one slot, NO cross-rank
+    // dep) — W runs exactly when the rank would otherwise sit idle, which is
+    // the zero-bubble idea in one sentence
+    const ZB = mode === 'zb1p';
+    const wPool = Array.from({ length: pp }, () => []);
     const rankT = Array(pp).fill(0);
-    let progress = mode === 'greedy';
+    let progress = !OFFICIAL;
     while (progress) {
       progress = false;
       for (let r = 0; r < pp; r++) {
@@ -3459,15 +3346,21 @@ class Dsv3PpSchedule extends HTMLElement {
             || (cand.ready === best.ready && cand.ph === 'B' && best.ph === 'F')
             || (cand.ready === best.ready && cand.ph === best.ph && cand.v > best.v)) best = cand;
         }
+        if (ZB && wPool[r].length && (!best || best.ready > rankT[r])) {
+          // the rank would idle: burn a deferred weight grad instead
+          const e = wPool[r].shift();
+          cells.push({ s: r, v: e.v, mb: e.mb, ph: 'W', chunk: Math.floor(e.v / pp), t0: rankT[r], t1: rankT[r] + 1 });
+          rankT[r] += 1; progress = true; continue;
+        }
         if (!best) continue;
-        const t0 = best.ready, t1 = t0 + (best.ph === 'F' ? 1 : 2);
+        const t0 = best.ready, t1 = t0 + (best.ph === 'F' || ZB ? 1 : 2);
         cells.push({ s: r, v: best.v, mb: best.mb, ph: best.ph, chunk: Math.floor(best.v / pp), t0, t1 });
         done.set(`${best.ph}${best.mb}@${best.v}`, t1);
+        if (ZB && best.ph === 'B') wPool[r].push({ v: best.v, mb: best.mb });
         rankT[r] = t1; best.q.i++; progress = true;
       }
     }
     const T = Math.max(1, ...cells.map(c => c.t1));
-    this._cells = cells; this._stagesOf = stagesOf;   // the editor serializes what is drawn
     const U = 10, RH = 14, GAP = 2, GUT = 34;   // slot width / row height / row gap / stage gutter
 
     // ---- in-flight lanes for the SELECTED stage: each stash is one bar —
@@ -3536,7 +3429,7 @@ class Dsv3PpSchedule extends HTMLElement {
     // ---- the in-flight section (same svg → the horizontal scroll is shared)
     const IFm = peakN / vpp;
     const law = inflightOf(sched, stage, pp, vpp, fold);
-    const lawTag = mode === 'custom' && Math.abs(IFm - law) > 1e-9 ? ` — the model charges ${law}` : '';
+    const lawTag = Math.abs(IFm - law) > 1e-9 ? ` — the model charges ${law} (its 1F1B law)` : '';
     P.push(`<text x="0" y="${laneY0 - 7}" font-size="10" fill="#52514e">in flight on s${Math.min(stage, pp - 1)}`
       + ` — each bar: the F that stashes a microbatch, held (amber) until the B that frees it.`
       + ` The peak is what the memory bars charge</text>`);
@@ -3568,27 +3461,14 @@ class Dsv3PpSchedule extends HTMLElement {
     P.push(`<text data-peak="${IFm}" x="${bx + 7}" y="${(by0 + by1) / 2 + 3.5}" font-size="10" font-weight="600" fill="#0b0b0b" stroke="#fcfcfb" stroke-width="3" paint-order="stroke" pointer-events="none">${IFm} mb in flight (peak)${vpp > 1 ? ` = ${peakN} chunks` : ''}${lawTag}</text>`);
     P.push('</svg>');
     const ppTag = this._layer ? '' : `PP${pp} · `;   // the knob group already names PP
-    // a custom program is audited softly: it draws whatever it says, and the
-    // gaps (stalls, unfinished microbatches) are NAMED instead of hidden
-    if (mode === 'custom') {
-      const want = D * m; let nF = 0, nBi = 0, nBw = 0;
-      for (const c of cells) {
-        if (c.ph === 'F') nF++;
-        else if (c.ph === 'W') nBw++;
-        else if (c.ph === 'B') { nBi++; if (!c.zb && c.t1 - c.t0 === 2) nBw++; }
-      }
-      const gaps = [];
-      if (stalled) gaps.push(`${stalled} ops never became ready (circular waits) — drawn up to the stall`);
-      if (nF < want) gaps.push(`forwards ${nF}/${want}`);
-      if (nBi < want) gaps.push(`input grads ${nBi}/${want}`);
-      if (nBw < want) gaps.push(`weight grads ${nBw}/${want}`);
-      this._warn.textContent = gaps.length ? `⚠ incomplete program: ${gaps.join(' · ')}` : '';
-    } else this._warn.textContent = '';
-    const vppTag = mode === 'custom'
-      ? 'CUSTOM program (as written below) · F one slot · B two · b/W the zero-bubble halves'
-      : OFFICIAL
+    const vppTag = OFFICIAL
       ? 'DualPipeV (official program) · down-pass chunk light, up-pass dark · F and B drawn touching = one'
         + ' overlapped F&B block · pale dashed W = deferred weight grads (B alone = input grads)'
+      : mode === 'gpipe'
+      ? 'GPipe — all forwards, a flush, all backwards: every stage stashes ALL m microbatches'
+      : mode === 'zb1p'
+      ? 'zero-bubble (ZB1P-style) — backward split: b = input grads (one slot, scheduled like 1F1B), pale'
+        + ' dashed W = weight grads, run exactly where the rank would otherwise idle · same stash residency as 1F1B'
       : vpp > 1
         ? `VPP${vpp} ${fold === 'wrap' ? 'wrap (Megatron interleaving)' : 'reflect'}`
           + ` · each rank runs ${vpp} chunks, later passes darker · chunks scheduled 1F1B`
@@ -3596,7 +3476,7 @@ class Dsv3PpSchedule extends HTMLElement {
         : '';
     this._hd.textContent = sched === 'one'
       ? `${ppTag}one microbatch at a time — an F wave down the stages, then a B wave back up`
-      : vpp > 1
+      : vpp > 1 || mode === 'gpipe' || mode === 'zb1p'
         ? `${ppTag}${m} microbatches shown · ${vppTag}`
         : `${ppTag}1F1B · ${m} microbatches shown — F = forward (one slot), B = backward (two: ~2× the FLOPs)`;
     this._scr.innerHTML = P.join('');
