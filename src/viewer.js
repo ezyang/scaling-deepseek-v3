@@ -3519,7 +3519,7 @@ class Dsv3PpFold extends HTMLElement {
     const SL = 8, STW = 16, BRX = SL + STW + 2, RX0 = BRX + 8;
     const GUT = RX0 + 8 * 1.6 + 22, LX = GUT + 6, X0 = LX + 64;
     const RH = 14, PV = 21, BW = 420;
-    const H = 16 * PV + 4, W = X0 + BW + 60;
+    const H = 16 * PV + 24, W = X0 + BW + 96;   // + the linear axis band (caption rides past its end)
     const rankP = (r) => this.chunks[r].p + this.chunks[15 - r].p;
     const scale = BW / Math.max(...Array.from({ length: 8 }, (_, r) => rankP(r)));
     const wOf = (k) => k.p * scale;
@@ -3591,6 +3591,21 @@ class Dsv3PpFold extends HTMLElement {
       B.push('</g>');
       B.push(`<text x="${(x + w + 4).toFixed(1)}" y="${(y + RH - 3).toFixed(1)}" font-size="9.5" fill="#898781" opacity="${(1 - t).toFixed(2)}">${fmtP(k.p)}</text>`);
       if (!down) B.push(`<text data-ranktotal="${r}" data-params="${rankP(r)}" x="${(x + w + 4).toFixed(1)}" y="${(y + RH - 3).toFixed(1)}" font-size="9.5" fill="#898781" opacity="${t.toFixed(2)}">${fmtP(rankP(r))}</text>`);
+    }
+    // the x-axis: these bars are LINEAR (everything else on the site is
+    // log₂) — ticks say so out loud
+    {
+      const maxP = Math.max(...Array.from({ length: 8 }, (_, r) => rankP(r)));
+      const pow = 10 ** Math.floor(Math.log10(maxP));
+      const step = maxP / pow >= 5 ? 2 * pow : maxP / pow >= 2.5 ? pow : pow / 2;
+      const ay = 16 * PV + 4;
+      B.push(`<line x1="${X0}" y1="${ay}" x2="${X0 + BW}" y2="${ay}" stroke="#c3c2b7" stroke-width="1"/>`);
+      for (let v = 0; v <= maxP; v += step) {
+        const x = X0 + v * scale;
+        B.push(`<line x1="${x.toFixed(1)}" y1="${ay}" x2="${x.toFixed(1)}" y2="${ay + 4}" stroke="#c3c2b7" stroke-width="1"/>`);
+        B.push(`<text x="${x.toFixed(1)}" y="${ay + 14}" text-anchor="middle" font-size="9" fill="#898781">${v === 0 ? '0' : fmtP(v)}</text>`);
+      }
+      B.push(`<text x="${X0 + BW + 10}" y="${ay + 14}" font-size="9" fill="#52514e">params · LINEAR</text>`);
     }
     // whole-row hitboxes (stack, label, and bar band alike — easy hovering)
     for (let row = 0; row < 16; row++)

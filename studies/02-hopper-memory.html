@@ -137,26 +137,29 @@
     href="https://hackmd.io/@ufotalent/r1lVXsa9Jg">DualPipeV</a>, a variation
     of the DualPipe schedule that DeepSeek-V3 was trained on.</p>
 
-    <p>Let's briefly recap the important facts about DualPipeV.
+    <p>Let's briefly recap the important facts about DualPipeV.  DualPipeV
+    belongs to a family of what we call "zero bubble" schedules, where weight
+    gradient computation, which is not critical path in backward computation,
+    is split out from the rest of the gradient computation and used to fill in
+    bubbles (dead time) that would occur when a PP rank runs out of work to
+    do.  The "V" in its name refers to the fact that each PP rank is assigned two
+    chunks of the model, and the execution of a single microbatch goes "down" and
+    then "up" in a V shape.
     </p>
 
-    <p>The first subtlety is that while pipeline parallelism would prefer
-    for every stage to have exactly the same work, we have to account for imbalance
-    that arises from the embedding and the LM head, as well as in DeepSeek-V3 the
-    imbalance that arises from the three initial dense transformer blocks.  One reasonable
-    assignment of layers would be to assign four layers for all of the intermediate stages,
-    with the very first stage taking care of the embedding, dense blocks and LM head.
-    The first PP rank needs extra memory for the embedding and LM head weights, but it's
-    compensated for by needing less saved activations (because there are less--and cheaper--transformer
-    blocks in this stage.)</p>
+    TODO(fable) diagram: the single mb pipeline schedule, showing the V shape
 
-    <dsv3-pp-fold style="min-height:409px"></dsv3-pp-fold>
+    <p>When we're computing the memory usage of DeepSeek-V3 with DualPipeV,
+    we have to account for imbalance that arises from the embedding and the LM
+    head, as well the imbalance that arises from DeepSeek-V3's three initial
+    dense transformer blocks.  One reasonable assignment of layers would be to
+    assign four layers for all of the intermediate stages, with the very first
+    stage taking care of the embedding, dense blocks and LM head.  The first
+    PP rank needs extra memory for the embedding and LM head weights, but it's
+    compensated for by needing less saved activations (because there are
+    less--and cheaper--transformer blocks in this stage.)</p>
 
-    TODO(fable): diagram showing how the the pipeline stage splits affects how parameters are
-    distributed over PP ranks.  It should support two views with animations between them:
-    virtual ranks (16 "ranks") and physical ranks (8 ranks).  To the left there is a
-    replica of the embedding - dense block - moe block - etc diagram and Mousing over a bar
-    changes this diagram to show what's on this particular rank.
+    <dsv3-pp-fold style="min-height:429px"></dsv3-pp-fold>
 
     <p>The second is microbatch execution and saved activations....</p>
 
