@@ -3645,7 +3645,7 @@ class Dsv3PpFold extends HTMLElement {
       const c = k.c, down = c < 8, r = this._rankOf(c);
       const x = down ? X0 : lerp(X0, X0 + wOf(this.chunks[r]) + 3);
       const y = down ? yRow(c) : lerp(yRow(c), yRow(r));
-      const w = wOf(k), fill = down ? '#9cc3ec' : '#2a78d6';
+      const w = wOf(k);
       const hot2 = hv != null && (folded ? this._rankOf(c) === hvRank : c === hv);
       B.push(`<g data-chunk="${c}" data-params="${k.p}">`);
       // one segment per SLOT (emb · layers · head), hairline gaps — the bar
@@ -3660,16 +3660,22 @@ class Dsv3PpFold extends HTMLElement {
         // dense-vs-MoE distinction, carried into the bar)
         const layer = k.lo + (i2 - (k.emb ? 1 : 0));
         const dense = !vocab && layer < 3;
-        const segFill = dense ? (down ? '#6fa3d9' : '#1a5cad') : fill;
+        // color = DEPTH in the chain (a stepwise gradient, slot 0 light →
+        // slot 62 dark): the continuous version of the down/up-pass split.
+        // Folded, a rank's two pieces wear complementary shades, and rank 0
+        // holds both extremes — the V as a color story.
+        const gT = (chunkSlots(k).s0 + i2) / 62;
+        const segFill = fitColor('#bcd8f3', '#134a8e', gT);
+        const ink = gT < 0.5 ? '#0b3d75' : '#dcebfa';
         B.push(`<rect x="${sx.toFixed(1)}" y="${y.toFixed(1)}" width="${Math.max(0.5, w2 - 1).toFixed(1)}" height="${RH}" fill="${segFill}"/>`);
         // only the ODD segments name themselves: emb/head (below) and the
         // dense blocks — ordinary MoE layers stay blank (they're the norm)
         if (dense && w2 > 30)
-          B.push(`<text x="${(sx + w2 / 2).toFixed(1)}" y="${y + RH - 4}" text-anchor="middle" font-size="8.5" fill="${down ? '#0b3d75' : '#eaf2fb'}">dense</text>`);
+          B.push(`<text x="${(sx + w2 / 2).toFixed(1)}" y="${y + RH - 4}" text-anchor="middle" font-size="8.5" fill="${ink}">dense</text>`);
         if (vocab) {
           B.push(`<rect x="${sx.toFixed(1)}" y="${(y + 1).toFixed(1)}" width="${Math.max(0.5, w2 - 2).toFixed(1)}" height="${RH - 2}" fill="#fff" opacity="0.35"/>`);
-          B.push(`<rect x="${sx.toFixed(1)}" y="${y.toFixed(1)}" width="${Math.max(0.5, w2 - 1).toFixed(1)}" height="${RH}" fill="none" stroke="${down ? '#2a78d6' : '#0b3d75'}" stroke-dasharray="2.5 2"/>`);
-          if (w2 > 30) B.push(`<text x="${(sx + w2 / 2).toFixed(1)}" y="${y + RH - 4}" text-anchor="middle" font-size="8.5" fill="${down ? '#0b3d75' : '#fff'}">${k.emb && i2 === 0 ? 'emb' : 'head'}</text>`);
+          B.push(`<rect x="${sx.toFixed(1)}" y="${y.toFixed(1)}" width="${Math.max(0.5, w2 - 1).toFixed(1)}" height="${RH}" fill="none" stroke="${gT < 0.5 ? '#2a78d6' : '#0b3d75'}" stroke-dasharray="2.5 2"/>`);
+          if (w2 > 30) B.push(`<text x="${(sx + w2 / 2).toFixed(1)}" y="${y + RH - 4}" text-anchor="middle" font-size="8.5" fill="${ink}">${k.emb && i2 === 0 ? 'emb' : 'head'}</text>`);
         }
         sx += w2;
       }
