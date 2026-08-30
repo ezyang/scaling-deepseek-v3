@@ -3111,57 +3111,29 @@ class Dsv3PpSchedule extends HTMLElement {
   // powers of two, stage select with layer-assignment labels, 1F1B/×1 mb
   // segments) — changes drive the LAYER (l.setLocal), and the layer's
   // 'recipe' event circles back to redraw both widgets in sync.
+  // the strip's only OWN control: how many microbatches to DRAW. It still
+  // FOLLOWS the layer's pp/sched/stage — but replicating those knobs here
+  // stopped paying once PP became {1, 8} and the schedule became DualPipeV
+  // (the ×1 mb wave still draws when the layer's sched knob says so)
   controls(pp, sched, stage, vpp, fold) {
     const l = this._layer;
     this._ctl.innerHTML = '';
     if (!l) return;
     const g = el('span', 'pargrp');
-    const lab = el('div', 'parlab'); lab.textContent = 'pipeline'; g.append(lab);
+    const lab = el('div', 'parlab'); lab.textContent = 'drawn'; g.append(lab);
     const row = (...kids) => { const d = el('div', 'parrow'); d.append(...kids); return d; };
     const txt = (t) => { const sp = el('span'); sp.style.cssText = 'color:#52514e;font-size:11px;'; sp.textContent = t; return sp; };
-    const mkstp = (opts, cur, set, max = Infinity) => {
-      const w2 = el('span', 'stp');
-      const val = document.createElement('select'); val.className = 'v';
-      for (const o of opts.filter((o) => o <= max)) val.append(new Option(o, o));
-      val.value = String(cur);
-      val.onchange = () => set(+val.value);
-      const i = opts.indexOf(cur);
-      const btn = (t, j) => {
-        const b = document.createElement('button');
-        b.textContent = t; b.type = 'button';
-        b.disabled = j < 0 || j >= opts.length || opts[j] > max;
-        if (!b.disabled) b.onclick = () => set(opts[j]);
-        return b;
-      };
-      w2.append(btn('−', i - 1), val, btn('+', i + 1));
-      return w2;
-    };
-    const stp = mkstp(PP_CHOICES, pp, (v) => l.setLocal(() => l._setPP(v)));
-    const seg = (opts, cur, set) => {
-      const w2 = el('span', 'stp');
-      for (const [k, t] of opts) {
-        const b = document.createElement('button');
-        b.textContent = t; b.type = 'button';
-        if (cur === k) b.classList.add('on');
-        else b.onclick = () => set(k);
-        w2.append(b);
-      }
-      return w2;
-    };
-    const sw = seg([['1f1b', 'DualPipeV'], ['one', '×1 mb']], sched, (k) => l.setLocal(() => { l.sched = k; }));
-    // microbatches DRAWN — a strip-local knob (the memory model needs no m;
-    // its 1F1B law assumes m ≥ pp): a real step's worth by default, 'auto'
-    // = just enough to reach steady state (depth + 4)
+    // microbatches DRAWN — strip-local (the memory model needs no m; its
+    // law assumes m ≥ pp): a real step's worth by default, 'auto' = just
+    // enough to reach steady state (depth + 4)
     const msel = document.createElement('select'); msel.className = 'v';
     msel.style.borderLeft = msel.style.borderRight = '1px solid #c3c2b7';
     msel.style.borderRadius = '4px';
     for (const o of ['auto', 4, 8, 16, 32, 64, 128]) msel.append(new Option(o, o));
     msel.value = String(this._m);
     msel.onchange = () => { this._m = msel.value === 'auto' ? 'auto' : +msel.value; this._sig = ''; this.sync(); };
-    for (const [n, e2] of [['pp', stp], ['sched', sw], ['mb', msel]])
-      e2.dataset.knob = n;
-    g.append(row(txt('PP'), stp),
-      row(txt('sched'), sw, txt('mb'), msel));
+    msel.dataset.knob = 'mb';
+    g.append(row(txt('mb'), msel));
     this._ctl.append(g);
   }
   cfg() {

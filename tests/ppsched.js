@@ -15,8 +15,9 @@ const stps = () => ['gpus', 'pp', 'sched', 'ep', 'zero']
 const pp = l().pp;
 T.log('pp', pp);
 T.check('opens on the official DualPipeV program (W cells drawn)', cells('W').length > 0, cells('W').length);
-T.check('no schedule-family or VPP knobs on the strip', !w().querySelector('[data-knob="prog"]')
-  && !w().querySelector('[data-knob="vpp"]') && !w().querySelector('[data-knob="fold"]'), '');
+T.check('the mb knob is the strip\'s ONLY control (no PP/sched/VPP replicas)',
+  !w().querySelector('[data-knob="pp"]') && !w().querySelector('[data-knob="sched"]')
+  && !w().querySelector('[data-knob="vpp"]') && !!w().querySelector('[data-knob="mb"]'), '');
 // highlight row follows the layer's stage
 const hl = () => w().querySelector('rect.stghl');
 const rowY = (s) => s * 16;
@@ -31,7 +32,7 @@ const hdr = w().querySelector('.hd').textContent;
 T.check('header describes the wave', hdr.includes('wave'), hdr);
 // in-flight section: one lane per concurrently-held stash, peak = the law
 {
-  const back1 = [...w().querySelectorAll('.stp[data-knob="sched"] button')].find(b => b.textContent === 'DualPipeV');
+  const back1 = [...l().parentElement.querySelectorAll('.stp[data-knob="sched"] button')].find(b => b.textContent === 'DualPipeV');
   back1.click(); await T.tick(500);
   const expect = l().pp + 0.5;   // uniform PP+½ under the V
   T.check('peak label matches the law', +w().querySelector('text[data-peak]').dataset.peak === expect, '');
@@ -54,17 +55,14 @@ T.check('header describes the wave', hdr.includes('wave'), hdr);
   T.check('second click releases', cellsOf(3).every(r => r.style.opacity === '')
     && !lane7.classList.contains('pin'), '');
 }
-// ---- the widget's own replicated controls drive the LAYER (two-way link)
-const wctl = () => w().querySelector('.pargrp');
-const wstp = () => wctl().querySelector('.stp');
-T.check('widget wears the pipeline knob group', !!wctl() && wctl().textContent.includes('PP'), '');
-wstp().querySelectorAll('button')[0].click(); await T.tick(600);   // widget's PP − (8 → 1: {1,8} only)
-T.check('widget PP− drops the layer to PP1', l().pp === 1, l().pp);
-T.check('PP1 draws the trivial single-row strip', w().querySelectorAll('rect.stghit').length === 1, '');
-wstp().querySelectorAll('button')[1].click(); await T.tick(600);   // back to PP8
+// ---- the strip still FOLLOWS the layer's knobs (one-way now)
+const lpp = () => l().parentElement.querySelector('.stp[data-knob="pp"]');
+lpp().querySelectorAll('button')[0].click(); await T.tick(600);   // layer PP − (8 → 1)
+T.check('layer PP1 draws the trivial single-row strip', w().querySelectorAll('rect.stghit').length === 1, '');
+lpp().querySelectorAll('button')[1].click(); await T.tick(600);   // back to PP8
 T.check('back to PP8: the official program again', l().pp === 8 && cells('W').length > 0, '');
 // the sX axis is the stage picker: click a gutter row
-T.check('no stage dropdown on the strip (axis picks)', !wctl().querySelector('[data-knob="stage"]'), '');
+T.check('no stage dropdown on the strip (axis picks)', !w().querySelector('[data-knob="stage"]'), '');
 w().querySelector('rect.stghit[data-stage="0"]').dispatchEvent(new MouseEvent('click', { bubbles: true }));
 await T.tick(600);
 T.check('clicking the s0 gutter moves the layer', l().stage === 0, l().stage);

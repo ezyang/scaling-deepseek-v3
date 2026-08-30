@@ -125,10 +125,10 @@ One row per PP stage, time flowing right; F cells one slot, B cells two
 (backward ≈ 2× forward FLOPs), every cell numbered with its microbatch.
 Colors follow the byte language (F stashes activations = amber; B consumes
 them into gradients = orange). Bound to a local-lens layer it follows the
-layer's PP / schedule / stage (the selected stage's row is tinted) AND wears
-its own replica of the pipeline knob group — the PP stepper and the sched
-segment — whose changes drive the layer (`layer.setLocal`), so
-either widget's controls move both. The sX gutter labels ARE the stage
+layer's PP / schedule / stage (the selected stage's row is tinted). Its
+only OWN control is the drawn-microbatch knob — the PP/sched replicas
+stopped paying once PP became {1, 8} and the schedule became DualPipeV
+(the ×1 mb wave still draws when the layer's sched knob says so). The sX gutter labels ARE the stage
 picker (whole-gutter hit rects, `.stghit`; the selected row's label is bold
 and its row tinted; after a click the strip holds focus so ↑/↓ walk the
 stages, clamped at the ends) — no stage dropdown on the strip. The scroll
