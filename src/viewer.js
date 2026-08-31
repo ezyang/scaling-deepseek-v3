@@ -2165,17 +2165,38 @@ export class Dsv3Layer extends HTMLElement {
       : lerpQ(flopEq(flopsTok, dtp), flopEq(flopsTok, dt2));
     const barColor = (dt2, dtp) => !VQ || !dtp || dtp === dt2 ? (DT_STYLE[dt2] ?? '#c3c2b7')
       : fitColor(DT_STYLE[dtp] ?? '#c3c2b7', DT_STYLE[dt2] ?? '#c3c2b7', VQ.t);
-    const barRows = (flopsTok, dt2, maxW, dtp) => !flopsTok || !this._ctl.quant || dt2 === 'vector' ? 1
-      : Math.max(1, Math.ceil(eqT(flopsTok, dt2, dtp) * FLOP_PX / maxW));
+    // flopsq (PROTOTYPE): compute as SQUARES, not bars — the squares-for-
+    // linear language inside the op boxes. One square = 20 MFLOP/token
+    // (bf16-equivalent) ≈ 83 µs per 4096-token microbatch at bf16 peak;
+    // sub-square ops wear the hollow trace, the last square is a
+    // partial-width sliver (area exact). Same unit in the tally ribbons.
+    const FSQ = this.hasAttribute('flopsq');
+    const FUNIT = 20e6;
+    const barRows = (flopsTok, dt2, maxW, dtp) => {
+      if (!flopsTok || !this._ctl.quant || dt2 === 'vector') return 1;
+      const eqv = eqT(flopsTok, dt2, dtp);
+      return Math.max(1, FSQ ? Math.ceil(Math.ceil(eqv / FUNIT) / Math.floor(maxW / 6))
+        : Math.ceil(eqv * FLOP_PX / maxW));
+    };
     const barExtra = (flopsTok, dt2, maxW, dtp) => (barRows(flopsTok, dt2, maxW, dtp) - 1) * 6;
     const flopBar = (x, y, flopsTok, dt2, maxW = W - 16, dtp) => {
       if (!flopsTok || !this._ctl.quant) return;
       if (dt2 === 'vector') {   // unpriced fig leaf: bandwidth-bound, and we model no epilogue fusions
-        P.push(`<rect x="${x}" y="${y}" width="5" height="4" fill="#c3c2b7"/>`);
+        P.push(`<rect x="${x}" y="${y}" width="5" height="4" fill="${FSQ ? 'none' : '#c3c2b7'}"${FSQ ? ' stroke="#c3c2b7" stroke-width="0.8" stroke-dasharray="1.5 1"' : ''}/>`);
+        return;
+      }
+      const color = barColor(dt2, dtp);
+      if (FSQ) {
+        const n = eqT(flopsTok, dt2, dtp) / FUNIT, per = Math.floor(maxW / 6);
+        if (n < 1) {   // sub-square: the hollow trace (▫ = nonzero but sub-square)
+          P.push(`<rect x="${x + 0.4}" y="${y + 0.4}" width="4.2" height="3.2" fill="none" stroke="${color}" stroke-width="0.8"/>`);
+          return;
+        }
+        for (let u = 0; u < Math.ceil(n); u++)
+          P.push(`<rect x="${x + (u % per) * 6}" y="${y + Math.floor(u / per) * 6}" width="${(5 * Math.min(1, n - u)).toFixed(2)}" height="4" fill="${color}"/>`);
         return;
       }
       let w = Math.max(1, eqT(flopsTok, dt2, dtp) * FLOP_PX);
-      const color = barColor(dt2, dtp);
       for (let r = 0; w > 0; r++, w -= maxW)
         P.push(`<rect x="${x}" y="${y + r * 6}" width="${Math.min(w, maxW).toFixed(1)}" height="4" fill="${color}"/>`);
     };
@@ -3050,14 +3071,33 @@ export class Dsv3Layer extends HTMLElement {
         `<text class="dims" x="${capX + 3}" y="${cy0 + 1}" fill="#d03b3b">80 GiB</text>`);
       ty = cy0 + 20;
     }
-    T.push(`<text class="grplabel" x="0" y="${ty + 9}">per-layer FLOPs as time at peak — length = time; bf16 fwd+bwd spans the row:</text>`);
+    T.push(`<text class="grplabel" x="0" y="${ty + 9}">per-layer FLOPs as time at peak — ${FSQ
+      ? '▪ = 20 MFLOP/token (bf16-eq) ≈ 83 µs per 4096-token microbatch at peak:'
+      : 'length = time; bf16 fwd+bwd spans the row:'}</text>`);
     ty += 14;
     const DT_ORDER = { bf16: 0, mxfp8: 1, fp32: 2 };
     const ribbon = (label, list, wOf, num) => {
       T.push(`<text class="dims" x="0" y="${ty + 9}">${label}</text>`);
       let cx = TB_X, cy = ty + 3;
+      const sorted = [...list].sort((p, q) => (DT_ORDER[opDt(p.id)] ?? 3) - (DT_ORDER[opDt(q.id)] ?? 3));
+      if (FSQ) {
+        // square runs at the in-box unit (the fwd ribbon = the boxes' squares
+        // laid end to end); per-op counts Bresenham'd over the exact cumulative
+        const per = Math.floor(TB_AVAIL / 6);
+        let cum = 0, drawn = 0;
+        for (const n of sorted) {
+          cum += wOf(n) / FUNIT;
+          const color = barColor(opDt(n.id), opDtP(n.id));
+          for (const upto = Math.round(cum); drawn < upto; drawn++)
+            T.push(`<rect x="${TB_X + (drawn % per) * 6}" y="${cy + Math.floor(drawn / per) * 6}" width="5" height="4" fill="${color}"/>`);
+        }
+        cx = TB_X + (drawn % per) * 6; cy += Math.floor(drawn / per) * 6;
+        T.push(`<text class="dims" x="${(cx + 10).toFixed(1)}" y="${cy + 6}">${num}</text>`);
+        ty = cy + 13;
+        return;
+      }
       // group same-dtype ops so each color is one contiguous run
-      for (const n of [...list].sort((p, q) => (DT_ORDER[opDt(p.id)] ?? 3) - (DT_ORDER[opDt(q.id)] ?? 3))) {
+      for (const n of sorted) {
         let w = wOf(n) * FLOP_PX;
         const color = barColor(opDt(n.id), opDtP(n.id));
         while (w > 0.05) {

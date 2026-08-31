@@ -25,12 +25,17 @@
     <p class="note">The current bar rendering, for comparison:</p>
     <dsv3-pp-fold style="min-height:447px"></dsv3-pp-fold>
 
-    <h2>2 · per-rank compute: eight rectangles of FLOP squares</h2>
-    <p class="note">v2 — each rank is ONE contiguous rectangle (lengths compare
-      directly: no gaps to distort s0 vs the interior). Layer boundaries are
-      the depth-gradient color steps plus ticks below; the head span is dashed
-      above. Squares round to the unit (Bresenham over the exact cumulative).
-      Compute is EP-independent (activated experts) — no knob.</p>
+    <h2>2 · FLOP squares INSIDE the op boxes (the AC diagram, flopsq)</h2>
+    <p class="note">v3 — the real intent: replace the dark time-bars inside the
+      operator boxes with countable FLOP squares. 1 ▪ = 20 MFLOP/token
+      (bf16-equivalent) ≈ 83 µs per 4096-token microbatch at peak; sub-square
+      ops (router, kv down-proj) wear the hollow trace; the tally ribbons are
+      the same squares laid end to end. Flip recompute/marks — squares pour.</p>
+    <dsv3-anatomy style="min-height:820px" layer="sq-ac" controls="marks" recipe="bf16" recompute="dsv3"
+      xlayers="8" xinflight="8.5" xtag="an interior rank of PP8 · DualPipeV steady state" flopsq></dsv3-anatomy>
+
+    <p class="note">Earlier riff, kept for reference — the same unit rolled up
+      per RANK (it surfaced that s0 runs 0.80× an interior rank's compute):</p>
     <dsv3-pp-flops style="min-height:400px"></dsv3-pp-flops>
 
     <h2>3 · full sim without parameter squares (nostrips)</h2>
