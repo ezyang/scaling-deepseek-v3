@@ -90,8 +90,8 @@ T.check('sub-picket GEMMs wear the hollow trace',
   T.check('both rulers present (GiB + GFLOP/token)',
     ribbons(ac).some(t => t.includes('minor tick = 1 GiB')) && ribbons(ac).some(t => t.includes('GFLOP/token')), '');
   // the honesty line: what the ruler does NOT meter, per the CURRENT policy
-  T.check('unmetered-vector line names this policy\'s replays (RoPE always + dsv3\'s norms/SwiGLU)',
-    ribbons(ac).some(t => t.startsWith('not priced') && t.includes('RoPE ×2 (always)')
+  T.check('unmetered-vector line names this policy\'s replays (dsv3: RoPE ×2 + norms + SwiGLU)',
+    ribbons(ac).some(t => t.startsWith('not priced') && t.includes('RoPE ×2')
       && t.includes('RMSNorm ×4') && t.includes('SwiGLU')), '');
 }
 // ---- transitions ANIMATE (deterministic 12-frame tween, ~200 ms)
@@ -144,8 +144,18 @@ T.check('sub-picket GEMMs wear the hollow trace',
   sh[1].click(); await T.tick(400);
   T.check('clicking the shared button flips BOTH (one graph node)',
     [...ac.querySelectorAll('button[data-mark="gate_up"]')].every(b => b.textContent !== before), '');
-  T.check('RoPE pills wear the locked \u21bb (fiat: always recomputed)',
-    [...ac.querySelectorAll('.lv-scroll button:disabled')].filter(b => b.textContent === '\u21bb').length === 2, '');
+  // RoPE is a REAL (zero-byte) mark: clickable; flipping it moves the stash
+  // between the rotated and pre-RoPE tensors \u2014 the total holds exactly
+  btn(ac, 'recompute', 'none').click(); await T.tick(400);
+  const rq = () => ac.querySelector('button[data-mark="rope_q"]');
+  T.check('RoPE pills carry LIVE mark buttons', !!rq() && !rq().disabled
+    && !!ac.querySelector('button[data-mark="rope_kv"]'), '');
+  const g0 = tHead(ac).match(/= ([\d.]+) GiB/)[1];
+  rq().click(); await T.tick(400);   // none \u2192 rope_q \u21bb: same bytes, now pre-RoPE
+  T.check('flipping RoPE moves ZERO bytes (the stash total holds)',
+    tHead(ac).includes(`= ${g0} GiB`), tHead(ac));
+  T.check('\u2026but the unmetered line picks up the re-run',
+    ribbons(ac).some(t => t.startsWith('not priced') && t.includes('RoPE')), '');
   btn(ac, 'recompute', 'dsv3').click(); await T.tick(400);
 }
 { // dtype flip: the picket count pours through the tween (fixed unit)

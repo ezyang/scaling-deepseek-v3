@@ -25,21 +25,27 @@ export const DTYPE_BYTES = { bf16: 2, mxfp8: 1 + 1 / 32, fp32: 4 };
 
 // Marking presets. true = save output, false = recompute. Unlisted ops: save.
 export const RECOMPUTE_PRESETS = {
+  // every preset except 'none' re-runs RoPE in backward (production fuses it
+  // into the attention prologue); 'none' is naive autograd — it saves the
+  // rotated q/k (attention's actual inputs), the same bytes either way
   none: {},
   // DeepSeek-paper policy: recompute RMSNorms, MLA up-projections, SwiGLU
-  dsv3: { norm1: false, norm2: false, q_norm: false, kv_norm: false, q_up: false, kv_up: false, swiglu: false },
+  dsv3: { norm1: false, norm2: false, q_norm: false, kv_norm: false, q_up: false, kv_up: false,
+    rope_q: false, rope_kv: false, swiglu: false },
   // aggressive production policy: recompute ALL of attention (norm1 through
   // the residual add) from x0 in backward; the saved attention-side tensor is
   // norm2's OUTPUT (the attention output post-norm), which the MoE half consumes.
   'attn-replay': {
     norm1: false, qkv_down: false, q_norm: false, kv_norm: false, q_up: false, kv_up: false,
-    attn: false, o_proj: false, x1: false, swiglu: false,
+    rope_q: false, rope_kv: false, attn: false, o_proj: false, x1: false, swiglu: false,
   },
   // dsv3 + recompute ffn gate/up from the dispatched tokens
-  selective: { norm1: false, norm2: false, q_norm: false, kv_norm: false, q_up: false, kv_up: false, swiglu: false, gate_up: false },
+  selective: { norm1: false, norm2: false, q_norm: false, kv_norm: false, q_up: false, kv_up: false,
+    rope_q: false, rope_kv: false, swiglu: false, gate_up: false },
   // full checkpointing: replay the whole layer from its input (incl. the a2a!)
   full: {
-    norm1: false, qkv_down: false, q_norm: false, kv_norm: false, q_up: false, kv_up: false, attn: false, o_proj: false, x1: false,
+    norm1: false, qkv_down: false, q_norm: false, kv_norm: false, q_up: false, kv_up: false,
+    rope_q: false, rope_kv: false, attn: false, o_proj: false, x1: false,
     norm2: false, router: false, dispatch: false, gate_up: false, swiglu: false, ffn_down: false, combine: false,
   },
 };
@@ -82,11 +88,20 @@ export function blockGraph(kind, a, mm, seqLen) {
       8 * a.qRank, { bucket: 'mla', aux: { name: 'rstd', bytes: 4 } }),
     N('kv_norm', 'RMSNorm (kv latent)', 'vector', ['qkv_down'], 'norm(kv latent)', a.kvRank, B('kv_up'),
       8 * a.kvRank, { bucket: 'mla', aux: { name: 'rstd', bytes: 4 } }),
-    N('q_up', 'q up-proj', 'matmul', ['q_norm'], 'q', a.heads * qk, B('attn'), 2 * a.qRank * a.heads * qk,
+    N('q_up', 'q up-proj', 'matmul', ['q_norm'], 'q (pre-RoPE)', a.heads * qk, B('attn'), 2 * a.qRank * a.heads * qk,
       { bucket: 'mla', tdims: `${a.heads}\u00d7${qk}` }),
-    N('kv_up', 'kv up-proj', 'matmul', ['kv_norm'], 'k,v', a.heads * (qk + a.vHead), B('attn'),
+    N('kv_up', 'kv up-proj', 'matmul', ['kv_norm'], 'k,v (pre-RoPE)', a.heads * (qk + a.vHead), B('attn'),
       2 * a.kvRank * a.heads * (a.qkNope + a.vHead), { bucket: 'mla', tdims: `${a.heads}\u00d7(${qk}+${a.vHead})` }),
-    N('attn', 'attention', 'attn', ['q_up', 'kv_up'], 'attn out', a.heads * a.vHead, B('o_proj'),
+    // RoPE as REAL nodes: the mark is a genuine (zero-byte) choice — save the
+    // rotated q/k (attention's actual inputs; same size as pre-RoPE) or
+    // re-run the rotation in backward (cheap bandwidth-bound vector work).
+    // Its own backward needs NOTHING (a fixed rotation: dL/dx = R\u1d40\u00b7dL/dy),
+    // hence bwdNeeds: [] — only a REPLAY pulls the pre-RoPE input.
+    N('rope_q', 'RoPE (q)', 'vector', ['q_up'], 'q', a.heads * qk, B('attn'),
+      6 * a.heads * a.qkRope, { bucket: 'mla', bwdNeeds: [], tdims: `${a.heads}\u00d7${qk}` }),
+    N('rope_kv', 'RoPE (k, build K,V)', 'vector', ['kv_up'], 'k,v', a.heads * (qk + a.vHead), B('attn'),
+      6 * a.qkRope, { bucket: 'mla', bwdNeeds: [], tdims: `${a.heads}\u00d7(${qk}+${a.vHead})` }),
+    N('attn', 'attention', 'attn', ['rope_q', 'rope_kv'], 'attn out', a.heads * a.vHead, B('o_proj'),
       2 * a.heads * (qk + a.vHead) * seqLen / 2, { bucket: 'mla', aux: { name: 'lse', bytes: 4 * a.heads }, needsOwnOutput: true, tdims: `${a.heads}\u00d7${a.vHead}` }),
     N('o_proj', 'attn out-proj', 'matmul', ['attn'], 'attn proj out', h, 2, 2 * a.heads * a.vHead * h, { bucket: 'mla' }),
     N('x1', '+ residual', 'add', ['o_proj', 'x0'], 'x1 (residual)', h, 2, 0, { bucket: 'residual' }),

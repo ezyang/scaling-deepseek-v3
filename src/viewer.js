@@ -43,7 +43,7 @@ export const ACT_BUCKETS = [
   { label: 'x0, x1 (residual)', ids: ['x0', 'x1'] },
   { label: 'norm outs', ids: ['norm1', 'norm2'] },
   { label: 'mla latents', ids: ['qkv_down', 'q_norm', 'kv_norm'] },
-  { label: 'q · k,v', ids: ['q_up', 'kv_up'] },
+  { label: 'q · k,v', ids: ['q_up', 'kv_up', 'rope_q', 'rope_kv'] },
   { label: 'attention out', ids: ['attn'] },
   { label: 'router state', ids: ['router'] },
   { label: 'dispatched tokens', ids: ['dispatch'] },
@@ -1782,7 +1782,7 @@ export class Dsv3Layer extends HTMLElement {
           : (this._ctl.quant
             ? `Shared expert${SCOPE === 'model' ? ' + dense MLPs' : ''} follow${SCOPE === 'model' ? '' : 's'} the ffn choices; `
             : `The shared expert${SCOPE === 'model' ? ' and dense MLPs share' : ' shares'} the ffn boxes; `))
-          + `RoPE is fused into the q/kv paths${this._ctl.quant ? ' and always recomputed' : ''} (negligible).`,
+          + `RoPE carries its own mark${this._ctl.quant ? ' (every preset replays it; saving it stashes the same bytes post-rotation)' : ''}.`,
       !this._ctl.quant ? '' :
       'The picket run inside each op is its FLOP cost as time at peak \u2014 one picket = 20 MFLOP/token \u2248 83 \u00b5s per 4096-token microbatch (' +
       'mxfp8 counted half \u2014 2\u00d7 peak; fp32 counted double \u2014 half peak; dtype colors here and on the saved-tensor tags: blue mxfp8, dark bf16, plum fp32); ' +
@@ -2034,13 +2034,6 @@ export class Dsv3Layer extends HTMLElement {
       `<foreignObject x="${x}" y="${y}" width="52" height="20">` +
       `<button xmlns="http://www.w3.org/1999/xhtml" class="st dtb" data-dt="${id}" style="color:${DT_STYLE[dt(id)]}" ` +
       `title="cycle precision: bf16 / mxfp8 / fp32">${dt(id)}</button></foreignObject>`;
-    // fiat state: ops with no CHOICE (RoPE is always recomputed — its
-    // backward is a rotation) wear the ↻ glyph, locked, so every op still
-    // shows its save/recompute state at a glance
-    const fiatBtn = (x, y, title) => !this._ctl.marks ? '' :
-      `<foreignObject x="${x}" y="${y}" width="26" height="20">` +
-      `<button xmlns="http://www.w3.org/1999/xhtml" class="st mode st-redo" disabled style="cursor:default;opacity:0.75" ` +
-      `title="${title}">\u21bb</button></foreignObject>`;
     const modeBtn = (ids, x, y) => {
       if (!this._ctl.marks) return '';       // hidden below the marks tier
       const st = state(ids[0]);
@@ -2537,23 +2530,35 @@ export class Dsv3Layer extends HTMLElement {
         // kernels (Megatron: apply_mla_rope_for_q / _for_kv) — the kv one is
         // rope plus a little extra (split, broadcast, assemble K and V) — feed
         // q and k,v directly into attention. The k_rope rail lands here.
-        if (!PONLY) P.push(`<text class="tensor tidle" x="${SX1 + 14}" y="${y + 12}">q_heads · ${flatten('128×192')}</text>` +
-          `<text class="tensor tidle" x="${RX + 14}" y="${y + 12}">kv_heads · ${flatten('128×(128+128)')}</text>`);
-        wire(SX1, y, y + 16);
-        P.push(`<path class="wire" d="M ${RX} ${y} L ${RX} ${y + 16}" marker-end="url(#arr)"/>`);
-        y += 16;
+        if (this._ctl.quant) {
+          // the PRE-RoPE outputs are real chips in the quant tiers: with RoPE
+          // marked \u21bb and an up-proj marked \ud83d\udcbe, THIS is where the stash
+          // lives — the ledger must be visible wherever it lands. (Static/params
+          // tiers keep the plain idle labels — 01 is published.)
+          tensorChip(['q_up'], SX1 + 14, y + 2, { short: true });
+          tensorChip(['kv_up'], RX + 14, y + 2, { short: true });
+          wire(SX1, y, y + 28);
+          P.push(`<path class="wire" d="M ${RX} ${y} L ${RX} ${y + 28}" marker-end="url(#arr)"/>`);
+          y += 28;
+        } else {
+          if (!PONLY) P.push(`<text class="tensor tidle" x="${SX1 + 14}" y="${y + 12}">q_heads · ${flatten('128×192')}</text>` +
+            `<text class="tensor tidle" x="${RX + 14}" y="${y + 12}">kv_heads · ${flatten('128×(128+128)')}</text>`);
+          wire(SX1, y, y + 16);
+          P.push(`<path class="wire" d="M ${RX} ${y} L ${RX} ${y + 16}" marker-end="url(#arr)"/>`);
+          y += 16;
+        }
         micro('RoPE', C1, y, 140,
-          'fused_apply_mla_rope_for_q — rotate the 64 rope dims of every q head (fp32), make Q contiguous');
-        P.push(fiatBtn(C1 + 112, y - 1, 'locked \u21bb: saving RoPE\u2019s output would stash the SAME bytes on the other side of a free rotation \u2014 a zero-byte choice this GEMM-only model cannot price; the backward re-run is bandwidth-bound vector work, unmetered (see the tally note)'));
+          'fused_apply_mla_rope_for_q — rotate the 64 rope dims of every q head (fp32), make Q contiguous. '
+          + 'A real (zero-byte) mark: save the rotated q — the SAME bytes as pre-RoPE — or re-run the rotation in backward (bandwidth-bound, unmetered here)', '', 'rope_q');
         micro('RoPE + build K,V', C1 + 150, y, 140,
-          'fused_apply_mla_rope_for_kv — split kv_heads into k_nope and V, rotate k_rope, broadcast it across the 128 heads, concat K = [k_nope | k_rope], make K and V contiguous');
-        P.push(fiatBtn(C1 + 150 + 112, y - 1, 'locked \u21bb: saving RoPE\u2019s output would stash the SAME bytes on the other side of a free rotation \u2014 a zero-byte choice this GEMM-only model cannot price; the backward re-run is bandwidth-bound vector work, unmetered (see the tally note)'));
+          'fused_apply_mla_rope_for_kv — split kv_heads into k_nope and V, rotate k_rope, broadcast it across the 128 heads, concat K = [k_nope | k_rope], make K and V contiguous. '
+          + 'Same zero-byte mark as RoPE (q): rotated vs pre-RoPE k,v are the same size', '', 'rope_kv');
         P.push(`<path class="wire" d="M ${bypX} ${bypTop} L ${bypX} ${y + 9} L ${C1 + W + 1} ${y + 9}" marker-end="url(#arr)"/>`);
         y += 18;
       }
-      tensorChip(['q_up'], SX1 + 14, y + 4);
-      tensorChip(['kv_up'], RX + 14, y + 4);
-      const csp = Math.max(chipSpace(['q_up']), chipSpace(['kv_up']));
+      tensorChip(['rope_q'], SX1 + 14, y + 4);
+      tensorChip(['rope_kv'], RX + 14, y + 4);
+      const csp = Math.max(chipSpace(['rope_q']), chipSpace(['rope_kv']));
       const elb = y + csp + 6;   // the return elbow rides BELOW the chip band
       const gap = Math.max(24, csp + 16);
       wire(SX1, y, y + gap);
@@ -3174,7 +3179,7 @@ export class Dsv3Layer extends HTMLElement {
         cnt[n.label.replace(/ \(.*\)/, '')] = (cnt[n.label.replace(/ \(.*\)/, '')] ?? 0) + 1;
       const lst = Object.entries(cnt).map(([k, c]) => c > 1 ? `${k} ×${c}` : k).join(' + ');
       T.push(`<text class="dims" x="${TB_X}" y="${ty + 8}" opacity="0.8">not priced (bandwidth-bound vector work — the hollow dashed marks): `
-        + `this policy's backward re-runs RoPE ×2 (always)${lst ? ` + ${lst}` : ''}, unmetered — cheap, not free.</text>`);
+        + (lst ? `this policy's backward re-runs ${lst}, unmetered — cheap, not free.` : `this policy re-runs no vector work in backward.`) + '</text>');
     }
     const TW = TB_X + TB_AVAIL + 166;
     const tallyEl = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
