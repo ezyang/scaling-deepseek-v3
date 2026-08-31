@@ -67,4 +67,48 @@ T.check('fp8 widget: mxfp8 gate/up bar is HALF the bf16 one', Math.abs(maxBar(f8
 // vector ops keep the unpriced fig-leaf stub (5px, muted)
 const stub = [...ac.querySelectorAll('.lv-scroll rect[width="5"][height="4"][fill="#c3c2b7"]')];
 T.check('norms/swiglu wear the fig-leaf stub', stub.length >= 3, stub.length);
+// ---- the consolidated-stash bar: log axis, 80 GiB cap, ghost anchor + badge
+{
+  const bar = tally(ac).querySelector('rect[data-true]');
+  const ghost = tally(ac).querySelector('rect[stroke-dasharray="2 2"]');
+  T.check('total bar carries its exact bytes', Math.abs(+bar.dataset.true / 2 ** 30 - 66.6) < 0.1, bar.dataset.true);
+  // log mapping: 28..44 doublings over the 870px runway from x=44
+  const pxOf = (b) => 44 + (Math.log2(b) - 28) / 16 * 870;
+  T.check('bar end sits at px(66.6 GiB) on the shared axis',
+    Math.abs(44 + +bar.getAttribute('width') - pxOf(+bar.dataset.true)) < 1, bar.getAttribute('width'));
+  T.check('ghost = the untreated 118.6 GiB anchor',
+    Math.abs(44 + +ghost.getAttribute('width') - pxOf(118.6 * 2 ** 30)) < 1.5, ghost.getAttribute('width'));
+  T.check('badge prices the lever vs the anchor', ribbons(ac).some(t => t.includes('▼×1.8')), '');
+  T.check('the 80 GiB card line is drawn', ribbons(ac).some(t => t === '80 GiB'), '');
+}
+// ---- transitions ANIMATE (deterministic 12-frame tween, ~200 ms)
+{
+  const repW = () => { // replay ribbon = rects in the band under the 'replay' label
+    const lab = [...tally(ac).querySelectorAll('text')].find(t => t.textContent === 'replay');
+    const y0 = +lab.getAttribute('y') - 6;
+    return [...tally(ac).querySelectorAll('rect[height="4"]')]
+      .filter(r => Math.abs(+r.getAttribute('y') - y0) < 3)
+      .reduce((t, r) => t + +r.getAttribute('width'), 0);
+  };
+  const w0 = repW();
+  btn(ac, 'recompute', 'attn-replay').click(); await T.tick(60);   // mid-tween
+  const wMid = repW();
+  const dissolving = ac.querySelectorAll('.lv-scroll g[opacity] text.tredo').length;
+  await T.tick(400);                                               // settled
+  const w1 = repW();
+  T.check('replay ribbon pours (mid-tween strictly between endpoints)',
+    wMid > w0 + 2 && wMid < w1 - 2, `${w0} < ${wMid} < ${w1}`);
+  T.check('chips dissolve mid-tween (both text forms present)', dissolving > 0, dissolving);
+  T.check('tween settles clean (no opacity groups left)',
+    !ac.querySelector('.lv-scroll g[opacity] text.tredo'), '');
+  btn(ac, 'recompute', 'dsv3').click(); await T.tick(400);
+}
+{ // dtype flip: the gate/up bar STRETCHES through the tween (fixed unit)
+  btn(f8, 'recipe', 'bf16').click(); await T.tick(60);
+  const mid = maxBar(f8);
+  await T.tick(400);
+  T.check('bar width lerps through the dtype flip', mid > 90 && mid < 168, mid);
+  T.check('and lands on the full unit', Math.abs(maxBar(f8) - 171.7) < 1, maxBar(f8));
+  btn(f8, 'recipe', 'dsv3-fp8').click(); await T.tick(400);
+}
 T.done();

@@ -31,7 +31,7 @@
     <p>While your exact memory usage depends on implementation details of your
     training framework, it's still possible to reason through what the major
     consumers of memory will be for a given configuration of choices.  Let's
-    first set the stage with a naive, global (across all ranks) memory
+    first set the stage with a naive, global memory
     accounting of DeepSeek-V3 training assuming compute being done in BF16
     (accounting for memory usage in FP8 gives rise to additional
     complications, which I'd like to address in a dedicated section) and no
@@ -39,7 +39,7 @@
 
     <p><strong>Parameters.</strong>  In <a
     href="./01-deepseek-diagram.html">the previous post</a>, we did a tally of
-    DSv3's parameters.  To do compute in BF16, we will want the parameters
+    DSv3's parameters, sans MTP.  To do compute in BF16, we will want the parameters
     to be available in BF16.  This gives us the following memory usage:</p>
 
     <dsv3-layer style="min-height:145px" snapshot nototal comps="weights"
@@ -130,17 +130,17 @@
     <p>The primary benefit of pipeline parallelism is that it lets us further
     reduce the per-device footprint of parameters, gradients and optimizer
     states by splitting stages of transformer blocks across the PP axis (but
-    in a cheaper way than ZeRO-3, as we only send/recv activations across PP
+    in a cheaper way than ZeRO-3, as we only send/recv activations/gradients across PP
     ranks, rather than the entire sharded weights).  However, besides being
     complicated to implement, there are some subtleties on how exactly PP
     interacts with the memory usage of your model.  The art of building a
     pipeline schedule is surprisingly deep, so to keep this section short
     we'll focus specifically on <a
-    href="https://hackmd.io/@ufotalent/r1lVXsa9Jg">DualPipeV</a>, a modernized
+    href="https://hackmd.io/@ufotalent/r1lVXsa9Jg">DualPipeV</a>, an improved
     version of the DualPipe schedule that DeepSeek-V3 was originally trained on.</p>
 
     <p>Let's briefly recap the important facts about DualPipeV.  DualPipeV
-    belongs to a family of what we call "zero bubble" schedules, where weight
+    is closely related to a family of what we call "zero bubble" schedules, where the weight
     gradient computation, which is not critical path in backward computation,
     is split out from the rest of the gradient computation and used to fill in
     bubbles (dead time) that would occur when a PP rank runs out of work to
@@ -170,7 +170,7 @@
     is why we need to maintain dedicated memory for gradients).  This
     per-microbatch processing means that the amount of memory we need to save
     activations for backwards is not based on the local batch size (global
-    batch size / DP), but instead based on the pipeline schedule: we don't get
+    batch size / DP), but instead based on the microbatch size and the pipeline schedule: we don't get
     to release saved activation memory until we've finished running the
     backwards of a microbatch.  When we have a V shape, so that a single PP
     rank is responsible for multiple chunks, we furthermore must be careful to
@@ -189,7 +189,7 @@
     <p>It turns out that in the DualPipeV schedule, we only ever need to hold
     17 (microbatch, chunk) activations (colloquially, we might call this 8.5
     microbatches, because each microbatch is associated with two chunks).
-    This is precisely "d + 1/2" (where d is the PP degree) as seen in the <a
+    This is precisely "d + 1/2" (where d is the number of physical PP ranks) as seen in the <a
     href="https://hackmd.io/@ufotalent/r1lVXsa9Jg">cut-in-half row of the
     table here</a>.  The 1/2 term here means that applying DualPipeV pipelining
     slightly <em>increases</em> the amount of memory you need to save for backwards!</p>
@@ -216,7 +216,13 @@
     <p>While there a number of different ways to reason about activation
     checkpointing, in this post I am going to explain AC on DeepSeek-V3 using
     <a href="https://github.com/meta-pytorch/remat">torch_remat's</a>
-    programming model.</p>
+    programming model.  For every operation, we can decide whether to recompute
+    it or not.  If we recompute it, it's not necessary to save any of the tensors
+    it needs for backwards--however, the inputs to the operation be available
+    somehow during recompute, either because: (1) it was independently saved for
+    backwards by another operation, (2) the producer is being recomputed, or (3) we
+    manually saved it (potentially increasing your memory usage!)  You can play around with
+    this </p>
 
     THIS SECTION IS SLOP
 
@@ -231,7 +237,7 @@
     grids are priced at; we'll revisit that assumption in the next
     section.</p>
 
-    <dsv3-anatomy style="min-height:797px" layer="ac-layer" controls="marks" recipe="bf16" recompute="dsv3"
+    <dsv3-anatomy style="min-height:818px" layer="ac-layer" controls="marks" recipe="bf16" recompute="dsv3"
       xlayers="8" xinflight="8.5" xtag="an interior rank of PP8 · DualPipeV steady state"></dsv3-anatomy>
 
     <p>Some things to notice as you play with the marks:</p>
@@ -275,7 +281,7 @@
     stored in the dtype of the GEMM that will read it during backward.  Flip
     the dtype buttons below and watch the stash sizes follow.</p>
 
-    <dsv3-anatomy style="min-height:797px" layer="fp8-layer" controls="dtype" recipe="dsv3-fp8" recompute="none"
+    <dsv3-anatomy style="min-height:818px" layer="fp8-layer" controls="dtype" recipe="dsv3-fp8" recompute="none"
       xlayers="8" xinflight="8.5" xtag="an interior rank of PP8 · DualPipeV steady state"></dsv3-anatomy>
 
     <p>Two recipes matter for us.  The <em>dsv3-fp8</em> recipe is the Hopper
