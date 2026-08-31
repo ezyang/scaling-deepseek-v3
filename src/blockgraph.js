@@ -46,7 +46,7 @@ export const RECOMPUTE_PRESETS = {
   full: {
     norm1: false, qkv_down: false, q_norm: false, kv_norm: false, q_up: false, kv_up: false,
     rope_q: false, rope_kv: false, attn: false, o_proj: false, x1: false,
-    norm2: false, router: false, dispatch: false, gate_up: false, swiglu: false, ffn_down: false, combine: false,
+    norm2: false, router: false, dispatch: false, gate_up: false, swiglu: false, ffn_down: false, combine: false, moe_add: false,
   },
 };
 
@@ -126,8 +126,14 @@ export function blockGraph(kind, a, mm, seqLen) {
       moe ? a.topk * h : h, 2, 2 * h * inter * experts,
       { tdims: moe ? `${a.topk}\u00d7${h}` : String(h) }),
     ...(moe ? [N('combine', 'a2a combine', 'comm', ['ffn_down', 'router'], 'moe out', h, 2, 0,
-      { bwdNeeds: ['swiglu', 'router'] })] : []),
-    N('x2', '+ residual (out)', 'add', [moe ? 'combine' : 'ffn_down', 'x1'], 'x2 → next block', h, 2, 0,
+      { bwdNeeds: ['swiglu', 'router'] }),
+    // the routed+shared sum is a REAL node (we model no fusion — Megatron's
+    // add_shared_and_residual is trivia, not an excuse): an add, so its
+    // backward needs nothing; a ↻ mark is representable and honestly
+    // wasteful (the replay pulls combine-out into the stash for nothing)
+    N('moe_add', '+ routed + shared', 'add', ['combine'], 'ffn out (routed + shared)', h, 2, 0,
+      { bucket: 'moe' })] : []),
+    N('x2', '+ residual (out)', 'add', [moe ? 'moe_add' : 'ffn_down', 'x1'], 'x2 → next block', h, 2, 0,
       { bucket: 'residual' }),
   ];
   return nodes;

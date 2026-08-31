@@ -206,6 +206,13 @@ T.check('sub-picket GEMMs wear the hollow trace',
     ac.querySelectorAll('button[data-mark="qkv_down"]').length === 2, '');
   T.check('the block-output add wears the locked \ud83d\udd12 (its output IS next-x0)',
     [...ac.querySelectorAll('.lv-scroll button:disabled')].filter(b => b.textContent === '\ud83d\udd12').length === 1, '');
+  // the routed+shared sum is a real node (no fusion modeled): its ↻ mark is
+  // representable and honestly WASTEFUL — the replay pulls combine-out in
+  const g1 = tHead(ac).match(/= ([\d.]+) GiB/)[1];
+  ac.querySelector('button[data-mark="moe_add"]').click(); await T.tick(400);
+  T.check('marking the routed+shared sum ↻ GROWS the stash (literal semantics)',
+    +tHead(ac).match(/= ([\d.]+) GiB/)[1] > +g1, tHead(ac));
+  ac.querySelector('button[data-mark="moe_add"]').click(); await T.tick(400);
   const g0 = tHead(ac).match(/= ([\d.]+) GiB/)[1];
   rq().click(); await T.tick(400);   // none \u2192 rope_q \u21bb: same bytes, now pre-RoPE
   T.check('flipping RoPE moves ZERO bytes (the stash total holds)',

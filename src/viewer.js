@@ -2695,7 +2695,7 @@ export class Dsv3Layer extends HTMLElement {
     const TABS = this.hasAttribute('tabs') && ONLY !== 'mla';
     // kind-pinned tiers keep the ENCLOSURE but drop the tab flaps
     const FLAPS = TABS && !this._noKind;
-    const FFN_RIDS = ['router', 'dispatch', 'gate_up', 'swiglu', 'ffn_down', 'combine'];
+    const FFN_RIDS = ['router', 'dispatch', 'gate_up', 'swiglu', 'ffn_down', 'combine', 'moe_add'];
     let z = ONLY === 'ffn' ? 36 : 16;
     let encTop = 0, encBot = 0;   // enclosure extent: just the kind-dependent region
     if (ONLY !== 'mla') {
@@ -2905,7 +2905,8 @@ export class Dsv3Layer extends HTMLElement {
       plus(SX2, zA);
       P.push(`<path class="wire" d="M ${shMid} ${shBot} L ${shMid} ${zA} L ${SX2 + 11} ${zA}" marker-end="url(#arr)"/>`);
       addBox(SX2 + 26, zA - 24, 'add — routed + shared',
-        'routed + shared expert outputs — Megatron fuses this with the residual add (add_shared_and_residual); split here for clarity', 178);
+        'routed + shared expert outputs — its backward needs nothing; a ↻ mark replays it (and must pull its inputs into the stash: honestly wasteful). Megatron fuses this with the residual add (add_shared_and_residual)', 178);
+      P.push(modeBtn(['moe_add'], SX2 + 26 + 178 - 30, zA - 34));
       encBot = zA + 14;   // the routed+shared add is MoE-internal — inside the box
       if (ONLY === 'ffn') {
         z = zA;
