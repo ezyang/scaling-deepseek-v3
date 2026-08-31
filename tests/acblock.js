@@ -12,7 +12,10 @@ const tHead = (l) => tally(l).querySelector('text').textContent;
 // ---- house knobs: one preset segment + the reserved custom chip
 T.check('AC head carries the recompute segment only', seg(ac, 'recompute') && !seg(ac, 'recipe')
   && !ac.querySelector('.lv-head select'), '');
-T.check('fp8 head carries the recipe segment only', seg(f8, 'recipe') && !seg(f8, 'recompute'), '');
+T.check('fp8 head: live recipe segment + LOCKED recompute readout (dsv3 lit)',
+  seg(f8, 'recipe') && seg(f8, 'recompute')
+  && [...seg(f8, 'recompute').querySelectorAll('button')].every(b => b.disabled)
+  && seg(f8, 'recompute').querySelector('button.on').textContent === 'dsv3', '');
 T.check('dsv3 preset lights up', btn(ac, 'recompute', 'dsv3').classList.contains('on'), '');
 T.check('custom chip reserved (present, disabled, off)', btn(ac, 'recompute', 'custom').disabled
   && !btn(ac, 'recompute', 'custom').classList.contains('on'), '');
@@ -68,9 +71,11 @@ T.check('fp8 widget: mxfp8 shrinks the tally (88 pickets)', fwdN(f8) === 88, fwd
 { // recipe flip to bf16 restores the count — the unit never renormalizes
   btn(f8, 'recipe', 'bf16').click(); await T.tick(400);
   T.check('recipe→bf16 restores the full count', fwdN(f8) === 134, fwdN(f8));
-  T.check('fp8 readout follows the recipe', /= 118\.6 GiB/.test(tHead(f8)), tHead(f8));
+  // the fp8 widget is PINNED to the dsv3 recompute policy, so its bf16
+  // readout equals the AC widget's dsv3 number — the two sections agree
+  T.check('fp8 readout follows the recipe (bf16 = the AC dsv3 66.6 GiB)', /= 66\.6 GiB/.test(tHead(f8)), tHead(f8));
   btn(f8, 'recipe', 'dsv3-fp8').click(); await T.tick(400);
-  T.check('back to dsv3-fp8', /= 86\.2 GiB/.test(tHead(f8)), tHead(f8));
+  T.check('back to dsv3-fp8', /= 42\.9 GiB/.test(tHead(f8)), tHead(f8));
 }
 // DOUBLED rows: recomputed ops carry a second picket row in the recompute
 // color; saved ops don't. Hollow amber grids price the counterfactual stash.

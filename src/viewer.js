@@ -1500,6 +1500,24 @@ export class Dsv3Layer extends HTMLElement {
       // 'selective' stays a MODEL preset (the trace sim's default; sanity's
       // GB300 anchor pins it) but earns no chip: the section's story is
       // full / attn-replay / dsv3 / none
+      // the dtype tier INHERITS its recompute policy from the AC section
+      // above (pinned via the recompute attr) — read it out in the marks
+      // tier's exact slot, locked, so the two heads mirror each other
+      if (!this._ctl.marks && this.getAttribute('recompute')) {
+        const g4 = el('span', 'pargrp');
+        const l4 = el('div', 'parlab'); l4.textContent = 'recompute policy'; g4.append(l4);
+        const row4 = el('div', 'parrow');
+        const w4 = el('span', 'stp'); w4.dataset.knob = 'recompute';
+        for (const k of ['full', 'attn-replay', 'dsv3', 'none']) {
+          const b = document.createElement('button');
+          b.type = 'button'; b.textContent = k; b.disabled = true;
+          b.title = 'fixed here — the recompute section above owns this knob';
+          if (k === this._origRecompute) b.classList.add('on');
+          w4.append(b);
+        }
+        row4.append(w4); g4.append(row4);
+        hh.append(g4);
+      }
       if (this._ctl.marks) hh.append(segGrp('recompute policy', 'recompute', ['full', 'attn-replay', 'dsv3', 'none'], curPreset,
         () => ({ ...this.marks }),
         (k) => localTween(() => { this.setAttribute('recompute', k); this.marks = { ...RECOMPUTE_PRESETS[k] }; }),
