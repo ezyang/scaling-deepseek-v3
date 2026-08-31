@@ -855,6 +855,8 @@ dsv3-layer[hypothetical] .lv { border-style: dashed; }
    segment selections keep their face */
 dsv3-layer[snapshot] .lv-head button:disabled, dsv3-layer[snapshot] .lv-head select:disabled { opacity: 1; color: #0b0b0b; cursor: default; }
 dsv3-layer[snapshot] .lv-head .stp button.on:disabled { background: #f3f2ee; color: #0b0b0b; }
+/* read-only knob chips (the ctx group): a locked value keeps its ink */
+.lv-head .stp button.on:disabled { background: #f3f2ee; color: #0b0b0b; opacity: 1; cursor: default; }
 dsv3-layer[snapshot] .lv-head .stp button:disabled:not(.on) { color: #c3c2b7; }
 dsv3-layer[snapshot] .lv-head .stp:has(select.v) button { display: none; }
 dsv3-layer[snapshot] .lv-head .stp:has(select.v) select.v { border-left: 1px solid #c3c2b7; border-right: 1px solid #c3c2b7; border-radius: 4px; }
@@ -1471,6 +1473,22 @@ export class Dsv3Layer extends HTMLElement {
       if (this._ctl.dtype) hh.append(segGrp('precision recipe', 'recipe', Object.keys(RECIPES), curRecipe,
         (k) => localTween(() => { this.setAttribute('recipe', k); this.matmuls = resolveMatmuls({ recipe: k }); })));
       if (this._ctl.dtype) hh.append(tl);
+      // ctx: the section's FIXED parallelism as read-only knob chips (the
+      // local sim's look, locked) — the reader sees which config prices the
+      // numbers without implying these are levers here
+      if (this.getAttribute('ctx')) {
+        const g = el('span', 'pargrp');
+        const l4 = el('div', 'parlab'); l4.textContent = 'parallelism (fixed)'; g.append(l4);
+        const row = el('div', 'parrow'); row.style.gap = '7px';
+        for (const [k, v] of Object.entries(JSON.parse(this.getAttribute('ctx')))) {
+          const t2 = el('span'); t2.style.cssText = 'color:#52514e;font-size:11px;'; t2.textContent = k;
+          const w4 = el('span', 'stp');
+          const b = document.createElement('button');
+          b.type = 'button'; b.textContent = v; b.disabled = true; b.classList.add('on');
+          w4.append(b); row.append(t2, w4);
+        }
+        g.append(row); hh.append(g);
+      }
       reset.style.cssText = 'font:11px ui-monospace,monospace;padding:2px 8px;border:1px solid #c3c2b7;' +
         'border-radius:4px;background:#fff;cursor:pointer;margin-left:auto;';
       hh.append(mkDimsBtn(), reset);
@@ -2016,6 +2034,13 @@ export class Dsv3Layer extends HTMLElement {
       `<foreignObject x="${x}" y="${y}" width="52" height="20">` +
       `<button xmlns="http://www.w3.org/1999/xhtml" class="st dtb" data-dt="${id}" style="color:${DT_STYLE[dt(id)]}" ` +
       `title="cycle precision: bf16 / mxfp8 / fp32">${dt(id)}</button></foreignObject>`;
+    // fiat state: ops with no CHOICE (RoPE is always recomputed — its
+    // backward is a rotation) wear the ↻ glyph, locked, so every op still
+    // shows its save/recompute state at a glance
+    const fiatBtn = (x, y, title) => !this._ctl.marks ? '' :
+      `<foreignObject x="${x}" y="${y}" width="26" height="20">` +
+      `<button xmlns="http://www.w3.org/1999/xhtml" class="st mode st-redo" disabled style="cursor:default;opacity:0.75" ` +
+      `title="${title}">\u21bb</button></foreignObject>`;
     const modeBtn = (ids, x, y) => {
       if (!this._ctl.marks) return '';       // hidden below the marks tier
       const st = state(ids[0]);
@@ -2519,8 +2544,10 @@ export class Dsv3Layer extends HTMLElement {
         y += 16;
         micro('RoPE', C1, y, 140,
           'fused_apply_mla_rope_for_q — rotate the 64 rope dims of every q head (fp32), make Q contiguous');
+        P.push(fiatBtn(C1 + 112, y - 1, 'always recomputed — RoPE\u2019s backward is a rotation; nothing to save'));
         micro('RoPE + build K,V', C1 + 150, y, 140,
           'fused_apply_mla_rope_for_kv — split kv_heads into k_nope and V, rotate k_rope, broadcast it across the 128 heads, concat K = [k_nope | k_rope], make K and V contiguous');
+        P.push(fiatBtn(C1 + 150 + 112, y - 1, 'always recomputed — RoPE\u2019s backward is a rotation; nothing to save'));
         P.push(`<path class="wire" d="M ${bypX} ${bypTop} L ${bypX} ${y + 9} L ${C1 + W + 1} ${y + 9}" marker-end="url(#arr)"/>`);
         y += 18;
       }
@@ -2643,12 +2670,15 @@ export class Dsv3Layer extends HTMLElement {
     } else {
     let shBot = 0, shTop = 0;
     const SHX = C2 + 320, shMid = SHX + 22;        // shared-expert mini column; spine down its LEFT, like every column
-    const shBox = (name, dims, tip, yy, pc = '') => {
+    const shBox = (name, dims, tip, yy, pc = '', markId = null) => {
       const n = name.includes('gate/up') ? 2 * DSV3.hidden * DSV3.moeInter : DSV3.hidden * DSV3.moeInter;
       P.push(`<g data-op="shared" data-tip="${escAttr(`${tip}\nparameters: ${n.toLocaleString('en-US')}`)}">` +
       `<rect class="box" x="${SHX}" y="${yy}" width="140" height="34" rx="4"/>` +
       `<text class="name" x="${SHX + 6}" y="${yy + 14}">${name}</text>` +
       `<text class="dims" x="${SHX + 6}" y="${yy + 27}">${PONLY ? pc.trim() : flatten(dims) + pc}</text></g>`);
+      // MIRRORED mark: the shared expert lives inside the grouped node, so
+      // its button toggles the same mark (both buttons re-render in sync)
+      if (markId) P.push(modeBtn([markId], SHX + 140 - 28, yy + 1));
     };
     if (!DET) {
       const g0 = Math.max(22, chipSpace(['norm2']) + 10) + (TABS ? 36 : 0);
@@ -2699,7 +2729,7 @@ export class Dsv3Layer extends HTMLElement {
         `<text class="grplabel" x="${SHX}" y="${rowG - 6}">shared expert (every token)</text>`);
       shBox('shared gate/up', '7168 → 2×2048',
         'one plain GEMM per token — follows the ffn gate/up mark and dtype (its FLOPs are counted in the grouped strip)', rowG,
-        pk(DSV3.hidden * 2 * DSV3.moeInter));
+        pk(DSV3.hidden * 2 * DSV3.moeInter), 'gate_up');
       tensorChip(['gate_up'], shMid + 14, z + 4, { name: 'gate, up (sh)', tdims: '2×2048', frac: 1 / nExp });
     }
     z = wireOut(['gate_up'], SX2, z, DET ? { name: 'gate, up (routed)', tdims: `${DSV3.topk}×2×2048`, frac: DSV3.topk / nExp } : undefined);
@@ -2712,7 +2742,7 @@ export class Dsv3Layer extends HTMLElement {
     const rowS = z;
     z = opNode('swiglu', DET ? 'SwiGLU · × top-k weight (one fused kernel)' : 'SwiGLU', C2, z);
     if (DET) {
-      micro('SwiGLU (ungated)', SHX, rowS, 140);
+      micro('SwiGLU (ungated)', SHX, rowS, 140, "follows the routed SwiGLU's mark — one graph node covers both", '', 'swiglu');
       tensorChip(['swiglu'], shMid + 14, z + 4, { name: 'swiglu out (sh)', tdims: '2048', frac: 1 / nExp, short: true });
     }
     z = wireOut(['swiglu'], SX2, z, DET ? { name: 'swiglu out (routed)', tdims: `${DSV3.topk}×2048`, frac: DSV3.topk / nExp } : undefined);
@@ -2722,7 +2752,7 @@ export class Dsv3Layer extends HTMLElement {
     if (DET) {
       shBox('shared down', '2048 → 7168',
         'one plain GEMM per token — follows the ffn down mark and dtype; its output joins the routed sum', rowD,
-        pk(DSV3.moeInter * DSV3.hidden));
+        pk(DSV3.moeInter * DSV3.hidden), 'ffn_down');
       tensorChip(['ffn_down'], shMid + 14, z + 4, { name: 'shared out', tdims: '7168', frac: 1 / nExp });
       shBot = rowD + 34;
     }

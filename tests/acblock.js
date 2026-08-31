@@ -125,6 +125,25 @@ T.check('sub-picket GEMMs wear the hollow trace',
     btn(ac, 'recompute', 'custom').classList.contains('on') && /= 117\.8 GiB/.test(tHead(ac)), tHead(ac));
   btn(ac, 'recompute', 'dsv3').click(); await T.tick(400);
 }
+// ---- the fixed-config readout + mirrored/fiat marks
+{
+  const ctx = [...ac.querySelectorAll('.lv-head .pargrp')].find(g => g.textContent.includes('parallelism (fixed)'));
+  T.check('ctx chips name the section config (PP8 · DualPipeV · EP64)',
+    !!ctx && /PP8/.test(ctx.textContent.replace(/\s/g, '')) && ctx.textContent.includes('DualPipeV')
+    && [...ctx.querySelectorAll('button')].every(b => b.disabled), ctx?.textContent);
+  T.check('shared expert mirrors the grouped marks (two buttons per mark)',
+    ac.querySelectorAll('button[data-mark="gate_up"]').length === 2
+    && ac.querySelectorAll('button[data-mark="ffn_down"]').length === 2
+    && ac.querySelectorAll('button[data-mark="swiglu"]').length === 2, '');
+  const sh = [...ac.querySelectorAll('button[data-mark="gate_up"]')];
+  const before = sh[0].textContent;
+  sh[1].click(); await T.tick(400);
+  T.check('clicking the shared button flips BOTH (one graph node)',
+    [...ac.querySelectorAll('button[data-mark="gate_up"]')].every(b => b.textContent !== before), '');
+  T.check('RoPE pills wear the locked \u21bb (fiat: always recomputed)',
+    [...ac.querySelectorAll('.lv-scroll button:disabled')].filter(b => b.textContent === '\u21bb').length === 2, '');
+  btn(ac, 'recompute', 'dsv3').click(); await T.tick(400);
+}
 { // dtype flip: the picket count pours through the tween (fixed unit)
   btn(f8, 'recipe', 'bf16').click(); await T.tick(60);
   const mid = fwdN(f8);

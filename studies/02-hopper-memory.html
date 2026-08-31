@@ -225,7 +225,7 @@
     manually saved it (potentially increasing your memory usage!)  You can play around with
     this below:</p>
 
-    <dsv3-anatomy style="min-height:956px" layer="ac-layer" controls="marks" recipe="bf16" recompute="dsv3"
+    <dsv3-anatomy style="min-height:956px" layer="ac-layer" ctx='{"GPUs":"2048","PP":"8","rank":"r1–7","sched":"DualPipeV","EP":"64","ZeRO":"1"}' controls="marks" recipe="bf16" recompute="dsv3"
       xlayers="8" xinflight="8.5" xtag="an interior rank of PP8 · DualPipeV steady state"></dsv3-anatomy>
 
     <p>Some things to notice as you play with the marks:</p>
@@ -269,7 +269,7 @@
     stored in the dtype of the GEMM that will read it during backward.  Flip
     the dtype buttons below and watch the stash sizes follow.</p>
 
-    <dsv3-anatomy style="min-height:956px" layer="fp8-layer" controls="dtype" recipe="dsv3-fp8" recompute="none"
+    <dsv3-anatomy style="min-height:956px" layer="fp8-layer" ctx='{"GPUs":"2048","PP":"8","rank":"r1–7","sched":"DualPipeV","EP":"64","ZeRO":"1"}' controls="dtype" recipe="dsv3-fp8" recompute="none"
       xlayers="8" xinflight="8.5" xtag="an interior rank of PP8 · DualPipeV steady state"></dsv3-anatomy>
 
     <p>Two recipes matter for us.  The <em>dsv3-fp8</em> recipe is the Hopper
