@@ -1908,6 +1908,10 @@ export class Dsv3Layer extends HTMLElement {
     // need a dtype tier, param strips need the bytes lens) — compact boxes
     // instead of reserving space for strips that can't appear
     const BQ = this._ctl.quant || PBYTES;
+    // flopsq (PROTOTYPE): squares mean FLOPs, so byte units change SHAPE —
+    // stash grids render as tall-thin rects (the fold-blocks unit), 4 KiB/token
+    // each, and the chip gap reservations reprice to the taller pitch
+    const FSQ = this.hasAttribute('flopsq');
     const BH = BQ ? 38 : 32;      // bold matmul box height
     const HBH = BQ ? 60 : 32;     // narrow half-column box (buttons + strip sit below the text)
     // quant tiers carry byte-quantity labels (e.g. attention's lse) that need
@@ -2022,12 +2026,19 @@ export class Dsv3Layer extends HTMLElement {
         `data-mark="${ids.join(',')}" title="save output for backward vs recompute this op during backward">${redo ? '↻' : '💾'}</button></foreignObject>`;
     };
     const blockGrid = (bytes, x, y, minOne = true) => {
-      const n = Math.max(minOne ? 1 : 0, Math.round(bytes / 1024 / 4)), per = 16;
-      if (!n) return { svg: '', rows: 0 };
+      const n = Math.max(minOne ? 1 : 0, Math.round(bytes / 1024 / 4));
+      if (!n) return { svg: '', rows: 0, pitch: 6 };
       let s = '';
+      if (FSQ) {   // tall-thin byte units (memory ≠ compute by SHAPE)
+        const per = 20;
+        for (let i = 0; i < n; i++)
+          s += `<rect x="${x + (i % per) * 5}" y="${y + Math.floor(i / per) * 11}" width="3" height="9" fill="#eda100"/>`;
+        return { svg: s, rows: Math.ceil(n / per), pitch: 11 };
+      }
+      const per = 16;
       for (let i = 0; i < n; i++)
         s += `<rect x="${x + (i % per) * 6}" y="${y + Math.floor(i / per) * 6}" width="5" height="5" fill="#eda100"/>`;
-      return { svg: s, rows: Math.ceil(n / per) };
+      return { svg: s, rows: Math.ceil(n / per), pitch: 6 };
     };
     const fmtB = (bytes) => bytes >= 1024 ? (bytes / 1024).toFixed(1) + ' KiB' : bytes + ' B';
     // combined view: totals over the block column — layers × in-flight microbatches × 4096 tokens
@@ -2170,7 +2181,6 @@ export class Dsv3Layer extends HTMLElement {
     // (bf16-equivalent) ≈ 83 µs per 4096-token microbatch at bf16 peak;
     // sub-square ops wear the hollow trace, the last square is a
     // partial-width sliver (area exact). Same unit in the tally ribbons.
-    const FSQ = this.hasAttribute('flopsq');
     const FUNIT = 20e6;
     const barRows = (flopsTok, dt2, maxW, dtp) => {
       if (!flopsTok || !this._ctl.quant || dt2 === 'vector') return 1;
@@ -2296,7 +2306,7 @@ export class Dsv3Layer extends HTMLElement {
         const bT = lerpQ(stP2 == null ? bytes : SAVED(stP2) ? bytesA(anaP) : 0, SAVED(st) ? bytes : 0);
         const g = blockGrid(bT, x, y + 12, !VQ);
         P.push(g.svg);
-        if (SAVED(st)) h = 12 + g.rows * 6 + 2;
+        if (SAVED(st)) h = 12 + g.rows * (g.pitch ?? 6) + 2;
       }
       return h;
     };
@@ -2321,8 +2331,8 @@ export class Dsv3Layer extends HTMLElement {
       // worst case per element: bf16 (2 B), or dual fp8 orientations (2 × 1.03 B)
       const perElem = this.transposed ? 2 * (1 + 1 / 32) : 2;
       const worst = ids.reduce((t, i) => t + anaX.byId[i].elems * perElem, 0);
-      const rows = Math.ceil(Math.max(1, Math.round(worst / 1024 / 4)) / 16);
-      return 12 + rows * 6 + 2;
+      const rows = Math.ceil(Math.max(1, Math.round(worst / 1024 / 4)) / (FSQ ? 20 : 16));
+      return 12 + rows * (FSQ ? 11 : 6) + 2;
     };
     const chipSpace = (ids) => chipSpaceA(ana, ids);
     // the MoE column's wire gaps, measured on the parallel MoE analysis —
