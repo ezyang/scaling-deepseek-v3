@@ -5,7 +5,7 @@
 import { fmtUs, fmtNum, DSV3 } from './model.js';
 import { simulate, LEVELS } from './sim.js';
 import { resolveMatmuls, MATMULS, RECIPES } from './memory.js';
-import { blockGraph, analyze, RECOMPUTE_PRESETS } from './blockgraph.js';
+import { blockGraph, analyze, RECOMPUTE_PRESETS, MARKABLE } from './blockgraph.js';
 import { PARAMS } from './params.js';
 
 // spreadsheet-style highlighting, shared by the layer and the anatomy plan:
@@ -117,7 +117,7 @@ export const ppStage = (s, pp = LOCAL_PAR.pp, vpp = 1, fold = 'reflect') => {
 // layer at the MoE rate would overstate the dense front
 const ACT_LAYER_B = {};
 export const actLayerBytes = (kind = 'moe') => ACT_LAYER_B[kind] ??=
-  analyze(blockGraph(kind, DSV3, resolveMatmuls({ recipe: 'bf16' }), 4096), {}, false).savedBytes * 4096;
+  analyze(blockGraph(kind, DSV3, resolveMatmuls({ recipe: 'bf16' }), 4096), RECOMPUTE_PRESETS.none, false).savedBytes * 4096;
 // 1F1B admission per virtual stage: stage v of a D-deep chain holds D − v
 // forward chunk-stashes at steady state (warmup depth; assumes ≥ D
 // microbatches per step). A rank's residency in microbatch-equivalents is
@@ -969,10 +969,10 @@ export class Dsv3Layer extends HTMLElement {
   }
   changed(write = true) {
     // explicit map over every markable op (true = save), so it overrides any
-    // recompute preset an authored row config pins
-    const allIds = [...new Set([...Object.keys(RECOMPUTE_PRESETS.full), 'x1'])];
-    const marksEff = (this.getAttribute('controls') ?? 'full') === 'static' ? {} : this.marks;
-    const savedMap = Object.fromEntries(allIds.map(id => [id, marksEff[id] !== false]));
+    // recompute preset an authored row config pins. Static tiers speak
+    // save-everything (the structure view makes no recompute claims).
+    const marksEff = (this.getAttribute('controls') ?? 'full') === 'static' ? RECOMPUTE_PRESETS.none : this.marks;
+    const savedMap = Object.fromEntries(MARKABLE.map(id => [id, marksEff[id] === true]));
     const detail = { matmuls: { ...this.matmuls }, saved: savedMap };
     this.dispatchEvent(new CustomEvent('recipe', { detail }));
     // recompute:'none' + explicit marks = exactly this.marks (preset merged already)
@@ -1000,9 +1000,9 @@ export class Dsv3Layer extends HTMLElement {
     this.render(); this.changed(false);
   }
   toggleMark(ids) {
-    const mutate = () => {
-      const to = this.marks[ids[0]] === false ? true : false;
-      for (const id of ids) { if (to) delete this.marks[id]; else this.marks[id] = false; }
+    const mutate = () => {   // save-driven marks: {id: true} = save; unlisted = recompute
+      const on = this.marks[ids[0]] === true;
+      for (const id of ids) { if (on) delete this.marks[id]; else this.marks[id] = true; }
     };
     if (this.hasAttribute('local') && this.getAttribute('lens') === 'param-bytes') {
       const prev = this._snapLocal(); mutate(); this._tweenLocal(prev);
@@ -1299,7 +1299,7 @@ export class Dsv3Layer extends HTMLElement {
     for (const name of Object.keys(RECOMPUTE_PRESETS)) {
       const o = document.createElement('option'); o.value = o.textContent = name; rsel.append(o);
     }
-    const marksKey = (m) => Object.keys(m).filter(k => m[k] === false).sort().join(',');
+    const marksKey = (m) => Object.keys(m).filter(k => m[k] === true).sort().join(',');
     const curPreset = Object.keys(RECOMPUTE_PRESETS).find(k => marksKey(RECOMPUTE_PRESETS[k]) === marksKey(this.marks));
     rsel.value = curPreset ?? 'none';
     if (!curPreset) {
@@ -1418,7 +1418,7 @@ export class Dsv3Layer extends HTMLElement {
     head.append(dl, mkDimsBtn(), mkCumBtn(), reset);
     // memoized: tween frames re-render 12× with identical analysis inputs —
     // recomputing the graph walk each frame is what made toggles sluggish
-    const marksEff2 = this._ctl.quant || this._ctl.marks ? this.marks : {};
+    const marksEff2 = this._ctl.quant || this._ctl.marks ? this.marks : RECOMPUTE_PRESETS.none;
     const anaKey = `${this.kind}|${cmode}|${this._ctl.marks}|${JSON.stringify(this.matmuls)}|` +
       `${JSON.stringify(this.marks)}|${this.transposed}`;
     if (this._anaMemo?.key !== anaKey) {
@@ -2074,14 +2074,14 @@ export class Dsv3Layer extends HTMLElement {
       return wrap(fmtPV(p, clsOf(id)) + fx);
     };
     const dt = (id) => this.matmuls[id];
-    const marks = this._ctl.quant || this._ctl.marks ? this.marks : {};   // static: save everything
+    const marks = this._ctl.quant || this._ctl.marks ? this.marks : RECOMPUTE_PRESETS.none;   // static: save everything
     const stateA = (A, mks, id) => {   // chip state against a given analysis (tween endpoints)
       const n = A.byId[id];
       if (!n) return null;
       // the checkpoint-anchor lock only means something when a replay exists
       // to terminate at it: with recompute none, x0 is just a saved tensor
       if (n.always) return A.replayed.size ? 'pin' : (A.neededSaved.has(id) ? 'save' : 'idle');
-      if (mks[id] === false) return 'redo';
+      if (mks[id] !== true) return 'redo';
       return A.neededSaved.has(id) ? 'save' : 'idle';
     };
     const state = (id) => stateA(ana, marks, id);
@@ -2101,7 +2101,7 @@ export class Dsv3Layer extends HTMLElement {
       if (!this._ctl.marks) return '';       // hidden below the marks tier
       const st = state(ids[0]);
       if (st === 'pin') return '';
-      const redo = this.marks[ids[0]] === false;
+      const redo = this.marks[ids[0]] !== true;
       // a recompute nobody reads gets a warning (the mark is honored — literal
       // semantics — but a demand-driven planner would have skipped it)
       const warn = redo && ana.pointless?.has(ids[0])
@@ -2465,10 +2465,10 @@ export class Dsv3Layer extends HTMLElement {
     const MLA_RIDS = ['qkv_down', 'q_norm', 'kv_norm', 'q_up', 'kv_up', 'rope_q', 'rope_kv', 'attn', 'o_proj'];
     const regionToggle = (rids, memKey, fx, fy, fw) => {
       if (!this._ctl.marks || !this._noKind) return '';
-      const st3 = rids.every(i => this.marks[i] === false) ? 'redo'
-        : rids.every(i => this.marks[i] !== false) ? 'save' : 'mixed';
+      const st3 = rids.every(i => this.marks[i] === true) ? 'save'
+        : rids.every(i => this.marks[i] !== true) ? 'redo' : 'mixed';
       if (st3 === 'mixed')
-        (this._segMem ??= {})[memKey] = Object.fromEntries(rids.map(i => [i, this.marks[i] === false]));
+        (this._segMem ??= {})[memKey] = Object.fromEntries(rids.map(i => [i, this.marks[i] === true]));
       const hasMix = !!this._segMem?.[memKey];
       const pv = this._segMem?.[memKey + ':prev'];   // toggle-back: the pick before this one
       const rb = (act, label, onStyle, on, dis, title) =>
@@ -3207,7 +3207,7 @@ export class Dsv3Layer extends HTMLElement {
       // dotted ghost at the untreated anchor (recompute none, all-bf16, no
       // fp8ᵀ) — the ▼×N badge is the whole figure's lever, exact. Width
       // lerps in pixel space (= geometric byte motion, rule 9).
-      const anchor = analyze(blockGraph(this.kind, DSV3, resolveMatmuls({ recipe: 'bf16' }), 4096), {}, false)
+      const anchor = analyze(blockGraph(this.kind, DSV3, resolveMatmuls({ recipe: 'bf16' }), 4096), RECOMPUTE_PRESETS.none, false)
         .savedBytes * M2b;
       // the total: a SOLID LINEAR bar over a unit RULER (minor = 1 GiB,
       // major = 8 GiB) — length-first reading, countability on the axis.
@@ -3348,10 +3348,10 @@ export class Dsv3Layer extends HTMLElement {
       b.onclick = () => {
         if (b.disabled) return;
         const rids = b.dataset.rids.split(','), memP = b.dataset.mem + ':prev';
-        const snap = () => Object.fromEntries(rids.map(i => [i, this.marks[i] === false]));
-        const stName = () => rids.every(i => this.marks[i] === false) ? '\u21bb all'
-          : rids.every(i => this.marks[i] !== false) ? '\ud83d\udcbe all' : 'mixed';
-        const apply = (m) => { for (const i of rids) { if (m[i]) this.marks[i] = false; else delete this.marks[i]; } };
+        const snap = () => Object.fromEntries(rids.map(i => [i, this.marks[i] === true]));
+        const stName = () => rids.every(i => this.marks[i] === true) ? '\ud83d\udcbe all'
+          : rids.every(i => this.marks[i] !== true) ? '\u21bb all' : 'mixed';
+        const apply = (m) => { for (const i of rids) { if (m[i]) this.marks[i] = true; else delete this.marks[i]; } };
         this._segMem ??= {};
         if (b.dataset.on === '1') {   // active chip: swap with the previous pick
           const pv = this._segMem[memP];
@@ -3363,8 +3363,8 @@ export class Dsv3Layer extends HTMLElement {
         const act = b.dataset.regionact;
         this._segMem[memP] = { sel: stName(), st: snap() };
         this._tweenQuant(() => {
-          if (act === 'save') for (const i of rids) delete this.marks[i];
-          else if (act === 'redo') for (const i of rids) this.marks[i] = false;
+          if (act === 'save') for (const i of rids) this.marks[i] = true;
+          else if (act === 'redo') for (const i of rids) delete this.marks[i];
           else apply(this._segMem?.[b.dataset.mem] ?? {});
         });
       };

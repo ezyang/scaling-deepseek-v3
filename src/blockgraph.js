@@ -1,7 +1,9 @@
 // The DSv3 transformer block as an explicit op graph, for recompute planning.
 //
-// Every compute op is marked `save` (its output tensor is stashed for backward)
-// or `recompute` (2x that op's compute: it replays once during backward).
+// SAVE-DRIVEN marking (torch_remat's authoring direction): the block starts
+// as recompute-everything; a policy writes `save` marks in ({id: true}).
+// A saved op's output is stashed for backward (if backward reads it); an
+// unmarked op RECOMPUTES — literally, replaying once during backward.
 // Backward needs specific tensors: a matmul/norm/swiglu backward needs its
 // inputs, flash attention also needs its own output (+lse), residual adds need
 // nothing. The gate weights are applied to the swiglu output BEFORE the (linear)
@@ -23,31 +25,32 @@
 // 128 elements — has the identical overhead, so this constant covers both.)
 export const DTYPE_BYTES = { bf16: 2, mxfp8: 1 + 1 / 32, fp32: 4 };
 
-// Marking presets. true = save output, false = recompute. Unlisted ops: save.
+// Marking is SAVE-driven (torch_remat's authoring direction): the checkpoint
+// region starts as RECOMPUTE-EVERYTHING, and a policy writes saves in.
+// marks: {id: true} = save this op's output; anything unlisted RECOMPUTES
+// (literally — see analyze). Recompute marks are literal; saves stay
+// demand-gated (autograd never materializes an output backward won't read).
+export const MARKABLE = ['norm1', 'qkv_down', 'q_norm', 'kv_norm', 'q_up', 'kv_up', 'rope_q', 'rope_kv',
+  'attn', 'o_proj', 'x1', 'norm2', 'router', 'dispatch', 'gate_up', 'swiglu', 'ffn_down', 'combine', 'moe_add'];
+const saveAllExcept = (...redo) => Object.fromEntries(MARKABLE.filter(i => !redo.includes(i)).map(i => [i, true]));
 export const RECOMPUTE_PRESETS = {
   // every preset except 'none' re-runs RoPE in backward (production fuses it
   // into the attention prologue); 'none' is naive autograd — it saves the
   // rotated q/k (attention's actual inputs), the same bytes either way
-  none: {},
+  none: saveAllExcept(),
   // DeepSeek-paper policy: recompute RMSNorms, MLA up-projections, SwiGLU
-  dsv3: { norm1: false, norm2: false, q_norm: false, kv_norm: false, q_up: false, kv_up: false,
-    rope_q: false, rope_kv: false, swiglu: false },
+  dsv3: saveAllExcept('norm1', 'norm2', 'q_norm', 'kv_norm', 'q_up', 'kv_up', 'rope_q', 'rope_kv', 'swiglu'),
   // aggressive production policy: recompute ALL of attention (norm1 through
   // the residual add) from x0 in backward; the saved attention-side tensor is
   // norm2's OUTPUT (the attention output post-norm), which the MoE half consumes.
-  'attn-replay': {
-    norm1: false, qkv_down: false, q_norm: false, kv_norm: false, q_up: false, kv_up: false,
-    rope_q: false, rope_kv: false, attn: false, o_proj: false, x1: false, swiglu: false,
-  },
+  'attn-replay': saveAllExcept('norm1', 'qkv_down', 'q_norm', 'kv_norm', 'q_up', 'kv_up',
+    'rope_q', 'rope_kv', 'attn', 'o_proj', 'x1', 'swiglu'),
   // dsv3 + recompute ffn gate/up from the dispatched tokens
-  selective: { norm1: false, norm2: false, q_norm: false, kv_norm: false, q_up: false, kv_up: false,
-    rope_q: false, rope_kv: false, swiglu: false, gate_up: false },
-  // full checkpointing: replay the whole layer from its input (incl. the a2a!)
-  full: {
-    norm1: false, qkv_down: false, q_norm: false, kv_norm: false, q_up: false, kv_up: false,
-    rope_q: false, rope_kv: false, attn: false, o_proj: false, x1: false,
-    norm2: false, router: false, dispatch: false, gate_up: false, swiglu: false, ffn_down: false, combine: false, moe_add: false,
-  },
+  selective: saveAllExcept('norm1', 'norm2', 'q_norm', 'kv_norm', 'q_up', 'kv_up',
+    'rope_q', 'rope_kv', 'swiglu', 'gate_up'),
+  // full checkpointing: NO saves — replay the whole layer from its input
+  // (incl. the a2a!). The empty policy is the canvas every policy starts from.
+  full: {},
 };
 
 export function resolveMarks(cfg) {
@@ -67,7 +70,7 @@ export function blockGraph(kind, a, mm, seqLen) {
     id, label, opKind, inputs, tensor, elems,
     outBytes: elems * bytesPer,
     flopsTok, bucket: opts.bucket ?? 'moe',
-    always: opts.always ?? false, needsOwnOutput: opts.needsOwnOutput ?? false,
+    always: opts.always ?? false, nomark: opts.nomark ?? false, needsOwnOutput: opts.needsOwnOutput ?? false,
     aux: opts.aux ?? null, bwdNeeds: opts.bwdNeeds ?? null,
     tdims: opts.tdims ?? String(elems),   // unitless per-token size, factored like the op dims
   });
@@ -134,7 +137,7 @@ export function blockGraph(kind, a, mm, seqLen) {
     N('moe_add', '+ routed + shared', 'add', ['combine'], 'ffn out (routed + shared)', h, 2, 0,
       { bucket: 'moe' })] : []),
     N('x2', '+ residual (out)', 'add', [moe ? 'moe_add' : 'ffn_down', 'x1'], 'x2 → next block', h, 2, 0,
-      { bucket: 'residual' }),
+      { bucket: 'residual', nomark: true }),   // the block boundary: its output is the next region's x0 (charged there) — no mark exists
   ];
   return nodes;
 }
@@ -154,7 +157,7 @@ const bwdNeedsInputs = (n) => BWD_NEEDS_INPUTS[n.opKind];
 // need no transpose, so those stashes are exempt either way.
 export function analyze(nodes, marks, transposedStash = false) {
   const byId = Object.fromEntries(nodes.map(n => [n.id, n]));
-  const saved = (n) => n.always || (marks[n.id] !== false);
+  const saved = (n) => n.always || n.nomark || marks[n.id] === true;
   const neededSaved = new Set(), replayed = new Set();
   const neededBy = new Map();                        // tensor id -> Set of ops whose backward/replay reads it
   const need = (id, by) => {
