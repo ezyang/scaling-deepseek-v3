@@ -1827,7 +1827,8 @@ export class Dsv3Layer extends HTMLElement {
           ? 'Each wire label is an output, tagged with the recompute policy\u2019s derived result \u2014'
           : 'Each wire label is an output, tagged with whether backward reads it \u2014',
       this._ctl.quant
-        ? '\u2193 \u2191 \u21c5 saved for backward, read by the op below / above / both (\u25aa = 4 KiB/token; violet boxes = communication), ' +
+        ? '\u2193 \u2191 \u21c5 saved for backward, read by the op below / above / both; \u21d3 \u21d1 \u21d5 saved as a RECOMPUTE anchor \u2014 every reader is a replay ' +
+          '(\u25aa = 4 KiB/token; violet boxes = communication), ' +
           '\u21bb recomputed, \u00b7 not needed, \ud83d\udd12 always saved; ' +
           'right arrows are aux backward artifacts (rstd, lse), \u2190 saved unless their op replays.'
         : '\u2193 \u2191 \u21c5 read by the op below / above / both, \u00b7 not needed (violet boxes = communication); ' +
@@ -2113,7 +2114,10 @@ export class Dsv3Layer extends HTMLElement {
       const warn = redo && ana.pointless?.has(ids[0])
         ? `<g data-tip="${escAttr('\u26a0 pointless recompute: nothing in backward reads this op\u2019s output — the replay burns time (and may pin its inputs in the stash) while saving no memory. torch_remat does what you said; a demand-driven planner would skip this mark.')}">` +
           `<text x="${x - 14}" y="${y + 15}" font-size="11">\u26a0\ufe0f</text></g>`
-        : '';
+        : redo && NEUTRAL.has(ids[0])
+          ? `<g data-tip="${escAttr('\u21c4 byte-NEUTRAL recompute: the replay is free (~0 FLOPs) and the stash just moves to an equal-sized tensor on the other side — net memory unchanged. On its own this mark buys nothing; it pays off as part of a longer replay chain (mark its inputs \u21bb too and the stash walks up toward x0).')}">` +
+            `<text x="${x - 14}" y="${y + 15}" font-size="11" fill="#52514e" font-weight="600">\u21c4</text></g>`
+          : '';
       return warn + `<foreignObject x="${x}" y="${y}" width="26" height="20">` +
         `<button xmlns="http://www.w3.org/1999/xhtml" class="st mode st-${redo ? 'redo' : 'save'}" ` +
         `data-mark="${ids.join(',')}" title="save output for backward vs recompute this op during backward">${redo ? '↻' : '💾'}</button></foreignObject>`;
@@ -2254,6 +2258,20 @@ export class Dsv3Layer extends HTMLElement {
     // microbatch at bf16 peak, so dtype flips visibly stretch/shrink the
     // runs instead of renormalizing the scale.
     const TB_X = 44, TB_AVAIL = 870;   // tally ribbons: label gutter + runway
+    // NEUTRAL marks (⇄): a ↻ whose flip to 💾 would leave the stash total
+    // EXACTLY unchanged — the recompute is free (an add, a rotation) and the
+    // stash just moves to an equal-sized tensor on the other side. Detected
+    // by counterfactual: re-analyze with that one mark flipped. Disjoint
+    // from ⚠ (pointless takes precedence).
+    const NEUTRAL = new Set();
+    if (this._ctl.marks) {
+      const cfNodes = blockGraph(this.kind, DSV3, this.matmuls, 4096);
+      for (const nid of MARKABLE) {
+        if (this.marks[nid] === true || ana.pointless?.has(nid) || !ana.byId[nid]) continue;
+        const cf = analyze(cfNodes, { ...this.marks, [nid]: true }, this.transposed);
+        if (Math.abs(cf.savedBytes - ana.savedBytes) < 1e-6) NEUTRAL.add(nid);
+      }
+    }
     // stash-knob tween endpoints (quant tiers): the previous analysis carries
     // membership + bytes, prev.mm the previous per-matmul dtypes. Widths and
     // colors lerp; numbers snap.
@@ -2304,12 +2322,17 @@ export class Dsv3Layer extends HTMLElement {
         P.push(`<rect x="${x + (u % per) * 3}" y="${y + (rows + Math.floor(u / per)) * 7}" width="${(2 * Math.min(1, rT - u)).toFixed(2)}" height="5" fill="${REDO_C}"/>`);
     };
     // who reads this saved tensor in backward: consumer below (↓), the
-    // producer's own backward above (↑), or both (↕)
+    // producer's own backward above (↑), or both (⇅). If EVERY reader is a
+    // REPLAY (the tensor is a recompute ANCHOR, not a direct backward
+    // input), the arrow goes double-struck: ⇓ ⇑ ⇕ — the paper's own framing
+    // ('cache the inputs of the SwiGLU operator and recompute its output')
     const needDir = (ids) => {
       const by = new Set(ids.flatMap(i => [...(ana.neededBy.get(i) ?? [])]));
       const up = ids.some(i => by.has(i));
       const down = [...by].some(b => !ids.includes(b));
-      return up && down ? '⇅' : up ? '↑' : '↓';
+      const anchor = by.size > 0 && [...by].every(c => c === 'replay anchor' || ana.replayed.has(c));
+      const [dnA, upA, bothA] = anchor ? ['⇓', '⇑', '⇕'] : ['↓', '↑', '⇅'];
+      return up && down ? bothA : up ? upA : dnA;
     };
     // ov (optional): display-split override for a chip that shows part of one
     // graph node — { name, tdims, frac } (bytes and grid scale by frac)

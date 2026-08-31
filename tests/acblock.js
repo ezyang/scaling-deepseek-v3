@@ -219,8 +219,25 @@ T.check('sub-picket GEMMs wear the hollow trace',
   const rq = () => ac.querySelector('button[data-mark="rope_q"]');
   T.check('RoPE pills carry LIVE mark buttons', !!rq() && !rq().disabled
     && !!ac.querySelector('button[data-mark="rope_kv"]'), '');
+  // NEUTRAL ⇄: a lone x1 ↻ swaps equal-sized stashes — free, net-zero
+  {
+    const neut = () => ac.querySelectorAll('.lv-scroll g[data-tip*="byte-NEUTRAL"]').length;
+    const gN = tHead(ac).match(/= ([\d.]+) GiB/)[1];
+    ac.querySelector('button[data-mark="x1"]').click(); await T.tick(400);
+    T.check('x1 ↻ alone wears the ⇄ badge and moves zero bytes',
+      neut() >= 1 && tHead(ac).includes(`= ${gN} GiB`), `${neut()} ${tHead(ac)}`);
+    ac.querySelector('button[data-mark="x1"]').click(); await T.tick(300);
+  }
   T.check('kv down-proj mirrors qkv_down (2 buttons, one node)',
     ac.querySelectorAll('button[data-mark="qkv_down"]').length === 2, '');
+  // recompute ANCHORS wear double-struck arrows (⇓⇑⇕): every reader is a replay
+  btn(ac, 'recompute', 'dsv3').click(); await T.tick(400);
+  const chipTxts = [...ac.querySelectorAll('.lv-scroll text.tsave')].map(t => t.textContent);
+  T.check('dsv3: latents + gate/up-out + x1 read as recompute anchors (⇓)',
+    ['latent', 'gate, up (routed)', 'x1'].every(n => chipTxts.some(t => /^[⇓⇑⇕]/.test(t) && t.includes(n))), '');
+  T.check('direct backward stashes keep single arrows (dispatched tokens)',
+    chipTxts.some(t => t.startsWith('↓') && t.includes('dispatched')), '');
+  btn(ac, 'recompute', 'none').click(); await T.tick(400);
   T.check('the block-output add wears the locked \ud83d\udd12 (its output IS next-x0)',
     [...ac.querySelectorAll('.lv-scroll button:disabled')].filter(b => b.textContent === '\ud83d\udd12').length === 1, '');
   // the routed+shared sum is a real node (no fusion modeled): its ↻ mark is
