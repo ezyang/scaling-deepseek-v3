@@ -50,7 +50,7 @@ the rest are conventions to uphold when editing the renderer.
     pile contexts (weight strips, stash chips — one stated unit per figure,
     never double-counted; chip runs never wrap). PICKETS (2×5 thin rects)
     count compute as time quanta — the 1D shape for the 1D quantity (one
-    picket = 20 MFLOP/token bf16-eq ≈ 83 µs/mb at peak; dtype flips change
+    picket = 10 MFLOP/token bf16-eq ≈ 41 µs/mb at peak; dtype flips change
     the COUNT, never the scale; hollow trace = sub-unit). Linear memory
     COMPARISON bars are SOLID over a unit-graduated RULER (countability on
     the axis: minor = the unit, major = 8 minors, quanta nesting in powers

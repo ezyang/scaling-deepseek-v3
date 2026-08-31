@@ -51,20 +51,20 @@ T.check('back to dsv3', gib() === 66.6, gib());
   T.check('dsv3 quantum is smaller', kib < kibNone, `${kib} vs ${kibNone}`);
   btn(ac, 'recompute', 'dsv3').click(); await T.tick(300);
 }
-// ---- FLOP pickets: one FIXED unit (20 MFLOP/token ≈ 83 µs/mb) — an fp8
+// ---- FLOP pickets: one FIXED unit (10 MFLOP/token ≈ 41 µs/mb) — an fp8
 // flip halves the COUNT, not the scale. Counting via the fwd ribbon (= the
-// boxes' pickets laid end to end): bf16 fwd ≈ 1.34 GFLOP/tok = 67 pickets.
+// boxes' pickets laid end to end): bf16 fwd ≈ 1.34 GFLOP/tok = 134 pickets.
 const fwdN = (l) => {
   const lab = [...tally(l).querySelectorAll('text')].find(t => t.textContent === 'fwd');
   const y0 = +lab.getAttribute('y') - 6;
   return [...tally(l).querySelectorAll('rect[height="5"]')]
     .filter(r => Math.abs(+r.getAttribute('y') - y0) < 3).length;
 };
-T.check('AC widget (bf16): fwd = 67 pickets at the fixed unit', fwdN(ac) === 67, fwdN(ac));
-T.check('fp8 widget: mxfp8 shrinks the tally (44 pickets)', fwdN(f8) === 44, fwdN(f8));
+T.check('AC widget (bf16): fwd = 134 pickets at the fixed unit', fwdN(ac) === 134, fwdN(ac));
+T.check('fp8 widget: mxfp8 shrinks the tally (88 pickets)', fwdN(f8) === 88, fwdN(f8));
 { // recipe flip to bf16 restores the count — the unit never renormalizes
   btn(f8, 'recipe', 'bf16').click(); await T.tick(400);
-  T.check('recipe→bf16 restores the full count', fwdN(f8) === 67, fwdN(f8));
+  T.check('recipe→bf16 restores the full count', fwdN(f8) === 134, fwdN(f8));
   T.check('fp8 readout follows the recipe', /= 118\.6 GiB/.test(tHead(f8)), tHead(f8));
   btn(f8, 'recipe', 'dsv3-fp8').click(); await T.tick(400);
   T.check('back to dsv3-fp8', /= 86\.2 GiB/.test(tHead(f8)), tHead(f8));
@@ -162,8 +162,8 @@ T.check('sub-picket GEMMs wear the hollow trace',
   btn(f8, 'recipe', 'bf16').click(); await T.tick(60);
   const mid = fwdN(f8);
   await T.tick(400);
-  T.check('picket count lerps through the dtype flip', mid > 46 && mid < 65, mid);
-  T.check('and lands on the full count', fwdN(f8) === 67, fwdN(f8));
+  T.check('picket count lerps through the dtype flip', mid > 92 && mid < 130, mid);
+  T.check('and lands on the full count', fwdN(f8) === 134, fwdN(f8));
   btn(f8, 'recipe', 'dsv3-fp8').click(); await T.tick(400);
 }
 T.done();

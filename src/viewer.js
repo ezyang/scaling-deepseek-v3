@@ -1784,7 +1784,7 @@ export class Dsv3Layer extends HTMLElement {
             : `The shared expert${SCOPE === 'model' ? ' and dense MLPs share' : ' shares'} the ffn boxes; `))
           + `RoPE carries its own mark${this._ctl.quant ? ' (every preset replays it; saving it stashes the same bytes post-rotation)' : ''}.`,
       !this._ctl.quant ? '' :
-      'The picket run inside each op is its FLOP cost as time at peak \u2014 one picket = 20 MFLOP/token \u2248 83 \u00b5s per 4096-token microbatch (' +
+      'The picket run inside each op is its FLOP cost as time at peak \u2014 one picket = 10 MFLOP/token \u2248 41 \u00b5s per 4096-token microbatch (' +
       'mxfp8 counted half \u2014 2\u00d7 peak; fp32 counted double \u2014 half peak; dtype colors here and on the saved-tensor tags: blue mxfp8, dark bf16, plum fp32); ' +
       'the lm head uses the same unit \u2014 per-token vocab work, independent of depth. Norms/SwiGLU ' +
       'get a hollow dashed fig-leaf (bandwidth-bound, compute precision unspecified).',
@@ -2171,7 +2171,8 @@ export class Dsv3Layer extends HTMLElement {
     };
     // FLOP cost as a BAR: length = time at peak (squares count bytes; length
     // measures time — the pipeline strip's language). ONE fixed unit:
-    // 20 MFLOP/token (bf16-equivalent) per picket ≈ 83 µs per 4096-token
+    // 10 MFLOP/token (bf16-equivalent) per picket ≈ 41 µs per 4096-token
+    // (bwd ≈ 268 pickets fills most of the tally runway)
     // microbatch at bf16 peak, so dtype flips visibly stretch/shrink the
     // runs instead of renormalizing the scale.
     const TB_X = 44, TB_AVAIL = 870;   // tally ribbons: label gutter + runway
@@ -2190,7 +2191,7 @@ export class Dsv3Layer extends HTMLElement {
     // dtype-colored) — the 1D shape for the 1D quantity; squares stay bytes.
     // Sub-picket ops wear the hollow trace; the last picket is a partial-
     // width sliver (area exact). Same unit in the tally ribbons.
-    const FUNIT = 20e6;
+    const FUNIT = 10e6;
     const barRows = (flopsTok, dt2, maxW, dtp) => {
       if (!flopsTok || !this._ctl.quant || dt2 === 'vector') return 1;
       return Math.max(1, Math.ceil(Math.ceil(eqT(flopsTok, dt2, dtp) / FUNIT) / Math.floor(maxW / 3)));
@@ -3123,7 +3124,7 @@ export class Dsv3Layer extends HTMLElement {
         `<text class="dims" x="${capX + 3}" y="${cy0 + 1}" fill="#d03b3b">80 GiB</text>`);
       ty = cy0 + 32;
     }
-    T.push(`<text class="grplabel" x="0" y="${ty + 9}">per-layer FLOPs as time at peak — one picket = 20 MFLOP/token (bf16-eq) ≈ 83 µs per 4096-token microbatch:</text>`);
+    T.push(`<text class="grplabel" x="0" y="${ty + 9}">per-layer FLOPs as time at peak — one picket = 10 MFLOP/token (bf16-eq) ≈ 41 µs per 4096-token microbatch:</text>`);
     ty += 14;
     const DT_ORDER = { bf16: 0, mxfp8: 1, fp32: 2 };
     const ribbon = (label, list, wOf, num) => {
@@ -3164,7 +3165,7 @@ export class Dsv3Layer extends HTMLElement {
         T.push(`<line x1="${x.toFixed(1)}" y1="${ry}" x2="${x.toFixed(1)}" y2="${ry + (major ? 5 : 2.5)}" stroke="#c3c2b7" stroke-width="1"/>`);
         if (major && u > 0) T.push(`<text x="${x.toFixed(1)}" y="${ry + 14}" text-anchor="middle" font-size="8.5" fill="#898781">${u / 10}</text>`);
       }
-      T.push(`<text class="dims" x="${(TB_X + rext + 10).toFixed(1)}" y="${ry + 14}">GFLOP/token (bf16-eq) · minor = 100 MFLOP · 1 GFLOP ≈ 4.1 ms per microbatch at peak · LINEAR</text>`);
+      T.push(`<text class="dims" x="${(TB_X + rext + 10).toFixed(1)}" y="${ry + 14}">GFLOP/token (bf16-eq) · LINEAR</text>`);
       ty = ry + 20;
     }
     T.push(`<text class="dims" x="${TB_X}" y="${ty + 8}">= ${(3 + replayEq / fwdEq).toFixed(2)}× fwd per training step</text>`);
