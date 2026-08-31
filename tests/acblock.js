@@ -131,10 +131,30 @@ T.check('sub-picket GEMMs wear the hollow trace',
 }
 // ---- the fixed-config readout + mirrored/fiat marks
 {
-  const ctx = [...ac.querySelectorAll('.lv-head .pargrp')].find(g => g.textContent.includes('parallelism (fixed)'));
-  T.check('ctx chips name the section config (PP8 · DualPipeV · EP64)',
-    !!ctx && /PP8/.test(ctx.textContent.replace(/\s/g, '')) && ctx.textContent.includes('DualPipeV')
-    && [...ctx.querySelectorAll('button')].every(b => b.disabled), ctx?.textContent);
+  // the ctx READOUT row mirrors the full sim's knob layout, locked
+  const rows = [...ac.querySelectorAll('.lv-head')];
+  T.check('ctx row mirrors the sim groups, policy row below',
+    rows.length >= 2 && !!rows[0].querySelector('[data-knob="gpus"]')
+    && !!rows[1].querySelector('[data-knob="recompute"]')
+    && ['cluster', 'pipeline', 'SPMD mesh', 'ZeRO'].every(x =>
+      [...rows[0].querySelectorAll('.parlab')].some(l2 => l2.textContent === x)), '');
+  T.check('locked chips carry the config (PP8 · r1–7 · DualPipeV · EP64 · ZeRO-1)',
+    ac.querySelector('.stp[data-knob="pp"] button.on')?.textContent === '8'
+    && ac.querySelector('.stp[data-knob="rank"] button.on')?.textContent.includes('r1–7')
+    && ac.querySelector('.stp[data-knob="sched"] button.on')?.textContent === 'DualPipeV'
+    && ac.querySelector('.stp[data-knob="ep"] button.on')?.textContent === '64'
+    && ac.querySelector('.stp[data-knob="zero"] button.on')?.textContent === '1'
+    && [...rows[0].querySelectorAll('button')].every(b => b.disabled), '');
+  // custom MEMORY + toggle-back: leave custom, return to it, ping-pong
+  ac.querySelector('button[data-mark="norm1"]').click(); await T.tick(400);   // dsv3 → custom
+  const gX = tHead(ac).match(/= ([\d.]+) GiB/)[1];
+  btn(ac, 'recompute', 'none').click(); await T.tick(400);
+  T.check('custom chip stays ENABLED after leaving', !btn(ac, 'recompute', 'custom').disabled, '');
+  btn(ac, 'recompute', 'custom').click(); await T.tick(400);
+  T.check('custom restores the hand-edited state', tHead(ac).includes(`= ${gX} GiB`)
+    && btn(ac, 'recompute', 'custom').classList.contains('on'), '');
+  btn(ac, 'recompute', 'custom').click(); await T.tick(400);
+  T.check('clicking the ACTIVE chip toggles back (to none)', btn(ac, 'recompute', 'none').classList.contains('on'), '');
   T.check('shared expert mirrors the grouped marks (two buttons per mark)',
     ac.querySelectorAll('button[data-mark="gate_up"]').length === 2
     && ac.querySelectorAll('button[data-mark="ffn_down"]').length === 2

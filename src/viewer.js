@@ -1449,49 +1449,101 @@ export class Dsv3Layer extends HTMLElement {
       // elided-kernels toggle is gone
       this.detail = true;
       const hh = el('div', 'lv-head');
-      const segGrp = (label, name, opts, cur, apply) => {
+      // preset segments REMEMBER: 'custom' keeps your last hand-edited
+      // state (click it to come back), and clicking the ACTIVE chip toggles
+      // back to whatever was selected before it
+      this._segMem ??= {};
+      const segGrp = (label, name, opts, cur, getState, setPreset, setState) => {
+        const mem = this._segMem[name] ??= {};
+        if (cur == null) mem.custom = getState();   // the latest hand-edited composition
         const g = el('span', 'pargrp');
         const l3 = el('div', 'parlab'); l3.textContent = label; g.append(l3);
         const row = el('div', 'parrow');
         const w3 = el('span', 'stp'); w3.dataset.knob = name;
+        const pick = (sel, st) => {                 // remember where we came FROM
+          mem.prev = { sel: cur ?? 'custom', st: getState() };
+          st ? setState(st) : setPreset(sel);
+        };
+        const back = () => {                        // active chip clicked: swap with the previous pick
+          const now = { sel: cur ?? 'custom', st: getState() };
+          const pv = mem.prev; mem.prev = now;
+          setState(pv.st);
+        };
+        const arm = (b) => {                        // an active chip with history is a toggle
+          if (!mem.prev) return;
+          b.onclick = back; b.style.cursor = 'pointer';
+          b.title = `click again — back to ${mem.prev.sel}`;
+        };
         for (const k of opts) {
           const b = document.createElement('button');
           b.textContent = k; b.type = 'button';
-          if (cur === k) b.classList.add('on');
-          else b.onclick = () => apply(k);
+          if (cur === k) { b.classList.add('on'); arm(b); }
+          else b.onclick = () => pick(k);
           w3.append(b);
         }
         const cb = document.createElement('button');
-        cb.textContent = 'custom'; cb.type = 'button'; cb.disabled = true;
-        if (cur == null) cb.classList.add('on');
+        cb.textContent = 'custom'; cb.type = 'button';
+        if (cur == null) { cb.classList.add('on'); arm(cb); }
+        else if (mem.custom) {
+          cb.title = 'your last hand-edited state';
+          cb.onclick = () => pick('custom', mem.custom);
+        } else cb.disabled = true;
         w3.append(cb);
         row.append(w3); g.append(row);
         return g;
       };
       if (this._ctl.marks) hh.append(segGrp('recompute policy', 'recompute', Object.keys(RECOMPUTE_PRESETS), curPreset,
-        (k) => localTween(() => { this.setAttribute('recompute', k); this.marks = { ...RECOMPUTE_PRESETS[k] }; })));
+        () => ({ ...this.marks }),
+        (k) => localTween(() => { this.setAttribute('recompute', k); this.marks = { ...RECOMPUTE_PRESETS[k] }; }),
+        (st) => localTween(() => { this.marks = { ...st }; })));
       if (this._ctl.dtype) hh.append(segGrp('precision recipe', 'recipe', Object.keys(RECIPES), curRecipe,
-        (k) => localTween(() => { this.setAttribute('recipe', k); this.matmuls = resolveMatmuls({ recipe: k }); })));
+        () => ({ ...this.matmuls }),
+        (k) => localTween(() => { this.setAttribute('recipe', k); this.matmuls = resolveMatmuls({ recipe: k }); }),
+        (st) => localTween(() => { this.matmuls = { ...st }; })));
       if (this._ctl.dtype) hh.append(tl);
-      // ctx: the section's FIXED parallelism as read-only knob chips (the
-      // local sim's look, locked) — the reader sees which config prices the
-      // numbers without implying these are levers here
+      // ctx: the section's FIXED parallelism as a READOUT row that mirrors
+      // the full sim's knob layout exactly (cluster · pipeline · SPMD mesh ·
+      // ZeRO, same groups, same places) — locked, so it reads as context,
+      // not levers. It takes the whole width; the policy row sits below.
+      let hr = null;
       if (this.getAttribute('ctx')) {
-        const g = el('span', 'pargrp');
-        const l4 = el('div', 'parlab'); l4.textContent = 'parallelism (fixed)'; g.append(l4);
-        const row = el('div', 'parrow'); row.style.gap = '7px';
-        for (const [k, v] of Object.entries(JSON.parse(this.getAttribute('ctx')))) {
-          const t2 = el('span'); t2.style.cssText = 'color:#52514e;font-size:11px;'; t2.textContent = k;
-          const w4 = el('span', 'stp');
-          const b = document.createElement('button');
-          b.type = 'button'; b.textContent = v; b.disabled = true; b.classList.add('on');
-          w4.append(b); row.append(t2, w4);
-        }
-        g.append(row); hh.append(g);
+        const C = JSON.parse(this.getAttribute('ctx'));   // {world, pp, ep, zero}
+        hr = el('div', 'lv-head');
+        const grp3 = (label) => { const g = el('span', 'pargrp'); const l5 = el('div', 'parlab'); l5.textContent = label; g.append(l5); return g; };
+        const row3 = (...kids) => { const d = el('div', 'parrow'); d.append(...kids); return d; };
+        const txt3 = (t3) => { const sp = el('span'); sp.style.cssText = 'color:#52514e;font-size:11px;'; sp.textContent = t3; return sp; };
+        const txtR3 = (t3) => { const sp = txt3(t3); sp.style.cssText += 'display:inline-block;width:64px;text-align:right;'; return sp; };
+        const seg3 = (name, opts, onIdx) => {
+          const w5 = el('span', 'stp'); w5.dataset.knob = name;
+          opts.forEach((t3, i) => {
+            const b = document.createElement('button');
+            b.type = 'button'; b.textContent = t3; b.disabled = true;
+            if (i === onIdx) b.classList.add('on');
+            w5.append(b);
+          });
+          return w5;
+        };
+        const chip3 = (name, v) => seg3(name, [String(v)], 0);
+        const DPn2 = C.world / C.pp;
+        const gC = grp3('cluster');
+        gC.append(row3(txt3('GPUs'), chip3('gpus', C.world)));
+        const gP = grp3('pipeline');
+        gP.append(
+          row3(txt3('PP'), chip3('pp', C.pp), txt3('rank'),
+            seg3('rank', ['r0 · emb+head', `r1–${C.pp - 1} · peak`], 1)),
+          row3(txt3('sched'), seg3('sched', ['DualPipeV', '×1 mb'], 0)));
+        const gM = grp3('SPMD mesh');
+        gM.append(
+          row3(txtR3('non-expert:'), txt3(`DP ${DPn2}`)),
+          row3(txtR3('expert:'), txt3('EP'), chip3('ep', C.ep), txt3(`× EDP ${DPn2 / C.ep}`)));
+        const gZ = grp3('ZeRO'); gZ.classList.add('center');
+        gZ.append(row3(seg3('zero', ['off', '1', '2', '3'], C.zero)));
+        hr.append(gC, gP, gM, gZ);
       }
       reset.style.cssText = 'font:11px ui-monospace,monospace;padding:2px 8px;border:1px solid #c3c2b7;' +
         'border-radius:4px;background:#fff;cursor:pointer;margin-left:auto;';
       hh.append(mkDimsBtn(), reset);
+      if (hr) root.append(hr);
       root.append(hh);
     } else if (cmode !== 'static') root.append(head);
     if (cmode === 'static') {
