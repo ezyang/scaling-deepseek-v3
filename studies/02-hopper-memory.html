@@ -157,7 +157,7 @@
     PP rank, with roughly four transformer blocks per chunk--click
     "fold onto the 8 ranks" to see the mapping:</p>
 
-    <dsv3-pp-fold style="min-height:447px"></dsv3-pp-fold>
+    <dsv3-pp-fold style="min-height:453px"></dsv3-pp-fold>
 
     <p>You may have noticed that there is a slight imbalance arising from the special cases at
     the beginning and end of the model (embedding, dense blocks, LM head).  It will turn out that this will be compensated for by the
@@ -222,22 +222,9 @@
     somehow during recompute, either because: (1) it was independently saved for
     backwards by another operation, (2) the producer is being recomputed, or (3) we
     manually saved it (potentially increasing your memory usage!)  You can play around with
-    this </p>
+    this below:</p>
 
-    THIS SECTION IS SLOP
-
-    <p>Here is the transformer block diagram from the
-    <a href="./01-deepseek-diagram.html">last post</a>, now with a save/recompute
-    control on every operation.  Each op is marked either 💾 (save its output
-    for backward) or ↻ (recompute it during backward).  The annotations on the
-    wires are <em>derived</em> from those marks: the diagram works out which
-    tensors backward actually reads, and therefore which ones must stay
-    resident.  For now, assume every saved tensor is stored in bf16 (2 bytes
-    per element) &mdash; that's what the byte counts and the yellow memory
-    grids are priced at; we'll revisit that assumption in the next
-    section.</p>
-
-    <dsv3-anatomy style="min-height:818px" layer="ac-layer" controls="marks" recipe="bf16" recompute="dsv3"
+    <dsv3-anatomy style="min-height:869px" layer="ac-layer" controls="marks" recipe="bf16" recompute="dsv3"
       xlayers="8" xinflight="8.5" xtag="an interior rank of PP8 · DualPipeV steady state"></dsv3-anatomy>
 
     <p>Some things to notice as you play with the marks:</p>
@@ -281,7 +268,7 @@
     stored in the dtype of the GEMM that will read it during backward.  Flip
     the dtype buttons below and watch the stash sizes follow.</p>
 
-    <dsv3-anatomy style="min-height:818px" layer="fp8-layer" controls="dtype" recipe="dsv3-fp8" recompute="none"
+    <dsv3-anatomy style="min-height:869px" layer="fp8-layer" controls="dtype" recipe="dsv3-fp8" recompute="none"
       xlayers="8" xinflight="8.5" xtag="an interior rank of PP8 · DualPipeV steady state"></dsv3-anatomy>
 
     <p>Two recipes matter for us.  The <em>dsv3-fp8</em> recipe is the Hopper

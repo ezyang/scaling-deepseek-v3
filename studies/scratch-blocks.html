@@ -16,25 +16,21 @@
       for time intervals. Memory units are tall-thin rects; FLOP units are
       squares. Not part of the series.</p>
 
-    <h2>1 · fold map, graduated (solid bars + unit ruler)</h2>
-    <p class="note">Round 4: the bars keep their approved solid look but sit on
-      a FIXED scale with a unit RULER (minor tick = 128 MiB bf16, major =
-      1 GiB) — countability on the axis, not atomized into the bars. Labels in
-      bytes. EP still changes lengths honestly (try EP1).</p>
-    <dsv3-pp-fold blocks style="min-height:447px"></dsv3-pp-fold>
+    <h2>1 · fold map, graduated (solid bars + unit ruler) — SHIPPED (default)</h2>
+    <p class="note">Solid bars on a FIXED scale with a unit RULER (minor tick =
+      128 MiB bf16, major = 1 GiB) — countability on the axis, not atomized
+      into the bars. Labels in bytes. EP still changes lengths honestly.</p>
+    <dsv3-pp-fold style="min-height:453px"></dsv3-pp-fold>
 
-    <p class="note">The current bar rendering, for comparison:</p>
-    <dsv3-pp-fold style="min-height:447px"></dsv3-pp-fold>
-
-    <h2>2 · the AC diagram under the SWAPPED assignment (flopsq)</h2>
+    <h2>2 · the AC diagram under the SWAPPED assignment — SHIPPED (default)</h2>
     <p class="note">Round 4 — FLOPs = PICKETS (a tally of time quanta: one
       picket = 20 MFLOP/token bf16-eq ≈ 83 µs per 4096-token microbatch at
       peak; hollow = sub-picket), bytes = SQUARES (amber, single-line on the
       wires), and the consolidated total = a SOLID linear bar over a GiB
       ruler (minor 1 GiB, major 8 GiB) with the dashed amber overhang ghost.
       Flip recompute/marks — everything pours.</p>
-    <dsv3-anatomy style="min-height:820px" layer="sq-ac" controls="marks" recipe="bf16" recompute="dsv3"
-      xlayers="8" xinflight="8.5" xtag="an interior rank of PP8 · DualPipeV steady state" flopsq></dsv3-anatomy>
+    <dsv3-anatomy style="min-height:869px" layer="sq-ac" controls="marks" recipe="bf16" recompute="dsv3"
+      xlayers="8" xinflight="8.5" xtag="an interior rank of PP8 · DualPipeV steady state"></dsv3-anatomy>
 
     <h2>2b · solid GEMM rects at their literal dims (no atomization)</h2>
     <p class="note">Eyeball prototype: each matmul drawn as ONE solid rectangle,

@@ -51,64 +51,72 @@ T.check('back to dsv3', gib() === 66.6, gib());
   T.check('dsv3 quantum is smaller', kib < kibNone, `${kib} vs ${kibNone}`);
   btn(ac, 'recompute', 'dsv3').click(); await T.tick(300);
 }
-// ---- FLOP bars: one FIXED unit — an fp8 flip halves the bar, not the scale.
-// The longest bar is always gate/up (528.5 MFLOP/token): 171.7px at bf16.
-const maxBar = (l) => Math.max(...[...l.querySelectorAll('.lv-scroll rect[height="4"]')]
-  .map(r => +r.getAttribute('width')));
-T.check('AC widget (bf16): gate/up bar at the fixed unit', Math.abs(maxBar(ac) - 171.7) < 1, maxBar(ac));
-T.check('fp8 widget: mxfp8 gate/up bar is HALF the bf16 one', Math.abs(maxBar(f8) - 171.7 / 2) < 1, maxBar(f8));
-{ // recipe flip to bf16 doubles the bar back — the unit never renormalizes
-  btn(f8, 'recipe', 'bf16').click(); await T.tick(300);
-  T.check('recipe→bf16 stretches the bar to the full unit', Math.abs(maxBar(f8) - 171.7) < 1, maxBar(f8));
+// ---- FLOP pickets: one FIXED unit (20 MFLOP/token ≈ 83 µs/mb) — an fp8
+// flip halves the COUNT, not the scale. Counting via the fwd ribbon (= the
+// boxes' pickets laid end to end): bf16 fwd ≈ 1.34 GFLOP/tok = 67 pickets.
+const fwdN = (l) => {
+  const lab = [...tally(l).querySelectorAll('text')].find(t => t.textContent === 'fwd');
+  const y0 = +lab.getAttribute('y') - 6;
+  return [...tally(l).querySelectorAll('rect[height="5"]')]
+    .filter(r => Math.abs(+r.getAttribute('y') - y0) < 3).length;
+};
+T.check('AC widget (bf16): fwd = 67 pickets at the fixed unit', fwdN(ac) === 67, fwdN(ac));
+T.check('fp8 widget: mxfp8 shrinks the tally (44 pickets)', fwdN(f8) === 44, fwdN(f8));
+{ // recipe flip to bf16 restores the count — the unit never renormalizes
+  btn(f8, 'recipe', 'bf16').click(); await T.tick(400);
+  T.check('recipe→bf16 restores the full count', fwdN(f8) === 67, fwdN(f8));
   T.check('fp8 readout follows the recipe', /= 118\.6 GiB/.test(tHead(f8)), tHead(f8));
-  btn(f8, 'recipe', 'dsv3-fp8').click(); await T.tick(300);
+  btn(f8, 'recipe', 'dsv3-fp8').click(); await T.tick(400);
   T.check('back to dsv3-fp8', /= 86\.2 GiB/.test(tHead(f8)), tHead(f8));
 }
-// vector ops keep the unpriced fig-leaf stub (5px, muted)
-const stub = [...ac.querySelectorAll('.lv-scroll rect[width="5"][height="4"][fill="#c3c2b7"]')];
-T.check('norms/swiglu wear the fig-leaf stub', stub.length >= 3, stub.length);
-// ---- the consolidated-stash bar: log axis, 80 GiB cap, ghost anchor + badge
+// vector ops keep the unpriced fig-leaf (hollow dashed); sub-picket GEMMs
+// (router, kv down-proj half) wear the hollow trace
+T.check('norms/swiglu wear the hollow dashed fig-leaf',
+  ac.querySelectorAll('.lv-scroll rect[height="4"][stroke-dasharray]').length >= 3, '');
+T.check('sub-picket GEMMs wear the hollow trace',
+  ac.querySelectorAll('.lv-scroll rect[width="1.4"]').length >= 2, '');
+// ---- the consolidated stash: SOLID linear bar over the GiB ruler
 {
   const bar = tally(ac).querySelector('rect[data-true]');
   const ghost = tally(ac).querySelector('rect[stroke-dasharray="2 2"]');
   T.check('total bar carries its exact bytes', Math.abs(+bar.dataset.true / 2 ** 30 - 66.6) < 0.1, bar.dataset.true);
-  // log mapping: 28..44 doublings over the 870px runway from x=44
-  const pxOf = (b) => 44 + (Math.log2(b) - 28) / 16 * 870;
-  T.check('bar end sits at px(66.6 GiB) on the shared axis',
-    Math.abs(44 + +bar.getAttribute('width') - pxOf(+bar.dataset.true)) < 1, bar.getAttribute('width'));
-  T.check('ghost = the untreated 118.6 GiB anchor',
-    Math.abs(44 + +ghost.getAttribute('width') - pxOf(118.6 * 2 ** 30)) < 1.5, ghost.getAttribute('width'));
+  // linear mapping: 6px per GiB from x=44
+  T.check('bar length = 6px/GiB (linear)',
+    Math.abs(+bar.getAttribute('width') - +bar.dataset.true / 2 ** 30 * 6) < 1, bar.getAttribute('width'));
+  T.check('ghost = the dashed OVERHANG up to the untreated 118.6 GiB anchor',
+    Math.abs(+ghost.getAttribute('x') + +ghost.getAttribute('width') - (44 + 118.6 * 6)) < 2, '');
   T.check('badge prices the lever vs the anchor', ribbons(ac).some(t => t.includes('▼×1.8')), '');
   T.check('the 80 GiB card line is drawn', ribbons(ac).some(t => t === '80 GiB'), '');
+  T.check('both rulers present (GiB + GFLOP/token)',
+    ribbons(ac).some(t => t.includes('minor tick = 1 GiB')) && ribbons(ac).some(t => t.includes('GFLOP/token')), '');
 }
 // ---- transitions ANIMATE (deterministic 12-frame tween, ~200 ms)
 {
-  const repW = () => { // replay ribbon = rects in the band under the 'replay' label
+  const repN = () => { // replay ribbon picket count
     const lab = [...tally(ac).querySelectorAll('text')].find(t => t.textContent === 'replay');
     const y0 = +lab.getAttribute('y') - 6;
-    return [...tally(ac).querySelectorAll('rect[height="4"]')]
-      .filter(r => Math.abs(+r.getAttribute('y') - y0) < 3)
-      .reduce((t, r) => t + +r.getAttribute('width'), 0);
+    return [...tally(ac).querySelectorAll('rect[height="5"]')]
+      .filter(r => Math.abs(+r.getAttribute('y') - y0) < 3).length;
   };
-  const w0 = repW();
+  const w0 = repN();
   btn(ac, 'recompute', 'attn-replay').click(); await T.tick(60);   // mid-tween
-  const wMid = repW();
+  const wMid = repN();
   const dissolving = ac.querySelectorAll('.lv-scroll g[opacity] text.tredo').length;
   await T.tick(400);                                               // settled
-  const w1 = repW();
+  const w1 = repN();
   T.check('replay ribbon pours (mid-tween strictly between endpoints)',
-    wMid > w0 + 2 && wMid < w1 - 2, `${w0} < ${wMid} < ${w1}`);
+    wMid > w0 + 1 && wMid < w1 - 1, `${w0} < ${wMid} < ${w1}`);
   T.check('chips dissolve mid-tween (both text forms present)', dissolving > 0, dissolving);
   T.check('tween settles clean (no opacity groups left)',
     !ac.querySelector('.lv-scroll g[opacity] text.tredo'), '');
   btn(ac, 'recompute', 'dsv3').click(); await T.tick(400);
 }
-{ // dtype flip: the gate/up bar STRETCHES through the tween (fixed unit)
+{ // dtype flip: the picket count pours through the tween (fixed unit)
   btn(f8, 'recipe', 'bf16').click(); await T.tick(60);
-  const mid = maxBar(f8);
+  const mid = fwdN(f8);
   await T.tick(400);
-  T.check('bar width lerps through the dtype flip', mid > 90 && mid < 168, mid);
-  T.check('and lands on the full unit', Math.abs(maxBar(f8) - 171.7) < 1, maxBar(f8));
+  T.check('picket count lerps through the dtype flip', mid > 46 && mid < 65, mid);
+  T.check('and lands on the full count', fwdN(f8) === 67, fwdN(f8));
   btn(f8, 'recipe', 'dsv3-fp8').click(); await T.tick(400);
 }
 T.done();

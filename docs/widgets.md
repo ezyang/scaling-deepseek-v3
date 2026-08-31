@@ -14,7 +14,7 @@ carry a measured `style="min-height:…px"` placeholder (scroll restoration);
 | attribute | kind | values (default first) | meaning |
 |---|---|---|---|
 | `scope` | view | `model` · `block` · `mla` · `ffn` | how much to draw: block + ×61/head row · the block alone · one column (with hand-off labels to the block wiring) |
-| `controls` | view | `full` · `static` · `marks` · `dtype` | progressive-disclosure tier: which knobs render (static = structure only: no quantities, marks, or tooltips). The `marks`/`dtype` tiers wear the HOUSE knob row (pargrp/stp segments, like the local head) instead of the legacy select head: one preset segment (`data-knob="recompute"` over `RECOMPUTE_PRESETS`, or `data-knob="recipe"` over `RECIPES` + the fp8ᵀ toggle) plus an always-reserved disabled `custom` chip that lights up when per-op edits leave every preset (reserved so a custom state never reflows the row), then the elided-kernels toggle, sizes button, reset. These tiers also DROP the prose caption (the page's own text explains the diagram); their foot is just the full-width tally svg. Quant tiers price compute as BARS, not blocks: length = time at peak (squares count bytes; length measures time — the pipeline strip's language), in ONE fixed unit per figure — the all-bf16 fwd+bwd ribbon spans the tally runway (870px), so dtype flips visibly stretch/shrink bars instead of renormalizing the scale (mxfp8 half, fp32 double). A bar that outgrows its box wraps flush-left and the box grows rows. Norms/SwiGLU keep an unpriced muted fig-leaf stub (bandwidth-bound; the model deliberately prices only the quadratic GEMM terms — no epilogue-fusion modeling, so no false bandwidth precision). The tally = fwd/bwd(2×)/replay ribbons (dtype-sorted contiguous runs) + a `stashed for backward: N KiB/token·layer × layers × in-flight × 4096 tokens = X GiB` readout header (the dynamic number the caption used to carry) + the CONSOLIDATED-STASH bar: one amber bar on the essay's shared log axis (256 MiB…16 TiB, ×2 ticks, the 80 GiB card line in red) with a dotted ghost at the untreated anchor (recompute none · all-bf16 · no fp8ᵀ) and an exact ▲/▼×N badge vs that anchor — the whole figure's lever as one factor. EVERY stash knob (preset segments, per-op 💾/↻ and dtype buttons, fp8ᵀ) animates through the standard 12-frame tween (`_tweenQuant`): FLOP bar widths and colors lerp (prev dtypes captured in the snapshot), tally ribbons pour (replay membership grows from/drains to zero), saved-tensor chips dissolve between their text forms while their 4 KiB grids pour between old and new bytes, aux artifacts (rstd/lse) dissolve too, and the stash bar lerps in pixel space on the log axis (= geometric byte motion, grammar rule 9); numbers snap |
+| `controls` | view | `full` · `static` · `marks` · `dtype` | progressive-disclosure tier: which knobs render (static = structure only: no quantities, marks, or tooltips). The `marks`/`dtype` tiers wear the HOUSE knob row (pargrp/stp segments, like the local head) instead of the legacy select head: one preset segment (`data-knob="recompute"` over `RECOMPUTE_PRESETS`, or `data-knob="recipe"` over `RECIPES` + the fp8ᵀ toggle) plus an always-reserved disabled `custom` chip that lights up when per-op edits leave every preset (reserved so a custom state never reflows the row), then the elided-kernels toggle, sizes button, reset. These tiers also DROP the prose caption (the page's own text explains the diagram); their foot is just the full-width tally svg. Quant tiers price compute as PICKETS (2×5 thin rects at 3px pitch, dtype-colored): a tally of time quanta — ONE fixed unit, 20 MFLOP/token bf16-equivalent ≈ 83 µs per 4096-token microbatch at bf16 peak — so dtype flips visibly grow/shrink the COUNT instead of renormalizing the scale (mxfp8 half, fp32 double); sub-picket GEMMs (router, kv down-proj half) wear the hollow trace, the last picket is a partial-width sliver (area exact), a run that outgrows its box wraps and grows rows. Norms/SwiGLU keep an unpriced hollow-dashed fig-leaf (bandwidth-bound; the model deliberately prices only the quadratic GEMM terms — no epilogue-fusion modeling, so no false bandwidth precision). Byte stashes stay amber SQUARES (4 KiB/token each), single-line ALWAYS (wrapped grids crossed the wire routes; the reserved chip band is fixed-height). The tally = the readout header (`stashed for backward: N KiB/token·layer × layers × in-flight × 4096 tokens = X GiB`) + the CONSOLIDATED STASH as a SOLID LINEAR amber bar over a unit RULER (minor tick = 1 GiB at 6px, major = 8 GiB, red 80 GiB card line; ghost = dashed amber OVERHANG only, up to the untreated anchor — recompute none · all-bf16 · no fp8ᵀ — with an exact ▲/▼×N badge) + fwd/bwd(2×)/replay picket ribbons (dtype-sorted runs, per-op counts Bresenham'd over the exact cumulative; the fwd ribbon = the boxes' pickets laid end to end) over their own ruler (minor = 100 MFLOP/token, major = 1 GFLOP/token ≈ 4.1 ms/mb at peak). EVERY stash knob (preset segments, per-op 💾/↻ and dtype buttons, fp8ᵀ) animates through the standard 12-frame tween (`_tweenQuant`): picket counts and colors lerp (prev dtypes captured in the snapshot), ribbons pour (replay membership grows from/drains to zero), saved-tensor chips dissolve between their text forms while their squares pour between old and new bytes, aux artifacts (rstd/lse) dissolve too, and the stash bar's width lerps (grammar rule 9); numbers snap |
 | `detail` | view | boolean | also draw the elided kernels (latent norms, RoPE, router internals, shared expert, top-k rail) |
 | `lens` | view | absent · `params` · `param-bytes` | display lens: `params` hides intermediates/dims/aux and unparenthesizes the parameter counts; `param-bytes` additionally restates every number as bf16 bytes, always multiplied out (the sizes toggle is hidden — factored ×256 byte chains pull no weight), adds blue weight-size strips (largest op per block = one row of 32; a square = largestOp/32 · 2 B = 448 MiB), and wears a static bf16 tag on each weight-bearing GEMM. Boxes reserve their in-box strip band only in tiers/lenses that can fill it (dtype tiers, the bytes lens) — static/params boxes are compact |
 | `tabs` | view | boolean | dense/MoE flip tabs (with per-block FFN tallies) above the FFN column, fused into a scoped enclosure |
@@ -89,16 +89,19 @@ animates the step's own delta. The visual audit covers every step.
 
 ## `<dsv3-pp-fold ep=… view=…>` — the V-fold stage map
 
-Built for 02's PP section (drafted on studies/scratch-fold.html; not yet
-placed): how the DualPipeV stage split distributes PARAMETERS over ranks.
+How the DualPipeV stage split distributes PARAMETERS over ranks (placed in
+02's PP section; scratch host: studies/scratch-fold.html).
 Two views of the same 16-chunk contiguous split (`ppStage(c, 16, 1,
 'reflect')` — the exact split the memory model charges): `virtual` unrolls
 the chunks as a 16-deep chain; `physical` folds chunk v onto rank
 min(v, 15−v) beside its partner — the V. The toggle ANIMATES the fold
 (frame-stepped; each chunk segment flies to its rank; physical rows are
-double-pitch so total height is reserved — no reflow). Bars are linear
-(the imbalance IS the story), down-pass chunks light blue / up-pass dark
-(the strip's chunk shading), vocab shares (emb / head+norm) wear a dashed
+double-pitch so total height is reserved — no reflow). Bars are SOLID and
+LINEAR on a FIXED graduated scale — countability lives in the unit RULER
+under them (minor tick = 128 MiB bf16, major = 1 GiB; labels in bytes),
+per the site language: solid bar + ruler for memory comparison, squares
+for byte piles, pickets for compute. Down-pass chunks light blue / up-pass
+dark (the depth gradient), vocab shares (emb / head+norm) wear a dashed
 outline — at EP64 they dominate rank 0, the fold's signature. A model-stack
 MINIMAP on the left (emb cap · 61 layer cells, dense ×3 distinct · norm+head
 cap) lights the hovered bar's layers — hovering s0 folded lights BOTH ends
@@ -106,8 +109,8 @@ of the model at once — with a reserved-height readout line naming the
 hovered rank's composition and exact param count (`data-params` carries
 exact values; rank totals = pairwise chunk sums, tested). The expert sharding is a KNOB on the figure (an
 EP stepper, default 64 — honesty over fine print: rank-resident params
-depend on it; bars/axis tween between shardings, exact values snap, and
-the axis caption's 'experts ÷N' follows). `ep` seeds the default;
+depend on it; bars tween between shardings on the FIXED scale — EP is a
+length change, honestly — and exact values snap). `ep` seeds the default;
 `view="physical"` opens folded. Attributes are figure-authoring only; no
 URL state.
 

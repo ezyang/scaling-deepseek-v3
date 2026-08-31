@@ -46,14 +46,20 @@ the rest are conventions to uphold when editing the renderer.
    model is consulted once per transition, never per frame, and the from-side
    is whatever is on screen, so interrupted tweens retarget continuously.
 
-10. **Quantity encodings never share a shape.** SQUARES count bytes (one
-    global unit per figure, never double-counted); horizontal LENGTH measures
-    time (the pipeline strip's cells, the quant tiers' in-box FLOP bars and
-    fwd/bwd/replay tally ribbons). The time unit is likewise ONE fixed unit
-    per figure — anchored to raw (bf16) FLOPs, so dtype flips stretch/shrink
-    the bars instead of renormalizing the scale. Bandwidth-bound vector ops
-    are deliberately unpriced (a muted fig-leaf stub): the model prices only
-    the quadratic GEMM terms, since it models no epilogue fusions.
+10. **Quantity encodings never share a shape.** SQUARES count bytes in
+    pile contexts (weight strips, stash chips — one stated unit per figure,
+    never double-counted; chip runs never wrap). PICKETS (2×5 thin rects)
+    count compute as time quanta — the 1D shape for the 1D quantity (one
+    picket = 20 MFLOP/token bf16-eq ≈ 83 µs/mb at peak; dtype flips change
+    the COUNT, never the scale; hollow trace = sub-unit). Linear memory
+    COMPARISON bars are SOLID over a unit-graduated RULER (countability on
+    the axis: minor = the unit, major = 8 minors, quanta nesting in powers
+    of two — fold map 128 MiB/1 GiB, stash total 1 GiB/8 GiB); log charts
+    are plain bars with ×2 gridlines. Every consolidated bar sits on an
+    explicit axis that names its scale (LINEAR or the log gridlines).
+    Bandwidth-bound vector ops are deliberately unpriced (a hollow dashed
+    fig-leaf): the model prices only the quadratic GEMM terms, since it
+    models no epilogue fusions.
 
 ## Text and labels
 
