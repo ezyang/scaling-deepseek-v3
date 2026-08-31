@@ -1459,6 +1459,7 @@ export class Dsv3Layer extends HTMLElement {
       this._segMem ??= {};
       const segGrp = (label, name, opts, cur, getState, setPreset, setState) => {
         const mem = this._segMem[name] ??= {};
+        if (cur != null && !opts.includes(cur)) cur = null;   // an uncurated preset reads as custom
         if (cur == null) mem.custom = getState();   // the latest hand-edited composition
         const g = el('span', 'pargrp');
         const l3 = el('div', 'parlab'); l3.textContent = label; g.append(l3);
@@ -1496,7 +1497,10 @@ export class Dsv3Layer extends HTMLElement {
         row.append(w3); g.append(row);
         return g;
       };
-      if (this._ctl.marks) hh.append(segGrp('recompute policy', 'recompute', Object.keys(RECOMPUTE_PRESETS), curPreset,
+      // 'selective' stays a MODEL preset (the trace sim's default; sanity's
+      // GB300 anchor pins it) but earns no chip: the section's story is
+      // full / attn-replay / dsv3 / none
+      if (this._ctl.marks) hh.append(segGrp('recompute policy', 'recompute', ['full', 'attn-replay', 'dsv3', 'none'], curPreset,
         () => ({ ...this.marks }),
         (k) => localTween(() => { this.setAttribute('recompute', k); this.marks = { ...RECOMPUTE_PRESETS[k] }; }),
         (st) => localTween(() => { this.marks = { ...st }; })));

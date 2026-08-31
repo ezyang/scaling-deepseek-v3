@@ -16,6 +16,9 @@ T.check('fp8 head carries the recipe segment only', seg(f8, 'recipe') && !seg(f8
 T.check('dsv3 preset lights up', btn(ac, 'recompute', 'dsv3').classList.contains('on'), '');
 T.check('custom chip reserved (present, disabled, off)', btn(ac, 'recompute', 'custom').disabled
   && !btn(ac, 'recompute', 'custom').classList.contains('on'), '');
+T.check('curated order: full → attn-replay → dsv3 → none · custom (no selective chip)',
+  [...seg(ac, 'recompute').querySelectorAll('button')].map(b => b.textContent).join('|')
+  === 'full|attn-replay|dsv3|none|custom', '');
 // ---- captionless: the foot is just the tally
 T.check('no prose caption on either widget', !ac.querySelector('.lv-foot2 .lv-note')
   && !f8.querySelector('.lv-foot2 .lv-note'), '');
