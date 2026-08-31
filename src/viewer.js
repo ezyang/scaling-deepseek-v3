@@ -790,7 +790,7 @@ export function patchTargets(forAttr, patch) {
 // Top-down SVG schematic of one DSv3 transformer block (plus the head).
 // Every matmul carries a dtype <select>; the chosen per-matmul precisions are
 // pushed to the widgets named in `for="id1 id2"` (memory now, rooflines later).
-const DT_STYLE = { bf16: '#52514e', mxfp8: '#2a78d6', fp32: '#9c3a96' };
+const DT_STYLE = { bf16: '#52514e', mxfp8: '#2a78d6', e5m6: '#128a72', fp32: '#9c3a96' };
 // the diagram's visual-language tokens (docs/diagram-grammar.md) — one
 // definition, scoped into each widget's stylesheet (the anatomy plan too)
 export const tokensCss = (s) => `
@@ -1870,7 +1870,7 @@ export class Dsv3Layer extends HTMLElement {
       'mxfp8 counted half \u2014 2\u00d7 peak; fp32 counted double \u2014 half peak; dtype colors here and on the saved-tensor tags: blue mxfp8, dark bf16, plum fp32); ' +
       'the lm head uses the same unit \u2014 per-token vocab work, independent of depth. Norms/SwiGLU ' +
       'get a hollow dashed fig-leaf (bandwidth-bound, compute precision unspecified).',
-      this._ctl.dtype ? 'One click on a dtype button toggles bf16 \u21c4 mxfp8 (the router is pinned).' : '',
+      this._ctl.dtype ? 'One click on a dtype button toggles bf16 \u21c4 mxfp8 (attn out: bf16 \u21c4 e5m6; the router is pinned).' : '',
       this._ctl.quant
         ? 'The tally at right totals fwd + bwd (2\u00d7 fwd \u2014 dgrad + wgrad; sdpa likewise) + replay'
           + (this._ctl.marks ? ' \u2014 marking ops \u21bb grows its replay row.' : '.')
@@ -2124,8 +2124,11 @@ export class Dsv3Layer extends HTMLElement {
       (id === 'router'
         ? `<button xmlns="http://www.w3.org/1999/xhtml" class="st dtb" data-dt="${id}" disabled style="color:${DT_STYLE[dt(id)]};cursor:default;opacity:0.8" ` +
           `title="pinned: the router runs fp32 in production (tiny GEMM, numerically sensitive) — it follows the recipe, not a per-op lever">${dt(id)}</button>`
-        : `<button xmlns="http://www.w3.org/1999/xhtml" class="st dtb" data-dt="${id}" style="color:${DT_STYLE[dt(id)]}" ` +
-          `title="toggle precision: bf16 ⇄ mxfp8">${dt(id)}</button>`) + '</foreignObject>';
+        : id === 'o_proj'
+          ? `<button xmlns="http://www.w3.org/1999/xhtml" class="st dtb" data-dt="${id}" style="color:${DT_STYLE[dt(id)]}" ` +
+            `title="toggle the attn-out STASH: bf16 ⇄ e5m6 (DeepSeek's customized 12-bit format — read by attention backward too, so it's kept wider than fp8; the GEMM itself runs fp8 either way)">${dt(id)}</button>`
+          : `<button xmlns="http://www.w3.org/1999/xhtml" class="st dtb" data-dt="${id}" style="color:${DT_STYLE[dt(id)]}" ` +
+            `title="toggle precision: bf16 ⇄ mxfp8">${dt(id)}</button>`) + '</foreignObject>';
     // the block-output add has NO free mark: its output IS the next block's
     // x0 — the checkpoint anchor, always saved (and charged there). It wears
     // a locked 🔒 so every op still shows its state.
@@ -2177,7 +2180,8 @@ export class Dsv3Layer extends HTMLElement {
     // largest op in the transformer block fills exactly one row of 30 blocks;
     // the lm head takes however many rows it needs at the same scale.
     // Colored by the op's precision; vector ops get a muted fig-leaf block.
-    const flopEq = (flopsTok, d) => flopsTok * (d === 'mxfp8' ? 0.5 : d === 'fp32' ? 2 : 1);
+    // e5m6 names a STASH format (the attn-out linear) — its GEMM runs fp8
+    const flopEq = (flopsTok, d) => flopsTok * (d === 'mxfp8' || d === 'e5m6' ? 0.5 : d === 'fp32' ? 2 : 1);
     const opDt = (id) => {
       const n = ana.byId[id];
       if (!n) return 'vector';
@@ -2213,7 +2217,7 @@ export class Dsv3Layer extends HTMLElement {
     // backward reads it — a real degree of freedom, so we surface it)
     const dtOf = (n) => {
       const b = n.outBytes / n.elems;
-      return b >= 3.5 ? 'fp32' : b >= 1.7 ? 'bf16' : 'mxfp8';
+      return b >= 3.5 ? 'fp32' : b >= 1.7 ? 'bf16' : b >= 1.2 ? 'e5m6' : 'mxfp8';
     };
     // 32/row: a power of two, so parallelism shards divide the strips cleanly
     // (EP64 on the ×58 MoE gate/up strip = 32·58/64 = 29 whole squares/rank),
@@ -3364,7 +3368,7 @@ export class Dsv3Layer extends HTMLElement {
     }
     T.push(`<text class="grplabel" x="0" y="${ty + 9}">per-layer FLOPs as time at peak — one picket = 10 MFLOP/token (bf16-eq) ≈ 41 µs per 4096-token microbatch:</text>`);
     ty += 14;
-    const DT_ORDER = { bf16: 0, mxfp8: 1, fp32: 2 };
+    const DT_ORDER = { bf16: 0, e5m6: 1, mxfp8: 2, fp32: 3 };
     const ribbon = (label, list, wOf, num, comm, cOv) => {
       T.push(`<text class="dims" x="0" y="${ty + 9}">${label}</text>`);
       let cx = TB_X, cy = ty + 3;
@@ -3449,7 +3453,12 @@ export class Dsv3Layer extends HTMLElement {
     for (const b of svgEl.querySelectorAll('button[data-dt]')) {
       b.onclick = () => {
         const mutate = () => {
-          const cycle = { bf16: 'mxfp8', mxfp8: 'bf16', fp32: 'bf16' };   // fp32 exits via bf16 (stale URL states)
+          // per-op two-state toggles: attn-out's realistic pair is bf16 ⇄ e5m6
+          // (the paper's stash format); every other GEMM is bf16 ⇄ mxfp8.
+          // Anything else (stale fp32 URL states) exits via bf16.
+          const cycle = b.dataset.dt === 'o_proj'
+            ? { bf16: 'e5m6', e5m6: 'bf16' }
+            : { bf16: 'mxfp8', mxfp8: 'bf16' };
           this.matmuls[b.dataset.dt] = cycle[this.matmuls[b.dataset.dt]] ?? 'bf16';
         };
         if (this.hasAttribute('local') && this.getAttribute('lens') === 'param-bytes') {

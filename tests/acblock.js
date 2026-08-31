@@ -12,9 +12,9 @@ const tHead = (l) => tally(l).querySelector('text').textContent;
 // ---- house knobs: one preset segment + the reserved custom chip
 T.check('AC head carries the recompute segment only', seg(ac, 'recompute') && !seg(ac, 'recipe')
   && !ac.querySelector('.lv-head select'), '');
-T.check('fp8 recipe chips are CURATED: bf16|dsv3-fp8|all-fp8|custom (nv-mxfp8 is the Blackwell post’s)',
+T.check('fp8 recipe chips are CURATED to the DSv3 story: bf16|dsv3-fp8|custom',
   [...seg(f8, 'recipe').querySelectorAll('button')].map(b => b.textContent).join('|')
-  === 'bf16|dsv3-fp8|all-fp8|custom', '');
+  === 'bf16|dsv3-fp8|custom', '');
 T.check('fp8 head: live recipe segment + LOCKED recompute readout (dsv3 lit)',
   seg(f8, 'recipe') && seg(f8, 'recompute')
   && [...seg(f8, 'recompute').querySelectorAll('button')].every(b => b.disabled)
@@ -70,7 +70,7 @@ const fwdN = (l) => {
     .filter(r => Math.abs(+r.getAttribute('y') - y0) < 3).length;
 };
 T.check('AC widget (bf16): fwd = 134 pickets at the fixed unit', fwdN(ac) === 134, fwdN(ac));
-T.check('fp8 widget: mxfp8 shrinks the tally (88 pickets)', fwdN(f8) === 88, fwdN(f8));
+T.check('fp8 widget: the fp8 recipe shrinks the tally (76 pickets — o_proj runs fp8 too, e5m6 names its stash)', fwdN(f8) === 76, fwdN(f8));
 { // recipe flip to bf16 restores the count — the unit never renormalizes
   btn(f8, 'recipe', 'bf16').click(); await T.tick(400);
   T.check('recipe→bf16 restores the full count', fwdN(f8) === 134, fwdN(f8));
@@ -78,7 +78,7 @@ T.check('fp8 widget: mxfp8 shrinks the tally (88 pickets)', fwdN(f8) === 88, fwd
   // readout equals the AC widget's dsv3 number — the two sections agree
   T.check('fp8 readout follows the recipe (bf16 = the AC dsv3 66.6 GiB)', /= 66\.6 GiB/.test(tHead(f8)), tHead(f8));
   btn(f8, 'recipe', 'dsv3-fp8').click(); await T.tick(400);
-  T.check('back to dsv3-fp8', /= 42\.9 GiB/.test(tHead(f8)), tHead(f8));
+  T.check('back to dsv3-fp8 (attn out stashed E5M6: 40.8, was 42.9 at bf16 pricing)', /= 40\.8 GiB/.test(tHead(f8)), tHead(f8));
 }
 // DOUBLED rows: recomputed ops carry a second picket row in the recompute
 // color; saved ops don't. Hollow amber grids price the counterfactual stash.
@@ -301,6 +301,16 @@ T.check('sub-picket GEMMs wear the hollow trace',
   const dbtn = (id) => f8.querySelector(`button[data-dt="${id}"]`);
   T.check('router dtype button is pinned (disabled, fp32 under dsv3-fp8)',
     dbtn('router').disabled && dbtn('router').textContent === 'fp32', dbtn('router').textContent);
+  // attn-out: the paper's own stash format, its own toggle pair
+  T.check('o_proj shows e5m6 under dsv3-fp8 (the paper stash format)',
+    dbtn('o_proj').textContent === 'e5m6', dbtn('o_proj').textContent);
+  const attnChip = () => [...f8.querySelectorAll('text')].map(n => n.textContent).find(t => /attn out ·/.test(t));
+  T.check('attn out chip prices E5M6 (6.4 GiB)', /6\.4 GiB e5m6/.test(attnChip()), attnChip());
+  dbtn('o_proj').click(); await T.tick(400);
+  T.check('o_proj toggles e5m6 → bf16 (never mxfp8)', dbtn('o_proj').textContent === 'bf16', dbtn('o_proj').textContent);
+  dbtn('o_proj').click(); await T.tick(400);
+  T.check('and back to e5m6 (recipe chip re-lights)',
+    dbtn('o_proj').textContent === 'e5m6' && btn(f8, 'recipe', 'dsv3-fp8').classList.contains('on'), '');
   dbtn('qkv_down').click(); await T.tick(400);   // mxfp8 → bf16 (not fp32)
   T.check('dtype click toggles mxfp8 → bf16 (no fp32 in the cycle)',
     dbtn('qkv_down').textContent === 'bf16', dbtn('qkv_down').textContent);

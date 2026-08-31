@@ -23,7 +23,11 @@
 // MXFP8: 1-byte E4M3 elements + one UE8M0 scale byte per 32-element block
 // = 1 + 1/32 B/elem. (DeepSeek's tile-wise recipe — 4 fp32 scale bytes per
 // 128 elements — has the identical overhead, so this constant covers both.)
-export const DTYPE_BYTES = { bf16: 2, mxfp8: 1 + 1 / 32, fp32: 4 };
+// E5M6: DeepSeek's customized 12-bit format (§3.3.3) exclusively for the
+// attention output — read by BOTH attention backward and the attn-out
+// linear's wgrad, too precision-sensitive for fp8. 1.5 B/elem, no scales
+// documented. The GEMM that reads it still RUNS fp8 (e5m6 names the stash).
+export const DTYPE_BYTES = { bf16: 2, mxfp8: 1 + 1 / 32, e5m6: 1.5, fp32: 4 };
 
 // Marking is SAVE-driven (torch_remat's authoring direction): the checkpoint
 // region starts as RECOMPUTE-EVERYTHING, and a policy writes saves in.
@@ -202,7 +206,9 @@ export function analyze(nodes, marks, transposedStash = false) {
   for (const id of neededSaved) {
     const n = byId[id];
     let bytes = n.outBytes;
-    if (transposedStash && n.outBytes / n.elems < 2
+    // < 1.2 B/elem = the tile-scaled fp8 class only: the transpose problem is
+    // the 1×128 per-row scales, so E5M6 (1.5 B, no tile scales) is exempt
+    if (transposedStash && n.outBytes / n.elems < 1.2
       && [...(neededBy.get(id) ?? [])].some(c => c !== id && ['matmul', 'attn'].includes(byId[c]?.opKind))) {
       dual.add(id);
       bytes *= 2;

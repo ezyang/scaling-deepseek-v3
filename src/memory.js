@@ -43,10 +43,10 @@ export const MATMULS = [
 export const RECIPES = {
   'bf16': {},
   // DeepSeek-V3 paper recipe: linears in fine-grained FP8 (1x128 tile scales —
-  // same bytes as MX); attention ops and head high-precision; the router runs
-  // fp32 in production; the attn-out linear's stash kept wide (E5M6 in
-  // the paper — we use bf16).
-  'dsv3-fp8': { qkv_down: 'mxfp8', q_up: 'mxfp8', kv_up: 'mxfp8', router: 'fp32', ffn_gate_up: 'mxfp8', ffn_down: 'mxfp8' },
+  // same bytes as MX); attention core and head high-precision; the router runs
+  // fp32 in production; the attn-out linear's stash is the paper's customized
+  // E5M6 (§3.3.3) — the GEMM itself runs fp8 (flopEq prices e5m6 at fp8 rate).
+  'dsv3-fp8': { qkv_down: 'mxfp8', q_up: 'mxfp8', kv_up: 'mxfp8', o_proj: 'e5m6', router: 'fp32', ffn_gate_up: 'mxfp8', ffn_down: 'mxfp8' },
   // dsv3-fp8 without the wide exception: EVERY linear runs (and stashes) fp8,
   // the attn-out included — a production H100 variant (notes.txt: MM5 is
   // fp8_linear). Attention core and head stay bf16, router fp32. Under
