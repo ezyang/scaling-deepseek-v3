@@ -2339,6 +2339,19 @@ export class Dsv3Layer extends HTMLElement {
       return (dir(new Set(by.filter(c => !isR(c))), ['↓', '↑', '⇅'])
         + dir(new Set(by.filter(isR)), ['⇓', '⇑', '⇕'])) || '↓';
     };
+    // the arrows explained, per chip: WHO keeps this tensor alive
+    const needTip = (ids) => {
+      const by = ids.flatMap(i => [...(ana.neededBy.get(i) ?? [])]);
+      const isR = (c) => c === 'replay anchor' || ana.replayed.has(c);
+      const lab = (c) => c === 'replay anchor' ? 'the replay chain (every replay ends at a saved anchor)' : (ana.byId[c]?.label ?? c);
+      const bwd = [...new Set(by.filter(c => !isR(c)).map(lab))];
+      const rep = [...new Set(by.filter(isR).map(lab))];
+      return escAttr('kept alive by '
+        + [bwd.length ? `the BACKWARD of: ${bwd.join(', ')} (single arrows \u2193\u2191\u21c5)` : '',
+          rep.length ? `the REPLAY of: ${rep.join(', ')} (double arrows \u21d3\u21d1\u21d5)` : '']
+          .filter(Boolean).join(', and ')
+        + '.\nDirection: \u2193\u21d3 read by an op below \u00b7 \u2191\u21d1 by this op\u2019s own backward \u00b7 \u21c5\u21d5 both.');
+    };
     // ov (optional): display-split override for a chip that shows part of one
     // graph node — { name, tdims, frac } (bytes and grid scale by frac)
     const tensorChip = (ids, x, y, ov) => {
@@ -2408,19 +2421,24 @@ export class Dsv3Layer extends HTMLElement {
       const bytesA = (A) => ids.reduce((t2, i2) => t2 + (A.byId[i2]?.outBytes ?? 0) * (A.dual.has(i2) ? 2 : 1), 0) * (ov?.frac ?? 1);
       const stP2 = VQ && anaP ? stateA(anaP, VQ.prev.marks ?? marks, id) : null;
       const chipTxt = (A, s2) => {
+        const tip = s2 === 'save' || s2 === 'pin'
+          ? ` data-tip="${needTip(ids)}${s2 === 'pin' ? escAttr('\n\ud83d\udd12 always saved: the checkpoint anchor.') : ''}"`
+          : s2 === 'redo'
+            ? ` data-tip="${escAttr('\u21bb recomputed in backward, not stashed \u2014 the hollow squares price what saving it WOULD cost.')}"`
+            : ` data-tip="${escAttr('\u00b7 not needed: no backward op or replay reads this tensor \u2014 saved or not, it is never stashed.')}"`;
         if (s2 === 'save' || s2 === 'pin') {
           const n2 = A.byId[id] ?? n;
           const dtag = ids.some(i2 => A.dual.has(i2)) ? ' ᵀ×2' : '';
           // narrow fork/shared columns (ov.short) go TWO lines — one line
           // runs into the neighbouring column (the CONS chips' pattern)
-          if (ov?.short) return `<text class="tensor tsave" x="${x}" y="${y + 8}">${needDir(ids)} ${esc(name0)}${s2 === 'pin' ? ' 🔒' : ''}</text>` +
+          if (ov?.short) return `<text class="tensor tsave"${tip} x="${x}" y="${y + 8}">${needDir(ids)} ${esc(name0)}${s2 === 'pin' ? ' 🔒' : ''}</text>` +
             `<text class="tensor tsave" x="${x}" y="${y + 21}">${fmtMem(bytesA(A))} <tspan fill="${DT_STYLE[dtOf(n2)]}">${dtOf(n2)}${dtag}</tspan></text>`;
-          return `<text class="tensor tsave" x="${x}" y="${y + 8}">${needDir(ids)} ${esc(name0)} · ${fmtMem(bytesA(A))} ` +
+          return `<text class="tensor tsave"${tip} x="${x}" y="${y + 8}">${needDir(ids)} ${esc(name0)} · ${fmtMem(bytesA(A))} ` +
             `<tspan fill="${DT_STYLE[dtOf(n2)]}">${dtOf(n2)}${dtag}</tspan>${s2 === 'pin' ? ' 🔒' : ''}</text>`;
         }
         // ov.short: narrow fork columns drop the suffix (the ↻ glyph carries it)
-        if (s2 === 'redo') return `<text class="tensor tredo" x="${x}" y="${y + 8}">↻ ${esc(name0)}${ov?.short ? '' : ' — recomputed'}</text>`;
-        return `<text class="tensor tidle" x="${x}" y="${y + 8}">· ${esc(name0)}</text>`;
+        if (s2 === 'redo') return `<text class="tensor tredo"${tip} x="${x}" y="${y + 8}">↻ ${esc(name0)}${ov?.short ? '' : ' — recomputed'}</text>`;
+        return `<text class="tensor tidle"${tip} x="${x}" y="${y + 8}">· ${esc(name0)}</text>`;
       };
       const SAVED = (s2) => s2 === 'save' || s2 === 'pin';
       // the grid: FILLED squares for a real stash, HOLLOW for a recomputed
