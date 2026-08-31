@@ -1446,8 +1446,12 @@ export class Dsv3Layer extends HTMLElement {
     if (cmode === 'marks' || cmode === 'dtype') {
       // these tiers are ALWAYS the detail view (one canonical diagram: every
       // markable op visible — the MLA latent norms carry marks too), so the
-      // elided-kernels toggle is gone
+      // elided-kernels toggle is gone. The section analyzes the PEAK rank,
+      // which is all-MoE: kind pins to moe and the dense/MoE tabs go — the
+      // enclosure stays, wearing a static label + the region toggle instead.
       this.detail = true;
+      this.kind = 'moe';
+      this._noKind = true;
       const hh = el('div', 'lv-head');
       // preset segments REMEMBER: 'custom' keeps your last hand-edited
       // state (click it to come back), and clicking the ACTIVE chip toggles
@@ -2653,6 +2657,9 @@ export class Dsv3Layer extends HTMLElement {
     const nExp = DSV3.topk + DSV3.sharedExperts;   // grouped boxes carry topk/nExp, shared 1/nExp
     // tabs: dense/MoE flip tabs (with the per-block tally) above the FFN column
     const TABS = this.hasAttribute('tabs') && ONLY !== 'mla';
+    // kind-pinned tiers keep the ENCLOSURE but drop the tab flaps
+    const FLAPS = TABS && !this._noKind;
+    const FFN_RIDS = ['router', 'dispatch', 'gate_up', 'swiglu', 'ffn_down', 'combine'];
     let z = ONLY === 'ffn' ? 36 : 16;
     let encTop = 0, encBot = 0;   // enclosure extent: just the kind-dependent region
     if (ONLY !== 'mla') {
@@ -2699,8 +2706,8 @@ export class Dsv3Layer extends HTMLElement {
       // then whitespace where the routing rows sit: router box (+ top-k micro
       // in detail) + its chip, a2a dispatch + its chip
       const g0 = (DET ? Math.max(38, chipSpace(['norm2']) + 20) : Math.max(22, chipSpace(['norm2']) + 10))
-        + (TABS ? 36 : 0);
-      if (TABS) { drawTabs(z + g0 - 46); encTop = z + g0 - 20; }
+        + (TABS ? (FLAPS ? 36 : 16) : 0);
+      if (TABS) { if (FLAPS) drawTabs(z + g0 - 46); encTop = z + g0 - 20; }
       z += g0 + BH + (DET ? 18 : 0) + gapM(['router']) + 22 + gapM(['dispatch']);
       const gTop = z + 3; z += 21;
       wire(SX2, spineFrom, gTop - 3);   // arrow stops above the group, like the MoE rows
@@ -2739,18 +2746,20 @@ export class Dsv3Layer extends HTMLElement {
       if (markId) P.push(modeBtn([markId], SHX + 140 - 28, yy + 1));
     };
     if (!DET) {
-      const g0 = Math.max(22, chipSpace(['norm2']) + 10) + (TABS ? 36 : 0);
+      const g0 = Math.max(22, chipSpace(['norm2']) + 10) + (TABS ? (FLAPS ? 36 : 16) : 0);
       tensorChip(['norm2'], SX2 + 14, z + 4);
       wire(SX2, z, z + g0);
-      if (TABS) { drawTabs(z + g0 - 46); encTop = z + g0 - 20; }
+      if (TABS) { if (FLAPS) drawTabs(z + g0 - 46); encTop = z + g0 - 20; }
       z += g0;
     } else {
       // the shared expert runs on EVERY token as its own plain GEMMs — fork
       // norm2-out here; its boxes are drawn row-aligned with the routed ones
       tensorChip(['norm2'], SX2 + 14, z + 4);
-      const nGap = Math.max(38, chipSpace(['norm2']) + 20) + (TABS ? 36 : 0);
+      const nGap = Math.max(38, chipSpace(['norm2']) + 20) + (TABS ? (FLAPS ? 36 : 24) : 0);
       wire(SX2, z, z + nGap);
-      if (TABS) { drawTabs(z + nGap - 46); encTop = z + nGap - 20; }
+      // flapless: a deeper top band — the label row sits ABOVE the shared-
+      // expert feed rail (which runs 10px over the router row)
+      if (TABS) { if (FLAPS) drawTabs(z + nGap - 46); encTop = z + nGap - (FLAPS ? 20 : 28); }
       shTop = z + nGap - 10;
       P.push(`<circle cx="${SX2}" cy="${shTop}" r="2.5" fill="#898781"/>` +
         `<path class="wire" d="M ${SX2} ${shTop} L ${shMid} ${shTop}"/>`);
@@ -2892,15 +2901,50 @@ export class Dsv3Layer extends HTMLElement {
       // reserved space stays — flip stability).
       {
         const x0 = C2 - 14, x1 = x0 + (DET ? 500 : 385) + 14, y0 = encTop, y1 = encBot, r = 8;
-        // active tab footprint: the outline leaves a gap there instead of an
-        // opaque eraser (which bleeds the border through when the tab fades)
-        const [tx, tw] = this.kind === 'dense' ? [C2 + 42, 148] : [C2 + 198, 168];
-        P[P.indexOf('__ENC__')] = HIDT >= 1 ? '' :
-          `<g opacity="${(1 - HIDT).toFixed(3)}">` +
-          `<rect x="${x0}" y="${y0}" width="${x1 - x0}" height="${y1 - y0}" rx="${r}" fill="#fcfcfb" stroke="none"/>` +
-          `<path d="M ${tx + tw} ${y0} L ${x1 - r} ${y0} Q ${x1} ${y0} ${x1} ${y0 + r} L ${x1} ${y1 - r} ` +
-          `Q ${x1} ${y1} ${x1 - r} ${y1} L ${x0 + r} ${y1} Q ${x0} ${y1} ${x0} ${y1 - r} ` +
-          `L ${x0} ${y0 + r} Q ${x0} ${y0} ${x0 + r} ${y0} L ${tx} ${y0}" fill="none" stroke="#c3c2b7"/></g>`;
+        if (!FLAPS) {
+          // kind-pinned: a plain enclosure with a static label, and the
+          // REGION TOGGLE — set every MoE-FFN mark at once. Idiomatically
+          // tristate: 💾 all / ↻ all / mixed, where 'mixed' both DISPLAYS an
+          // in-between state and REMEMBERS the last one (the custom-chip
+          // pattern), so 'all' never destroys a hand-tuned composition.
+          let regionCtl = '';
+          if (this._ctl.marks) {
+            const st3 = FFN_RIDS.every(i => this.marks[i] === false) ? 'redo'
+              : FFN_RIDS.every(i => this.marks[i] !== false) ? 'save' : 'mixed';
+            if (st3 === 'mixed')
+              (this._segMem ??= {}).ffnMixed = Object.fromEntries(FFN_RIDS.map(i => [i, this.marks[i] === false]));
+            const hasMix = !!this._segMem?.ffnMixed;
+            const rb = (act, label, onStyle, on, dis, title) =>
+              `<button xmlns="http://www.w3.org/1999/xhtml" class="st" data-ffnall="${act}" data-on="${on ? 1 : 0}"` +
+              `${dis ? ' disabled' : ''} style="width:auto;padding:0 7px;height:18px;` +
+              `${on ? onStyle + 'font-weight:600;cursor:default;' : 'background:#fff;border:1px solid #c3c2b7;color:#52514e;'}` +
+              `${dis ? 'opacity:0.45;cursor:default;' : ''}" title="${title}">${label}</button>`;
+            const rx0 = Math.max(x1 - 210, C2 + 348);   // right of the shared-expert spine (shMid = C2+342)
+            regionCtl = `<foreignObject x="${rx0}" y="${y0 + 2}" width="${x1 - rx0 - 4}" height="22">` +
+              `<div xmlns="http://www.w3.org/1999/xhtml" style="display:flex;gap:4px;justify-content:flex-end;">` +
+              rb('save', '\ud83d\udcbe all', 'background:#fff8ea;border:1px solid #eda100;color:#0b0b0b;', st3 === 'save', false,
+                'save every MoE-FFN output for backward') +
+              rb('redo', '\u21bb all', 'background:#f3f2ee;border:1px dashed #898781;color:#52514e;', st3 === 'redo', false,
+                'recompute the ENTIRE MoE FFN in backward \u2014 including the a2a!') +
+              rb('mixed', 'mixed', 'background:#f3f2ee;border:1px solid #898781;color:#0b0b0b;', st3 === 'mixed', !hasMix && st3 !== 'mixed',
+                'your last mixed set of FFN marks') +
+              '</div></foreignObject>';
+          }
+          P[P.indexOf('__ENC__')] =
+            `<rect x="${x0}" y="${y0}" width="${x1 - x0}" height="${y1 - y0}" rx="${r}" fill="#fcfcfb" stroke="#c3c2b7"/>` +
+            `<text class="grplabel" x="${x0 + 56}" y="${y0 + 11}">MoE FFN \u00d7${DSV3.layers - (DSV3.denseLayers ?? 3)} \u00b7 ${fmtPV(PARAMS.moeFfnBlk)}</text>` +
+            regionCtl;
+        } else {
+          // active tab footprint: the outline leaves a gap there instead of an
+          // opaque eraser (which bleeds the border through when the tab fades)
+          const [tx, tw] = this.kind === 'dense' ? [C2 + 42, 148] : [C2 + 198, 168];
+          P[P.indexOf('__ENC__')] = HIDT >= 1 ? '' :
+            `<g opacity="${(1 - HIDT).toFixed(3)}">` +
+            `<rect x="${x0}" y="${y0}" width="${x1 - x0}" height="${y1 - y0}" rx="${r}" fill="#fcfcfb" stroke="none"/>` +
+            `<path d="M ${tx + tw} ${y0} L ${x1 - r} ${y0} Q ${x1} ${y0} ${x1} ${y0 + r} L ${x1} ${y1 - r} ` +
+            `Q ${x1} ${y1} ${x1 - r} ${y1} L ${x0 + r} ${y1} Q ${x0} ${y1} ${x0} ${y1 - r} ` +
+            `L ${x0} ${y0 + r} Q ${x0} ${y0} ${x0 + r} ${y0} L ${tx} ${y0}" fill="none" stroke="#c3c2b7"/></g>`;
+        }
       }
     }
     }  // end FFN column (skipped in only="mla" mode)
@@ -3269,6 +3313,21 @@ export class Dsv3Layer extends HTMLElement {
     }
     for (const b of svgEl.querySelectorAll('button[data-mark]')) {
       b.onclick = () => this.toggleMark(b.dataset.mark.split(','));
+    }
+    for (const b of svgEl.querySelectorAll('button[data-ffnall]')) {
+      b.onclick = () => {
+        if (b.dataset.on === '1' || b.disabled) return;
+        const act = b.dataset.ffnall;
+        const RIDS2 = ['router', 'dispatch', 'gate_up', 'swiglu', 'ffn_down', 'combine'];
+        this._tweenQuant(() => {
+          if (act === 'save') for (const i of RIDS2) delete this.marks[i];
+          else if (act === 'redo') for (const i of RIDS2) this.marks[i] = false;
+          else {
+            const m = this._segMem?.ffnMixed ?? {};
+            for (const i of RIDS2) { if (m[i]) this.marks[i] = false; else delete this.marks[i]; }
+          }
+        });
+      };
     }
     for (const b of svgEl.querySelectorAll('[data-kind]')) {
       b.onclick = () => {

@@ -155,6 +155,28 @@ T.check('sub-picket GEMMs wear the hollow trace',
     && btn(ac, 'recompute', 'custom').classList.contains('on'), '');
   btn(ac, 'recompute', 'custom').click(); await T.tick(400);
   T.check('clicking the ACTIVE chip toggles back (to none)', btn(ac, 'recompute', 'none').classList.contains('on'), '');
+  btn(ac, 'recompute', 'dsv3').click(); await T.tick(400);
+}
+// ---- kind pinned to MoE (the peak rank), tabs gone, REGION toggle on the
+// enclosure; marks are LITERAL (torch_remat): full = exactly 1× fwd replay
+{
+  const rbtn = (a) => ac.querySelector(`button[data-ffnall="${a}"]`);
+  const replayN = () => ribbons(ac).find(t => /^\+[\d.]+×/.test(t));
+  T.check('no dense/MoE tab flaps (kind pinned)', !ac.querySelector('[data-kind]'), '');
+  T.check('enclosure wears the static MoE FFN label',
+    [...ac.querySelectorAll('.lv-scroll text')].some(t => t.textContent.includes('MoE FFN ×58')), '');
+  T.check('region toggle: dsv3 reads as mixed (swiglu ↻, rest 💾)',
+    rbtn('mixed')?.dataset.on === '1', '');
+  rbtn('redo').click(); await T.tick(500);
+  T.check('↻ all: the whole FFN replays (stash drops, a2a in the replay)',
+    gib() < 66.6 && replayN().includes('a2a dispatch+combine'), `${gib()} ${replayN()}`);
+  rbtn('save').click(); await T.tick(500);
+  T.check('💾 all: every FFN output stashed', gib() > 66.6, gib());
+  rbtn('mixed').click(); await T.tick(500);
+  T.check('mixed restores the exact dsv3 marks (preset chip relights)',
+    gib() === 66.6 && btn(ac, 'recompute', 'dsv3').classList.contains('on'), gib());
+  btn(ac, 'recompute', 'full').click(); await T.tick(500);
+  T.check('LITERAL remat: full replays exactly 1.00× fwd', replayN().startsWith('+1.00×'), replayN());
   T.check('shared expert mirrors the grouped marks (two buttons per mark)',
     ac.querySelectorAll('button[data-mark="gate_up"]').length === 2
     && ac.querySelectorAll('button[data-mark="ffn_down"]').length === 2

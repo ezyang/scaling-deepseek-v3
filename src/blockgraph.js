@@ -166,6 +166,14 @@ export function analyze(nodes, marks, transposedStash = false) {
     else if (bwdNeedsInputs(n)) for (const i of n.inputs) need(i, n.id);
     if (n.needsOwnOutput) need(n.id, n.id);
   }
+  // torch_remat semantics: a \u21bb mark MEANS recompute — the op replays even
+  // if no backward consumer demands its output (so marking everything costs
+  // exactly 1\u00d7 fwd), and its inputs must be available (a useless mark can
+  // honestly INCREASE the stash). Demand still decides what is stashed.
+  for (const n of nodes) if (!saved(n) && !replayed.has(n.id)) {
+    replayed.add(n.id);
+    for (const i of n.inputs) need(i, n.id);
+  }
   // the checkpoint region saves its own input: the anchor every replay reads
   neededSaved.add('x0');
   if (!neededBy.has('x0')) neededBy.set('x0', new Set(['replay anchor']));
