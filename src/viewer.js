@@ -3552,12 +3552,11 @@ class Dsv3PpFold extends HTMLElement {
     if (view === this.view) return;
     this.view = view;
     const from = this._t, to = view === 'physical' ? 1 : 0;
-    const N = 14; let f = 0;
+    const N = 22; let f = 0;   // room for the stagger (~350 ms)
     const gen = this._gen = (this._gen ?? 0) + 1;
     const step = () => {
       if (this._gen !== gen) return;
-      f++; const q = fitEase(Math.min(1, f / N));
-      this._t = from + (to - from) * q;
+      f++; this._t = from + (to - from) * Math.min(1, f / N);   // RAW progress: easing is per-chunk in render
       this.render();
       if (f < N) setTimeout(step, 16);
     };
@@ -3593,7 +3592,16 @@ class Dsv3PpFold extends HTMLElement {
     const rankPT = (r) => pT(r) + pT(15 - r);                        // geometry: tweened
     const scale = BW / Math.max(...Array.from({ length: 8 }, (_, r) => rankPT(r)));
     const wOf = (k) => pT(k.c) * scale;
-    const lerp = (a, b) => a + (b - a) * t;
+    // the fold STAGGERS, farthest traveler first: v15 leads (the deepest
+    // bar sweeps to the top row), then v14, v13… so ranks visibly complete
+    // top-to-bottom; the unfold peels back bottom-up. t is raw progress —
+    // easing is applied per chunk inside its slice of the timeline.
+    const tG = fitEase(t);
+    const STAG = 0.4;
+    const tcOf = (c) => c < 8 ? tG
+      : fitEase(Math.min(1, Math.max(0, (t - STAG * ((15 - c) / 7)) / (1 - STAG))));
+    const lerp = (a, b) => a + (b - a) * tG;
+    const lerpC = (a, b, c) => a + (b - a) * tcOf(c);
     const hv = this._hover;
     const hvRank = hv == null ? null : this._rankOf(hv);
     const folded = t > 0.5;
@@ -3634,7 +3642,7 @@ class Dsv3PpFold extends HTMLElement {
       const y0 = slotY(s0) + 0.5, y1 = slotY(s1) - 1.5, ym = (y0 + y1) / 2;
       const r = this._rankOf(k.c), down = k.c < 8;
       const rx = RX0 + r * 1.6;                        // the pair shares a lane
-      const yb = lerp(yRow(k.c), yRow(down ? k.c : r)) + RH / 2;
+      const yb = lerpC(yRow(k.c), yRow(down ? k.c : r), k.c) + RH / 2;   // leaders ride their chunk's stagger
       const hot2 = hotRow(k.c);
       const st = hot2 ? 'stroke="#7a5200" stroke-width="1.3"' : 'stroke="#c3c2b7" stroke-width="0.9"';
       B.push(`<path d="M ${BRX} ${y0.toFixed(1)} h 3 V ${y1.toFixed(1)} h -3" fill="none" ${st}/>`);
@@ -3645,8 +3653,8 @@ class Dsv3PpFold extends HTMLElement {
     // outline (emb at the front, head at the back — the s0 imbalance)
     for (const k of this.chunks) {
       const c = k.c, down = c < 8, r = this._rankOf(c);
-      const x = down ? X0 : lerp(X0, X0 + wOf(this.chunks[r]) + 3);
-      const y = down ? yRow(c) : lerp(yRow(c), yRow(r));
+      const x = down ? X0 : lerpC(X0, X0 + wOf(this.chunks[r]) + 3, c);
+      const y = down ? yRow(c) : lerpC(yRow(c), yRow(r), c);
       const w = wOf(k);
       const hot2 = hv != null && (folded ? this._rankOf(c) === hvRank : c === hv);
       B.push(`<g data-chunk="${c}" data-params="${k.p}">`);

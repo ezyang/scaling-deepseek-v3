@@ -23,15 +23,21 @@ T.check('rank 0 is the heaviest (emb + head both land there)',
 segs()[0].dispatchEvent(new MouseEvent('mouseover', { bubbles: true })); await T.tick(50);
 T.check('virtual hover: chunk 0 lights its own range only', hot().length > 0 && Math.max(...hot()) < 8
   && f.querySelector('.ro').textContent.includes('v0'), f.querySelector('.ro').textContent);
-// fold it (ONE cycle button): the animation runs, height is reserved
+// fold it (ONE cycle button): the animation runs STAGGERED (farthest
+// traveler first: v15 leads, ranks complete top-to-bottom), height reserved
 const h0 = f.getBoundingClientRect().height;
+const yOf = (c) => +f.querySelector(`g[data-chunk="${c}"] rect`).getAttribute('y');
+const y0s = { 15: yOf(15), 12: yOf(12), 9: yOf(9) };
 const btn = [...f.querySelectorAll('.top button')].find((b) => b.textContent.includes('fold') || b.textContent.includes('unroll'));
 T.check('one cycle button + the EP stepper in the top row', !!btn && btn.textContent.includes('fold')
   && !!f.querySelector('[data-knob="ep"]'), btn.textContent);
 btn.click();
-await T.tick(150);   // mid-fold
+await T.tick(120);   // mid-fold
+const prog = (c) => (y0s[c] - yOf(c)) / (y0s[c] - (Math.min(c, 15 - c) * 21 + 3.5));
+T.check('stagger: v15 leads, v9 trails', prog(15) > prog(12) + 0.1 && prog(12) > prog(9),
+  [15, 12, 9].map((c) => prog(c).toFixed(2)).join('/'));
 T.check('mid-fold: height reserved (no reflow)', Math.abs(f.getBoundingClientRect().height - h0) < 1, '');
-await T.tick(400);   // settled
+await T.tick(500);   // settled
 // hover rank 0: BOTH ends of the model light up — the fold's signature
 segs()[15].dispatchEvent(new MouseEvent('mouseover', { bubbles: true })); await T.tick(50);
 const hs = hot();
