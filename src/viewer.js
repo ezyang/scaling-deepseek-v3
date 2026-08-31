@@ -2029,10 +2029,10 @@ export class Dsv3Layer extends HTMLElement {
       const n = Math.max(minOne ? 1 : 0, Math.round(bytes / 1024 / 4));
       if (!n) return { svg: '', rows: 0, pitch: 6 };
       let s = '';
-      if (FSQ) {   // the canonical byte picket (2px · 3px pitch · 9px tall,
-        // everywhere: fold map, chips, stash total) — NEVER wrapped
+      if (FSQ) {   // bytes stay SQUARES (the site's installed language) —
+        // single-line always (one stash = one run; wrapping banned)
         for (let i = 0; i < n; i++)
-          s += `<rect x="${x + i * 3}" y="${y}" width="2" height="9" fill="#eda100"/>`;
+          s += `<rect x="${x + i * 6}" y="${y}" width="5" height="5" fill="#eda100"/>`;
         return { svg: s, rows: 1, pitch: 11 };
       }
       const per = 16;
@@ -2197,13 +2197,15 @@ export class Dsv3Layer extends HTMLElement {
       }
       const color = barColor(dt2, dtp);
       if (FSQ) {
-        const n = eqT(flopsTok, dt2, dtp) / FUNIT, per = Math.floor(maxW / 6);
-        if (n < 1) {   // sub-square: the hollow trace (▫ = nonzero but sub-square)
-          P.push(`<rect x="${x + 0.4}" y="${y + 0.4}" width="4.2" height="3.2" fill="none" stroke="${color}" stroke-width="0.8"/>`);
+        // compute = PICKETS: a tally of time quanta (2px · 3px pitch), the
+        // 1D shape for the 1D quantity; squares stay bytes
+        const n = eqT(flopsTok, dt2, dtp) / FUNIT, per = Math.floor(maxW / 3);
+        if (n < 1) {   // sub-picket: the hollow trace
+          P.push(`<rect x="${x + 0.3}" y="${y + 0.3}" width="1.4" height="4.4" fill="none" stroke="${color}" stroke-width="0.7"/>`);
           return;
         }
         for (let u = 0; u < Math.ceil(n); u++)
-          P.push(`<rect x="${x + (u % per) * 6}" y="${y + Math.floor(u / per) * 6}" width="${(5 * Math.min(1, n - u)).toFixed(2)}" height="4" fill="${color}"/>`);
+          P.push(`<rect x="${x + (u % per) * 3}" y="${y + Math.floor(u / per) * 7}" width="${(2 * Math.min(1, n - u)).toFixed(2)}" height="5" fill="${color}"/>`);
         return;
       }
       let w = Math.max(1, eqT(flopsTok, dt2, dtp) * FLOP_PX);
@@ -3071,27 +3073,31 @@ export class Dsv3Layer extends HTMLElement {
       // near-fitting regime, exactly where countable units earn their keep.
       // Thinner pickets than the chips' (w2/p3), so both weights are on view.
       const pxT = FSQ
-        ? (b) => TB_X + b / (448 * 2 ** 20) * 3
+        ? (b) => TB_X + b / 2 ** 30 * 6
         : (b) => TB_X + Math.max(0, Math.min(1, (Math.log2(Math.max(b, 1)) - 28) / 16)) * TB_AVAIL;
       const totPx = lerpQ(pxT((anaP?.savedBytes ?? ana.savedBytes) * M2b), pxT(totNow));
       const cy0 = ty + 3;
       T.push(`<text class="dims" x="0" y="${cy0 + 10}">total</text>`);
       if (FSQ) {
         const aPx = pxT(anchor);
-        // ghost, picket-flavored: dashed amber OVERHANG only (the stretch
-        // the levers shaved off); if the stash ever exceeds the untreated
-        // anchor, a dashed amber tick marks where untreated was
+        // SOLID linear bar over a unit RULER (minor = 1 GiB, major = 8 GiB):
+        // length-first reading, countability on the axis. Ghost = dashed
+        // amber OVERHANG only (the stretch the levers shaved off); a dashed
+        // tick if the stash ever exceeds the untreated anchor
         if (aPx > totPx + 1)
           T.push(`<rect x="${totPx.toFixed(1)}" y="${cy0 + 2}" width="${(aPx - totPx).toFixed(1)}" height="9" fill="none" stroke="#d19023" stroke-dasharray="2 2"/>`);
         else if (aPx < totPx - 1)
           T.push(`<line x1="${aPx.toFixed(1)}" y1="${cy0 - 1}" x2="${aPx.toFixed(1)}" y2="${cy0 + 13}" stroke="#d19023" stroke-dasharray="2 2"/>`);
-        const uN = (totPx - TB_X) / 3;   // lerped picket count (partial last)
-        let g2 = '';
-        for (let u = 0; u < Math.ceil(uN); u++)
-          g2 += `<rect x="${TB_X + u * 3}" y="${cy0 + 2}" width="${(2 * Math.min(1, uN - u)).toFixed(2)}" height="9" fill="#eda100"/>`;
-        T.push(`<g data-true="${totNow}">${g2}</g>`);
-        T.push(`<rect x="${TB_X + TB_AVAIL + 24}" y="${cy0 + 2}" width="2" height="9" fill="#eda100"/>` +
-          `<text class="dims" x="${TB_X + TB_AVAIL + 30}" y="${cy0 + 10}">= 448 MiB · LINEAR</text>`);
+        T.push(`<rect x="${TB_X}" y="${cy0 + 2}" width="${(totPx - TB_X).toFixed(1)}" height="9" fill="#eda100" data-true="${totNow}"/>`);
+        const rext = Math.max(totPx, aPx, pxT(88 * 2 ** 30)) - TB_X + 6;
+        const ry = cy0 + 14;
+        T.push(`<line x1="${TB_X}" y1="${ry}" x2="${(TB_X + rext).toFixed(1)}" y2="${ry}" stroke="#c3c2b7" stroke-width="1"/>`);
+        for (let u = 0; u * 6 <= rext; u++) {
+          const x = TB_X + u * 6, major = u % 8 === 0;
+          T.push(`<line x1="${x}" y1="${ry}" x2="${x}" y2="${ry + (major ? 5 : 2.5)}" stroke="#c3c2b7" stroke-width="1"/>`);
+          if (major && u > 0) T.push(`<text x="${x}" y="${ry + 14}" text-anchor="middle" font-size="8.5" fill="#898781">${u}</text>`);
+        }
+        T.push(`<text class="dims" x="${(TB_X + rext + 10).toFixed(1)}" y="${ry + 14}">GiB · minor tick = 1 GiB · LINEAR</text>`);
       } else {
         T.push(`<rect x="${TB_X}" y="${cy0 + 2}" width="${(pxT(anchor) - TB_X).toFixed(1)}" height="8" fill="none" stroke="#b9b7ae" stroke-dasharray="2 2"/>`);
         for (let d = 0; d <= 16; d++)   // ×2 gridline ticks
@@ -3108,7 +3114,7 @@ export class Dsv3Layer extends HTMLElement {
       if (bdg) T.push(`<text class="dims" x="${bdgX.toFixed(1)}" y="${cy0 + 10}">${bdg}</text>`);
       T.push(`<line x1="${capX}" y1="${cy0 - 2}" x2="${capX}" y2="${cy0 + 14}" stroke="#d03b3b"/>` +
         `<text class="dims" x="${capX + 3}" y="${cy0 + 1}" fill="#d03b3b">80 GiB</text>`);
-      ty = cy0 + 20;
+      ty = cy0 + (FSQ ? 32 : 20);
     }
     T.push(`<text class="grplabel" x="0" y="${ty + 9}">per-layer FLOPs as time at peak — ${FSQ
       ? '▪ = 20 MFLOP/token (bf16-eq) ≈ 83 µs per 4096-token microbatch at peak:'
@@ -3120,17 +3126,17 @@ export class Dsv3Layer extends HTMLElement {
       let cx = TB_X, cy = ty + 3;
       const sorted = [...list].sort((p, q) => (DT_ORDER[opDt(p.id)] ?? 3) - (DT_ORDER[opDt(q.id)] ?? 3));
       if (FSQ) {
-        // square runs at the in-box unit (the fwd ribbon = the boxes' squares
+        // picket runs at the in-box unit (the fwd ribbon = the boxes' pickets
         // laid end to end); per-op counts Bresenham'd over the exact cumulative
-        const per = Math.floor(TB_AVAIL / 6);
+        const per = Math.floor(TB_AVAIL / 3);
         let cum = 0, drawn = 0;
         for (const n of sorted) {
           cum += wOf(n) / FUNIT;
           const color = barColor(opDt(n.id), opDtP(n.id));
           for (const upto = Math.round(cum); drawn < upto; drawn++)
-            T.push(`<rect x="${TB_X + (drawn % per) * 6}" y="${cy + Math.floor(drawn / per) * 6}" width="5" height="4" fill="${color}"/>`);
+            T.push(`<rect x="${TB_X + (drawn % per) * 3}" y="${cy + Math.floor(drawn / per) * 7}" width="2" height="5" fill="${color}"/>`);
         }
-        cx = TB_X + (drawn % per) * 6; cy += Math.floor(drawn / per) * 6;
+        cx = TB_X + (drawn % per) * 3; cy += Math.floor(drawn / per) * 7;
         T.push(`<text class="dims" x="${(cx + 10).toFixed(1)}" y="${cy + 6}">${num}</text>`);
         ty = cy + 13;
         return;
@@ -3797,13 +3803,14 @@ class Dsv3PpFold extends HTMLElement {
     // unit rects at the global byte quantum (448 MiB bf16 = 224M params),
     // layer separations widen, and the x-scale is FIXED by the unit (the EP
     // knob changes the unit count, so EP1 gets enormous — that's the honest
-    // picture; the essay arrives here with EP64 already applied). ONE
-    // canonical picket everywhere (2px wide · 3px pitch · 9px tall — the
-    // same rect the AC chips and the stash total wear); the quantum here is
-    // 56 MiB so a rank at EP64 keeps the old bar's extent.
+    // picture; the essay arrives here with EP64 already applied). blocks
+    // (PROTOTYPE, round 4): SOLID bars on a FIXED graduated scale — the
+    // countability moves into the shared unit RULER under the bars (minor
+    // tick = 128 MiB bf16, major = 1 GiB, 8 minors to a major), labels in
+    // bytes. The bars keep their approved look; the axis carries the units.
     const BLOCKS = this.hasAttribute('blocks');
     const RH = 14, PV = 21, BW = 420;
-    const UNITP = 56 * 2 ** 20 / 2, UPX = 3, UW = 2, SLOTGAP = 4;   // params/unit · pitch · unit width · layer margin
+    const UNITP = 128 * 2 ** 20 / 2, UPX = 6;   // params per ruler unit · px per unit
     const pTs = (c) => this.chunks[c].slotsP.map((v, i) =>
       this._epFrom ? this._epFrom[c][i] + (v - this._epFrom[c][i]) * this._ept : v);
     const pT = (c) => pTs(c).reduce((a, b) => a + b, 0);
@@ -3811,10 +3818,10 @@ class Dsv3PpFold extends HTMLElement {
     const rankPT = (r) => pT(r) + pT(15 - r);                        // geometry: tweened
     const scale = BLOCKS ? UPX / UNITP
       : BW / Math.max(...Array.from({ length: 8 }, (_, r) => rankPT(r)));
-    const wOf = (k) => pT(k.c) * scale + (BLOCKS ? SLOTGAP * pTs(k.c).length : 0);
+    const wOf = (k) => pT(k.c) * scale;
     const H = 16 * PV + (BLOCKS ? 30 : 24);
     const W = BLOCKS
-      ? X0 + Math.max(...Array.from({ length: 8 }, (_, r) => wOf(this.chunks[r]) + wOf(this.chunks[15 - r]))) + 160
+      ? X0 + Math.max(...Array.from({ length: 8 }, (_, r) => wOf(this.chunks[r]) + wOf(this.chunks[15 - r]))) + 270
       : X0 + BW + 152;   // + the linear axis band (caption rides past its end)
     // ONE authored motion — the UNROLL (crease-outward release, v8 first,
     // decelerating arrivals — the paper-unrolling read): the fold plays the
@@ -3901,23 +3908,6 @@ class Dsv3PpFold extends HTMLElement {
         const gT = (chunkSlots(k).s0 + i2) / 62;
         const segFill = fitColor('#bcd8f3', '#134a8e', gT);
         const ink = gT < 0.5 ? '#0b3d75' : '#dcebfa';
-        if (BLOCKS) {
-          // tall-thin unit rects (memory), 448 MiB each; the last unit is a
-          // partial-width sliver so the drawn AREA stays exact (linear!)
-          const units = w2 / UPX;
-          for (let u = 0; u < Math.ceil(units) && u < 4000; u++) {
-            const frac = Math.min(1, units - u);
-            B.push(`<rect x="${(sx + u * UPX).toFixed(1)}" y="${y + 2}" width="${(UW * frac).toFixed(2)}" height="9" fill="${segFill}"/>`);
-          }
-          if (vocab) {
-            B.push(`<rect x="${(sx - 2).toFixed(1)}" y="${y.toFixed(1)}" width="${(w2 - UPX + UW + 3).toFixed(1)}" height="${RH}" fill="none" stroke="${gT < 0.5 ? '#0b3d75' : '#bcd8f3'}" stroke-dasharray="2.5 2"/>`);
-            if (w2 > 30) B.push(`<text x="${(sx + (w2 - UPX + UW) / 2).toFixed(1)}" y="${y + RH - 4}" text-anchor="middle" font-size="8.5" fill="${ink}" stroke="#fcfcfb" stroke-width="2.5" paint-order="stroke">${k.emb && i2 === 0 ? 'emb' : 'head'}</text>`);
-          }
-          if (dense && w2 > 30)
-            B.push(`<text x="${(sx + (w2 - UPX + UW) / 2).toFixed(1)}" y="${y + RH - 4}" text-anchor="middle" font-size="8.5" fill="${ink}" stroke="#fcfcfb" stroke-width="2.5" paint-order="stroke">dense</text>`);
-          sx += w2 + SLOTGAP;
-          continue;
-        }
         B.push(`<rect x="${sx.toFixed(1)}" y="${y.toFixed(1)}" width="${Math.max(0.5, w2 - 1).toFixed(1)}" height="${RH}" fill="${segFill}"/>`);
         // only the ODD segments name themselves: emb/head (below) and the
         // dense blocks — ordinary MoE layers stay blank (they're the norm)
@@ -3933,15 +3923,23 @@ class Dsv3PpFold extends HTMLElement {
       }
       if (hot2) B.push(`<rect x="${(x - 1).toFixed(1)}" y="${(y - 1).toFixed(1)}" width="${(w + 1).toFixed(1)}" height="${RH + 2}" fill="none" stroke="#7a5200" stroke-width="1.2"/>`);
       B.push('</g>');
-      B.push(`<text x="${(x + w + 4).toFixed(1)}" y="${(y + RH - 3).toFixed(1)}" font-size="9.5" fill="#898781" opacity="${(1 - t).toFixed(2)}">${fmtP(k.p)}</text>`);
-      if (!down) B.push(`<text data-ranktotal="${r}" data-params="${rankP(r)}" x="${(x + w + 4).toFixed(1)}" y="${(y + RH - 3).toFixed(1)}" font-size="9.5" fill="#898781" opacity="${t.toFixed(2)}">${fmtP(rankP(r))}</text>`);
+      const val = (pp2) => BLOCKS ? fmtBytes(pp2 * 2) : fmtP(pp2);   // graduated mode reads in bytes (the ruler's currency)
+      B.push(`<text x="${(x + w + 4).toFixed(1)}" y="${(y + RH - 3).toFixed(1)}" font-size="9.5" fill="#898781" opacity="${(1 - t).toFixed(2)}">${val(k.p)}</text>`);
+      if (!down) B.push(`<text data-ranktotal="${r}" data-params="${rankP(r)}" x="${(x + w + 4).toFixed(1)}" y="${(y + RH - 3).toFixed(1)}" font-size="9.5" fill="#898781" opacity="${t.toFixed(2)}">${val(rankP(r))}</text>`);
     }
     // the x-axis: these bars are LINEAR (everything else on the site is
     // log₂) — ticks say so out loud
     if (BLOCKS) {
-      const ay = 16 * PV + 6;
-      B.push(`<rect x="${X0}" y="${ay}" width="${UW}" height="9" fill="#52514e"/>` +
-        `<text x="${X0 + UW + 6}" y="${ay + 9}" font-size="9" fill="#52514e">= 56 MiB bf16 (28M params) · LINEAR</text>`);
+      // the unit RULER: countability without atomizing the bars
+      const ay = 16 * PV + 4;
+      const ext = Math.max(...Array.from({ length: 8 }, (_, r) => wOf(this.chunks[r]) + wOf(this.chunks[15 - r]))) + UPX;
+      B.push(`<line x1="${X0}" y1="${ay}" x2="${(X0 + ext).toFixed(1)}" y2="${ay}" stroke="#c3c2b7" stroke-width="1"/>`);
+      for (let u = 0; u * UPX <= ext; u++) {
+        const x = X0 + u * UPX, major = u % 8 === 0;
+        B.push(`<line x1="${x}" y1="${ay}" x2="${x}" y2="${ay + (major ? 5 : 2.5)}" stroke="#c3c2b7" stroke-width="1"/>`);
+        if (major && u > 0) B.push(`<text x="${x}" y="${ay + 14}" text-anchor="middle" font-size="8.5" fill="#898781">${u / 8}</text>`);
+      }
+      B.push(`<text x="${(X0 + ext + 10).toFixed(1)}" y="${ay + 14}" font-size="9" fill="#52514e">GiB bf16 · minor tick = 128 MiB · LINEAR</text>`);
     } else {
       const maxP = Math.max(...Array.from({ length: 8 }, (_, r) => rankP(r)));
       const pow = 10 ** Math.floor(Math.log10(maxP));
