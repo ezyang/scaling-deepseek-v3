@@ -1870,7 +1870,7 @@ export class Dsv3Layer extends HTMLElement {
       'mxfp8 counted half \u2014 2\u00d7 peak; fp32 counted double \u2014 half peak; dtype colors here and on the saved-tensor tags: blue mxfp8, dark bf16, plum fp32); ' +
       'the lm head uses the same unit \u2014 per-token vocab work, independent of depth. Norms/SwiGLU ' +
       'get a hollow dashed fig-leaf (bandwidth-bound, compute precision unspecified).',
-      this._ctl.dtype ? 'One click on a dtype button cycles bf16 \u2192 mxfp8 \u2192 fp32.' : '',
+      this._ctl.dtype ? 'One click on a dtype button toggles bf16 \u21c4 mxfp8 (the router is pinned).' : '',
       this._ctl.quant
         ? 'The tally at right totals fwd + bwd (2\u00d7 fwd \u2014 dgrad + wgrad; sdpa likewise) + replay'
           + (this._ctl.marks ? ' \u2014 marking ops \u21bb grows its replay row.' : '.')
@@ -2115,11 +2115,17 @@ export class Dsv3Layer extends HTMLElement {
       return A.neededSaved.has(id) ? 'save' : 'idle';
     };
     const state = (id) => stateA(ana, marks, id);
-    // one-click precision toggle (bf16 -> mxfp8 -> fp32), hidden below the dtype tier
+    // one-click precision toggle (bf16 ⇄ mxfp8 — the article is anchored on
+    // bf16, so fp32 compute is not a lever here), hidden below the dtype tier.
+    // The ROUTER is not a lever at all: production runs it fp32 (a tiny,
+    // numerically sensitive GEMM) — its tag is a pinned readout of the recipe.
     const dtBtn = (id, x, y) => !this._ctl.dtype ? '' :
       `<foreignObject x="${x}" y="${y}" width="52" height="20">` +
-      `<button xmlns="http://www.w3.org/1999/xhtml" class="st dtb" data-dt="${id}" style="color:${DT_STYLE[dt(id)]}" ` +
-      `title="cycle precision: bf16 / mxfp8 / fp32">${dt(id)}</button></foreignObject>`;
+      (id === 'router'
+        ? `<button xmlns="http://www.w3.org/1999/xhtml" class="st dtb" data-dt="${id}" disabled style="color:${DT_STYLE[dt(id)]};cursor:default;opacity:0.8" ` +
+          `title="pinned: the router runs fp32 in production (tiny GEMM, numerically sensitive) — it follows the recipe, not a per-op lever">${dt(id)}</button>`
+        : `<button xmlns="http://www.w3.org/1999/xhtml" class="st dtb" data-dt="${id}" style="color:${DT_STYLE[dt(id)]}" ` +
+          `title="toggle precision: bf16 ⇄ mxfp8">${dt(id)}</button>`) + '</foreignObject>';
     // the block-output add has NO free mark: its output IS the next block's
     // x0 — the checkpoint anchor, always saved (and charged there). It wears
     // a locked 🔒 so every op still shows its state.
@@ -3443,7 +3449,7 @@ export class Dsv3Layer extends HTMLElement {
     for (const b of svgEl.querySelectorAll('button[data-dt]')) {
       b.onclick = () => {
         const mutate = () => {
-          const cycle = { bf16: 'mxfp8', mxfp8: 'fp32', fp32: 'bf16' };
+          const cycle = { bf16: 'mxfp8', mxfp8: 'bf16', fp32: 'bf16' };   // fp32 exits via bf16 (stale URL states)
           this.matmuls[b.dataset.dt] = cycle[this.matmuls[b.dataset.dt]] ?? 'bf16';
         };
         if (this.hasAttribute('local') && this.getAttribute('lens') === 'param-bytes') {

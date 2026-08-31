@@ -295,4 +295,17 @@ T.check('sub-picket GEMMs wear the hollow trace',
   T.check('and lands on the full count', fwdN(f8) === 134, fwdN(f8));
   btn(f8, 'recipe', 'dsv3-fp8').click(); await T.tick(400);
 }
+// per-op dtype buttons: bf16 ⇄ mxfp8 only (the article anchors on bf16 — no
+// fp32 stop), and the ROUTER is pinned (production fp32, not a lever)
+{
+  const dbtn = (id) => f8.querySelector(`button[data-dt="${id}"]`);
+  T.check('router dtype button is pinned (disabled, fp32 under dsv3-fp8)',
+    dbtn('router').disabled && dbtn('router').textContent === 'fp32', dbtn('router').textContent);
+  dbtn('qkv_down').click(); await T.tick(400);   // mxfp8 → bf16 (not fp32)
+  T.check('dtype click toggles mxfp8 → bf16 (no fp32 in the cycle)',
+    dbtn('qkv_down').textContent === 'bf16', dbtn('qkv_down').textContent);
+  dbtn('qkv_down').click(); await T.tick(400);   // bf16 → mxfp8, back on the preset
+  T.check('second click returns to mxfp8 (recipe chip re-lights)',
+    dbtn('qkv_down').textContent === 'mxfp8' && btn(f8, 'recipe', 'dsv3-fp8').classList.contains('on'), '');
+}
 T.done();
