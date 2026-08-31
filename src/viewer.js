@@ -3718,12 +3718,13 @@ class Dsv3PpFold extends HTMLElement {
     // unit rects at the global byte quantum (448 MiB bf16 = 224M params),
     // layer separations widen, and the x-scale is FIXED by the unit (the EP
     // knob changes the unit count, so EP1 gets enormous — that's the honest
-    // picture; the essay arrives here with EP64 already applied). Sized
-    // ~2.5× the byte-square pitch, taller rows: deflated units read as
-    // noise (author's call), so the map breathes instead.
+    // picture; the essay arrives here with EP64 already applied). The unit
+    // is the byte square QUARTERED (112 MiB) so the bars run WIDE — a rank
+    // at EP64 is ~59 countable units, about the old bar's extent — without
+    // inflating the rows (author's call: wider, not taller).
     const BLOCKS = this.hasAttribute('blocks');
-    const RH = BLOCKS ? 30 : 14, PV = BLOCKS ? 38 : 21, BW = 420;
-    const UNITP = 448 * 2 ** 20 / 2, UPX = BLOCKS ? 15 : 6, UW = 10, SLOTGAP = 5;   // params/unit · pitch · unit width · layer margin
+    const RH = 14, PV = 21, BW = 420;
+    const UNITP = 112 * 2 ** 20 / 2, UPX = 6, UW = 4, SLOTGAP = 4;   // params/unit · pitch · unit width · layer margin
     const pTs = (c) => this.chunks[c].slotsP.map((v, i) =>
       this._epFrom ? this._epFrom[c][i] + (v - this._epFrom[c][i]) * this._ept : v);
     const pT = (c) => pTs(c).reduce((a, b) => a + b, 0);
@@ -3732,7 +3733,7 @@ class Dsv3PpFold extends HTMLElement {
     const scale = BLOCKS ? UPX / UNITP
       : BW / Math.max(...Array.from({ length: 8 }, (_, r) => rankPT(r)));
     const wOf = (k) => pT(k.c) * scale + (BLOCKS ? SLOTGAP * pTs(k.c).length : 0);
-    const H = 16 * PV + (BLOCKS ? 34 : 24);
+    const H = 16 * PV + (BLOCKS ? 30 : 24);
     const W = BLOCKS
       ? X0 + Math.max(...Array.from({ length: 8 }, (_, r) => wOf(this.chunks[r]) + wOf(this.chunks[15 - r]))) + 160
       : X0 + BW + 152;   // + the linear axis band (caption rides past its end)
@@ -3860,8 +3861,8 @@ class Dsv3PpFold extends HTMLElement {
     // log₂) — ticks say so out loud
     if (BLOCKS) {
       const ay = 16 * PV + 6;
-      B.push(`<rect x="${X0}" y="${ay}" width="${UW}" height="${RH - 12}" fill="#52514e"/>` +
-        `<text x="${X0 + UW + 6}" y="${ay + 12}" font-size="9" fill="#52514e">= 448 MiB bf16 (224M params) · LINEAR</text>`);
+      B.push(`<rect x="${X0}" y="${ay}" width="${UW}" height="${RH - 4}" fill="#52514e"/>` +
+        `<text x="${X0 + UW + 6}" y="${ay + 11}" font-size="9" fill="#52514e">= 112 MiB bf16 (56M params) — the byte square, quartered · LINEAR</text>`);
     } else {
       const maxP = Math.max(...Array.from({ length: 8 }, (_, r) => rankP(r)));
       const pow = 10 ** Math.floor(Math.log10(maxP));
