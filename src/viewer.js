@@ -1998,11 +1998,13 @@ export class Dsv3Layer extends HTMLElement {
     // quant tiers carry byte-quantity labels (e.g. attention's lse) that need
     // more room between the columns; the static tier keeps its published width
     const W = 290, C1 = 60,
-      C2 = (ONLY === 'ffn' ? 60 : !this._ctl.quant ? 512 : this.detail ? 576 : 524)
+      // quant+detail tightened to 540: the widened MLA ends at ~480, and the
+      // laptop column is ~1000px — every spare hpx counts
+      C2 = (ONLY === 'ffn' ? 60 : !this._ctl.quant ? 512 : this.detail ? 540 : 524)
         + (ONLY !== 'ffn' && this._ctl.quant && this.hasAttribute('tabs') ? 20 : 0);
     const SX1 = C1 + 22, SX2 = C2 + 22, RAIL1 = C1 - 26;
     const WIDTH = ONLY === 'mla' ? C1 + W + 250
-      : C2 + W + (this.detail ? (this._ctl.quant ? 264 : 224) : 180); // right margin fits aux labels (+ shared column in detail; quant byte tags are wider)
+      : C2 + W + (this.detail ? (this._ctl.quant ? 232 : 224) : 180); // right margin fits aux labels (+ shared column in detail; quant byte tags are wider)
     // dims display: factored (128\u00d7192) or multiplied out (24576)
     const flatten = (s) => {
       if (!FLAT || !s) return s;
@@ -2739,7 +2741,7 @@ export class Dsv3Layer extends HTMLElement {
         micro('RoPE + build K,V', C1 + KVO, y, 140,
           'fused_apply_mla_rope_for_kv — split kv_heads into k_nope and V, rotate k_rope, broadcast it across the 128 heads, concat K = [k_nope | k_rope], make K and V contiguous. '
           + 'Same zero-byte mark as RoPE (q): rotated vs pre-RoPE k,v are the same size', '', 'rope_kv');
-        P.push(`<path class="wire" d="M ${bypX} ${bypTop} L ${bypX} ${y + 9} L ${C1 + W + 1} ${y + 9}" marker-end="url(#arr)"/>`);
+        P.push(`<path class="wire" d="M ${bypX} ${bypTop} L ${bypX} ${y + 9} L ${C1 + KVO + 141} ${y + 9}" marker-end="url(#arr)"/>`);
         y += 18;
       }
       tensorChip(['rope_q'], SX1 + 14, y + 4);
