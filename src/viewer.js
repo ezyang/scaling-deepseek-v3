@@ -2398,9 +2398,16 @@ export class Dsv3Layer extends HTMLElement {
       // the grid: FILLED squares for a real stash, HOLLOW for a recomputed
       // tensor (the counterfactual: what saving it would cost) — flipping a
       // mark crossfades filled/hollow instead of vanishing the bytes
-      const gx = ov?.short ? x + 88 : x, gy = ov?.short ? y + 13 : y + 12;
-      const gridFor = (A, s2) => SAVED(s2) ? blockGrid(bytesA(A), gx, gy, true).svg
-        : s2 === 'redo' ? blockGrid(bytesA(A), gx, gy, true, true).svg : '';
+      // grid position follows the chip's FORM: two-line saved short chips
+      // park it beside the value line; single-line forms (redo, non-short)
+      // put it flush-left under the text — a hollow row at the +88 offset
+      // floated into the neighbouring column
+      const gpos = (s2) => ov?.short && SAVED(s2) ? [x + 88, y + 13] : ov?.short ? [x, y + 13] : [x, y + 12];
+      const gridFor = (A, s2) => {
+        const [gx, gy] = gpos(s2);
+        return SAVED(s2) ? blockGrid(bytesA(A), gx, gy, true).svg
+          : s2 === 'redo' ? blockGrid(bytesA(A), gx, gy, true, true).svg : '';
+      };
       if (stP2 != null && stP2 !== st)
         P.push(`<g opacity="${(1 - VQ.t).toFixed(3)}">${chipTxt(anaP, stP2)}${gridFor(anaP, stP2)}</g>` +
           `<g opacity="${VQ.t.toFixed(3)}">${chipTxt(ana, st)}${gridFor(ana, st)}</g>`);
@@ -2408,6 +2415,7 @@ export class Dsv3Layer extends HTMLElement {
         P.push(chipTxt(ana, st));
         if (SAVED(st) || st === 'redo') {   // same state: bytes still pour (dtype flips)
           const bT = lerpQ(anaP ? bytesA(anaP) : bytes, bytes);
+          const [gx, gy] = gpos(st);
           P.push(blockGrid(bT, gx, gy, !VQ, st === 'redo').svg);
         }
       }
