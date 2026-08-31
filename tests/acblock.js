@@ -243,6 +243,17 @@ T.check('sub-picket GEMMs wear the hollow trace',
   ac.querySelector('button[data-mark="gate_up"]').click(); await T.tick(400);
   T.check('a both-roles tensor shows both arrows (↓⇓ norm2 out)',
     [...ac.querySelectorAll('.lv-scroll text.tsave')].some(t => t.textContent.startsWith('↓⇓') && t.textContent.includes('norm2')), '');
+  // split-display chips (q/kv latent halves of ONE tensor) filter to their
+  // OWN reader: a ⇓ never points at a saved consumer
+  {
+    btn(ac, 'recompute', 'none').click(); await T.tick(300);
+    ac.querySelector('button[data-mark="kv_norm"]').click(); await T.tick(400);
+    const c = (f) => [...ac.querySelectorAll('.lv-scroll text.tsave')].map(t => t.textContent).find(t => t.includes(f));
+    T.check('kv_norm ↻ alone: kv latent goes ⇓ while q latent keeps ↓',
+      c('kv latent')?.startsWith('⇓') && c('q latent')?.startsWith('↓ '), `${c('q latent')} | ${c('kv latent')}`);
+    btn(ac, 'recompute', 'none').click(); await T.tick(300);
+    ac.querySelector('button[data-mark="gate_up"]').click(); await T.tick(400);
+  }
   T.check('chip tooltips name the keepers (backward + replay) with the arrow legend',
     [...ac.querySelectorAll('.lv-scroll text[data-tip]')].some(t => t.textContent.includes('norm2')
       && t.dataset.tip.includes('BACKWARD of:') && t.dataset.tip.includes('REPLAY of:') && t.dataset.tip.includes('Direction:')), '');

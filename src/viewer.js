@@ -2326,8 +2326,9 @@ export class Dsv3Layer extends HTMLElement {
     // REPLAY (the tensor is a recompute ANCHOR, not a direct backward
     // input), the arrow goes double-struck: ⇓ ⇑ ⇕ — the paper's own framing
     // ('cache the inputs of the SwiGLU operator and recompute its output')
-    const needDir = (ids) => {
-      const by = ids.flatMap(i => [...(ana.neededBy.get(i) ?? [])]);
+    const needDir = (ids, only) => {
+      const by = ids.flatMap(i => [...(ana.neededBy.get(i) ?? [])])
+        .filter(c => !only || only.includes(c));
       const isR = (c) => c === 'replay anchor' || ana.replayed.has(c);
       const dir = (set2, glyphs) => {
         if (!set2.size) return '';
@@ -2340,8 +2341,9 @@ export class Dsv3Layer extends HTMLElement {
         + dir(new Set(by.filter(isR)), ['⇓', '⇑', '⇕'])) || '↓';
     };
     // the arrows explained, per chip: WHO keeps this tensor alive
-    const needTip = (ids) => {
-      const by = ids.flatMap(i => [...(ana.neededBy.get(i) ?? [])]);
+    const needTip = (ids, only) => {
+      const by = ids.flatMap(i => [...(ana.neededBy.get(i) ?? [])])
+        .filter(c => !only || only.includes(c));
       const isR = (c) => c === 'replay anchor' || ana.replayed.has(c);
       const lab = (c) => c === 'replay anchor' ? 'the replay chain (every replay ends at a saved anchor)' : (ana.byId[c]?.label ?? c);
       const bwd = [...new Set(by.filter(c => !isR(c)).map(lab))];
@@ -2394,9 +2396,9 @@ export class Dsv3Layer extends HTMLElement {
         const CROW = ov?.short ? 8 : CHIP_ROW;
         const [sqX, sqY] = ov?.short ? [x + 60, y + 17] : [x, y + 12];
         let g = ov?.short
-          ? `<text class="tensor tsave" x="${x}" y="${y + 8}">${needDir(ids)} ${name}${lock}</text>` +
+          ? `<text class="tensor tsave" x="${x}" y="${y + 8}">${needDir(ids, ov?.readers)} ${name}${lock}</text>` +
             `<text class="tensor tsave" x="${x}" y="${y + 21}">${fmtBytes(b4096)}${facTxt('a')}</text>`
-          : `<text class="tensor tsave" x="${x}" y="${y + 8}">${needDir(ids)} ${name} · ${fmtBytes(b4096)}${facTxt('a')}${lock}</text>`;
+          : `<text class="tensor tsave" x="${x}" y="${y + 8}">${needDir(ids, ov?.readers)} ${name} · ${fmtBytes(b4096)}${facTxt('a')}${lock}</text>`;
         if (hollow) g += `<rect x="${sqX + 0.4}" y="${sqY + 0.4}" width="4.2" height="3.2" fill="none" stroke="#eda100" stroke-width="0.8"/>`;
         else for (let i = 0; i < nsq; i++)
           g += `<rect x="${sqX + (i % CROW) * 6}" y="${sqY + Math.floor(i / CROW) * 6}" width="5" height="4" fill="#eda100"/>`;
@@ -2412,7 +2414,7 @@ export class Dsv3Layer extends HTMLElement {
         const sz = flatten(ov?.tdims ?? ids.map(i => ana.byId[i].tdims).join(' + '));
         P.push(st === 'idle'
           ? `<text class="tensor tidle" x="${x}" y="${y + 8}">· ${name}</text>`
-          : `<text class="tensor tsave" x="${x}" y="${y + 8}">${needDir(ids)} ${name} <tspan class="tdim">· ${sz}</tspan></text>`);
+          : `<text class="tensor tsave" x="${x}" y="${y + 8}">${needDir(ids, ov?.readers)} ${name} <tspan class="tdim">· ${sz}</tspan></text>`);
         return h;
       }
       // stash-knob tween: when the STATE flips (saved ↔ recomputed/idle) the
@@ -2422,7 +2424,7 @@ export class Dsv3Layer extends HTMLElement {
       const stP2 = VQ && anaP ? stateA(anaP, VQ.prev.marks ?? marks, id) : null;
       const chipTxt = (A, s2) => {
         const tip = s2 === 'save' || s2 === 'pin'
-          ? ` data-tip="${needTip(ids)}${s2 === 'pin' ? escAttr('\n\ud83d\udd12 always saved: the checkpoint anchor.') : ''}"`
+          ? ` data-tip="${needTip(ids, ov?.readers)}${s2 === 'pin' ? escAttr('\n\ud83d\udd12 always saved: the checkpoint anchor.') : ''}"`
           : s2 === 'redo'
             ? ` data-tip="${escAttr('\u21bb recomputed in backward, not stashed \u2014 the hollow squares price what saving it WOULD cost.')}"`
             : ` data-tip="${escAttr('\u00b7 not needed: no backward op or replay reads this tensor \u2014 saved or not, it is never stashed.')}"`;
@@ -2431,9 +2433,9 @@ export class Dsv3Layer extends HTMLElement {
           const dtag = ids.some(i2 => A.dual.has(i2)) ? ' ᵀ×2' : '';
           // narrow fork/shared columns (ov.short) go TWO lines — one line
           // runs into the neighbouring column (the CONS chips' pattern)
-          if (ov?.short) return `<text class="tensor tsave"${tip} x="${x}" y="${y + 8}">${needDir(ids)} ${esc(name0)}${s2 === 'pin' ? ' 🔒' : ''}</text>` +
+          if (ov?.short) return `<text class="tensor tsave"${tip} x="${x}" y="${y + 8}">${needDir(ids, ov?.readers)} ${esc(name0)}${s2 === 'pin' ? ' 🔒' : ''}</text>` +
             `<text class="tensor tsave" x="${x}" y="${y + 21}">${fmtMem(bytesA(A))} <tspan fill="${DT_STYLE[dtOf(n2)]}">${dtOf(n2)}${dtag}</tspan></text>`;
-          return `<text class="tensor tsave"${tip} x="${x}" y="${y + 8}">${needDir(ids)} ${esc(name0)} · ${fmtMem(bytesA(A))} ` +
+          return `<text class="tensor tsave"${tip} x="${x}" y="${y + 8}">${needDir(ids, ov?.readers)} ${esc(name0)} · ${fmtMem(bytesA(A))} ` +
             `<tspan fill="${DT_STYLE[dtOf(n2)]}">${dtOf(n2)}${dtag}</tspan>${s2 === 'pin' ? ' 🔒' : ''}</text>`;
         }
         // ov.short: narrow fork columns drop the suffix (the ↻ glyph carries it)
@@ -2653,9 +2655,9 @@ export class Dsv3Layer extends HTMLElement {
         // pre-norm latent chips: real graph state (saved at no-AC — the latent
         // norms' backward input; the replay anchor under recompute presets)
         tensorChip(['qkv_down'], SX1 + 14, y + 24,
-          { name: 'q latent', tdims: String(DSV3.qRank), frac: DSV3.qRank / latTot, short: true });
+          { name: 'q latent', tdims: String(DSV3.qRank), frac: DSV3.qRank / latTot, short: true, readers: ['q_norm'] });
         tensorChip(['qkv_down'], RX + 14, y + 24,
-          { name: 'kv latent', tdims: String(DSV3.kvRank), frac: DSV3.kvRank / latTot, short: true });
+          { name: 'kv latent', tdims: String(DSV3.kvRank), frac: DSV3.kvRank / latTot, short: true, readers: ['kv_norm'] });
         wire(SX1, y, y + 48);
         P.push(`<path class="wire" d="M ${RX} ${y} L ${RX} ${y + 48}" marker-end="url(#arr)"/>`);
         y += 48;
@@ -2681,9 +2683,9 @@ export class Dsv3Layer extends HTMLElement {
         tensorChip(['kv_norm'], RX + 14, y + 4, { short: true });
       } else {
         tensorChip(['qkv_down'], SX1 + 14, y + 4,
-          { name: 'q latent', tdims: String(DSV3.qRank), frac: DSV3.qRank / latTot, short: true });
+          { name: 'q latent', tdims: String(DSV3.qRank), frac: DSV3.qRank / latTot, short: true, readers: ['q_norm'] });
         tensorChip(['qkv_down'], RX + 14, y + 4,
-          { name: 'kv latent', tdims: String(DSV3.kvRank), frac: DSV3.kvRank / latTot, short: true });
+          { name: 'kv latent', tdims: String(DSV3.kvRank), frac: DSV3.kvRank / latTot, short: true, readers: ['kv_norm'] });
       }
       // consolidated: the narrow fork chips are two lines tall (name / bytes)
       const latGap = Math.max(CONS ? 36 : 26, chipSpace(['qkv_down']) + 8);
