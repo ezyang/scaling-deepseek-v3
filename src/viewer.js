@@ -2102,7 +2102,13 @@ export class Dsv3Layer extends HTMLElement {
       const st = state(ids[0]);
       if (st === 'pin') return '';
       const redo = this.marks[ids[0]] === false;
-      return `<foreignObject x="${x}" y="${y}" width="26" height="20">` +
+      // a recompute nobody reads gets a warning (the mark is honored — literal
+      // semantics — but a demand-driven planner would have skipped it)
+      const warn = redo && ana.pointless?.has(ids[0])
+        ? `<g data-tip="${escAttr('\u26a0 pointless recompute: nothing in backward reads this op\u2019s output — the replay burns time (and may pin its inputs in the stash) while saving no memory. torch_remat does what you said; a demand-driven planner would skip this mark.')}">` +
+          `<text x="${x - 14}" y="${y + 15}" font-size="11">\u26a0\ufe0f</text></g>`
+        : '';
+      return warn + `<foreignObject x="${x}" y="${y}" width="26" height="20">` +
         `<button xmlns="http://www.w3.org/1999/xhtml" class="st mode st-${redo ? 'redo' : 'save'}" ` +
         `data-mark="${ids.join(',')}" title="save output for backward vs recompute this op during backward">${redo ? '↻' : '💾'}</button></foreignObject>`;
     };

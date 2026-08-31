@@ -209,9 +209,12 @@ T.check('sub-picket GEMMs wear the hollow trace',
   // the routed+shared sum is a real node (no fusion modeled): its ↻ mark is
   // representable and honestly WASTEFUL — the replay pulls combine-out in
   const g1 = tHead(ac).match(/= ([\d.]+) GiB/)[1];
+  const warns = () => ac.querySelectorAll('.lv-scroll g[data-tip*="pointless recompute"]').length;
+  T.check('no ⚠ before the wasteful mark', warns() === 0, warns());
   ac.querySelector('button[data-mark="moe_add"]').click(); await T.tick(400);
   T.check('marking the routed+shared sum ↻ GROWS the stash (literal semantics)',
     +tHead(ac).match(/= ([\d.]+) GiB/)[1] > +g1, tHead(ac));
+  T.check('…and earns the ⚠ (nothing reads the recompute)', warns() === 1, warns());
   ac.querySelector('button[data-mark="moe_add"]').click(); await T.tick(400);
   const g0 = tHead(ac).match(/= ([\d.]+) GiB/)[1];
   rq().click(); await T.tick(400);   // none \u2192 rope_q \u21bb: same bytes, now pre-RoPE

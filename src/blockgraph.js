@@ -209,9 +209,13 @@ export function analyze(nodes, marks, transposedStash = false) {
   const replayFlopsTok = [...replayed].reduce((t, id) => t + byId[id].flopsTok, 0);
   const fwdFlopsTok = nodes.reduce((t, n) => t + n.flopsTok, 0);
   const replayComm = ['dispatch', 'combine'].filter(id => replayed.has(id));
+  // POINTLESS recomputes: marked \u21bb, so they replay (literal semantics),
+  // but nothing in backward — no bwd op, no other replay — reads the output.
+  // A demand-driven planner would skip them; torch_remat does what you said.
+  const pointless = new Set([...replayed].filter(id => !neededBy.has(id)));
   return {
     buckets, savedBytes, savedById, replayFlopsTok, fwdFlopsTok,
     replayFrac: fwdFlopsTok ? replayFlopsTok / fwdFlopsTok : 0,
-    neededSaved, replayed, replayComm, neededBy, byId, dual,
+    neededSaved, replayed, replayComm, neededBy, byId, dual, pointless,
   };
 }
