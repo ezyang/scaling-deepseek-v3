@@ -185,6 +185,8 @@ T.check('sub-picket GEMMs wear the hollow trace',
   T.check('💾 all MLA: stash grows past dsv3', gib() > 66.6, gib());
   mbtn('mixed').click(); await T.tick(500);
   T.check('MLA mixed restores the dsv3-side composition', mbtn('mixed').dataset.on === '1', '');
+  mbtn('mixed').click(); await T.tick(500);   // active chip → back to the previous pick (💾 all)
+  T.check('region toggle-back: active chip returns to the previous pick', mbtn('save')?.dataset.on === '1', '');
   T.check('shared expert mirrors the grouped marks (two buttons per mark)',
     ac.querySelectorAll('button[data-mark="gate_up"]').length === 2
     && ac.querySelectorAll('button[data-mark="ffn_down"]').length === 2

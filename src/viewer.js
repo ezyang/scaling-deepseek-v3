@@ -2457,12 +2457,13 @@ export class Dsv3Layer extends HTMLElement {
       if (st3 === 'mixed')
         (this._segMem ??= {})[memKey] = Object.fromEntries(rids.map(i => [i, this.marks[i] === false]));
       const hasMix = !!this._segMem?.[memKey];
+      const pv = this._segMem?.[memKey + ':prev'];   // toggle-back: the pick before this one
       const rb = (act, label, onStyle, on, dis, title) =>
         `<button xmlns="http://www.w3.org/1999/xhtml" class="st" data-regionact="${act}" data-mem="${memKey}" ` +
         `data-rids="${rids.join(',')}" data-on="${on ? 1 : 0}"${dis ? ' disabled' : ''} ` +
         `style="width:auto;padding:0 7px;height:18px;` +
-        `${on ? onStyle + 'font-weight:600;cursor:default;' : 'background:#fff;border:1px solid #c3c2b7;color:#52514e;'}` +
-        `${dis ? 'opacity:0.45;cursor:default;' : ''}" title="${title}">${label}</button>`;
+        `${on ? onStyle + 'font-weight:600;' + (pv ? 'cursor:pointer;' : 'cursor:default;') : 'background:#fff;border:1px solid #c3c2b7;color:#52514e;'}` +
+        `${dis ? 'opacity:0.45;cursor:default;' : ''}" title="${on && pv ? `click again \u2014 back to ${pv.sel}` : title}">${label}</button>`;
       return `<foreignObject x="${fx}" y="${fy}" width="${fw}" height="22">` +
         `<div xmlns="http://www.w3.org/1999/xhtml" style="display:flex;gap:4px;justify-content:flex-end;">` +
         rb('save', '\ud83d\udcbe all', 'background:#fff8ea;border:1px solid #eda100;color:#0b0b0b;', st3 === 'save', false,
@@ -3323,15 +3324,26 @@ export class Dsv3Layer extends HTMLElement {
     }
     for (const b of svgEl.querySelectorAll('button[data-regionact]')) {
       b.onclick = () => {
-        if (b.dataset.on === '1' || b.disabled) return;
-        const act = b.dataset.regionact, rids = b.dataset.rids.split(',');
+        if (b.disabled) return;
+        const rids = b.dataset.rids.split(','), memP = b.dataset.mem + ':prev';
+        const snap = () => Object.fromEntries(rids.map(i => [i, this.marks[i] === false]));
+        const stName = () => rids.every(i => this.marks[i] === false) ? '\u21bb all'
+          : rids.every(i => this.marks[i] !== false) ? '\ud83d\udcbe all' : 'mixed';
+        const apply = (m) => { for (const i of rids) { if (m[i]) this.marks[i] = false; else delete this.marks[i]; } };
+        this._segMem ??= {};
+        if (b.dataset.on === '1') {   // active chip: swap with the previous pick
+          const pv = this._segMem[memP];
+          if (!pv) return;
+          this._segMem[memP] = { sel: stName(), st: snap() };
+          this._tweenQuant(() => apply(pv.st));
+          return;
+        }
+        const act = b.dataset.regionact;
+        this._segMem[memP] = { sel: stName(), st: snap() };
         this._tweenQuant(() => {
           if (act === 'save') for (const i of rids) delete this.marks[i];
           else if (act === 'redo') for (const i of rids) this.marks[i] = false;
-          else {
-            const m = this._segMem?.[b.dataset.mem] ?? {};
-            for (const i of rids) { if (m[i]) this.marks[i] = false; else delete this.marks[i]; }
-          }
+          else apply(this._segMem?.[b.dataset.mem] ?? {});
         });
       };
     }
