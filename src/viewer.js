@@ -2029,11 +2029,11 @@ export class Dsv3Layer extends HTMLElement {
       const n = Math.max(minOne ? 1 : 0, Math.round(bytes / 1024 / 4));
       if (!n) return { svg: '', rows: 0, pitch: 6 };
       let s = '';
-      if (FSQ) {   // tall-thin byte units (memory ≠ compute by SHAPE)
-        const per = 20;
+      if (FSQ) {   // tall-thin byte units (memory ≠ compute by SHAPE):
+        // 1px gaps, and NEVER wrapped — one line reads as one tally
         for (let i = 0; i < n; i++)
-          s += `<rect x="${x + (i % per) * 5}" y="${y + Math.floor(i / per) * 11}" width="3" height="9" fill="#eda100"/>`;
-        return { svg: s, rows: Math.ceil(n / per), pitch: 11 };
+          s += `<rect x="${x + i * 4}" y="${y}" width="3" height="9" fill="#eda100"/>`;
+        return { svg: s, rows: 1, pitch: 11 };
       }
       const per = 16;
       for (let i = 0; i < n; i++)
@@ -2330,9 +2330,10 @@ export class Dsv3Layer extends HTMLElement {
       }
       // worst case per element: bf16 (2 B), or dual fp8 orientations (2 × 1.03 B)
       const perElem = this.transposed ? 2 * (1 + 1 / 32) : 2;
+      if (FSQ) return 12 + 11 + 2;   // single-line pickets: one fixed band
       const worst = ids.reduce((t, i) => t + anaX.byId[i].elems * perElem, 0);
-      const rows = Math.ceil(Math.max(1, Math.round(worst / 1024 / 4)) / (FSQ ? 20 : 16));
-      return 12 + rows * (FSQ ? 11 : 6) + 2;
+      const rows = Math.ceil(Math.max(1, Math.round(worst / 1024 / 4)) / 16);
+      return 12 + rows * 6 + 2;
     };
     const chipSpace = (ids) => chipSpaceA(ana, ids);
     // the MoE column's wire gaps, measured on the parallel MoE analysis —
@@ -3062,21 +3063,39 @@ export class Dsv3Layer extends HTMLElement {
       // dotted ghost at the untreated anchor (recompute none, all-bf16, no
       // fp8ᵀ) — the ▼×N badge is the whole figure's lever, exact. Width
       // lerps in pixel space (= geometric byte motion, rule 9).
-      const pxT = (b) => TB_X + Math.max(0, Math.min(1, (Math.log2(Math.max(b, 1)) - 28) / 16)) * TB_AVAIL;
       const anchor = analyze(blockGraph(this.kind, DSV3, resolveMatmuls({ recipe: 'bf16' }), 4096), {}, false)
         .savedBytes * M2b;
+      // flopsq: the total goes LINEAR pickets — the AC section lives in the
+      // near-fitting regime, exactly where countable units earn their keep.
+      // Thinner pickets than the chips' (w2/p3), so both weights are on view.
+      const pxT = FSQ
+        ? (b) => TB_X + b / (448 * 2 ** 20) * 3
+        : (b) => TB_X + Math.max(0, Math.min(1, (Math.log2(Math.max(b, 1)) - 28) / 16)) * TB_AVAIL;
       const totPx = lerpQ(pxT((anaP?.savedBytes ?? ana.savedBytes) * M2b), pxT(totNow));
       const cy0 = ty + 3;
-      for (let d = 0; d <= 16; d++)   // ×2 gridline ticks
-        T.push(`<line x1="${TB_X + d / 16 * TB_AVAIL}" y1="${cy0}" x2="${TB_X + d / 16 * TB_AVAIL}" y2="${cy0 + 12}" stroke="#eeede8"/>`);
       T.push(`<text class="dims" x="0" y="${cy0 + 10}">total</text>`);
       T.push(`<rect x="${TB_X}" y="${cy0 + 2}" width="${(pxT(anchor) - TB_X).toFixed(1)}" height="8" fill="none" stroke="#b9b7ae" stroke-dasharray="2 2"/>`);
-      T.push(`<rect x="${TB_X}" y="${cy0 + 2}" width="${(totPx - TB_X).toFixed(1)}" height="8" fill="#eda100" data-true="${totNow}"/>`);
+      if (FSQ) {
+        const uN = (totPx - TB_X) / 3;   // lerped picket count (partial last)
+        let g2 = '';
+        for (let u = 0; u < Math.ceil(uN); u++)
+          g2 += `<rect x="${TB_X + u * 3}" y="${cy0 + 2}" width="${(2 * Math.min(1, uN - u)).toFixed(2)}" height="8" fill="#eda100"/>`;
+        T.push(`<g data-true="${totNow}">${g2}</g>`);
+        T.push(`<rect x="${TB_X + TB_AVAIL + 24}" y="${cy0 + 2}" width="2" height="8" fill="#eda100"/>` +
+          `<text class="dims" x="${TB_X + TB_AVAIL + 30}" y="${cy0 + 10}">= 448 MiB · LINEAR</text>`);
+      } else {
+        for (let d = 0; d <= 16; d++)   // ×2 gridline ticks
+          T.push(`<line x1="${TB_X + d / 16 * TB_AVAIL}" y1="${cy0}" x2="${TB_X + d / 16 * TB_AVAIL}" y2="${cy0 + 12}" stroke="#eeede8"/>`);
+        T.push(`<rect x="${TB_X}" y="${cy0 + 2}" width="${(totPx - TB_X).toFixed(1)}" height="8" fill="#eda100" data-true="${totNow}"/>`);
+      }
       const capX = pxT(80 * 2 ** 30);
-      // the badge rides the bar end, but never under the 80 GiB cap label
+      // the badge rides the bar end, but never under the 80 GiB cap label;
+      // flopsq: bar = ghost edge already says untreated — no fallback text
+      // (it would collide with the unit legend past the runway)
       let bdgX = Math.max(totPx, pxT(anchor)) + 8;
       if (bdgX > capX - 4 && bdgX < capX + 44) bdgX = capX + 44;
-      T.push(`<text class="dims" x="${bdgX.toFixed(1)}" y="${cy0 + 10}">${facBadge(totNow, anchor) || '= the untreated stash'}</text>`);
+      const bdg = facBadge(totNow, anchor) || (FSQ ? '' : '= the untreated stash');
+      if (bdg) T.push(`<text class="dims" x="${bdgX.toFixed(1)}" y="${cy0 + 10}">${bdg}</text>`);
       T.push(`<line x1="${capX}" y1="${cy0 - 2}" x2="${capX}" y2="${cy0 + 14}" stroke="#d03b3b"/>` +
         `<text class="dims" x="${capX + 3}" y="${cy0 + 1}" fill="#d03b3b">80 GiB</text>`);
       ty = cy0 + 20;
