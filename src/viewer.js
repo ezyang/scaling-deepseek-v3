@@ -3554,12 +3554,15 @@ class Dsv3PpFold extends HTMLElement {
     const from = this._t, to = view === 'physical' ? 1 : 0;
     // TAPE-MEASURE physics: the unroll is graceful (~350 ms); the fold is
     // its reverse-video at recoil speed — a roll-up only reads as physical
-    // when it SNAPS
-    const N = view === 'physical' ? 12 : 22; let f = 0;
+    // when it SNAPS. The recoil gets a BUMPER: a mild ease-out on its
+    // timeline, so the last stretch settles instead of slamming.
+    const N = view === 'physical' ? 14 : 22; let f = 0;
     const gen = this._gen = (this._gen ?? 0) + 1;
     const step = () => {
       if (this._gen !== gen) return;
-      f++; this._t = from + (to - from) * Math.min(1, f / N);   // RAW progress: easing is per-chunk in render
+      f++; const q = Math.min(1, f / N);
+      const q2 = view === 'physical' ? 1 - (1 - q) ** 1.6 : q;   // recoil decelerates into the stop
+      this._t = from + (to - from) * q2;   // RAW progress: per-chunk easing lives in render
       this.render();
       if (f < N) setTimeout(step, 16);
     };
