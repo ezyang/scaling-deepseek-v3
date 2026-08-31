@@ -3675,8 +3675,9 @@ class Dsv3PpFold extends HTMLElement {
         if (dense && w2 > 30)
           B.push(`<text x="${(sx + w2 / 2).toFixed(1)}" y="${y + RH - 4}" text-anchor="middle" font-size="8.5" fill="${ink}">dense</text>`);
         if (vocab) {
-          B.push(`<rect x="${sx.toFixed(1)}" y="${(y + 1).toFixed(1)}" width="${Math.max(0.5, w2 - 2).toFixed(1)}" height="${RH - 2}" fill="#fff" opacity="0.35"/>`);
-          B.push(`<rect x="${sx.toFixed(1)}" y="${y.toFixed(1)}" width="${Math.max(0.5, w2 - 1).toFixed(1)}" height="${RH}" fill="none" stroke="${gT < 0.5 ? '#2a78d6' : '#0b3d75'}" stroke-dasharray="2.5 2"/>`);
+          // the dashed outline alone says not-a-layer — no white wash: the
+          // depth ramp must hold (head is slot 62, the DARKEST point)
+          B.push(`<rect x="${sx.toFixed(1)}" y="${y.toFixed(1)}" width="${Math.max(0.5, w2 - 1).toFixed(1)}" height="${RH}" fill="none" stroke="${gT < 0.5 ? '#0b3d75' : '#bcd8f3'}" stroke-dasharray="2.5 2"/>`);
           if (w2 > 30) B.push(`<text x="${(sx + w2 / 2).toFixed(1)}" y="${y + RH - 4}" text-anchor="middle" font-size="8.5" fill="${ink}">${k.emb && i2 === 0 ? 'emb' : 'head'}</text>`);
         }
         sx += w2;
