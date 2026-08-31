@@ -289,7 +289,7 @@ dsv3-anatomy dsv3-anatomy-plan { margin-top: 46px; }
 }
 `;
 const FWD = ['controls', 'recipe', 'recompute', 'detail', 'transposed', 'for',
-  'nocaption', 'kind', 'xlayers', 'xinflight', 'lens', 'strips', 'optim', 'consolidated', 'local', 'cumulative'];
+  'nocaption', 'kind', 'xlayers', 'xinflight', 'xtag', 'lens', 'strips', 'optim', 'consolidated', 'local', 'cumulative'];
 export class Dsv3Anatomy extends HTMLElement {
   connectedCallback() {
     const lid = this.getAttribute('layer') ?? ((this.id || 'anatomy') + '-layer');

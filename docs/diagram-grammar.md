@@ -46,6 +46,15 @@ the rest are conventions to uphold when editing the renderer.
    model is consulted once per transition, never per frame, and the from-side
    is whatever is on screen, so interrupted tweens retarget continuously.
 
+10. **Quantity encodings never share a shape.** SQUARES count bytes (one
+    global unit per figure, never double-counted); horizontal LENGTH measures
+    time (the pipeline strip's cells, the quant tiers' in-box FLOP bars and
+    fwd/bwd/replay tally ribbons). The time unit is likewise ONE fixed unit
+    per figure — anchored to raw (bf16) FLOPs, so dtype flips stretch/shrink
+    the bars instead of renormalizing the scale. Bandwidth-bound vector ops
+    are deliberately unpriced (a muted fig-leaf stub): the model prices only
+    the quadratic GEMM terms, since it models no epilogue fusions.
+
 ## Text and labels
 
 9. **Text never collides**: no text under an arrowhead ✓, no wire passing

@@ -23,7 +23,7 @@
     usage: you will often be in a regime where your hero run just barely doesn't
     fit in memory, and you're trying to make it fit without
     sacrificing too much MFU.  For example, the original DeepSeek-V3 pretrain
-    was done on 2048 H800 GPUs (same amount of memory as any H100)--as we'll
+    was done on 2048 H800 GPUs (same amount of memory as H100 SXM)--as we'll
     see, memory is pretty tight in this setting!</p>
 
     <h2>What is memory used for in training?</h2>
@@ -181,7 +181,8 @@
     <p>Below, we've reproduced the classic DualPipeV schedule diagram, but by
     selecting a specific PP rank there is a second visualization of the lifetime of saved activations
     for each (microbatch, chunk) span. (Microbatches are identified by number, and then a chunk
-    is either light or dark.)</p>
+    is either light or dark.)  If you aren't convinced the spans line up with the schedule,
+    you can click a span to highlight the corresponding entries in the schedule.</p>
 
     <dsv3-pp-schedule style="min-height:446px" layer="local-diagram"></dsv3-pp-schedule>
 
@@ -203,15 +204,21 @@
 
     <h2>Activation checkpointing</h2>
 
-    THIS SECTION IS SLOP
+    <p>With pipeline parallelism, our parameters/gradients/optimizer states
+    are comfortably fitting on a single H100, but we still cannot fit the
+    activations we need to save for backwards.  The classic technique for reducing
+    the amount of memory we need for backwards is activation checkpointing:
+    we trade MFU for memory, by simply dropping some quantities in the initial
+    forward and recomputing them in backwards.  This strategy is especially
+    attractive as it can be adjusted in a bitwise equivalent way (which is not
+    true for the low precision tricks in the next section.)</p>
 
-    <p>At the end of the forward pass you are at (or near) the memory high-water
-    mark, because autograd is keeping alive every intermediate activation that
-    the backward pass will need.  Activation checkpointing (also called
-    rematerialization) is the observation that you don't have to <em>save</em> a
-    tensor for it to be available in backward: you can recompute it on the spot
-    from something earlier that you did save.  You pay FLOPs, you get back
-    bytes.</p>
+    <p>While there a number of different ways to reason about activation
+    checkpointing, in this post I am going to explain AC on DeepSeek-V3 using
+    <a href="https://github.com/meta-pytorch/remat">torch_remat's</a>
+    programming model.</p>
+
+    THIS SECTION IS SLOP
 
     <p>Here is the transformer block diagram from the
     <a href="./01-deepseek-diagram.html">last post</a>, now with a save/recompute
@@ -224,7 +231,8 @@
     grids are priced at; we'll revisit that assumption in the next
     section.</p>
 
-    <dsv3-anatomy style="min-height:827px" layer="ac-layer" controls="marks" recipe="bf16" recompute="dsv3"></dsv3-anatomy>
+    <dsv3-anatomy style="min-height:797px" layer="ac-layer" controls="marks" recipe="bf16" recompute="dsv3"
+      xlayers="8" xinflight="8.5" xtag="an interior rank of PP8 · DualPipeV steady state"></dsv3-anatomy>
 
     <p>Some things to notice as you play with the marks:</p>
 
@@ -267,7 +275,8 @@
     stored in the dtype of the GEMM that will read it during backward.  Flip
     the dtype buttons below and watch the stash sizes follow.</p>
 
-    <dsv3-anatomy style="min-height:854px" layer="fp8-layer" controls="dtype" recipe="dsv3-fp8" recompute="none"></dsv3-anatomy>
+    <dsv3-anatomy style="min-height:797px" layer="fp8-layer" controls="dtype" recipe="dsv3-fp8" recompute="none"
+      xlayers="8" xinflight="8.5" xtag="an interior rank of PP8 · DualPipeV steady state"></dsv3-anatomy>
 
     <p>Two recipes matter for us.  The <em>dsv3-fp8</em> recipe is the Hopper
     one: linears in tile-scaled FP8, but the attention core, its output, and

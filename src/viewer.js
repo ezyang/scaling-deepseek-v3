@@ -1425,8 +1425,42 @@ export class Dsv3Layer extends HTMLElement {
     }
     const ana = this._anaMemo.ana;
     let barSlot = null;   // the local fit bar renders under the parallelism row
-    if (cmode !== 'static') root.append(head);
-    else {
+    // marks/dtype tiers wear the house knob row (grouped stp segments, like the
+    // local diagram's) instead of the legacy select head: one policy/recipe
+    // segment plus an always-reserved 'custom' chip, so a hand-edited state
+    // lights up without reflowing the row
+    if (cmode === 'marks' || cmode === 'dtype') {
+      const hh = el('div', 'lv-head');
+      const segGrp = (label, name, opts, cur, apply) => {
+        const g = el('span', 'pargrp');
+        const l3 = el('div', 'parlab'); l3.textContent = label; g.append(l3);
+        const row = el('div', 'parrow');
+        const w3 = el('span', 'stp'); w3.dataset.knob = name;
+        for (const k of opts) {
+          const b = document.createElement('button');
+          b.textContent = k; b.type = 'button';
+          if (cur === k) b.classList.add('on');
+          else b.onclick = () => apply(k);
+          w3.append(b);
+        }
+        const cb = document.createElement('button');
+        cb.textContent = 'custom'; cb.type = 'button'; cb.disabled = true;
+        if (cur == null) cb.classList.add('on');
+        w3.append(cb);
+        row.append(w3); g.append(row);
+        return g;
+      };
+      if (this._ctl.marks) hh.append(segGrp('recompute policy', 'recompute', Object.keys(RECOMPUTE_PRESETS), curPreset,
+        (k) => localTween(() => { this.setAttribute('recompute', k); this.marks = { ...RECOMPUTE_PRESETS[k] }; })));
+      if (this._ctl.dtype) hh.append(segGrp('precision recipe', 'recipe', Object.keys(RECIPES), curRecipe,
+        (k) => localTween(() => { this.setAttribute('recipe', k); this.matmuls = resolveMatmuls({ recipe: k }); })));
+      if (this._ctl.dtype) hh.append(tl);
+      reset.style.cssText = 'font:11px ui-monospace,monospace;padding:2px 8px;border:1px solid #c3c2b7;' +
+        'border-radius:4px;background:#fff;cursor:pointer;margin-left:auto;';
+      hh.append(dl, mkDimsBtn(), reset);
+      root.append(hh);
+    } else if (cmode !== 'static') root.append(head);
+    if (cmode === 'static') {
       const mini = el('div', 'lv-head');
       // article instances disclose a SUBSET of the knob groups:
       // knobs="cluster,pipeline,mesh,zero,save,prec,blocks" (absent = all)
@@ -1716,10 +1750,10 @@ export class Dsv3Layer extends HTMLElement {
             : `The shared expert${SCOPE === 'model' ? ' and dense MLPs share' : ' shares'} the ffn boxes; `))
           + `RoPE is fused into the q/kv paths${this._ctl.quant ? ' and always recomputed' : ''} (negligible).`,
       !this._ctl.quant ? '' :
-      'The block strip inside each op is its FLOP cost as time at peak, scaled so the block\u2019s largest op fills one row (' +
+      'The bar inside each op is its FLOP cost as time at peak \u2014 length measures time, in one fixed unit per figure (' +
       'mxfp8 counted half \u2014 2\u00d7 peak; fp32 counted double \u2014 half peak; dtype colors here and on the saved-tensor tags: blue mxfp8, dark bf16, plum fp32); ' +
       'the lm head uses the same scale \u2014 per-token vocab work, independent of depth. Norms/SwiGLU ' +
-      'get a muted fig-leaf block (bandwidth-bound, compute precision unspecified).',
+      'get a muted fig-leaf stub (bandwidth-bound, compute precision unspecified).',
       this._ctl.dtype ? 'One click on a dtype button cycles bf16 \u2192 mxfp8 \u2192 fp32.' : '',
       this._ctl.quant
         ? 'The tally at right totals fwd + bwd (2\u00d7 fwd \u2014 dgrad + wgrad; sdpa likewise) + replay'
@@ -1735,7 +1769,9 @@ export class Dsv3Layer extends HTMLElement {
     // nocaption: the page explains the diagram in its own prose
     if (!this.hasAttribute('nocaption')) {
       const foot = el('div', 'lv-foot2');
-      foot.append(note);
+      // marks/dtype tiers drop the prose caption (the page's own text explains
+      // the diagram) — the foot is just the full-width tally + stash readout
+      if (cmode !== 'marks' && cmode !== 'dtype') foot.append(note);
       if (cmode !== 'static') foot.append(this._tallySvg);
       root.append(foot);
     }
@@ -2029,9 +2065,6 @@ export class Dsv3Layer extends HTMLElement {
     // and the byte unit lands exact: largestOp.moe/32 · 2 B = 448 MiB/square
     const FLOP_ROW = 32;
     const CHIP_ROW = 16;   // amber wire-chip squares wrap sooner (chips sit between columns)
-    const FLOP_UNIT = Math.max(...['qkv_down', 'q_up', 'kv_up', 'attn', 'o_proj', 'router', 'gate_up', 'swiglu', 'ffn_down']
-      .filter(id => ana.byId[id])            // dense blocks have no router
-      .map(id => flopEq(ana.byId[id].flopsTok, opDt(id)))) / FLOP_ROW;
     // strips="absolute": one FIXED unit (the per-block largest op fills a
     // row); cumulative strips GROW into space reserved for them, so the
     // toggle neither rescales nor reflows. Costs vertical space; dense/MoE
@@ -2092,15 +2125,28 @@ export class Dsv3Layer extends HTMLElement {
       }
       P.push(g);
     };
-    const flopBlocks = (x, y, flopsTok, dt2) => {
-      if (!flopsTok || !this._ctl.quant) return 0;
-      const n = Math.max(1, Math.round(flopEq(flopsTok, dt2) / FLOP_UNIT));
+    // FLOP cost as a BAR: length = time at peak (squares count bytes; length
+    // measures time — the pipeline strip's language). ONE fixed unit per
+    // figure: the whole bf16 fwd+bwd ribbon spans the tally width, so dtype
+    // flips visibly stretch/shrink bars instead of renormalizing the scale.
+    // fwdFlopsTok is dtype- and marks-independent (raw FLOPs), so the unit
+    // never moves under the knobs. Bars that outgrow their box wrap flush-left
+    // (the box grows rows, like the param strips).
+    const TB_X = 44, TB_AVAIL = 870;   // tally ribbons: label gutter + bar runway
+    const FLOP_PX = TB_AVAIL / (2 * ana.fwdFlopsTok);
+    const barRows = (flopsTok, dt2, maxW) => !flopsTok || !this._ctl.quant || dt2 === 'vector' ? 1
+      : Math.max(1, Math.ceil(flopEq(flopsTok, dt2) * FLOP_PX / maxW));
+    const barExtra = (flopsTok, dt2, maxW) => (barRows(flopsTok, dt2, maxW) - 1) * 6;
+    const flopBar = (x, y, flopsTok, dt2, maxW = W - 16) => {
+      if (!flopsTok || !this._ctl.quant) return;
+      if (dt2 === 'vector') {   // unpriced fig leaf: bandwidth-bound, and we model no epilogue fusions
+        P.push(`<rect x="${x}" y="${y}" width="5" height="4" fill="#c3c2b7"/>`);
+        return;
+      }
       const color = DT_STYLE[dt2] ?? '#c3c2b7';
-      let s = '';
-      for (let i = 0; i < n; i++)
-        s += `<rect x="${x + (i % FLOP_ROW) * 6}" y="${y + Math.floor(i / FLOP_ROW) * 6}" width="5" height="4" fill="${color}"/>`;
-      P.push(s);
-      return Math.ceil(n / FLOP_ROW);
+      let w = Math.max(1, flopEq(flopsTok, dt2) * FLOP_PX);
+      for (let r = 0; w > 0; r++, w -= maxW)
+        P.push(`<rect x="${x}" y="${y + r * 6}" width="${Math.min(w, maxW).toFixed(1)}" height="4" fill="${color}"/>`);
     };
     // who reads this saved tensor in backward: consumer below (↓), the
     // producer's own backward above (↑), or both (↕)
@@ -2260,7 +2306,8 @@ export class Dsv3Layer extends HTMLElement {
       `<text class="grplabel" x="${x - 2}" y="${y0 + 11}">${label}</text>`);
     const mmBox = (ids, x, y, markIds, label, dims) => {
       const spec = MATMULS.find(m => m.id === ids[0]);
-      const extra = stripExtra(sqParam(ids[0]), clsOf(ids[0]));
+      const extra = stripExtra(sqParam(ids[0]), clsOf(ids[0]))
+        + barExtra(ana.byId[(markIds ?? ids)[0]]?.flopsTok, dt(ids[0]), W - 16);
       P.push(`<g data-op="${ids[0]}"${boxTip((markIds ?? ids)[0], dims ? undefined : spec.dimsNote, ids[0])}>` +
         `<rect class="box" x="${x}" y="${y}" width="${W}" height="${BH + extra}" rx="4"/>` +
         (PBYTES && !this._ctl.dtype && exactParam(ids[0]) != null ? `<text class="dims" x="${x + W - 8}" y="${y + 13}" text-anchor="end">bf16</text>` : '') +
@@ -2269,9 +2316,9 @@ export class Dsv3Layer extends HTMLElement {
       P.push(modeBtn(markIds ?? ids, x + W - 86, y + 6));
       P.push(dtBtn(ids[0], x + W - 58, y + 6));
       auxOut((markIds ?? ids)[0], x, y + 19);
-      flopBlocks(x + 8, y + 30, ana.byId[(markIds ?? ids)[0]]?.flopsTok, dt(ids[0]));
+      flopBar(x + 8, y + 30, ana.byId[(markIds ?? ids)[0]]?.flopsTok, dt(ids[0]));
       paramBlocks(x + 8, y + 30, sqParam(ids[0]), clsOf(ids[0]));
-      return y + BH + stripExtra(sqParam(ids[0]), clsOf(ids[0]));
+      return y + BH + extra;
     };
     const opNode = (id, label, x, y, cls = 'op', pc = '') => {
       const h2 = cls === 'comm' || !BQ ? 22 : 27;   // the extra 5px hold the fig-leaf strip
@@ -2280,7 +2327,7 @@ export class Dsv3Layer extends HTMLElement {
         `<text class="oplabel" x="${x + 10}" y="${y + 15}">${label}${pc ? `<tspan class="dims"> ${pc}</tspan>` : ''}</text></g>` +
         modeBtn([id], x + W - 30, y + 1));
       auxOut(id, x, y + Math.round(h2 / 2));
-      if (cls !== 'comm') { flopBlocks(x + 10, y + 19, ana.byId[id]?.flopsTok, 'vector'); paramBlocks(x + 10, y + 19, sqParam(id)); }
+      if (cls !== 'comm') { flopBar(x + 10, y + 19, ana.byId[id]?.flopsTok, 'vector'); paramBlocks(x + 10, y + 19, sqParam(id)); }
       return y + h2;
     };
 
@@ -2305,14 +2352,15 @@ export class Dsv3Layer extends HTMLElement {
       const qFrac = DSV3.qRank / (DSV3.qRank + DSV3.kvRank + DSV3.qkRope);
       const HALF_ROW = 21;   // 140px half boxes: strip rows wrap inside the box
       const dhalf = (x, name, dims, tip, frac, withBtns, pc = '', nP = 0) => {
-        const ex = stripExtra(nP, 'd', HALF_ROW);   // strip rows can outgrow the box (×N)
+        const ex = stripExtra(nP, 'd', HALF_ROW)   // strip rows can outgrow the box (×N)
+          + barExtra(ana.byId.qkv_down.flopsTok * frac, dt('qkv_down'), 128);
         P.push(`<g data-op="qkv_down" data-tip="${escAttr(tip)}">` +
           `<rect class="box" x="${x}" y="${y}" width="140" height="${HBH + ex}" rx="4"/>` +
           (PBYTES && !this._ctl.dtype ? `<text class="dims" x="${x + 134}" y="${y + 13}" text-anchor="end">bf16</text>` : '') +
           `<text class="name" x="${x + 6}" y="${y + 13}">${name}</text>` +
           `<text class="dims" x="${x + 6}" y="${y + 25}">${PONLY ? pc.trim() : flatten(dims) + pc}</text></g>` +
           (withBtns ? modeBtn(['qkv_down'], x + 140 - 86, y + 29) + dtBtn('qkv_down', x + 140 - 58, y + 29) : ''));
-        flopBlocks(x + 6, y + 52, ana.byId.qkv_down.flopsTok * frac, dt('qkv_down'));
+        flopBar(x + 6, y + 52, ana.byId.qkv_down.flopsTok * frac, dt('qkv_down'), 128);
         paramBlocks(x + 6, y + 52, nP, 'd', HALF_ROW);
         return ex;
       };
@@ -2379,14 +2427,15 @@ export class Dsv3Layer extends HTMLElement {
       y += latGap;
       const halfBox = (id, x) => {
         const m = MATMULS.find(mm2 => mm2.id === id);
-        const ex = stripExtra(sqParam(id), 'd', 21);   // strip rows can outgrow the box (×N; 140px box row)
+        const ex = stripExtra(sqParam(id), 'd', 21)   // strip rows can outgrow the box (×N; 140px box row)
+          + barExtra(ana.byId[id]?.flopsTok, dt(id), 128);
         P.push(`<g data-op="${id}"${boxTip(id, m.dimsNote)}>` +
           `<rect class="box" x="${x}" y="${y}" width="140" height="${HBH + ex}" rx="4"/>` +
           (PBYTES && !this._ctl.dtype ? `<text class="dims" x="${x + 134}" y="${y + 13}" text-anchor="end">bf16</text>` : '') +
           `<text class="name" x="${x + 6}" y="${y + 13}">${m.label}</text>` +
           `<text class="dims" x="${x + 6}" y="${y + 25}">${PONLY ? pstr(id).trim() : flatten(m.dims) + pstr(id)}</text></g>` +
           modeBtn([id], x + 140 - 86, y + 29) + dtBtn(id, x + 140 - 58, y + 29));
-        flopBlocks(x + 6, y + 52, ana.byId[id]?.flopsTok, dt(id));
+        flopBar(x + 6, y + 52, ana.byId[id]?.flopsTok, dt(id), 128);
         paramBlocks(x + 6, y + 52, sqParam(id), 'd', 21);
         return ex;
       };
@@ -2890,52 +2939,67 @@ export class Dsv3Layer extends HTMLElement {
         `<text class="oplabel" x="${C1 + 12}" y="${h + 21}">final RMSNorm<tspan class="dims"> (${fmtP(DSV3.hidden)})</tspan></text>`);
       P.push(`<line class="wire" x1="${C1 + 150}" y1="${h + 17}" x2="${C1 + 180}" y2="${h + 17}" marker-end="url(#arr)"/>`);
       const lmFlops = 2 * DSV3.hidden * DSV3.vocab / (this.view === 'combined' ? this.dispLayers : 1);
-      const lmRows = this._ctl.quant
-        ? Math.ceil(Math.max(1, Math.round(flopEq(lmFlops, dt('lm_head')) / FLOP_UNIT)) / FLOP_ROW) : 0;
+      const lmRows = this._ctl.quant ? barRows(lmFlops, dt('lm_head'), 224) : 0;
       lmH = (BQ ? 38 : 34) + lmRows * 6;   // lm-head text sits 2px lower than mmBox text
       P.push(`<g data-op="lm_head" data-tip="${escAttr(`${fmtNum(lmFlops)} FLOP/token = ${FLOP_EXPR.lm_head}\n${lm.dimsNote}\nparameters: ${PARAMS.embed.toLocaleString('en-US')}`)}">` +
         `<rect class="box" x="${C1 + 184}" y="${h}" width="240" height="${lmH}" rx="4"/>` +
         `<text class="name" x="${C1 + 192}" y="${h + 14}">${lm.label}</text>` +
         `<text class="dims" x="${C1 + 192}" y="${h + 28}">${PONLY ? pstr('lm_head').trim() : flatten(lm.dims) + pstr('lm_head')}</text></g>` + dtBtn('lm_head', C1 + 184 + 240 - 58, h + 7));
-      flopBlocks(C1 + 192, h + 33, lmFlops, dt('lm_head'));
+      flopBar(C1 + 192, h + 33, lmFlops, dt('lm_head'), 224);
       P.push(`<line class="wire" x1="${C1 + 424}" y1="${h + 17}" x2="${C1 + 454}" y2="${h + 17}" marker-end="url(#arr)"/>`);
       P.push(`<rect class="op" x="${C1 + 458}" y="${h + 6}" width="140" height="22" rx="11"/>` +
         `<text class="oplabel" x="${C1 + 470}" y="${h + 21}">softmax / loss</text>`);
     }
 
-    // ---- per-layer FLOP tally: fwd + bwd + recompute replay, same block scale.
-    // Rendered as its own small SVG, floated to the right of the caption.
+    // ---- per-layer FLOP tally: fwd + bwd + recompute replay as full-width
+    // RIBBONS in the figure's one time unit (bf16 fwd+bwd spans the runway).
+    // Headed by the dynamic stash readout — the caption is gone, but the
+    // stashed-bytes number reacts to every knob, so it lives in the widget.
     const T = [];
     const eq = (n) => flopEq(n.flopsTok, opDt(n.id));
     const fwdOps = Object.values(ana.byId).filter(n => n.flopsTok > 0);
     const fwdEq = fwdOps.reduce((t, n) => t + eq(n), 0);
     const replayOps = fwdOps.filter(n => ana.replayed.has(n.id));
     const replayEq = replayOps.reduce((t, n) => t + eq(n), 0);
-    let ty = 10;
-    T.push(`<text class="grplabel" x="0" y="${ty}">per-layer FLOPs as time at peak (same block scale):</text>`);
-    ty += 8;
+    let ty = 2;
+    if (this._ctl.quant) {
+      const M2b = this.dispLayers * this.dispInflight * 4096;
+      const xt = this.getAttribute('xtag');
+      T.push(`<text class="name" x="0" y="${ty + 10}">stashed for backward: ` +
+        `${(ana.savedBytes / 1024).toFixed(0)} KiB/token·layer × ${this.dispLayers} layers` +
+        ` × ${this.dispInflight} in flight × 4096 tokens = ${(ana.savedBytes * M2b / 2 ** 30).toFixed(1)} GiB` +
+        (xt ? `<tspan class="dims"> (${esc(xt)})</tspan>` : '') + '</text>');
+      ty += 20;
+    }
+    T.push(`<text class="grplabel" x="0" y="${ty + 9}">per-layer FLOPs as time at peak — length = time; bf16 fwd+bwd spans the row:</text>`);
+    ty += 14;
     const DT_ORDER = { bf16: 0, mxfp8: 1, fp32: 2 };
-    const tallyStrip = (label, list, mult, num) => {
+    const ribbon = (label, list, mult, num) => {
       T.push(`<text class="dims" x="0" y="${ty + 9}">${label}</text>`);
-      let i = 0;
+      let cx = TB_X, cy = ty + 3;
       // group same-dtype ops so each color is one contiguous run
       for (const n of [...list].sort((p, q) => (DT_ORDER[opDt(p.id)] ?? 3) - (DT_ORDER[opDt(q.id)] ?? 3))) {
-        const k = Math.round(eq(n) * mult / FLOP_UNIT);
+        let w = eq(n) * mult * FLOP_PX;
         const color = DT_STYLE[opDt(n.id)] ?? '#c3c2b7';
-        for (let j = 0; j < k; j++, i++)
-          T.push(`<rect x="${44 + (i % FLOP_ROW) * 6}" y="${ty + Math.floor(i / FLOP_ROW) * 6}" width="5" height="4" fill="${color}"/>`);
+        while (w > 0.05) {
+          const seg = Math.min(w, TB_X + TB_AVAIL - cx);
+          T.push(`<rect x="${cx.toFixed(1)}" y="${cy}" width="${seg.toFixed(1)}" height="4" fill="${color}"/>`);
+          cx += seg; w -= seg;
+          if (cx >= TB_X + TB_AVAIL - 0.05) { cx = TB_X; cy += 6; }
+        }
       }
-      T.push(`<text class="dims" x="${44 + FLOP_ROW * 6 + 12}" y="${ty + 9}">${num}</text>`);
-      ty += Math.max(1, Math.ceil(i / FLOP_ROW)) * 6 + 6;
+      T.push(`<text class="dims" x="${(cx + 10).toFixed(1)}" y="${cy + 6}">${num}</text>`);
+      ty = cy + 13;
     };
-    tallyStrip('fwd', fwdOps, 1, '1.00×');
-    tallyStrip('bwd', fwdOps, 2, '2.00× (dgrad + wgrad)');
-    tallyStrip('replay', replayOps, 1, `+${(replayEq / fwdEq).toFixed(2)}×`
+    ribbon('fwd', fwdOps, 1, '1.00×');
+    ribbon('bwd', fwdOps, 2, '2.00× (dgrad + wgrad)');
+    ribbon('replay', replayOps, 1, `+${(replayEq / fwdEq).toFixed(2)}×`
       + (ana.replayComm.length ? ' + a2a ' + ana.replayComm.join('+') : ''));
-    T.push(`<text class="dims" x="44" y="${ty + 8}">= ${(3 + replayEq / fwdEq).toFixed(2)}× fwd per training step</text>`);
+    T.push(`<text class="dims" x="${TB_X}" y="${ty + 8}">= ${(3 + replayEq / fwdEq).toFixed(2)}× fwd per training step</text>`);
+    const TW = TB_X + TB_AVAIL + 166;
     const tallyEl = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    tallyEl.setAttribute('width', 370); tallyEl.setAttribute('height', ty + 16);
-    tallyEl.setAttribute('viewBox', `0 0 370 ${ty + 16}`);
+    tallyEl.setAttribute('width', TW); tallyEl.setAttribute('height', ty + 16);
+    tallyEl.setAttribute('viewBox', `0 0 ${TW} ${ty + 16}`);
     tallyEl.innerHTML = T.join('');
     this._tallySvg = tallyEl;
 
