@@ -2446,6 +2446,33 @@ export class Dsv3Layer extends HTMLElement {
     const grp = (x, y0, y1, label, w = W + 20) => P.push(
       `<rect class="grp" x="${x - 10}" y="${y0}" width="${w}" height="${y1 - y0}" rx="6"/>` +
       `<text class="grplabel" x="${x - 2}" y="${y0 + 11}">${label}</text>`);
+    // REGION toggle (AC tiers): set every mark in a column at once — the
+    // tristate 💾 all / ↻ all / mixed segment, where 'mixed' both displays an
+    // in-between state and REMEMBERS the last one (the custom-chip pattern)
+    const MLA_RIDS = ['qkv_down', 'q_norm', 'kv_norm', 'q_up', 'kv_up', 'rope_q', 'rope_kv', 'attn', 'o_proj'];
+    const regionToggle = (rids, memKey, fx, fy, fw) => {
+      if (!this._ctl.marks || !this._noKind) return '';
+      const st3 = rids.every(i => this.marks[i] === false) ? 'redo'
+        : rids.every(i => this.marks[i] !== false) ? 'save' : 'mixed';
+      if (st3 === 'mixed')
+        (this._segMem ??= {})[memKey] = Object.fromEntries(rids.map(i => [i, this.marks[i] === false]));
+      const hasMix = !!this._segMem?.[memKey];
+      const rb = (act, label, onStyle, on, dis, title) =>
+        `<button xmlns="http://www.w3.org/1999/xhtml" class="st" data-regionact="${act}" data-mem="${memKey}" ` +
+        `data-rids="${rids.join(',')}" data-on="${on ? 1 : 0}"${dis ? ' disabled' : ''} ` +
+        `style="width:auto;padding:0 7px;height:18px;` +
+        `${on ? onStyle + 'font-weight:600;cursor:default;' : 'background:#fff;border:1px solid #c3c2b7;color:#52514e;'}` +
+        `${dis ? 'opacity:0.45;cursor:default;' : ''}" title="${title}">${label}</button>`;
+      return `<foreignObject x="${fx}" y="${fy}" width="${fw}" height="22">` +
+        `<div xmlns="http://www.w3.org/1999/xhtml" style="display:flex;gap:4px;justify-content:flex-end;">` +
+        rb('save', '\ud83d\udcbe all', 'background:#fff8ea;border:1px solid #eda100;color:#0b0b0b;', st3 === 'save', false,
+          'save every output in this region for backward') +
+        rb('redo', '\u21bb all', 'background:#f3f2ee;border:1px dashed #898781;color:#52514e;', st3 === 'redo', false,
+          'recompute this ENTIRE region in backward') +
+        rb('mixed', 'mixed', 'background:#f3f2ee;border:1px solid #898781;color:#0b0b0b;', st3 === 'mixed', !hasMix && st3 !== 'mixed',
+          'your last mixed set of marks for this region') +
+        '</div></foreignObject>';
+    };
     const mmBox = (ids, x, y, markIds, label, dims) => {
       const spec = MATMULS.find(m => m.id === ids[0]);
       const extra = stripExtra(sqParam(ids[0]), clsOf(ids[0]))
@@ -2629,6 +2656,7 @@ export class Dsv3Layer extends HTMLElement {
     y = mmBox(['o_proj'], C1, y);
     grp(C1, g1, y + 5, CUM ? `MLA · ${fmtPV(PARAMS.mla * KMUL)}${facTxt('d')}`
       : `MLA ×${DSV3.layers} · ${fmtPV(PARAMS.mla)}${facTxt('d')}`, MLAGW);
+    P.push(regionToggle(MLA_RIDS, 'mlaMixed', C1 - 10 + MLAGW - 196, g1 + 1, 190));
     y = wireOut(['o_proj'], SX1, y + 5);
     if (ONLY === 'mla') {
       // component view: the residual add lives in the block wiring, not here
@@ -2907,29 +2935,8 @@ export class Dsv3Layer extends HTMLElement {
           // tristate: 💾 all / ↻ all / mixed, where 'mixed' both DISPLAYS an
           // in-between state and REMEMBERS the last one (the custom-chip
           // pattern), so 'all' never destroys a hand-tuned composition.
-          let regionCtl = '';
-          if (this._ctl.marks) {
-            const st3 = FFN_RIDS.every(i => this.marks[i] === false) ? 'redo'
-              : FFN_RIDS.every(i => this.marks[i] !== false) ? 'save' : 'mixed';
-            if (st3 === 'mixed')
-              (this._segMem ??= {}).ffnMixed = Object.fromEntries(FFN_RIDS.map(i => [i, this.marks[i] === false]));
-            const hasMix = !!this._segMem?.ffnMixed;
-            const rb = (act, label, onStyle, on, dis, title) =>
-              `<button xmlns="http://www.w3.org/1999/xhtml" class="st" data-ffnall="${act}" data-on="${on ? 1 : 0}"` +
-              `${dis ? ' disabled' : ''} style="width:auto;padding:0 7px;height:18px;` +
-              `${on ? onStyle + 'font-weight:600;cursor:default;' : 'background:#fff;border:1px solid #c3c2b7;color:#52514e;'}` +
-              `${dis ? 'opacity:0.45;cursor:default;' : ''}" title="${title}">${label}</button>`;
-            const rx0 = Math.max(x1 - 210, C2 + 348);   // right of the shared-expert spine (shMid = C2+342)
-            regionCtl = `<foreignObject x="${rx0}" y="${y0 + 2}" width="${x1 - rx0 - 4}" height="22">` +
-              `<div xmlns="http://www.w3.org/1999/xhtml" style="display:flex;gap:4px;justify-content:flex-end;">` +
-              rb('save', '\ud83d\udcbe all', 'background:#fff8ea;border:1px solid #eda100;color:#0b0b0b;', st3 === 'save', false,
-                'save every MoE-FFN output for backward') +
-              rb('redo', '\u21bb all', 'background:#f3f2ee;border:1px dashed #898781;color:#52514e;', st3 === 'redo', false,
-                'recompute the ENTIRE MoE FFN in backward \u2014 including the a2a!') +
-              rb('mixed', 'mixed', 'background:#f3f2ee;border:1px solid #898781;color:#0b0b0b;', st3 === 'mixed', !hasMix && st3 !== 'mixed',
-                'your last mixed set of FFN marks') +
-              '</div></foreignObject>';
-          }
+          const rx0 = Math.max(x1 - 210, C2 + 348);   // right of the shared-expert spine (shMid = C2+342)
+          const regionCtl = regionToggle(FFN_RIDS, 'ffnMixed', rx0, y0 + 2, x1 - rx0 - 4);
           P[P.indexOf('__ENC__')] =
             `<rect x="${x0}" y="${y0}" width="${x1 - x0}" height="${y1 - y0}" rx="${r}" fill="#fcfcfb" stroke="#c3c2b7"/>` +
             `<text class="grplabel" x="${x0 + 56}" y="${y0 + 11}">MoE FFN \u00d7${DSV3.layers - (DSV3.denseLayers ?? 3)} \u00b7 ${fmtPV(PARAMS.moeFfnBlk)}</text>` +
@@ -3314,17 +3321,16 @@ export class Dsv3Layer extends HTMLElement {
     for (const b of svgEl.querySelectorAll('button[data-mark]')) {
       b.onclick = () => this.toggleMark(b.dataset.mark.split(','));
     }
-    for (const b of svgEl.querySelectorAll('button[data-ffnall]')) {
+    for (const b of svgEl.querySelectorAll('button[data-regionact]')) {
       b.onclick = () => {
         if (b.dataset.on === '1' || b.disabled) return;
-        const act = b.dataset.ffnall;
-        const RIDS2 = ['router', 'dispatch', 'gate_up', 'swiglu', 'ffn_down', 'combine'];
+        const act = b.dataset.regionact, rids = b.dataset.rids.split(',');
         this._tweenQuant(() => {
-          if (act === 'save') for (const i of RIDS2) delete this.marks[i];
-          else if (act === 'redo') for (const i of RIDS2) this.marks[i] = false;
+          if (act === 'save') for (const i of rids) delete this.marks[i];
+          else if (act === 'redo') for (const i of rids) this.marks[i] = false;
           else {
-            const m = this._segMem?.ffnMixed ?? {};
-            for (const i of RIDS2) { if (m[i]) this.marks[i] = false; else delete this.marks[i]; }
+            const m = this._segMem?.[b.dataset.mem] ?? {};
+            for (const i of rids) { if (m[i]) this.marks[i] = false; else delete this.marks[i]; }
           }
         });
       };

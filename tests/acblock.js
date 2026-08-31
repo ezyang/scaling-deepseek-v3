@@ -160,7 +160,7 @@ T.check('sub-picket GEMMs wear the hollow trace',
 // ---- kind pinned to MoE (the peak rank), tabs gone, REGION toggle on the
 // enclosure; marks are LITERAL (torch_remat): full = exactly 1× fwd replay
 {
-  const rbtn = (a) => ac.querySelector(`button[data-ffnall="${a}"]`);
+  const rbtn = (a) => ac.querySelector(`button[data-regionact="${a}"][data-mem="ffnMixed"]`);
   const replayN = () => ribbons(ac).find(t => /^\+[\d.]+×/.test(t));
   T.check('no dense/MoE tab flaps (kind pinned)', !ac.querySelector('[data-kind]'), '');
   T.check('enclosure wears the static MoE FFN label',
@@ -177,6 +177,14 @@ T.check('sub-picket GEMMs wear the hollow trace',
     gib() === 66.6 && btn(ac, 'recompute', 'dsv3').classList.contains('on'), gib());
   btn(ac, 'recompute', 'full').click(); await T.tick(500);
   T.check('LITERAL remat: full replays exactly 1.00× fwd', replayN().startsWith('+1.00×'), replayN());
+  // the MLA column carries the same toggle: attn-replay = ↻ all there
+  const mbtn = (a) => ac.querySelector(`button[data-regionact="${a}"][data-mem="mlaMixed"]`);
+  btn(ac, 'recompute', 'attn-replay').click(); await T.tick(500);
+  T.check('MLA region toggle: attn-replay reads as ↻ all', mbtn('redo')?.dataset.on === '1', '');
+  mbtn('save').click(); await T.tick(500);
+  T.check('💾 all MLA: stash grows past dsv3', gib() > 66.6, gib());
+  mbtn('mixed').click(); await T.tick(500);
+  T.check('MLA mixed restores the dsv3-side composition', mbtn('mixed').dataset.on === '1', '');
   T.check('shared expert mirrors the grouped marks (two buttons per mark)',
     ac.querySelectorAll('button[data-mark="gate_up"]').length === 2
     && ac.querySelectorAll('button[data-mark="ffn_down"]').length === 2
