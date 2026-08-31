@@ -3713,15 +3713,17 @@ class Dsv3PpFold extends HTMLElement {
     // bar row, then the v/s axis, range labels, and the bars
     const SL = 8, STW = 16, BRX = SL + STW + 2, RX0 = BRX + 8;
     const GUT = RX0 + 8 * 1.6 + 22, LX = GUT + 6, X0 = LX + 64;
-    const RH = 14, PV = 21, BW = 420;
     // blocks (PROTOTYPE): the linear chart leans into the site convention —
     // squares/units for linear, bars for log. Each slot renders as tall-thin
     // unit rects at the global byte quantum (448 MiB bf16 = 224M params),
     // layer separations widen, and the x-scale is FIXED by the unit (the EP
     // knob changes the unit count, so EP1 gets enormous — that's the honest
-    // picture; the essay arrives here with EP64 already applied)
+    // picture; the essay arrives here with EP64 already applied). Sized
+    // ~2.5× the byte-square pitch, taller rows: deflated units read as
+    // noise (author's call), so the map breathes instead.
     const BLOCKS = this.hasAttribute('blocks');
-    const UNITP = 448 * 2 ** 20 / 2, UPX = 6, SLOTGAP = 3;   // params/unit · px/unit · layer margin
+    const RH = BLOCKS ? 30 : 14, PV = BLOCKS ? 38 : 21, BW = 420;
+    const UNITP = 448 * 2 ** 20 / 2, UPX = BLOCKS ? 15 : 6, UW = 10, SLOTGAP = 5;   // params/unit · pitch · unit width · layer margin
     const pTs = (c) => this.chunks[c].slotsP.map((v, i) =>
       this._epFrom ? this._epFrom[c][i] + (v - this._epFrom[c][i]) * this._ept : v);
     const pT = (c) => pTs(c).reduce((a, b) => a + b, 0);
@@ -3730,7 +3732,7 @@ class Dsv3PpFold extends HTMLElement {
     const scale = BLOCKS ? UPX / UNITP
       : BW / Math.max(...Array.from({ length: 8 }, (_, r) => rankPT(r)));
     const wOf = (k) => pT(k.c) * scale + (BLOCKS ? SLOTGAP * pTs(k.c).length : 0);
-    const H = 16 * PV + 24;
+    const H = 16 * PV + (BLOCKS ? 34 : 24);
     const W = BLOCKS
       ? X0 + Math.max(...Array.from({ length: 8 }, (_, r) => wOf(this.chunks[r]) + wOf(this.chunks[15 - r]))) + 160
       : X0 + BW + 152;   // + the linear axis band (caption rides past its end)
@@ -3825,10 +3827,14 @@ class Dsv3PpFold extends HTMLElement {
           const units = w2 / UPX;
           for (let u = 0; u < Math.ceil(units) && u < 4000; u++) {
             const frac = Math.min(1, units - u);
-            B.push(`<rect x="${(sx + u * UPX).toFixed(1)}" y="${y + 1}" width="${(4 * frac).toFixed(2)}" height="${RH - 2}" fill="${segFill}"/>`);
+            B.push(`<rect x="${(sx + u * UPX).toFixed(1)}" y="${y + 2}" width="${(UW * frac).toFixed(2)}" height="${RH - 4}" fill="${segFill}"/>`);
           }
-          if (vocab)
-            B.push(`<rect x="${(sx - 1).toFixed(1)}" y="${y.toFixed(1)}" width="${(w2 + 1).toFixed(1)}" height="${RH}" fill="none" stroke="${gT < 0.5 ? '#0b3d75' : '#bcd8f3'}" stroke-dasharray="2.5 2"/>`);
+          if (vocab) {
+            B.push(`<rect x="${(sx - 2).toFixed(1)}" y="${y.toFixed(1)}" width="${(w2 - UPX + UW + 3).toFixed(1)}" height="${RH}" fill="none" stroke="${gT < 0.5 ? '#0b3d75' : '#bcd8f3'}" stroke-dasharray="2.5 2"/>`);
+            if (w2 > 30) B.push(`<text x="${(sx + (w2 - UPX + UW) / 2).toFixed(1)}" y="${y + RH - 4}" text-anchor="middle" font-size="8.5" fill="${ink}" stroke="#fcfcfb" stroke-width="2.5" paint-order="stroke">${k.emb && i2 === 0 ? 'emb' : 'head'}</text>`);
+          }
+          if (dense && w2 > 30)
+            B.push(`<text x="${(sx + (w2 - UPX + UW) / 2).toFixed(1)}" y="${y + RH - 4}" text-anchor="middle" font-size="8.5" fill="${ink}" stroke="#fcfcfb" stroke-width="2.5" paint-order="stroke">dense</text>`);
           sx += w2 + SLOTGAP;
           continue;
         }
@@ -3853,9 +3859,9 @@ class Dsv3PpFold extends HTMLElement {
     // the x-axis: these bars are LINEAR (everything else on the site is
     // log₂) — ticks say so out loud
     if (BLOCKS) {
-      const ay = 16 * PV + 4;
-      B.push(`<rect x="${X0}" y="${ay + 3}" width="4" height="${RH - 2}" fill="#52514e"/>` +
-        `<text x="${X0 + 10}" y="${ay + 13}" font-size="9" fill="#52514e">= 448 MiB bf16 (224M params) · LINEAR — the site's byte square, stood upright</text>`);
+      const ay = 16 * PV + 6;
+      B.push(`<rect x="${X0}" y="${ay}" width="${UW}" height="${RH - 12}" fill="#52514e"/>` +
+        `<text x="${X0 + UW + 6}" y="${ay + 12}" font-size="9" fill="#52514e">= 448 MiB bf16 (224M params) · LINEAR</text>`);
     } else {
       const maxP = Math.max(...Array.from({ length: 8 }, (_, r) => rankP(r)));
       const pow = 10 ** Math.floor(Math.log10(maxP));

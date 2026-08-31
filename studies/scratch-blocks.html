@@ -26,10 +26,11 @@
     <dsv3-pp-fold style="min-height:447px"></dsv3-pp-fold>
 
     <h2>2 · per-rank compute: eight rectangles of FLOP squares</h2>
-    <p class="note">Same fold, area = forward FLOPs per token instead of
-      width = resident params. One tile per slot (emb is a dashed stub — a
-      lookup, no FLOPs; the head is dashed but LARGE). Compute is
-      EP-independent (activated experts, not resident ones) — no knob.</p>
+    <p class="note">v2 — each rank is ONE contiguous rectangle (lengths compare
+      directly: no gaps to distort s0 vs the interior). Layer boundaries are
+      the depth-gradient color steps plus ticks below; the head span is dashed
+      above. Squares round to the unit (Bresenham over the exact cumulative).
+      Compute is EP-independent (activated experts) — no knob.</p>
     <dsv3-pp-flops style="min-height:400px"></dsv3-pp-flops>
 
     <h2>3 · full sim without parameter squares (nostrips)</h2>
@@ -58,7 +59,7 @@
     for (const kind of ['dense', 'moe'])
       layerF[kind] = blockGraph(kind, DSV3, mm, 4096).reduce((t, n) => t + n.flopsTok, 0);
     const headF = 2 * DSV3.hidden * DSV3.vocab;
-    const UNIT = 20e6;                                    // 20 MFLOP/token per square
+    const UNIT = 40e6;                                    // 40 MFLOP/token per square
     const usPerMb = (UNIT * 4096 / 989e12 * 1e6).toFixed(0); // its time at H800 bf16 peak
     const lerpHex = (a, b, t) => '#' + [0, 1, 2].map(i =>
       Math.round(parseInt(a.slice(1 + 2 * i, 3 + 2 * i), 16) * (1 - t)
@@ -76,43 +77,46 @@
             ...(g.head ? [['head', 62]] : [])];
         };
         const fOf = (kind) => kind === 'emb' ? 0 : kind === 'head' ? headF : layerF[kind];
-        const SQ = 5, PITCH = 6, TR = 4;                  // square, pitch, tile rows
-        const X0 = 150, RH = TR * PITCH, PV = RH + 12;
+        const SQ = 5, PITCH = 6, TR = 4;                  // square, pitch, ribbon rows
+        const X0 = 40, RH = TR * PITCH, PV = RH + 14;
         const P = [];
         let maxX = 0;
-        const ranks = Array.from({ length: 8 }, (_, r) => [...chunkSlots(r), null, ...chunkSlots(15 - r)]);
-        const totals = ranks.map(slots => slots.reduce((t, s) => t + (s ? fOf(s[0]) : 0), 0));
+        const ranks = Array.from({ length: 8 }, (_, r) => [...chunkSlots(r), ...chunkSlots(15 - r)]);
+        const totals = ranks.map(slots => slots.reduce((t, s) => t + fOf(s[0]), 0));
         ranks.forEach((slots, r) => {
           const y = r * PV;
           P.push(`<text x="${X0 - 8}" y="${y + RH - 8}" text-anchor="end" font-size="10" font-weight="600" fill="#52514e">s${r}</text>`);
-          let x = X0;
-          for (const s of slots) {
-            if (!s) { x += 10; continue; }                // chunk divider (down vs up pass)
-            const [kind, slot] = s;
+          // ONE contiguous ribbon: squares on a global column-major grid,
+          // Bresenham'd to the exact cumulative FLOPs; layer boundaries are
+          // color steps + a tick below (no gaps — lengths stay comparable)
+          let cum = 0, drawn = 0;
+          for (const [kind, slot] of slots) {
+            cum += fOf(kind) / UNIT;
+            const upto = Math.round(cum);
             const fill = lerpHex('#fdeab5', '#7a5200', slot / 62);
-            const units = fOf(kind) / UNIT;
-            const cols = Math.ceil(units / TR);
-            if (kind === 'emb') {
-              P.push(`<rect x="${x}" y="${y}" width="8" height="${RH - 1}" fill="none" stroke="#b9b7ae" stroke-dasharray="2.5 2"/>`);
-              x += 8 + 4; continue;
+            const from = drawn;
+            for (; drawn < upto; drawn++)
+              P.push(`<rect x="${X0 + Math.floor(drawn / TR) * PITCH}" y="${y + (drawn % TR) * PITCH}" width="${SQ}" height="${SQ}" fill="${fill}"/>`);
+            const bx = X0 + (cum / TR) * PITCH;
+            P.push(`<line x1="${bx.toFixed(1)}" y1="${y + RH + 1}" x2="${bx.toFixed(1)}" y2="${y + RH + 4}" stroke="#b9b7ae"/>`);
+            if (kind === 'head') {   // the head's span, dashed ABOVE the ribbon
+              const hx0 = X0 + (from / TR) * PITCH;
+              P.push(`<line x1="${hx0.toFixed(1)}" y1="${y - 3}" x2="${bx.toFixed(1)}" y2="${y - 3}" stroke="#7a5200" stroke-dasharray="2.5 2"/>`
+                + `<text x="${((hx0 + bx) / 2).toFixed(1)}" y="${y - 6}" text-anchor="middle" font-size="8" fill="#7a5200">head</text>`);
             }
-            for (let u = 0; u < Math.ceil(units); u++) {
-              const frac = Math.min(1, units - u);
-              P.push(`<rect x="${x + Math.floor(u / TR) * PITCH}" y="${y + (u % TR) * PITCH}" width="${(SQ * frac).toFixed(2)}" height="${SQ}" fill="${fill}"/>`);
-            }
-            if (kind === 'head')
-              P.push(`<rect x="${x - 1.5}" y="${y - 1.5}" width="${cols * PITCH + 2}" height="${RH + 2}" fill="none" stroke="#7a5200" stroke-dasharray="2.5 2"/>`);
-            x += cols * PITCH + 4;
+            if (kind === 'emb')      // a lookup: zero FLOPs, named at its (zero-width) spot
+              P.push(`<text x="${bx.toFixed(1)}" y="${y - 6}" text-anchor="middle" font-size="8" fill="#898781">emb·0</text>`);
           }
-          maxX = Math.max(maxX, x);
-          P.push(`<text data-rank="${r}" data-gf="${totals[r]}" x="${x + 8}" y="${y + RH - 8}" font-size="9.5" fill="#898781">${fmtNum(totals[r])} FLOP/tok${r === 0 ? ` (${(totals[0] / totals[1]).toFixed(2)}× an interior rank)` : ''}</text>`);
+          const xEnd = X0 + Math.ceil(drawn / TR) * PITCH;
+          maxX = Math.max(maxX, xEnd);
+          P.push(`<text data-rank="${r}" data-gf="${totals[r]}" x="${xEnd + 8}" y="${y + RH - 8}" font-size="9.5" fill="#898781">${fmtNum(totals[r])} FLOP/tok${r === 0 ? ` (${(totals[0] / totals[1]).toFixed(2)}× an interior rank)` : ''}</text>`);
         });
-        const W = maxX + 190, H = 8 * PV + 26;
+        const W = maxX + 200, H = 8 * PV + 26;
         P.push(`<rect x="${X0}" y="${8 * PV + 4}" width="${SQ}" height="${SQ}" fill="#52514e"/>`
-          + `<text x="${X0 + 10}" y="${8 * PV + 10}" font-size="9" fill="#52514e">= 20 MFLOP/token ≈ ${usPerMb} µs per 4096-token microbatch at bf16 peak · fwd only (bwd = 2×) · LINEAR</text>`);
+          + `<text x="${X0 + 10}" y="${8 * PV + 10}" font-size="9" fill="#52514e">= 40 MFLOP/token ≈ ${usPerMb} µs per 4096-token microbatch at bf16 peak · fwd only (bwd = 2×) · LINEAR</text>`);
         this.innerHTML = `<div style="font:12px system-ui;color:#0b0b0b;border:1px solid #e1e0d9;border-radius:6px;background:#fcfcfb;padding:8px 10px;width:max-content;max-width:100%;box-sizing:border-box;overflow-x:auto;">`
-          + `<div style="font-size:11.5px;color:#52514e;padding-bottom:6px;">forward compute per rank — one tile per layer (depth gradient), dashed = vocab (emb: a lookup, no FLOPs; head: real GEMM work)</div>`
-          + `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" font-family="system-ui">${P.join('')}</svg></div>`;
+          + `<div style="font-size:11.5px;color:#52514e;padding-bottom:8px;">forward compute per rank — one contiguous rectangle (color steps = layers, depth gradient; ticks = boundaries)</div>`
+          + `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" font-family="system-ui" style="overflow:visible">${P.join('')}</svg></div>`;
       }
     }
     customElements.define('dsv3-pp-flops', Dsv3PpFlops);
