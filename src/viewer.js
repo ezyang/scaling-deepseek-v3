@@ -3592,14 +3592,20 @@ class Dsv3PpFold extends HTMLElement {
     const rankPT = (r) => pT(r) + pT(15 - r);                        // geometry: tweened
     const scale = BW / Math.max(...Array.from({ length: 8 }, (_, r) => rankPT(r)));
     const wOf = (k) => pT(k.c) * scale;
-    // the fold STAGGERS, farthest traveler first: v15 leads (the deepest
-    // bar sweeps to the top row), then v14, v13… so ranks visibly complete
-    // top-to-bottom; the unfold peels back bottom-up. t is raw progress —
-    // easing is applied per chunk inside its slice of the timeline.
+    // BOTH directions cascade crease-outward (v8 first … v15 last) and are
+    // authored in their own wall-time, so each gets decelerating arrivals —
+    // a pure time-reverse would flip the easing into slam landings, which
+    // is why the fold used to read worse than the unfold. t stays raw;
+    // per-chunk easing lives inside each chunk's slice.
     const tG = fitEase(t);
     const STAG = 0.4;
-    const tcOf = (c) => c < 8 ? tG
-      : fitEase(Math.min(1, Math.max(0, (t - STAG * ((15 - c) / 7)) / (1 - STAG))));
+    const dir = this.view === 'physical' ? 1 : 0;   // which endpoint this tween is heading to
+    const tau = dir ? t : 1 - t;                    // wall-time progress of the CURRENT direction
+    const tcOf = (c) => {
+      if (c < 8) return tG;
+      const e = fitEase(Math.min(1, Math.max(0, (tau - STAG * ((c - 8) / 7)) / (1 - STAG))));
+      return dir ? e : 1 - e;
+    };
     const lerp = (a, b) => a + (b - a) * tG;
     const lerpC = (a, b, c) => a + (b - a) * tcOf(c);
     const hv = this._hover;

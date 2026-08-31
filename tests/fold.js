@@ -34,8 +34,8 @@ T.check('one cycle button + the EP stepper in the top row', !!btn && btn.textCon
 btn.click();
 await T.tick(120);   // mid-fold
 const prog = (c) => (y0s[c] - yOf(c)) / (y0s[c] - (Math.min(c, 15 - c) * 21 + 3.5));
-T.check('stagger: v15 leads, v9 trails', prog(15) > prog(12) + 0.1 && prog(12) > prog(9),
-  [15, 12, 9].map((c) => prog(c).toFixed(2)).join('/'));
+T.check('stagger: crease first — v9 leads, v15 trails', prog(9) > prog(12) + 0.1 && prog(12) >= prog(15),
+  [9, 12, 15].map((c) => prog(c).toFixed(2)).join('/'));
 T.check('mid-fold: height reserved (no reflow)', Math.abs(f.getBoundingClientRect().height - h0) < 1, '');
 await T.tick(500);   // settled
 // hover rank 0: BOTH ends of the model light up — the fold's signature
