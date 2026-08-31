@@ -89,6 +89,10 @@ T.check('sub-picket GEMMs wear the hollow trace',
   T.check('the 80 GiB card line is drawn', ribbons(ac).some(t => t === '80 GiB'), '');
   T.check('both rulers present (GiB + GFLOP/token)',
     ribbons(ac).some(t => t.includes('minor tick = 1 GiB')) && ribbons(ac).some(t => t.includes('GFLOP/token')), '');
+  // the honesty line: what the ruler does NOT meter, per the CURRENT policy
+  T.check('unmetered-vector line names this policy\'s replays (RoPE always + dsv3\'s norms/SwiGLU)',
+    ribbons(ac).some(t => t.startsWith('not priced') && t.includes('RoPE ×2 (always)')
+      && t.includes('RMSNorm ×4') && t.includes('SwiGLU')), '');
 }
 // ---- transitions ANIMATE (deterministic 12-frame tween, ~200 ms)
 {

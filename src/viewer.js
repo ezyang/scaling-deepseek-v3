@@ -2544,10 +2544,10 @@ export class Dsv3Layer extends HTMLElement {
         y += 16;
         micro('RoPE', C1, y, 140,
           'fused_apply_mla_rope_for_q — rotate the 64 rope dims of every q head (fp32), make Q contiguous');
-        P.push(fiatBtn(C1 + 112, y - 1, 'always recomputed — RoPE\u2019s backward is a rotation; nothing to save'));
+        P.push(fiatBtn(C1 + 112, y - 1, 'locked \u21bb: saving RoPE\u2019s output would stash the SAME bytes on the other side of a free rotation \u2014 a zero-byte choice this GEMM-only model cannot price; the backward re-run is bandwidth-bound vector work, unmetered (see the tally note)'));
         micro('RoPE + build K,V', C1 + 150, y, 140,
           'fused_apply_mla_rope_for_kv — split kv_heads into k_nope and V, rotate k_rope, broadcast it across the 128 heads, concat K = [k_nope | k_rope], make K and V contiguous');
-        P.push(fiatBtn(C1 + 150 + 112, y - 1, 'always recomputed — RoPE\u2019s backward is a rotation; nothing to save'));
+        P.push(fiatBtn(C1 + 150 + 112, y - 1, 'locked \u21bb: saving RoPE\u2019s output would stash the SAME bytes on the other side of a free rotation \u2014 a zero-byte choice this GEMM-only model cannot price; the backward re-run is bandwidth-bound vector work, unmetered (see the tally note)'));
         P.push(`<path class="wire" d="M ${bypX} ${bypTop} L ${bypX} ${y + 9} L ${C1 + W + 1} ${y + 9}" marker-end="url(#arr)"/>`);
         y += 18;
       }
@@ -3163,6 +3163,19 @@ export class Dsv3Layer extends HTMLElement {
       ty = ry + 20;
     }
     T.push(`<text class="dims" x="${TB_X}" y="${ty + 8}">= ${(3 + replayEq / fwdEq).toFixed(2)}× fwd per training step</text>`);
+    ty += 12;
+    // honesty line: the vector work the ruler does NOT meter, and what of it
+    // the CURRENT policy re-runs in backward — recomputing an RMSNorm or
+    // RoPE is cheap (bandwidth-bound) but not free, and the GEMM-only model
+    // deliberately leaves it unpriced (no epilogue-fusion story)
+    {
+      const cnt = {};
+      for (const n of fwdOps) if (opDt(n.id) === 'vector' && ana.replayed.has(n.id))
+        cnt[n.label.replace(/ \(.*\)/, '')] = (cnt[n.label.replace(/ \(.*\)/, '')] ?? 0) + 1;
+      const lst = Object.entries(cnt).map(([k, c]) => c > 1 ? `${k} ×${c}` : k).join(' + ');
+      T.push(`<text class="dims" x="${TB_X}" y="${ty + 8}" opacity="0.8">not priced (bandwidth-bound vector work — the hollow dashed marks): `
+        + `this policy's backward re-runs RoPE ×2 (always)${lst ? ` + ${lst}` : ''}, unmetered — cheap, not free.</text>`);
+    }
     const TW = TB_X + TB_AVAIL + 166;
     const tallyEl = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     tallyEl.setAttribute('width', TW); tallyEl.setAttribute('height', ty + 16);
