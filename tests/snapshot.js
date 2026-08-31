@@ -14,7 +14,7 @@ const beat = (sel) => beats().find(b => (b.getAttribute('solo') ?? b.getAttribut
   ?? beats().find(b => b.hasAttribute('parts'));
 T.check('optim beat: soloed at 8 B/param, accordion open', beat('optim').textContent.includes('optimizer states4.88 TiB')
   && beat('optim').textContent.includes('· experts') && !/weights\d/.test(beat('optim').textContent), '');
-T.check('acts beat: soloed, per-op buckets open', beat('acts').textContent.includes('activations ×1mb106.4 GiB')
+T.check('acts beat: soloed, per-op buckets open', beat('acts').textContent.includes('activations ×1mb105.1 GiB')
   && beat('acts').textContent.includes('· dispatched tokens') && beat('acts').textContent.includes('· swiglu out')
   && !beat('acts').textContent.includes('· experts'), '');
 T.check('grads beat: soloed at fp32, accordion open', beat('grads').textContent.includes('gradients (fp32)2.44 TiB')

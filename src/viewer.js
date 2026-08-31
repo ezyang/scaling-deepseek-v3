@@ -112,10 +112,12 @@ export const ppStage = (s, pp = LOCAL_PAR.pp, vpp = 1, fold = 'reflect') => {
 };
 
 // save-everything bf16 activation bytes for ONE layer × one 4096-token
-// microbatch (the local model's activation quantum), computed once
-let ACT_LAYER_B = 0;
-export const actLayerBytes = () => ACT_LAYER_B ||=
-  analyze(blockGraph('moe', DSV3, resolveMatmuls({ recipe: 'bf16' }), 4096), {}, false).savedBytes * 4096;
+// microbatch (the local model's activation quantum), per KIND — a dense
+// layer stashes no router state or dispatched tokens, so pricing every
+// layer at the MoE rate would overstate the dense front
+const ACT_LAYER_B = {};
+export const actLayerBytes = (kind = 'moe') => ACT_LAYER_B[kind] ??=
+  analyze(blockGraph(kind, DSV3, resolveMatmuls({ recipe: 'bf16' }), 4096), {}, false).savedBytes * 4096;
 // 1F1B admission per virtual stage: stage v of a D-deep chain holds D − v
 // forward chunk-stashes at steady state (warmup depth; assumes ≥ D
 // microbatches per step). A rank's residency in microbatch-equivalents is
@@ -295,7 +297,7 @@ export const peakStage = (pp, ep, zero, world = LOCAL_PAR.world, sched = '1f1b',
     const g = ppStage(s2, pp, vpp, fold);
     const v = g.dense * dB + g.moe * mB
       + (((g.emb ? 1 : 0) + (g.head ? 1 : 0)) * PARAMS.embed * bpp('d'))
-      + g.layers * actLayerBytes() * inflightOf(sched, s2, pp, vpp, fold);
+      + (g.dense * actLayerBytes('dense') + g.moe * actLayerBytes('moe')) * inflightOf(sched, s2, pp, vpp, fold);
     if (v > bestV) { bestV = v; best = s2; }
   }
   return best;
@@ -1413,6 +1415,11 @@ export class Dsv3Layer extends HTMLElement {
         // alignment across kind flips)
         anaM: this.kind === 'dense'
           ? analyze(blockGraph('moe', DSV3, this.matmuls, 4096), marksEff2, this.transposed)
+          : null,
+        // local fit charts price mixed-kind ranks exactly: the dense
+        // front's layers stash at the DENSE rate (same marks/recipe)
+        anaD: this.hasAttribute('local') && this.getAttribute('lens') === 'param-bytes' && this.kind !== 'dense'
+          ? analyze(blockGraph('dense', DSV3, this.matmuls, 4096), marksEff2, this.transposed)
           : null,
       };
     }
@@ -2721,24 +2728,30 @@ export class Dsv3Layer extends HTMLElement {
           d: g.dense * PARAMS.denseBlock + g.moe * (PARAMS.moeBlock - moeExp),
           v: ((g.emb ? 1 : 0) + (g.head ? 1 : 0)) * PARAMS.embed
             + (g.head ? DSV3.hidden : 0),
-          layers: g.layers,
+          layers: g.layers, dLay: g.dense, mLay: g.moe,
         };
       };
+      // per-(rank, microbatch) activation bytes, priced BY KIND: the dense
+      // front stashes at the dense rate (no router state, no dispatched
+      // tokens), the MoE layers at theirs — same marks/recipe for both
+      const anaD = this._anaMemo.anaD ?? ana;
+      const actQ = (q) => (q.dLay * anaD.savedBytes + q.mLay * ana.savedBytes) * 4096;
       const shardOf = (S, c, cls) =>
         (S.zero ?? 1) >= c.zthresh ? c.bpp / (cls === 'e' ? (S.world ?? LOCAL_PAR.world) / S.pp / S.ep : (S.world ?? LOCAL_PAR.world) / S.pp) : c.bpp;
       // per component: [experts, non-expert blocks, emb+lm head] bytes — the solo
       // breakdown and its pin factors ride these
       const partsFor = (S) => {
         const q = stageParts(S);
-        const actM = 4096 * q.layers * inflightOf(S.sched ?? '1f1b', S.stage, S.pp, S.vpp, S.fold);
-        const actP = actBucketsOf(ana).map((b) => b * actM);
+        const IFn = inflightOf(S.sched ?? '1f1b', S.stage, S.pp, S.vpp, S.fold);
+        const bM = actBucketsOf(ana), bD = actBucketsOf(anaD);
+        const actP = bM.map((b, i) => (q.mLay * b + q.dLay * bD[i]) * 4096 * IFn);
         return COMPS.map((c) => [q.e * shardOf(S, c, 'e'), q.d * shardOf(S, c, 'd'), q.v * shardOf(S, c, 'd')])
           .concat([actP]);
       };
       const segB = (S) => {
         const q = stageParts(S);
         return COMPS.map((c) => (q.d + q.v) * shardOf(S, c, 'd') + q.e * shardOf(S, c, 'e'))
-          .concat([ana.savedBytes * 4096 * q.layers * inflightOf(S.sched ?? '1f1b', S.stage, S.pp, S.vpp, S.fold)]);
+          .concat([actQ(q) * inflightOf(S.sched ?? '1f1b', S.stage, S.pp, S.vpp, S.fold)]);
       };
       this._segParts = partsFor(Snow);
       const nowB = segB(Snow);
