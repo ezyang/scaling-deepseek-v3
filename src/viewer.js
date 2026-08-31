@@ -1546,7 +1546,7 @@ export class Dsv3Layer extends HTMLElement {
       }
       reset.style.cssText = 'font:11px ui-monospace,monospace;padding:2px 8px;border:1px solid #c3c2b7;' +
         'border-radius:4px;background:#fff;cursor:pointer;margin-left:auto;';
-      hh.append(mkDimsBtn(), reset);
+      hh.append(reset);   // no sizes toggle here: shapes are 01's story, not this section's
       if (hr) root.append(hr);
       root.append(hh);
     } else if (cmode !== 'static') root.append(head);
