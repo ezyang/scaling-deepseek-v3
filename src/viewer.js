@@ -3163,6 +3163,21 @@ export class Dsv3Layer extends HTMLElement {
     ribbon('bwd', fwdOps, (n) => 2 * wFwd(n), '2.00× (dgrad + wgrad)');
     ribbon('replay', fwdOps, wRep, `+${(replayEq / fwdEq).toFixed(2)}×`
       + (ana.replayComm.length ? ' + a2a ' + ana.replayComm.join('+') : ''));
+    if (FSQ) {
+      // the compute ruler: same device as the byte bars' — minor tick =
+      // 100 MFLOP/token (5 pickets), major = 1 GFLOP/token, bf16-equivalent
+      const PPF = 3 / FUNIT;                       // px per FLOP/token
+      const rext = 2 * fwdEq * PPF + 12;           // bwd is always the longest ribbon
+      const ry = ty + 2;
+      T.push(`<line x1="${TB_X}" y1="${ry}" x2="${(TB_X + rext).toFixed(1)}" y2="${ry}" stroke="#c3c2b7" stroke-width="1"/>`);
+      for (let u = 0; u * 100e6 * PPF <= rext; u++) {
+        const x = TB_X + u * 100e6 * PPF, major = u % 10 === 0;
+        T.push(`<line x1="${x.toFixed(1)}" y1="${ry}" x2="${x.toFixed(1)}" y2="${ry + (major ? 5 : 2.5)}" stroke="#c3c2b7" stroke-width="1"/>`);
+        if (major && u > 0) T.push(`<text x="${x.toFixed(1)}" y="${ry + 14}" text-anchor="middle" font-size="8.5" fill="#898781">${u / 10}</text>`);
+      }
+      T.push(`<text class="dims" x="${(TB_X + rext + 10).toFixed(1)}" y="${ry + 14}">GFLOP/token (bf16-eq) · minor = 100 MFLOP · 1 GFLOP ≈ 4.1 ms per microbatch at peak · LINEAR</text>`);
+      ty = ry + 20;
+    }
     T.push(`<text class="dims" x="${TB_X}" y="${ty + 8}">= ${(3 + replayEq / fwdEq).toFixed(2)}× fwd per training step</text>`);
     const TW = TB_X + TB_AVAIL + 166;
     const tallyEl = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
