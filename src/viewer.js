@@ -2090,6 +2090,13 @@ export class Dsv3Layer extends HTMLElement {
       `<foreignObject x="${x}" y="${y}" width="52" height="20">` +
       `<button xmlns="http://www.w3.org/1999/xhtml" class="st dtb" data-dt="${id}" style="color:${DT_STYLE[dt(id)]}" ` +
       `title="cycle precision: bf16 / mxfp8 / fp32">${dt(id)}</button></foreignObject>`;
+    // the block-output add has NO free mark: its output IS the next block's
+    // x0 — the checkpoint anchor, always saved (and charged there). It wears
+    // a locked 🔒 so every op still shows its state.
+    const lockBtn = (x, y) => !this._ctl.marks ? '' :
+      `<foreignObject x="${x}" y="${y}" width="26" height="20">` +
+      `<button xmlns="http://www.w3.org/1999/xhtml" class="st mode st-save" disabled style="cursor:default;opacity:0.8" ` +
+      `title="locked: this add's output IS the next block's x0 \u2014 the checkpoint anchor, always saved (charged to the next block)">\ud83d\udd12</button></foreignObject>`;
     const modeBtn = (ids, x, y) => {
       if (!this._ctl.marks) return '';       // hidden below the marks tier
       const st = state(ids[0]);
@@ -2538,7 +2545,7 @@ export class Dsv3Layer extends HTMLElement {
       const exQ = dhalf(C1, 'q down-proj', '7168 → 1536',
         `2 · 7168 · 1536 FLOP/token — wq_a; a separate GEMM from kv down-proj in production stacks\nparameters: ${(DSV3.hidden * DSV3.qRank).toLocaleString('en-US')}`, qFrac, true, pQ, DSV3.hidden * DSV3.qRank);
       const exKV = dhalf(C1 + 150, 'kv down-proj', '7168 → 512 + 64',
-        `2 · 7168 · (512 + 64) FLOP/token — wkv_a; shares q down-proj’s mark and dtype (one graph node)\nparameters: ${(DSV3.hidden * (DSV3.kvRank + DSV3.qkRope)).toLocaleString('en-US')}`, 1 - qFrac, false, pKV, DSV3.hidden * (DSV3.kvRank + DSV3.qkRope));
+        `2 · 7168 · (512 + 64) FLOP/token — wkv_a; shares q down-proj’s mark and dtype (one graph node — the buttons are MIRRORS)\nparameters: ${(DSV3.hidden * (DSV3.kvRank + DSV3.qkRope)).toLocaleString('en-US')}`, 1 - qFrac, true, pKV, DSV3.hidden * (DSV3.kvRank + DSV3.qkRope));
       y += HBH + Math.max(exQ, exKV);   // the pair advances together
       // display-split of the one latents stash. What backward keeps is the
       // POST-norm latent (the up-proj's input), so in detail the chips sit
@@ -2760,6 +2767,7 @@ export class Dsv3Layer extends HTMLElement {
         wire(SX2, zc, z - 11);
         plus(SX2, z);
         addBox(SX2 + 26, z, 'residual add', 'residual add — x1 + the ffn output');
+        P.push(lockBtn(SX2 + 26 + 126 - 30, z - 10));
       }
     } else {
     let shBot = 0, shTop = 0;
@@ -2885,6 +2893,7 @@ export class Dsv3Layer extends HTMLElement {
       wire(SX2, zc, z - 11);
       addBox(SX2 + 26, z, 'residual add',
         'one fused add kernel (Megatron: add_shared_and_residual) — routed output + shared output + residual x1');
+      P.push(lockBtn(SX2 + 26 + 126 - 30, z - 10));
       }
     } else {
       // pedagogical split: (routed + shared) first, then the residual add.
@@ -2905,6 +2914,7 @@ export class Dsv3Layer extends HTMLElement {
       wire(SX2, zA + 9, zB - 11);
       plus(SX2, zB);
       addBox(SX2 + 26, zB, 'residual add', 'residual add — x1 + the ffn output');
+      P.push(lockBtn(SX2 + 26 + 126 - 30, zB - 10));
       z = zB;
       }
     }

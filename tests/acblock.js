@@ -202,6 +202,10 @@ T.check('sub-picket GEMMs wear the hollow trace',
   const rq = () => ac.querySelector('button[data-mark="rope_q"]');
   T.check('RoPE pills carry LIVE mark buttons', !!rq() && !rq().disabled
     && !!ac.querySelector('button[data-mark="rope_kv"]'), '');
+  T.check('kv down-proj mirrors qkv_down (2 buttons, one node)',
+    ac.querySelectorAll('button[data-mark="qkv_down"]').length === 2, '');
+  T.check('the block-output add wears the locked \ud83d\udd12 (its output IS next-x0)',
+    [...ac.querySelectorAll('.lv-scroll button:disabled')].filter(b => b.textContent === '\ud83d\udd12').length === 1, '');
   const g0 = tHead(ac).match(/= ([\d.]+) GiB/)[1];
   rq().click(); await T.tick(400);   // none \u2192 rope_q \u21bb: same bytes, now pre-RoPE
   T.check('flipping RoPE moves ZERO bytes (the stash total holds)',
