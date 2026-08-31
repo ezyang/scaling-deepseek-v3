@@ -39,8 +39,7 @@ T.check('PP8 → VPP2 again, rank picker returns', l().vpp === 2 && !!knob('rank
 // ---- the strip draws the official program; residency counted off the cells
 const w = document.querySelector('dsv3-pp-schedule[layer]')   // 02 also carries a standalone ×1mb strip;
 {
-  const msel = w.querySelector('[data-knob="mb"]');
-  msel.value = 'auto'; msel.dispatchEvent(new Event('change')); await T.tick(150);
+  w._m = 'auto'; w._sig = ''; w.sync(); await T.tick(150);
   const PP = l().pp, D = 2 * PP, M = D + 4;
   const all = [...w.querySelectorAll('rect[data-cell]')];
   const nOf = (ph) => all.filter(r => r.dataset.cell.startsWith(ph)).length;

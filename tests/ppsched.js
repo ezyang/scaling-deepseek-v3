@@ -7,25 +7,14 @@ const cells = (ph) => [...w().querySelectorAll(`rect[data-cell^="${ph}"]`)];
 const stps = () => ['gpus', 'pp', 'sched', 'ep', 'zero']
   .map(k => l().parentElement.querySelector(`.stp[data-knob="${k}"]`));
 
-// pin the drawn-microbatch knob to 'auto' (= depth+4, steady state reached)
-{
-  const msel = w().querySelector('[data-knob="mb"]');
-  msel.value = 'auto'; msel.dispatchEvent(new Event('change')); await T.tick(150);
-}
+// pin drawn microbatches to 'auto' (= depth+4, steady state reached) —
+// mb is attr/state only now, no knob on the strip
+w()._m = 'auto'; w()._sig = ''; w().sync(); await T.tick(150);
 const pp = l().pp;
 T.log('pp', pp);
 T.check('opens on the official DualPipeV program (W cells drawn)', cells('W').length > 0, cells('W').length);
-T.check('the mb knob is the strip\'s ONLY control (no PP/sched/VPP replicas)',
-  !w().querySelector('[data-knob="pp"]') && !w().querySelector('[data-knob="sched"]')
-  && !w().querySelector('[data-knob="vpp"]') && !!w().querySelector('[data-knob="mb"]'), '');
-// mb wears ± steppers that walk the option list ('auto' is the first stop)
-const mbW = () => w().querySelector('[data-knob="mb"]').closest('.stp');
-mbW().querySelectorAll('button')[1].click(); await T.tick(300);   // auto → 4
-T.check('mb + steps auto → 4', w().querySelector('[data-knob="mb"]').value === '4'
-  && cells('F').length === 2 * l().pp * 4, w().querySelector('[data-knob="mb"]').value);
-mbW().querySelectorAll('button')[0].click(); await T.tick(300);   // back to auto
-T.check('mb − steps back to auto, − then disabled', w().querySelector('[data-knob="mb"]').value === 'auto'
-  && mbW().querySelectorAll('button')[0].disabled, '');
+T.check('the strip carries NO controls at all (mb is attr-only now)',
+  !w().querySelector('.stp') && !w().querySelector('select'), '');
 // highlight row follows the layer's stage
 const hl = () => w().querySelector('rect.stghl');
 const rowY = (s) => s * 16;

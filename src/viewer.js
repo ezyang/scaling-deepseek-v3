@@ -3028,9 +3028,8 @@ class Dsv3PpSchedule extends HTMLElement {
     const style = document.createElement('style'); style.textContent = PPS_CSS;
     this._root = el('div', 'pps');
     this._top = el('div', 'top');
-    this._ctl = el('span');            // the replicated pipeline knob group
     this._hd = el('div', 'hd');
-    this._top.append(this._ctl, this._hd);
+    this._top.append(this._hd);
     this._scr = el('div', 'scroll');
     // the sX axis IS the stage picker: click a row's gutter to select it;
     // once clicked the strip holds focus, so ↑/↓ walk the stages
@@ -3113,41 +3112,6 @@ class Dsv3PpSchedule extends HTMLElement {
   // powers of two, stage select with layer-assignment labels, 1F1B/×1 mb
   // segments) — changes drive the LAYER (l.setLocal), and the layer's
   // 'recipe' event circles back to redraw both widgets in sync.
-  // the strip's only OWN control: how many microbatches to DRAW. It still
-  // FOLLOWS the layer's pp/sched/stage — but replicating those knobs here
-  // stopped paying once PP became {1, 8} and the schedule became DualPipeV
-  // (the ×1 mb wave still draws when the layer's sched knob says so)
-  controls(pp, sched, stage, vpp, fold) {
-    const l = this._layer;
-    this._ctl.innerHTML = '';
-    if (!l) return;
-    const g = el('span', 'pargrp');
-    const lab = el('div', 'parlab'); lab.textContent = 'drawn'; g.append(lab);
-    const row = (...kids) => { const d = el('div', 'parrow'); d.append(...kids); return d; };
-    const txt = (t) => { const sp = el('span'); sp.style.cssText = 'color:#52514e;font-size:11px;'; sp.textContent = t; return sp; };
-    // microbatches DRAWN — strip-local (the memory model needs no m; its
-    // law assumes m ≥ pp): a real step's worth by default, 'auto' = just
-    // enough to reach steady state (depth + 4)
-    const MBS = ['auto', 4, 8, 16, 32, 64, 128];
-    const wrap = el('span', 'stp');
-    const msel = document.createElement('select'); msel.className = 'v';
-    for (const o of MBS) msel.append(new Option(o, o));
-    msel.value = String(this._m);
-    const setM = (v) => { this._m = v === 'auto' ? 'auto' : +v; this._sig = ''; this.sync(); };
-    msel.onchange = () => setM(msel.value);
-    const mi = MBS.indexOf(this._m === 'auto' ? 'auto' : this._m);
-    const mbtn = (t, j) => {   // ± walks the option list ('auto' is a stop too)
-      const b = document.createElement('button');
-      b.textContent = t; b.type = 'button';
-      b.disabled = j < 0 || j >= MBS.length;
-      if (!b.disabled) b.onclick = () => setM(String(MBS[j]));
-      return b;
-    };
-    wrap.append(mbtn('−', mi - 1), msel, mbtn('+', mi + 1));
-    msel.dataset.knob = 'mb';   // on the select, as before — tests drive it directly
-    g.append(row(txt('mb'), wrap));
-    this._ctl.append(g);
-  }
   cfg() {
     const l = this._layer;
     return {
@@ -3165,7 +3129,6 @@ class Dsv3PpSchedule extends HTMLElement {
     const grew = this._sig.split('|').slice(0, 2).join('|') !== `${pp}|${sched}`;
     const prevH = this._sig && grew ? this._scr.getBoundingClientRect().height : 0;
     this._sig = sig;
-    this.controls(pp, sched, stage, vpp, fold);
     this.draw(pp, sched, stage, vpp, fold);
     if (prevH) {   // animate the reflow: same deterministic 12-frame ease-out
       const target = this._scr.scrollHeight;

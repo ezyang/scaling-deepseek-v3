@@ -159,11 +159,10 @@ stages, clamped at the ends) — no stage dropdown on the strip. The scroll
 container sets overscroll-behavior-x: none so hitting the strip's edge
 never triggers the browser's back-swipe. `noflight` drops the in-flight braid AND all the
 stage machinery with it — no tint, no gutter hitboxes, keys inert (a pure-
-schedule figure; with no braid there is nothing a selection would feed). It also
-carries a strip-local `mb` knob for how many
-microbatches to DRAW (default 64, a real step's worth; 'auto' = depth+4, just
-enough to reach steady state — the memory model needs no m, its law assumes
-m ≥ pp; smaller m shows a pipeline that never fills). ×1 mb draws the
+schedule figure; with no braid there is nothing a selection would feed). Drawn-microbatch count is
+attr-only (`mb`, default 64 — a real step's worth; 'auto' = depth+4, just
+enough to reach steady state; the memory model needs no m, its law assumes
+m ≥ pp) — the strip carries NO controls of its own now. ×1 mb draws the
 single-microbatch wave. The strip ALWAYS draws DualPipeV: with m ≥ 2·PP
 (and pp > 1) it is the OFFICIAL program, ported step-for-step from
 deepseek-ai/DualPipe
