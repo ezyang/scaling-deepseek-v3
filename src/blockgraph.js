@@ -51,7 +51,13 @@ export const RECOMPUTE_PRESETS = {
   // dsv3 + recompute ffn gate/up from the dispatched tokens
   selective: saveAllExcept('norm1', 'norm2', 'q_norm', 'kv_norm', 'q_up', 'kv_up',
     'rope_q', 'rope_kv', 'swiglu', 'gate_up'),
-  // DeepSeek-paper policy: recompute RMSNorms, MLA up-projections, SwiGLU
+  // DeepSeek-paper policy, two verbatim sources: \u00a73.2.3 "We recompute all
+  // RMSNorm operations and MLA up-projections during back-propagation"
+  // (ALL norms — the latent norms included), and \u00a73.3.3 "we cache the
+  // inputs of the SwiGLU operator and recompute its output in the backward
+  // pass" (hence gate/up-out stays stashed here while swiglu goes \u21bb).
+  // RoPE \u21bb is OUR extension (fused production kernels; a zero-byte choice
+  // either way, so it cannot move the ledger) — the paper doesn't name it.
   dsv3: saveAllExcept('norm1', 'norm2', 'q_norm', 'kv_norm', 'q_up', 'kv_up', 'rope_q', 'rope_kv', 'swiglu'),
   none: saveAllExcept(),
 };
