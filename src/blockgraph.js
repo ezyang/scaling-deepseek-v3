@@ -34,12 +34,15 @@ export const MARKABLE = ['norm1', 'qkv_down', 'q_norm', 'kv_norm', 'q_up', 'kv_u
   'attn', 'o_proj', 'x1', 'norm2', 'router', 'dispatch', 'gate_up', 'swiglu', 'ffn_down', 'combine', 'moe_add'];
 const saveAllExcept = (...redo) => Object.fromEntries(MARKABLE.filter(i => !redo.includes(i)).map(i => [i, true]));
 export const RECOMPUTE_PRESETS = {
-  // every preset except 'none' re-runs RoPE in backward (production fuses it
-  // into the attention prologue); 'none' is naive autograd — it saves the
-  // rotated q/k (attention's actual inputs), the same bytes either way
-  none: saveAllExcept(),
-  // DeepSeek-paper policy: recompute RMSNorms, MLA up-projections, SwiGLU
-  dsv3: saveAllExcept('norm1', 'norm2', 'q_norm', 'kv_norm', 'q_up', 'kv_up', 'rope_q', 'rope_kv', 'swiglu'),
+  // ORDERED as the authoring direction reads: start from the empty policy
+  // (recompute everything) and write saves in — the stash grows rightward,
+  // like every linear bar on the site. Every preset except 'none' re-runs
+  // RoPE in backward (production fuses it into the attention prologue);
+  // 'none' is naive autograd — it saves the rotated q/k (attention's actual
+  // inputs), the same bytes either way.
+  // full checkpointing: NO saves — replay the whole layer from its input
+  // (incl. the a2a!). The canvas every policy starts from.
+  full: {},
   // aggressive production policy: recompute ALL of attention (norm1 through
   // the residual add) from x0 in backward; the saved attention-side tensor is
   // norm2's OUTPUT (the attention output post-norm), which the MoE half consumes.
@@ -48,9 +51,9 @@ export const RECOMPUTE_PRESETS = {
   // dsv3 + recompute ffn gate/up from the dispatched tokens
   selective: saveAllExcept('norm1', 'norm2', 'q_norm', 'kv_norm', 'q_up', 'kv_up',
     'rope_q', 'rope_kv', 'swiglu', 'gate_up'),
-  // full checkpointing: NO saves — replay the whole layer from its input
-  // (incl. the a2a!). The empty policy is the canvas every policy starts from.
-  full: {},
+  // DeepSeek-paper policy: recompute RMSNorms, MLA up-projections, SwiGLU
+  dsv3: saveAllExcept('norm1', 'norm2', 'q_norm', 'kv_norm', 'q_up', 'kv_up', 'rope_q', 'rope_kv', 'swiglu'),
+  none: saveAllExcept(),
 };
 
 export function resolveMarks(cfg) {
