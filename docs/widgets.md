@@ -19,7 +19,8 @@ carry a measured `style="min-height:…px"` placeholder (scroll restoration);
 | `lens` | view | absent · `params` · `param-bytes` | display lens: `params` hides intermediates/dims/aux and unparenthesizes the parameter counts; `param-bytes` additionally restates every number as bf16 bytes, always multiplied out (the sizes toggle is hidden — factored ×256 byte chains pull no weight), adds blue weight-size strips (largest op per block = one row of 32; a square = largestOp/32 · 2 B = 448 MiB), and wears a static bf16 tag on each weight-bearing GEMM. Boxes reserve their in-box strip band only in tiers/lenses that can fill it (dtype tiers, the bytes lens) — static/params boxes are compact |
 | `tabs` | view | boolean | dense/MoE flip tabs (with per-block FFN tallies) above the FFN column, fused into a scoped enclosure |
 | `nocaption` | view | boolean | suppress the foot caption (the page explains the diagram itself) |
-| `recipe` | state | `nv-mxfp8` · `bf16` · `dsv3-fp8` | per-matmul dtype preset |
+| `recipe` | state | `nv-mxfp8` · `bf16` · `dsv3-fp8` · `all-fp8` | per-matmul dtype preset (`all-fp8` = dsv3-fp8 without the wide attn-out exception — the production H100 variant in notes.txt; byte-identical to dsv3-fp8 under attn-replay, pinned in sanity) |
+| `recipes` | view | comma list of recipe keys | curates which recipe chips/options an instance offers (both the house segment and the legacy select); absent = all. The Hopper article drops nv-mxfp8 (the Blackwell post's recipe) |
 | `recompute` | state | `dsv3` · `none` · `attn-replay` · `selective` · `full` | save/recompute marks preset |
 | `kind` | state | `moe` · `dense` | which FFN column variant (flip-stable layout; the MLA column is shared) |
 | `transposed` | state | boolean | Hopper fp8ᵀ dual-orientation stashes |

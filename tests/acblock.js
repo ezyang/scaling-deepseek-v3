@@ -12,6 +12,9 @@ const tHead = (l) => tally(l).querySelector('text').textContent;
 // ---- house knobs: one preset segment + the reserved custom chip
 T.check('AC head carries the recompute segment only', seg(ac, 'recompute') && !seg(ac, 'recipe')
   && !ac.querySelector('.lv-head select'), '');
+T.check('fp8 recipe chips are CURATED: bf16|dsv3-fp8|all-fp8|custom (nv-mxfp8 is the Blackwell post’s)',
+  [...seg(f8, 'recipe').querySelectorAll('button')].map(b => b.textContent).join('|')
+  === 'bf16|dsv3-fp8|all-fp8|custom', '');
 T.check('fp8 head: live recipe segment + LOCKED recompute readout (dsv3 lit)',
   seg(f8, 'recipe') && seg(f8, 'recompute')
   && [...seg(f8, 'recompute').querySelectorAll('button')].every(b => b.disabled)

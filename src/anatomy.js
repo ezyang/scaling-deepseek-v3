@@ -288,7 +288,7 @@ dsv3-anatomy dsv3-anatomy-plan { margin-top: 46px; }
   .anat-cone { display: none; }
 }
 `;
-const FWD = ['controls', 'recipe', 'recompute', 'detail', 'transposed', 'for',
+const FWD = ['controls', 'recipe', 'recipes', 'recompute', 'detail', 'transposed', 'for',
   'nocaption', 'kind', 'xlayers', 'xinflight', 'xtag', 'ctx', 'lens', 'strips', 'nostrips', 'optim', 'consolidated', 'local', 'cumulative'];
 export class Dsv3Anatomy extends HTMLElement {
   connectedCallback() {

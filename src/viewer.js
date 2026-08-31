@@ -1269,13 +1269,16 @@ export class Dsv3Layer extends HTMLElement {
     else head.append('DSv3 ', mkKindSel());
     if (this._ctl.dtype) head.append(' · precision: ');
     const preset = document.createElement('select');
-    for (const name of Object.keys(RECIPES)) {
+    // an instance may curate its recipe chips (recipes="bf16,dsv3-fp8"):
+    // e.g. the Hopper article drops nv-mxfp8 (that's the Blackwell post's)
+    const recipeOpts = (this.getAttribute('recipes')?.split(/[ ,]+/).filter(k => RECIPES[k])) ?? Object.keys(RECIPES);
+    for (const name of recipeOpts) {
       const o = document.createElement('option'); o.value = o.textContent = name; preset.append(o);
     }
     // recognize the current matmul dtypes as a recipe (dtype buttons may have
     // moved us off the attribute's preset), else show "custom"
     const mmKey = (m) => MATMULS.map(x => m[x.id]).join(',');
-    const curRecipe = Object.keys(RECIPES).find(k => mmKey(resolveMatmuls({ recipe: k })) === mmKey(this.matmuls));
+    const curRecipe = recipeOpts.find(k => mmKey(resolveMatmuls({ recipe: k })) === mmKey(this.matmuls));
     preset.value = curRecipe ?? 'bf16';
     if (!curRecipe) {
       const o = document.createElement('option'); o.value = o.textContent = 'custom'; o.selected = true; preset.append(o);
@@ -1522,7 +1525,7 @@ export class Dsv3Layer extends HTMLElement {
         () => ({ ...this.marks }),
         (k) => localTween(() => { this.setAttribute('recompute', k); this.marks = { ...RECOMPUTE_PRESETS[k] }; }),
         (st) => localTween(() => { this.marks = { ...st }; })));
-      if (this._ctl.dtype) hh.append(segGrp('precision recipe', 'recipe', Object.keys(RECIPES), curRecipe,
+      if (this._ctl.dtype) hh.append(segGrp('precision recipe', 'recipe', recipeOpts, curRecipe,
         () => ({ ...this.matmuls }),
         (k) => localTween(() => { this.setAttribute('recipe', k); this.matmuls = resolveMatmuls({ recipe: k }); }),
         (st) => localTween(() => { this.matmuls = { ...st }; })));

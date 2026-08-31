@@ -113,6 +113,18 @@ check('fp8ᵀ dual stash: wgrad-read fp8 only (dispatch, norm2; not gate_up/x0/r
 check('fp8ᵀ adds exactly the dual payloads',
   Math.abs((arT.savedBytes - ar.savedBytes) - (ar.byId.dispatch.outBytes + ar.byId.norm2.outBytes)) < 1,
   `+${((arT.savedBytes - ar.savedBytes) / 1024).toFixed(1)} KiB/tok`);
+// ---- the production H100 config (notes.txt): attention checkpointed
+// (= attn-replay) + every linear fp8 (= all-fp8) + fp8ᵀ dual stash. Under
+// attn-replay the o_proj stash never materializes, so all-fp8's BYTES equal
+// dsv3-fp8's — the recipes differ only in the o_proj GEMM's compute pricing.
+// The absolute numbers are pinned as regression anchors for the external
+// crosscheck (Haziza's analysis).
+const amaia = analyze(blockGraph('moe', DSV3, resolveMatmuls({ recipe: 'all-fp8' }), 4096), RECOMPUTE_PRESETS['attn-replay'], true);
+check('all-fp8 ≡ dsv3-fp8 bytes under attn-replay (o_proj replayed, stash moot)',
+  Math.abs(amaia.savedBytes - arT.savedBytes) < 1e-6, `${(amaia.savedBytes / 1024).toFixed(3)} KiB/tok`);
+check('production H100 config stash: 118.2 KiB/tok (183.2 with fp8ᵀ)',
+  Math.abs(ar.savedBytes / 1024 - 118.223) < 0.01 && Math.abs(amaia.savedBytes / 1024 - 183.191) < 0.01,
+  `${(ar.savedBytes / 1024).toFixed(3)} / ${(amaia.savedBytes / 1024).toFixed(3)} KiB/tok`);
 const noT = mem({ hardware: 'h100', gpus: 2048, pp: 8, ep: 64, zero: 1, recompute: 'attn-replay', recipe: 'dsv3-fp8' });
 const withT = mem({ hardware: 'h100', gpus: 2048, pp: 8, ep: 64, zero: 1, recompute: 'attn-replay', recipe: 'dsv3-fp8', transposedStash: true });
 check('transposedStash grows the H100 watermark by GiBs',
