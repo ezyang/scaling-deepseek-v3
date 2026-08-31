@@ -3242,7 +3242,7 @@ export class Dsv3Layer extends HTMLElement {
     T.push(`<text class="grplabel" x="0" y="${ty + 9}">per-layer FLOPs as time at peak — one picket = 10 MFLOP/token (bf16-eq) ≈ 41 µs per 4096-token microbatch:</text>`);
     ty += 14;
     const DT_ORDER = { bf16: 0, mxfp8: 1, fp32: 2 };
-    const ribbon = (label, list, wOf, num) => {
+    const ribbon = (label, list, wOf, num, comm) => {
       T.push(`<text class="dims" x="0" y="${ty + 9}">${label}</text>`);
       let cx = TB_X, cy = ty + 3;
       const sorted = [...list].sort((p, q) => (DT_ORDER[opDt(p.id)] ?? 3) - (DT_ORDER[opDt(q.id)] ?? 3));
@@ -3258,6 +3258,12 @@ export class Dsv3Layer extends HTMLElement {
       }
       cx = TB_X + (drawn % per) * 3; cy += Math.floor(drawn / per) * 7;
       T.push(`<text class="dims" x="${(cx + 10).toFixed(1)}" y="${cy + 6}">${num}</text>`);
+      if (comm?.length) {   // replayed a2a wears the diagram's violet comm pill
+        const ct = `a2a ${comm.join(' + ')}`;
+        const tx = cx + 10 + num.length * 5.2 + 8, cw = (ct.length + 2) * 4.7 + 16;
+        T.push(`<rect x="${tx.toFixed(1)}" y="${cy - 4.5}" width="${cw.toFixed(1)}" height="15" rx="7.5" fill="#f3f1fb" stroke="#6b5bd2"/>` +
+          `<text class="dims" x="${(tx + 7).toFixed(1)}" y="${cy + 6}" style="fill:#4636a3">+ ${ct}</text>`);
+      }
       ty = cy + 13;
     };
     const wFwd = (n) => lerpQ(eqP(n), eq(n));
@@ -3266,8 +3272,7 @@ export class Dsv3Layer extends HTMLElement {
     const wRep = (n) => lerpQ(anaP?.replayed.has(n.id) ? eqP(n) : 0, ana.replayed.has(n.id) ? eq(n) : 0);
     ribbon('fwd', fwdOps, wFwd, '1.00×');
     ribbon('bwd', fwdOps, (n) => 2 * wFwd(n), '2.00× (dgrad + wgrad)');
-    ribbon('replay', fwdOps, wRep, `+${(replayEq / fwdEq).toFixed(2)}×`
-      + (ana.replayComm.length ? ' + a2a ' + ana.replayComm.join('+') : ''));
+    ribbon('replay', fwdOps, wRep, `+${(replayEq / fwdEq).toFixed(2)}×`, ana.replayComm);
     {
       // the compute ruler: same device as the byte bars' — minor tick =
       // 100 MFLOP/token (5 pickets), major = 1 GFLOP/token, bf16-equivalent

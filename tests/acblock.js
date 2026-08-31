@@ -168,8 +168,8 @@ T.check('sub-picket GEMMs wear the hollow trace',
   T.check('region toggle: dsv3 reads as mixed (swiglu ↻, rest 💾)',
     rbtn('mixed')?.dataset.on === '1', '');
   rbtn('redo').click(); await T.tick(500);
-  T.check('↻ all: the whole FFN replays (stash drops, a2a in the replay)',
-    gib() < 66.6 && replayN().includes('a2a dispatch+combine'), `${gib()} ${replayN()}`);
+  T.check('↻ all: the whole FFN replays (stash drops, a2a comm pill shown)',
+    gib() < 66.6 && ribbons(ac).some(t => t.includes('a2a dispatch + combine')), `${gib()} ${replayN()}`);
   rbtn('save').click(); await T.tick(500);
   T.check('💾 all: every FFN output stashed', gib() > 66.6, gib());
   rbtn('mixed').click(); await T.tick(500);
