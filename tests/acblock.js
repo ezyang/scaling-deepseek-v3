@@ -69,6 +69,20 @@ T.check('fp8 widget: mxfp8 shrinks the tally (88 pickets)', fwdN(f8) === 88, fwd
   btn(f8, 'recipe', 'dsv3-fp8').click(); await T.tick(400);
   T.check('back to dsv3-fp8', /= 86\.2 GiB/.test(tHead(f8)), tHead(f8));
 }
+// DOUBLED rows: recomputed ops carry a second picket row in the recompute
+// color; saved ops don't. Hollow amber grids price the counterfactual stash.
+{
+  const redoRows = () => ac.querySelectorAll('.lv-scroll rect[height="5"][fill="#c74e1d"]').length;
+  const hollows = () => ac.querySelectorAll('.lv-scroll rect[height="4.2"][stroke="#eda100"]').length;
+  T.check('dsv3: recompute picket rows drawn (the cheap up-projs replay)', redoRows() >= 8, redoRows());
+  T.check('dsv3: hollow amber counterfactual grids on ↻ chips', hollows() > 20, hollows());
+  const r0 = redoRows();
+  btn(ac, 'recompute', 'none').click(); await T.tick(500);
+  T.check('none: recompute rows pour to zero, hollows vanish', redoRows() === 0 && hollows() === 0, `${redoRows()}/${hollows()}`);
+  btn(ac, 'recompute', 'dsv3').click(); await T.tick(500);
+  T.check('dsv3 again: rows return', redoRows() === r0, redoRows());
+  T.check('the tally row is named recompute', ribbons(ac).some(t => t === 'recompute'), '');
+}
 // vector ops keep the unpriced fig-leaf (hollow dashed); sub-picket GEMMs
 // (router, kv down-proj half) wear the hollow trace
 T.check('norms/swiglu wear the hollow dashed fig-leaf',
@@ -97,7 +111,7 @@ T.check('sub-picket GEMMs wear the hollow trace',
 // ---- transitions ANIMATE (deterministic 12-frame tween, ~200 ms)
 {
   const repN = () => { // replay ribbon picket count
-    const lab = [...tally(ac).querySelectorAll('text')].find(t => t.textContent === 'replay');
+    const lab = [...tally(ac).querySelectorAll('text')].find(t => t.textContent === 'recompute');
     const y0 = +lab.getAttribute('y') - 6;
     return [...tally(ac).querySelectorAll('rect[height="5"]')]
       .filter(r => Math.abs(+r.getAttribute('y') - y0) < 3).length;

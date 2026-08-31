@@ -1986,8 +1986,10 @@ export class Dsv3Layer extends HTMLElement {
     // need a dtype tier, param strips need the bytes lens) — compact boxes
     // instead of reserving space for strips that can't appear
     const BQ = this._ctl.quant || PBYTES;
-    const BH = BQ ? 38 : 32;      // bold matmul box height
-    const HBH = BQ ? 60 : 32;     // narrow half-column box (buttons + strip sit below the text)
+    // quant tiers reserve TWO picket rows per box (fwd + recompute) so the
+    // recompute row pouring in/out never reflows
+    const BH = this._ctl.quant ? 45 : BQ ? 38 : 32;      // bold matmul box height
+    const HBH = this._ctl.quant ? 67 : BQ ? 60 : 32;     // narrow half-column box (buttons + strip sit below the text)
     // quant tiers carry byte-quantity labels (e.g. attention's lse) that need
     // more room between the columns; the static tier keeps its published width
     const W = 290, C1 = 60,
@@ -2112,14 +2114,17 @@ export class Dsv3Layer extends HTMLElement {
         `<button xmlns="http://www.w3.org/1999/xhtml" class="st mode st-${redo ? 'redo' : 'save'}" ` +
         `data-mark="${ids.join(',')}" title="save output for backward vs recompute this op during backward">${redo ? '↻' : '💾'}</button></foreignObject>`;
     };
-    const blockGrid = (bytes, x, y, minOne = true) => {
+    const blockGrid = (bytes, x, y, minOne = true, hollow = false) => {
       // byte squares, single-line ALWAYS (one stash = one run; wrapping is
-      // banned — a wrapped grid crossed the wire routes)
+      // banned — a wrapped grid crossed the wire routes). hollow = the
+      // COUNTERFACTUAL stash: what saving this recomputed tensor would cost
       const n = Math.max(minOne ? 1 : 0, Math.round(bytes / 1024 / 4));
       if (!n) return { svg: '', rows: 0, pitch: 11 };
       let s = '';
       for (let i = 0; i < n; i++)
-        s += `<rect x="${x + i * 6}" y="${y}" width="5" height="5" fill="#eda100"/>`;
+        s += hollow
+          ? `<rect x="${x + i * 6 + 0.4}" y="${y + 0.4}" width="4.2" height="4.2" fill="none" stroke="#eda100" stroke-width="0.8"/>`
+          : `<rect x="${x + i * 6}" y="${y}" width="5" height="5" fill="#eda100"/>`;
       return { svg: s, rows: 1, pitch: 11 };
     };
     const fmtB = (bytes) => bytes >= 1024 ? (bytes / 1024).toFixed(1) + ' KiB' : bytes + ' B';
@@ -2265,21 +2270,34 @@ export class Dsv3Layer extends HTMLElement {
       if (!flopsTok || !this._ctl.quant || dt2 === 'vector') return 1;
       return Math.max(1, Math.ceil(Math.ceil(eqT(flopsTok, dt2, dtp) / FUNIT) / Math.floor(maxW / 3)));
     };
-    const barExtra = (flopsTok, dt2, maxW, dtp) => (barRows(flopsTok, dt2, maxW, dtp) - 1) * 6;
-    const flopBar = (x, y, flopsTok, dt2, maxW = W - 16, dtp) => {
+    const barExtra = (flopsTok, dt2, maxW, dtp) => (barRows(flopsTok, dt2, maxW, dtp) - 1) * 14;
+    // DOUBLED rows: the fwd pickets (dtype color) and, below them, the
+    // RECOMPUTE pickets (their own color) — the op's replay cost, pouring to
+    // zero when it is saved. Space is reserved either way (no reflow).
+    const REDO_C = '#c74e1d';   // the schedule's backward family: replay is bwd-side work
+    const flopBar = (x, y, flopsTok, dt2, maxW = W - 16, dtp, id) => {
       if (!flopsTok || !this._ctl.quant) return;
+      // recompute share, tweened: membership pours in/out with the marks
+      const rT = !id ? 0 : lerpQ(
+        anaP ? (anaP.replayed.has(id) ? flopEq(flopsTok, dtp ?? dt2) : 0) : (ana.replayed.has(id) ? flopEq(flopsTok, dt2) : 0),
+        ana.replayed.has(id) ? flopEq(flopsTok, dt2) : 0) / FUNIT;
       if (dt2 === 'vector') {   // unpriced fig leaf: bandwidth-bound, and we model no epilogue fusions
         P.push(`<rect x="${x}" y="${y}" width="5" height="4" fill="none" stroke="#c3c2b7" stroke-width="0.8" stroke-dasharray="1.5 1"/>`);
+        if (rT > 0.001) P.push(`<g opacity="${Math.min(1, rT * 40).toFixed(2)}"><rect x="${x + 8}" y="${y}" width="5" height="4" fill="none" stroke="${REDO_C}" stroke-width="0.8" stroke-dasharray="1.5 1"/></g>`);
         return;
       }
       const color = barColor(dt2, dtp);
       const n = eqT(flopsTok, dt2, dtp) / FUNIT, per = Math.floor(maxW / 3);
       if (n < 1) {   // sub-picket: the hollow trace
         P.push(`<rect x="${x + 0.3}" y="${y + 0.3}" width="1.4" height="4.4" fill="none" stroke="${color}" stroke-width="0.7"/>`);
+        if (rT > 0.001) P.push(`<rect x="${x + 0.3}" y="${y + 7.3}" width="1.4" height="4.4" fill="none" stroke="${REDO_C}" stroke-width="0.7" opacity="${Math.min(1, rT * 40).toFixed(2)}"/>`);
         return;
       }
+      const rows = Math.ceil(n / per);
       for (let u = 0; u < Math.ceil(n); u++)
         P.push(`<rect x="${x + (u % per) * 3}" y="${y + Math.floor(u / per) * 7}" width="${(2 * Math.min(1, n - u)).toFixed(2)}" height="5" fill="${color}"/>`);
+      for (let u = 0; u < Math.ceil(rT); u++)
+        P.push(`<rect x="${x + (u % per) * 3}" y="${y + (rows + Math.floor(u / per)) * 7}" width="${(2 * Math.min(1, rT - u)).toFixed(2)}" height="5" fill="${REDO_C}"/>`);
     };
     // who reads this saved tensor in backward: consumer below (↓), the
     // producer's own backward above (↑), or both (↕)
@@ -2372,17 +2390,24 @@ export class Dsv3Layer extends HTMLElement {
         if (s2 === 'redo') return `<text class="tensor tredo" x="${x}" y="${y + 8}">↻ ${esc(name0)}${ov?.short ? '' : ' — recomputed'}</text>`;
         return `<text class="tensor tidle" x="${x}" y="${y + 8}">· ${esc(name0)}</text>`;
       };
-      if (stP2 != null && stP2 !== st)
-        P.push(`<g opacity="${(1 - VQ.t).toFixed(3)}">${chipTxt(anaP, stP2)}</g>` +
-          `<g opacity="${VQ.t.toFixed(3)}">${chipTxt(ana, st)}</g>`);
-      else P.push(chipTxt(ana, st));
       const SAVED = (s2) => s2 === 'save' || s2 === 'pin';
-      if (SAVED(st) || (stP2 != null && SAVED(stP2))) {
-        const bT = lerpQ(stP2 == null ? bytes : SAVED(stP2) ? bytesA(anaP) : 0, SAVED(st) ? bytes : 0);
-        const g = ov?.short ? blockGrid(bT, x + 88, y + 13, !VQ) : blockGrid(bT, x, y + 12, !VQ);
-        P.push(g.svg);
-        if (SAVED(st)) h = ov?.short ? 25 : 12 + g.rows * (g.pitch ?? 6) + 2;
+      // the grid: FILLED squares for a real stash, HOLLOW for a recomputed
+      // tensor (the counterfactual: what saving it would cost) — flipping a
+      // mark crossfades filled/hollow instead of vanishing the bytes
+      const gx = ov?.short ? x + 88 : x, gy = ov?.short ? y + 13 : y + 12;
+      const gridFor = (A, s2) => SAVED(s2) ? blockGrid(bytesA(A), gx, gy, true).svg
+        : s2 === 'redo' ? blockGrid(bytesA(A), gx, gy, true, true).svg : '';
+      if (stP2 != null && stP2 !== st)
+        P.push(`<g opacity="${(1 - VQ.t).toFixed(3)}">${chipTxt(anaP, stP2)}${gridFor(anaP, stP2)}</g>` +
+          `<g opacity="${VQ.t.toFixed(3)}">${chipTxt(ana, st)}${gridFor(ana, st)}</g>`);
+      else {
+        P.push(chipTxt(ana, st));
+        if (SAVED(st) || st === 'redo') {   // same state: bytes still pour (dtype flips)
+          const bT = lerpQ(anaP ? bytesA(anaP) : bytes, bytes);
+          P.push(blockGrid(bT, gx, gy, !VQ, st === 'redo').svg);
+        }
       }
+      if (SAVED(st) || st === 'redo') h = ov?.short ? 25 : 12 + 11 + 2;
       return h;
     };
     const wire = (cx, y1, y2) =>
@@ -2499,18 +2524,18 @@ export class Dsv3Layer extends HTMLElement {
       P.push(modeBtn(markIds ?? ids, x + W - 86, y + 6));
       P.push(dtBtn(ids[0], x + W - 58, y + 6));
       auxOut((markIds ?? ids)[0], x, y + 19);
-      flopBar(x + 8, y + 30, ana.byId[(markIds ?? ids)[0]]?.flopsTok, dt(ids[0]), W - 16, dtPm(ids[0]));
+      flopBar(x + 8, y + 30, ana.byId[(markIds ?? ids)[0]]?.flopsTok, dt(ids[0]), W - 16, dtPm(ids[0]), (markIds ?? ids)[0]);
       paramBlocks(x + 8, y + 30, sqParam(ids[0]), clsOf(ids[0]));
       return y + BH + extra;
     };
     const opNode = (id, label, x, y, cls = 'op', pc = '') => {
-      const h2 = cls === 'comm' || !BQ ? 22 : 27;   // the extra 5px hold the fig-leaf strip
+      const h2 = cls === 'comm' || !BQ ? 22 : this._ctl.quant ? 34 : 27;   // the extra rows hold the fig-leaf + recompute stubs
       P.push(`<g data-op="${id}"${boxTip(id)}>` +
         `<rect class="${cls}" x="${x}" y="${y}" width="${W}" height="${h2}" rx="6"/>` +
         `<text class="oplabel" x="${x + 10}" y="${y + 15}">${label}${pc ? `<tspan class="dims"> ${pc}</tspan>` : ''}</text></g>` +
         modeBtn([id], x + W - 30, y + 1));
       auxOut(id, x, y + Math.round(h2 / 2));
-      if (cls !== 'comm') { flopBar(x + 10, y + 19, ana.byId[id]?.flopsTok, 'vector'); paramBlocks(x + 10, y + 19, sqParam(id)); }
+      if (cls !== 'comm') { flopBar(x + 10, y + 19, ana.byId[id]?.flopsTok, 'vector', W - 16, undefined, id); paramBlocks(x + 10, y + 19, sqParam(id)); }
       return y + h2;
     };
 
@@ -2543,7 +2568,7 @@ export class Dsv3Layer extends HTMLElement {
           `<text class="name" x="${x + 6}" y="${y + 13}">${name}</text>` +
           `<text class="dims" x="${x + 6}" y="${y + 25}">${PONLY ? pc.trim() : flatten(dims) + pc}</text></g>` +
           (withBtns ? modeBtn(['qkv_down'], x + 140 - 86, y + 29) + dtBtn('qkv_down', x + 140 - 58, y + 29) : ''));
-        flopBar(x + 6, y + 52, ana.byId.qkv_down.flopsTok * frac, dt('qkv_down'), 128, dtPm('qkv_down'));
+        flopBar(x + 6, y + 52, ana.byId.qkv_down.flopsTok * frac, dt('qkv_down'), 128, dtPm('qkv_down'), 'qkv_down');
         paramBlocks(x + 6, y + 52, nP, 'd', HALF_ROW);
         return ex;
       };
@@ -2618,7 +2643,7 @@ export class Dsv3Layer extends HTMLElement {
           `<text class="name" x="${x + 6}" y="${y + 13}">${m.label}</text>` +
           `<text class="dims" x="${x + 6}" y="${y + 25}">${PONLY ? pstr(id).trim() : flatten(m.dims) + pstr(id)}</text></g>` +
           modeBtn([id], x + 140 - 86, y + 29) + dtBtn(id, x + 140 - 58, y + 29));
-        flopBar(x + 6, y + 52, ana.byId[id]?.flopsTok, dt(id), 128, dtPm(id));
+        flopBar(x + 6, y + 52, ana.byId[id]?.flopsTok, dt(id), 128, dtPm(id), id);
         paramBlocks(x + 6, y + 52, sqParam(id), 'd', 21);
         return ex;
       };
@@ -3248,7 +3273,7 @@ export class Dsv3Layer extends HTMLElement {
     T.push(`<text class="grplabel" x="0" y="${ty + 9}">per-layer FLOPs as time at peak — one picket = 10 MFLOP/token (bf16-eq) ≈ 41 µs per 4096-token microbatch:</text>`);
     ty += 14;
     const DT_ORDER = { bf16: 0, mxfp8: 1, fp32: 2 };
-    const ribbon = (label, list, wOf, num, comm) => {
+    const ribbon = (label, list, wOf, num, comm, cOv) => {
       T.push(`<text class="dims" x="0" y="${ty + 9}">${label}</text>`);
       let cx = TB_X, cy = ty + 3;
       const sorted = [...list].sort((p, q) => (DT_ORDER[opDt(p.id)] ?? 3) - (DT_ORDER[opDt(q.id)] ?? 3));
@@ -3258,7 +3283,7 @@ export class Dsv3Layer extends HTMLElement {
       let cum = 0, drawn = 0;
       for (const n of sorted) {
         cum += wOf(n) / FUNIT;
-        const color = barColor(opDt(n.id), opDtP(n.id));
+        const color = cOv ?? barColor(opDt(n.id), opDtP(n.id));
         for (const upto = Math.round(cum); drawn < upto; drawn++)
           T.push(`<rect x="${TB_X + (drawn % per) * 3}" y="${cy + Math.floor(drawn / per) * 7}" width="2" height="5" fill="${color}"/>`);
       }
@@ -3278,7 +3303,7 @@ export class Dsv3Layer extends HTMLElement {
     const wRep = (n) => lerpQ(anaP?.replayed.has(n.id) ? eqP(n) : 0, ana.replayed.has(n.id) ? eq(n) : 0);
     ribbon('fwd', fwdOps, wFwd, '1.00×');
     ribbon('bwd', fwdOps, (n) => 2 * wFwd(n), '2.00× (dgrad + wgrad)');
-    ribbon('replay', fwdOps, wRep, `+${(replayEq / fwdEq).toFixed(2)}×`, ana.replayComm);
+    ribbon('recompute', fwdOps, wRep, `+${(replayEq / fwdEq).toFixed(2)}×`, ana.replayComm, '#c74e1d');
     {
       // the compute ruler: same device as the byte bars' — minor tick =
       // 100 MFLOP/token (5 pickets), major = 1 GFLOP/token, bf16-equivalent
