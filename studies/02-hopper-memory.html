@@ -54,7 +54,7 @@
     head" (the initial embedding, the LM head, and — riding along — the final
     RMSNorm.)  Though it's not
     evident from log scale, these three subcategories cover all the weights in
-    the model.  Similary, don't be deceived into thinking that the non-expert
+    the model.  Similarly, don't be deceived into thinking that the non-expert
     weights are "half" of the expert weights: there are more than 40x expert
     weights than non-expert weights!</p>
 
@@ -62,14 +62,14 @@
     dividing a quantity by some factor. As a short preview, when we distribute
     parameters for expert parallelism, we'll divide the expert weights exactly
     by the EP factor.  A log scale lets us express the change from applying
-    EP64 by shortening a expert weights bar by six ticks (each tick is a
+    EP64 by shortening an expert weights bar by six ticks (each tick is a
     factor of two), no matter what the original starting quantity was, and
     allows us to keep a consistent x-scale across all the diagrams in this
     essay.</p>
 
     <p><strong>Gradients.</strong>  We need memory to store computed gradients
     before we update parameters with them.  As a simplifying assumption, we will
-    assume that the memory for gradients stays live for the entirety of the model;
+    assume that the memory for gradients stays live for the entirety of the optimizer step;
     while you can avoid this in non-PP settings (since you can try to all-reduce
     the gradient as soon as possible and then update the weights ASAP so you can
     reuse the gradient memory for something else), with PP--or really any
@@ -99,7 +99,7 @@
 
     <p><strong>Activations.</strong>  Intermediate activations that are saved
     for backwards typically contribute to the high watermark memory usage
-    (which typically occurs at the end of forwards / beginning of backwards).
+    (which usually occurs at the end of forwards / beginning of backwards).
     We tally up all of the saved for backwards activations, which here are
     assumed to be saved in the compute precision BF16.</p>
 
@@ -117,12 +117,12 @@
       local cumulative lens="param-bytes" recipe="bf16" recompute="none" controls="static" detail
       nocaption></dsv3-layer>
 
-    <p>There are two obvious things we can do here: ZeRO (depending on the
-    level, reducing optimizer (ZeRO-1), gradient (ZeRO-2) or parameter (ZeRO-3, aka FSDP) sizes by a
-    factor of DP) and expert parallelism (reducing expert weights by a factor
-    of EP).  However, we cannot do full ZeRO-3 (sharding weights), as it
-    turns out a communication roofline show we will be communication bound (we
-    leave this analysis to a future post).  And with only ZeRO-1 and EP, we
+    <p>There are two obvious things we can do here: ZeRO (at ZeRO-3, this
+    would reduce optimizer state, gradient and parameter sizes by a factor of
+    DP) and expert parallelism (reducing expert weights by a factor of EP).
+    However, we cannot do full ZeRO-3, as it turns out a communication
+    roofline shows we will be communication bound (we leave this analysis to a
+    future post).  And with only ZeRO-1 (optimizer state only) and EP, we
     still cannot fit, so we need to bring out the big guns.</p>
 
     <h2>Pipeline parallelism</h2>
@@ -162,17 +162,44 @@
     <p>You may have noticed that there is a slight imbalance arising from the special cases at
     the beginning and end of the model (embedding, dense blocks, LM head).  It will turn out that this will be compensated for by the
     fact that the first PP rank doesn't need to save as many activations for backwards
-    (because there are less transformer blocks assigned to it.)</p>
+    (because there are fewer transformer blocks assigned to it.)</p>
 
+    <p>Second, pipeline parallelism implies the use of microbatching, where we
+    take our local batch and split it even further into microbatches, which are
+    then processed in an interleaved manner (this microbatching, by the way,
+    is why we need to maintain dedicated memory for gradients).  This
+    per-microbatch processing means that the amount of memory we need to save
+    activations for backwards is not based on the local batch size (global
+    batch size / DP), but instead based on the pipeline schedule: we don't get
+    to release saved activation memory until we've finished running the
+    backwards of a microbatch.  When we have a V shape, so that a single PP
+    rank is responsible for multiple chunks, we furthermore must be careful to
+    talk about the saved activation memory for a specific microbatch and chunk
+    (because the PP rank is responsible for computing two disjoint chunks of
+    transformer blocks on a single microbatch--the V!)</p>
 
-    <p>Assuming we have kept the number of GPUs and the global batch size constant,
-    what happens to our memory usage when we increase PP (correspondingly decreasing
-    DP)?  It's well known that increasing PP doesn't change the amount of memory you
-    save for activations.  This is because the increase in PP (which reduces the layers
-    you have to save activations for) correspondingly decreases DP (which increases your
-    local batch size).</p>
+    <p>Below, we've reproduced the classic DualPipeV schedule diagram, but by
+    selecting a specific PP rank there is a second visualization of the lifetime of saved activations
+    for each (microbatch, chunk) span. (Microbatches are identified by number, and then a chunk
+    is either light or dark.)</p>
 
-    <dsv3-pp-schedule style="min-height:505px" layer="local-diagram"></dsv3-pp-schedule>
+    <dsv3-pp-schedule style="min-height:446px" layer="local-diagram"></dsv3-pp-schedule>
+
+    <p>It turns out that in the DualPipeV schedule, we only ever need to hold
+    17 (microbatch, chunk) activations (colloquially, we might call this 8.5
+    microbatches, because each microbatch is associated with two chunks).
+    This is precisely "d + 1/2" (where d is the PP degree) as seen in the <a
+    href="https://hackmd.io/@ufotalent/r1lVXsa9Jg">cut-in-half row of the
+    table here</a>.  The 1/2 term here means that applying DualPipeV pipelining
+    slightly <em>increases</em> the amount of memory you need to save for backwards!</p>
+
+    <p>This suffices for the rest of our memory analysis.  However, to give
+    some broader context: DualPipeV is not "the schedule to rule them all."
+    In general, zero bubble schedules form a Pareto curve, where you trade off
+    between bubbles and activation memory usage.  You would like to reduce
+    bubbles (increase MFU) as much as possible, subject to the constraint of
+    fitting the model in memory.  In fact, the next section will be about
+    another such Pareto curve!</p>
 
     <h2>Activation checkpointing</h2>
 
