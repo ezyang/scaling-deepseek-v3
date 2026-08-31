@@ -1825,6 +1825,11 @@ export class Dsv3Layer extends HTMLElement {
     const LOCAL = PBYTES && this.hasAttribute('local');
     const CONS = LOCAL || (PBYTES && this.hasAttribute('consolidated'));
     const OPTIM = CONS || (PBYTES && this.hasAttribute('optim'));
+    // nostrips (PROTOTYPE): drop the in-box parameter squares entirely — at
+    // PP1/EP1 they are enormous and the message is just "this is big" (the
+    // log chart carries it); countable squares earn their keep only once
+    // things fit. Amber activation chips stay (they ARE the AC feedback).
+    const NOSTRIPS = this.hasAttribute('nostrips');
     const EPn = this.ep ?? 64, PPn = this.pp ?? LOCAL_PAR.pp, STG = this.stage ?? 1;
     const ZL = this.zero ?? 1;                               // ZeRO level (0 off · 1 optim · 2 +grads · 3 +weights)
     const WORLD = this.world ?? LOCAL_PAR.world;
@@ -2123,11 +2128,11 @@ export class Dsv3Layer extends HTMLElement {
       return n || (cells.some((r) => r.f > 0.02) ? 1 : 0);
     };
     const stripExtra = (nParams, cls, row = FLOP_ROW) => {   // box growth beyond the built-in strip row
-      if (!nParams || !(ABS || OPTIM)) return 0;
+      if (NOSTRIPS || !nParams || !(ABS || OPTIM)) return 0;
       return (Math.max(1, Math.ceil(stripCells(nParams, cls) / row)) - 1) * 6;
     };
     const paramBlocks = (x, y, nParams, cls, row = FLOP_ROW) => {
-      if (!PBYTES || !nParams) return;
+      if (NOSTRIPS || !PBYTES || !nParams) return;
       const cells = compCells(nParams, cls);
       let g = '', i = 0;
       for (const { c, n } of cells)
@@ -3709,14 +3714,26 @@ class Dsv3PpFold extends HTMLElement {
     const SL = 8, STW = 16, BRX = SL + STW + 2, RX0 = BRX + 8;
     const GUT = RX0 + 8 * 1.6 + 22, LX = GUT + 6, X0 = LX + 64;
     const RH = 14, PV = 21, BW = 420;
-    const H = 16 * PV + 24, W = X0 + BW + 152;   // + the linear axis band (caption rides past its end)
+    // blocks (PROTOTYPE): the linear chart leans into the site convention —
+    // squares/units for linear, bars for log. Each slot renders as tall-thin
+    // unit rects at the global byte quantum (448 MiB bf16 = 224M params),
+    // layer separations widen, and the x-scale is FIXED by the unit (the EP
+    // knob changes the unit count, so EP1 gets enormous — that's the honest
+    // picture; the essay arrives here with EP64 already applied)
+    const BLOCKS = this.hasAttribute('blocks');
+    const UNITP = 448 * 2 ** 20 / 2, UPX = 6, SLOTGAP = 3;   // params/unit · px/unit · layer margin
     const pTs = (c) => this.chunks[c].slotsP.map((v, i) =>
       this._epFrom ? this._epFrom[c][i] + (v - this._epFrom[c][i]) * this._ept : v);
     const pT = (c) => pTs(c).reduce((a, b) => a + b, 0);
     const rankP = (r) => this.chunks[r].p + this.chunks[15 - r].p;   // labels/data: the exact NEW values
     const rankPT = (r) => pT(r) + pT(15 - r);                        // geometry: tweened
-    const scale = BW / Math.max(...Array.from({ length: 8 }, (_, r) => rankPT(r)));
-    const wOf = (k) => pT(k.c) * scale;
+    const scale = BLOCKS ? UPX / UNITP
+      : BW / Math.max(...Array.from({ length: 8 }, (_, r) => rankPT(r)));
+    const wOf = (k) => pT(k.c) * scale + (BLOCKS ? SLOTGAP * pTs(k.c).length : 0);
+    const H = 16 * PV + 24;
+    const W = BLOCKS
+      ? X0 + Math.max(...Array.from({ length: 8 }, (_, r) => wOf(this.chunks[r]) + wOf(this.chunks[15 - r]))) + 160
+      : X0 + BW + 152;   // + the linear axis band (caption rides past its end)
     // ONE authored motion — the UNROLL (crease-outward release, v8 first,
     // decelerating arrivals — the paper-unrolling read): the fold plays the
     // same video in reverse, at recoil tempo (see _go). t stays raw;
@@ -3802,6 +3819,19 @@ class Dsv3PpFold extends HTMLElement {
         const gT = (chunkSlots(k).s0 + i2) / 62;
         const segFill = fitColor('#bcd8f3', '#134a8e', gT);
         const ink = gT < 0.5 ? '#0b3d75' : '#dcebfa';
+        if (BLOCKS) {
+          // tall-thin unit rects (memory), 448 MiB each; the last unit is a
+          // partial-width sliver so the drawn AREA stays exact (linear!)
+          const units = w2 / UPX;
+          for (let u = 0; u < Math.ceil(units) && u < 4000; u++) {
+            const frac = Math.min(1, units - u);
+            B.push(`<rect x="${(sx + u * UPX).toFixed(1)}" y="${y + 1}" width="${(4 * frac).toFixed(2)}" height="${RH - 2}" fill="${segFill}"/>`);
+          }
+          if (vocab)
+            B.push(`<rect x="${(sx - 1).toFixed(1)}" y="${y.toFixed(1)}" width="${(w2 + 1).toFixed(1)}" height="${RH}" fill="none" stroke="${gT < 0.5 ? '#0b3d75' : '#bcd8f3'}" stroke-dasharray="2.5 2"/>`);
+          sx += w2 + SLOTGAP;
+          continue;
+        }
         B.push(`<rect x="${sx.toFixed(1)}" y="${y.toFixed(1)}" width="${Math.max(0.5, w2 - 1).toFixed(1)}" height="${RH}" fill="${segFill}"/>`);
         // only the ODD segments name themselves: emb/head (below) and the
         // dense blocks — ordinary MoE layers stay blank (they're the norm)
@@ -3822,7 +3852,11 @@ class Dsv3PpFold extends HTMLElement {
     }
     // the x-axis: these bars are LINEAR (everything else on the site is
     // log₂) — ticks say so out loud
-    {
+    if (BLOCKS) {
+      const ay = 16 * PV + 4;
+      B.push(`<rect x="${X0}" y="${ay + 3}" width="4" height="${RH - 2}" fill="#52514e"/>` +
+        `<text x="${X0 + 10}" y="${ay + 13}" font-size="9" fill="#52514e">= 448 MiB bf16 (224M params) · LINEAR — the site's byte square, stood upright</text>`);
+    } else {
       const maxP = Math.max(...Array.from({ length: 8 }, (_, r) => rankP(r)));
       const pow = 10 ** Math.floor(Math.log10(maxP));
       const step = maxP / pow >= 5 ? 2 * pow : maxP / pow >= 2.5 ? pow : pow / 2;

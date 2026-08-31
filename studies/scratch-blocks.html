@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>scratch: squares-for-linear prototypes</title>
+  <link rel="stylesheet" href="./study.css">
+</head>
+
+<body>
+  <main>
+    <h1>scratch: squares-for-linear, bars-for-log</h1>
+    <p class="note">Prototypes for the proposed global visual language:
+      SQUARES (countable units) for linear charts, BARS for log charts, spans
+      for time intervals. Memory units are tall-thin rects; FLOP units are
+      squares. Not part of the series.</p>
+
+    <h2>1 · fold map in blocks (memory = tall-thin units, 448 MiB each)</h2>
+    <p class="note">Fixed unit, so the EP knob changes the COUNT (try EP1 —
+      the honest explosion). Layer separations widened; the last unit of each
+      layer is a partial-width sliver so drawn area stays exact.</p>
+    <dsv3-pp-fold blocks style="min-height:447px"></dsv3-pp-fold>
+
+    <p class="note">The current bar rendering, for comparison:</p>
+    <dsv3-pp-fold style="min-height:447px"></dsv3-pp-fold>
+
+    <h2>2 · per-rank compute: eight rectangles of FLOP squares</h2>
+    <p class="note">Same fold, area = forward FLOPs per token instead of
+      width = resident params. One tile per slot (emb is a dashed stub — a
+      lookup, no FLOPs; the head is dashed but LARGE). Compute is
+      EP-independent (activated experts, not resident ones) — no knob.</p>
+    <dsv3-pp-flops style="min-height:400px"></dsv3-pp-flops>
+
+    <h2>3 · full sim without parameter squares (nostrips)</h2>
+    <p class="note">The PP1/EP1 answer: stop drawing the in-box parameter
+      squares entirely — when nothing fits, the message is "this is big" and
+      the log chart carries it. Amber activation chips stay. Compare with the
+      live 02 sim.</p>
+    <dsv3-anatomy style="min-height:900px" lens="param-bytes" local cumulative recipe="bf16"
+      recompute="none" layer="blocks-local" detail controls="static" nocaption nostrips></dsv3-anatomy>
+
+  </main>
+  <script type="module" src="../src/viewer.js"></script>
+  <script type="module">
+    // ---- <dsv3-pp-flops> (page-local prototype): the fold, priced in FLOPs.
+    // Eight rank rows; each slot is a TILE of FLOP squares (4-square-tall
+    // grid), so area = compute. Squares because FLOPs are the linear/countable
+    // quantity here; the unit is stated in time at peak.
+    import '../src/anatomy.js';
+    import { DSV3, fmtNum } from '../src/model.js';
+    import { blockGraph } from '../src/blockgraph.js';
+    import { resolveMatmuls } from '../src/memory.js';
+    import { ppStage } from '../src/viewer.js';
+
+    const mm = resolveMatmuls({ recipe: 'bf16' });
+    const layerF = {};
+    for (const kind of ['dense', 'moe'])
+      layerF[kind] = blockGraph(kind, DSV3, mm, 4096).reduce((t, n) => t + n.flopsTok, 0);
+    const headF = 2 * DSV3.hidden * DSV3.vocab;
+    const UNIT = 20e6;                                    // 20 MFLOP/token per square
+    const usPerMb = (UNIT * 4096 / 989e12 * 1e6).toFixed(0); // its time at H800 bf16 peak
+    const lerpHex = (a, b, t) => '#' + [0, 1, 2].map(i =>
+      Math.round(parseInt(a.slice(1 + 2 * i, 3 + 2 * i), 16) * (1 - t)
+        + parseInt(b.slice(1 + 2 * i, 3 + 2 * i), 16) * t).toString(16).padStart(2, '0')).join('');
+
+    class Dsv3PpFlops extends HTMLElement {
+      connectedCallback() {
+        // slots per chunk, in model order: [kind, slotIndex 0..62]
+        const chunkSlots = (c) => {
+          const g = ppStage(c, 16, 1, 'reflect');
+          const seg = g.segs[0];
+          return [...(g.emb ? [['emb', 0]] : []),
+            ...Array.from({ length: seg.hi - seg.lo }, (_, i) =>
+              [seg.lo + i < 3 ? 'dense' : 'moe', seg.lo + i + 1]),
+            ...(g.head ? [['head', 62]] : [])];
+        };
+        const fOf = (kind) => kind === 'emb' ? 0 : kind === 'head' ? headF : layerF[kind];
+        const SQ = 5, PITCH = 6, TR = 4;                  // square, pitch, tile rows
+        const X0 = 150, RH = TR * PITCH, PV = RH + 12;
+        const P = [];
+        let maxX = 0;
+        const ranks = Array.from({ length: 8 }, (_, r) => [...chunkSlots(r), null, ...chunkSlots(15 - r)]);
+        const totals = ranks.map(slots => slots.reduce((t, s) => t + (s ? fOf(s[0]) : 0), 0));
+        ranks.forEach((slots, r) => {
+          const y = r * PV;
+          P.push(`<text x="${X0 - 8}" y="${y + RH - 8}" text-anchor="end" font-size="10" font-weight="600" fill="#52514e">s${r}</text>`);
+          let x = X0;
+          for (const s of slots) {
+            if (!s) { x += 10; continue; }                // chunk divider (down vs up pass)
+            const [kind, slot] = s;
+            const fill = lerpHex('#fdeab5', '#7a5200', slot / 62);
+            const units = fOf(kind) / UNIT;
+            const cols = Math.ceil(units / TR);
+            if (kind === 'emb') {
+              P.push(`<rect x="${x}" y="${y}" width="8" height="${RH - 1}" fill="none" stroke="#b9b7ae" stroke-dasharray="2.5 2"/>`);
+              x += 8 + 4; continue;
+            }
+            for (let u = 0; u < Math.ceil(units); u++) {
+              const frac = Math.min(1, units - u);
+              P.push(`<rect x="${x + Math.floor(u / TR) * PITCH}" y="${y + (u % TR) * PITCH}" width="${(SQ * frac).toFixed(2)}" height="${SQ}" fill="${fill}"/>`);
+            }
+            if (kind === 'head')
+              P.push(`<rect x="${x - 1.5}" y="${y - 1.5}" width="${cols * PITCH + 2}" height="${RH + 2}" fill="none" stroke="#7a5200" stroke-dasharray="2.5 2"/>`);
+            x += cols * PITCH + 4;
+          }
+          maxX = Math.max(maxX, x);
+          P.push(`<text data-rank="${r}" data-gf="${totals[r]}" x="${x + 8}" y="${y + RH - 8}" font-size="9.5" fill="#898781">${fmtNum(totals[r])} FLOP/tok${r === 0 ? ` (${(totals[0] / totals[1]).toFixed(2)}× an interior rank)` : ''}</text>`);
+        });
+        const W = maxX + 190, H = 8 * PV + 26;
+        P.push(`<rect x="${X0}" y="${8 * PV + 4}" width="${SQ}" height="${SQ}" fill="#52514e"/>`
+          + `<text x="${X0 + 10}" y="${8 * PV + 10}" font-size="9" fill="#52514e">= 20 MFLOP/token ≈ ${usPerMb} µs per 4096-token microbatch at bf16 peak · fwd only (bwd = 2×) · LINEAR</text>`);
+        this.innerHTML = `<div style="font:12px system-ui;color:#0b0b0b;border:1px solid #e1e0d9;border-radius:6px;background:#fcfcfb;padding:8px 10px;width:max-content;max-width:100%;box-sizing:border-box;overflow-x:auto;">`
+          + `<div style="font-size:11.5px;color:#52514e;padding-bottom:6px;">forward compute per rank — one tile per layer (depth gradient), dashed = vocab (emb: a lookup, no FLOPs; head: real GEMM work)</div>`
+          + `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" font-family="system-ui">${P.join('')}</svg></div>`;
+      }
+    }
+    customElements.define('dsv3-pp-flops', Dsv3PpFlops);
+  </script>
+</body>
+
+</html>
