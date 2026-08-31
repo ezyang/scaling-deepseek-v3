@@ -3007,7 +3007,8 @@ if (typeof customElements !== 'undefined' && !customElements.get('dsv3-layer')) 
 const PPS_CSS = `
 dsv3-pp-schedule { display: block; margin: 14px 0; }
 .pps { font: 12px system-ui, -apple-system, "Segoe UI", sans-serif; color: #0b0b0b;
-  border: 1px solid #e1e0d9; border-radius: 6px; background: #fcfcfb; padding: 8px 10px; }
+  border: 1px solid #e1e0d9; border-radius: 6px; background: #fcfcfb; padding: 8px 10px;
+  width: max-content; max-width: 100%; box-sizing: border-box; }   /* cards hug their strip (wide strips cap + scroll) */
 .pps .top { display: flex; align-items: flex-start; gap: 12px; padding-bottom: 8px; flex-wrap: wrap; }
 ${knobCss('.pps .top')}
 .pps .hd { color: #52514e; font-size: 11.5px; align-self: center; }
@@ -3460,7 +3461,8 @@ class Dsv3PpSchedule extends HTMLElement {
 const PPF_CSS = `
 dsv3-pp-fold { display: block; margin: 14px 0; }
 .pf { font: 12px system-ui, -apple-system, "Segoe UI", sans-serif; color: #0b0b0b;
-  border: 1px solid #e1e0d9; border-radius: 6px; background: #fcfcfb; padding: 8px 10px; }
+  border: 1px solid #e1e0d9; border-radius: 6px; background: #fcfcfb; padding: 8px 10px;
+  width: max-content; max-width: 100%; box-sizing: border-box; }   /* hug the chart, like snapshot cards */
 .pf .top { display: flex; align-items: flex-end; gap: 14px; padding-bottom: 6px; }
 ${knobCss('.pf .top')}
 .pf .top button.cyc { font: 12px ui-monospace, monospace; padding: 3px 12px; border: 1px solid #c3c2b7;
