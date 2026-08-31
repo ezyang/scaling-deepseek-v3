@@ -111,6 +111,20 @@ T.check('sub-picket GEMMs wear the hollow trace',
     !ac.querySelector('.lv-scroll g[opacity] text.tredo'), '');
   btn(ac, 'recompute', 'dsv3').click(); await T.tick(400);
 }
+// ---- always-detail: no elided-kernels toggle; the latent norms are markable
+{
+  T.check('AC tier is always the detail view (RoPE micros drawn)',
+    [...ac.querySelectorAll('.lv-scroll text')].some(t => t.textContent === 'RoPE'), '');
+  T.check('no elided-kernels checkbox on the house head',
+    ![...ac.querySelectorAll('.lv-head label')].some(l => l.textContent.includes('elided')), '');
+  btn(ac, 'recompute', 'none').click(); await T.tick(400);
+  const qb = ac.querySelector('button[data-mark="q_norm"]');
+  T.check('the q-latent RMSNorm micro carries a mark button', qb?.textContent === '💾', qb?.textContent);
+  qb.click(); await T.tick(400);
+  T.check('hand-flipping q_norm lands on custom and reprices',
+    btn(ac, 'recompute', 'custom').classList.contains('on') && /= 117\.8 GiB/.test(tHead(ac)), tHead(ac));
+  btn(ac, 'recompute', 'dsv3').click(); await T.tick(400);
+}
 { // dtype flip: the picket count pours through the tween (fixed unit)
   btn(f8, 'recipe', 'bf16').click(); await T.tick(60);
   const mid = fwdN(f8);

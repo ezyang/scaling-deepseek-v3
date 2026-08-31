@@ -1442,6 +1442,10 @@ export class Dsv3Layer extends HTMLElement {
     // segment plus an always-reserved 'custom' chip, so a hand-edited state
     // lights up without reflowing the row
     if (cmode === 'marks' || cmode === 'dtype') {
+      // these tiers are ALWAYS the detail view (one canonical diagram: every
+      // markable op visible — the MLA latent norms carry marks too), so the
+      // elided-kernels toggle is gone
+      this.detail = true;
       const hh = el('div', 'lv-head');
       const segGrp = (label, name, opts, cur, apply) => {
         const g = el('span', 'pargrp');
@@ -1469,7 +1473,7 @@ export class Dsv3Layer extends HTMLElement {
       if (this._ctl.dtype) hh.append(tl);
       reset.style.cssText = 'font:11px ui-monospace,monospace;padding:2px 8px;border:1px solid #c3c2b7;' +
         'border-radius:4px;background:#fff;cursor:pointer;margin-left:auto;';
-      hh.append(dl, mkDimsBtn(), reset);
+      hh.append(mkDimsBtn(), reset);
       root.append(hh);
     } else if (cmode !== 'static') root.append(head);
     if (cmode === 'static') {
@@ -2269,6 +2273,10 @@ export class Dsv3Layer extends HTMLElement {
         if (s2 === 'save' || s2 === 'pin') {
           const n2 = A.byId[id] ?? n;
           const dtag = ids.some(i2 => A.dual.has(i2)) ? ' ᵀ×2' : '';
+          // narrow fork/shared columns (ov.short) go TWO lines — one line
+          // runs into the neighbouring column (the CONS chips' pattern)
+          if (ov?.short) return `<text class="tensor tsave" x="${x}" y="${y + 8}">${needDir(ids)} ${esc(name0)}${s2 === 'pin' ? ' 🔒' : ''}</text>` +
+            `<text class="tensor tsave" x="${x}" y="${y + 21}">${fmtMem(bytesA(A))} <tspan fill="${DT_STYLE[dtOf(n2)]}">${dtOf(n2)}${dtag}</tspan></text>`;
           return `<text class="tensor tsave" x="${x}" y="${y + 8}">${needDir(ids)} ${esc(name0)} · ${fmtMem(bytesA(A))} ` +
             `<tspan fill="${DT_STYLE[dtOf(n2)]}">${dtOf(n2)}${dtag}</tspan>${s2 === 'pin' ? ' 🔒' : ''}</text>`;
         }
@@ -2283,9 +2291,9 @@ export class Dsv3Layer extends HTMLElement {
       const SAVED = (s2) => s2 === 'save' || s2 === 'pin';
       if (SAVED(st) || (stP2 != null && SAVED(stP2))) {
         const bT = lerpQ(stP2 == null ? bytes : SAVED(stP2) ? bytesA(anaP) : 0, SAVED(st) ? bytes : 0);
-        const g = blockGrid(bT, x, y + 12, !VQ);
+        const g = ov?.short ? blockGrid(bT, x + 88, y + 13, !VQ) : blockGrid(bT, x, y + 12, !VQ);
         P.push(g.svg);
-        if (SAVED(st)) h = 12 + g.rows * (g.pitch ?? 6) + 2;
+        if (SAVED(st)) h = ov?.short ? 25 : 12 + g.rows * (g.pitch ?? 6) + 2;
       }
       return h;
     };
@@ -2349,6 +2357,9 @@ export class Dsv3Layer extends HTMLElement {
       const body = `<rect class="micro" x="${x}" y="${y}" width="${w}" height="18" rx="9"/>` +
         `<text class="microlabel" x="${x + 9}" y="${y + 13}">${label}${pc ? `<tspan class="dims"> ${pc}</tspan>` : ''}</text>`;
       P.push(tip2 || opId ? `<g${opId ? ` data-op="${opId}"` : ''}${tip2 ? ` data-tip="${escAttr(tip2)}"` : ''}>${body}</g>` : body);
+      // real graph nodes drawn as micros (the MLA latent RMSNorms) carry the
+      // save/recompute button like any other markable op
+      if (opId && ana.byId[opId] && !ana.byId[opId].always) P.push(modeBtn([opId], x + w - 28, y - 1));
       return y + 18;
     };
     const plus = (cx, y) => P.push(`<circle cx="${cx}" cy="${y}" r="9" class="box"/>` +
@@ -2702,7 +2713,7 @@ export class Dsv3Layer extends HTMLElement {
     z = opNode('swiglu', DET ? 'SwiGLU · × top-k weight (one fused kernel)' : 'SwiGLU', C2, z);
     if (DET) {
       micro('SwiGLU (ungated)', SHX, rowS, 140);
-      tensorChip(['swiglu'], shMid + 14, z + 4, { name: 'swiglu out (sh)', tdims: '2048', frac: 1 / nExp });
+      tensorChip(['swiglu'], shMid + 14, z + 4, { name: 'swiglu out (sh)', tdims: '2048', frac: 1 / nExp, short: true });
     }
     z = wireOut(['swiglu'], SX2, z, DET ? { name: 'swiglu out (routed)', tdims: `${DSV3.topk}×2048`, frac: DSV3.topk / nExp } : undefined);
     if (DET) wire(shMid, rowS + 18, z);
@@ -3239,19 +3250,28 @@ class Dsv3PpSchedule extends HTMLElement {
     // once clicked the strip holds focus, so ↑/↓ walk the stages
     this._scr.tabIndex = -1;
     this._scr.style.outline = 'none';
-    // Perfetto-style panning: shift+drag scrubs the timeline (the strip is
-    // usually wider than the column). Shift also parks the grab cursor, and
-    // a shift-click never picks a stage or pins a lane — it means PAN.
+    // Perfetto-style panning, DIRECTLY: press and drag pans the timeline
+    // (the strip is usually wider than the column); a stationary click still
+    // picks a stage or pins a lane. A 4px horizontal threshold splits the
+    // two — once a drag becomes a pan, it suppresses the click that follows.
+    // Shift+drag pans from the first pixel (and a shift-click never picks).
     this._scr.addEventListener('mousemove', (e) => {
       if (!this._scr.classList.contains('panning'))
-        this._scr.classList.toggle('pannable', e.shiftKey);
+        this._scr.classList.toggle('pannable', e.shiftKey || this._scr.scrollWidth > this._scr.clientWidth + 2);
     });
     this._scr.addEventListener('mousedown', (e) => {
-      if (!e.shiftKey) return;
+      if (e.button !== 0) return;
       e.preventDefault();
+      this._justPanned = false;
       const sx = e.clientX, sl = this._scr.scrollLeft;
-      this._scr.classList.add('panning');
-      const mv = (e2) => { this._scr.scrollLeft = sl - (e2.clientX - sx); };
+      let live = e.shiftKey;                 // shift: pan from the first pixel
+      if (live) this._scr.classList.add('panning');
+      const mv = (e2) => {
+        if (!live && Math.abs(e2.clientX - sx) <= 4) return;
+        if (!live) { live = true; this._scr.classList.add('panning'); }
+        this._justPanned = true;
+        this._scr.scrollLeft = sl - (e2.clientX - sx);
+      };
       const up = () => {
         document.removeEventListener('mousemove', mv);
         document.removeEventListener('mouseup', up);
@@ -3261,7 +3281,7 @@ class Dsv3PpSchedule extends HTMLElement {
       document.addEventListener('mouseup', up);
     });
     this._scr.addEventListener('click', (e) => {
-      if (e.shiftKey) return;   // that was a pan, not a pick
+      if (e.shiftKey || this._justPanned) { this._justPanned = false; return; }   // that was a pan, not a pick
       const g = e.target.closest('g.lane');
       if (g) {   // clicking an in-flight bar lights up ITS two ops in the
         // schedule — the F that made the stash and the B that frees it — and

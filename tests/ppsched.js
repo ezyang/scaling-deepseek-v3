@@ -86,4 +86,28 @@ document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
 gutter.dispatchEvent(new MouseEvent('click', { bubbles: true, shiftKey: true })); await T.tick(200);
 T.check('shift-click does not pick a stage', l().stage === stage0 && !scr.classList.contains('panning'), l().stage);
 scr.scrollLeft = 0;
+// DIRECT drag-pan (no shift): press + drag past the 4px threshold pans and
+// suppresses the click; a stationary click still picks
+{
+  const s0b = l().stage;
+  gutter.dispatchEvent(new MouseEvent('mousedown', { clientX: 300, bubbles: true }));
+  document.dispatchEvent(new MouseEvent('mousemove', { clientX: 297, bubbles: true }));
+  T.check('a 3px jiggle is not a pan yet', !scr.classList.contains('panning'), '');
+  document.dispatchEvent(new MouseEvent('mousemove', { clientX: 160, bubbles: true })); await T.tick(30);
+  T.check('dragging past the threshold pans', scr.classList.contains('panning') && scr.scrollLeft > 60, scr.scrollLeft);
+  document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+  gutter.dispatchEvent(new MouseEvent('click', { bubbles: true })); await T.tick(200);
+  T.check('the pan suppresses the click (no pick)', l().stage === s0b, l().stage);
+  scr.scrollLeft = 0;
+  // stationary press-release on a gutter row still picks
+  const g1 = scr.querySelector('rect.stghit[data-stage="1"]');
+  g1.dispatchEvent(new MouseEvent('mousedown', { clientX: 300, bubbles: true }));
+  document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+  g1.dispatchEvent(new MouseEvent('click', { bubbles: true })); await T.tick(500);
+  T.check('a stationary click still picks', l().stage === 1, l().stage);
+  T.check('overflowing strip parks the grab cursor without shift', (() => {
+    scr.dispatchEvent(new MouseEvent('mousemove', { bubbles: true }));
+    return scr.classList.contains('pannable');
+  })(), '');
+}
 T.done();

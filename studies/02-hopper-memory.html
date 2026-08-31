@@ -210,8 +210,9 @@
     the amount of memory we need for backwards is activation checkpointing:
     we trade MFU for memory, by simply dropping some quantities in the initial
     forward and recomputing them in backwards.  This strategy is especially
-    attractive as it can be adjusted in a bitwise equivalent way (which is not
-    true for the low precision tricks in the next section.)</p>
+    attractive as we can change how much recompute we do without changing bitwise
+    numerics (this is not true for the low precision tricks in the next
+    section.)</p>
 
     <p>While there a number of different ways to reason about activation
     checkpointing, in this post I am going to explain AC on DeepSeek-V3 using
@@ -224,7 +225,7 @@
     manually saved it (potentially increasing your memory usage!)  You can play around with
     this below:</p>
 
-    <dsv3-anatomy style="min-height:869px" layer="ac-layer" controls="marks" recipe="bf16" recompute="dsv3"
+    <dsv3-anatomy style="min-height:956px" layer="ac-layer" controls="marks" recipe="bf16" recompute="dsv3"
       xlayers="8" xinflight="8.5" xtag="an interior rank of PP8 · DualPipeV steady state"></dsv3-anatomy>
 
     <p>Some things to notice as you play with the marks:</p>
@@ -268,7 +269,7 @@
     stored in the dtype of the GEMM that will read it during backward.  Flip
     the dtype buttons below and watch the stash sizes follow.</p>
 
-    <dsv3-anatomy style="min-height:869px" layer="fp8-layer" controls="dtype" recipe="dsv3-fp8" recompute="none"
+    <dsv3-anatomy style="min-height:956px" layer="fp8-layer" controls="dtype" recipe="dsv3-fp8" recompute="none"
       xlayers="8" xinflight="8.5" xtag="an interior rank of PP8 · DualPipeV steady state"></dsv3-anatomy>
 
     <p>Two recipes matter for us.  The <em>dsv3-fp8</em> recipe is the Hopper
