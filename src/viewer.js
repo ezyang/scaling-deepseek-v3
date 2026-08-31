@@ -1827,7 +1827,7 @@ export class Dsv3Layer extends HTMLElement {
           ? 'Each wire label is an output, tagged with the recompute policy\u2019s derived result \u2014'
           : 'Each wire label is an output, tagged with whether backward reads it \u2014',
       this._ctl.quant
-        ? '\u2193 \u2191 \u21c5 saved for backward, read by the op below / above / both; \u21d3 \u21d1 \u21d5 saved as a RECOMPUTE anchor \u2014 every reader is a replay ' +
+        ? '\u2193 \u2191 \u21c5 saved for backward, read by the op below / above / both; \u21d3 \u21d1 \u21d5 read by a RECOMPUTE (replay) instead \u2014 both families appear when a tensor serves both roles ' +
           '(\u25aa = 4 KiB/token; violet boxes = communication), ' +
           '\u21bb recomputed, \u00b7 not needed, \ud83d\udd12 always saved; ' +
           'right arrows are aux backward artifacts (rstd, lse), \u2190 saved unless their op replays.'
@@ -2327,12 +2327,17 @@ export class Dsv3Layer extends HTMLElement {
     // input), the arrow goes double-struck: ⇓ ⇑ ⇕ — the paper's own framing
     // ('cache the inputs of the SwiGLU operator and recompute its output')
     const needDir = (ids) => {
-      const by = new Set(ids.flatMap(i => [...(ana.neededBy.get(i) ?? [])]));
-      const up = ids.some(i => by.has(i));
-      const down = [...by].some(b => !ids.includes(b));
-      const anchor = by.size > 0 && [...by].every(c => c === 'replay anchor' || ana.replayed.has(c));
-      const [dnA, upA, bothA] = anchor ? ['⇓', '⇑', '⇕'] : ['↓', '↑', '⇅'];
-      return up && down ? bothA : up ? upA : dnA;
+      const by = ids.flatMap(i => [...(ana.neededBy.get(i) ?? [])]);
+      const isR = (c) => c === 'replay anchor' || ana.replayed.has(c);
+      const dir = (set2, glyphs) => {
+        if (!set2.size) return '';
+        const up = [...set2].some(c => ids.includes(c));
+        const down = [...set2].some(c => !ids.includes(c));
+        return glyphs[up && down ? 2 : up ? 1 : 0];
+      };
+      // a tensor can serve BOTH roles — show both families side by side
+      return (dir(new Set(by.filter(c => !isR(c))), ['↓', '↑', '⇅'])
+        + dir(new Set(by.filter(isR)), ['⇓', '⇑', '⇕'])) || '↓';
     };
     // ov (optional): display-split override for a chip that shows part of one
     // graph node — { name, tdims, frac } (bytes and grid scale by frac)

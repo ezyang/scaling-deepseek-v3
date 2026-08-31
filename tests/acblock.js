@@ -237,6 +237,13 @@ T.check('sub-picket GEMMs wear the hollow trace',
     ['latent', 'gate, up (routed)', 'x1'].every(n => chipTxts.some(t => /^[⇓⇑⇕]/.test(t) && t.includes(n))), '');
   T.check('direct backward stashes keep single arrows (dispatched tokens)',
     chipTxts.some(t => t.startsWith('↓') && t.includes('dispatched')), '');
+  // mixed role = BOTH families: none + gate_up ↻ makes norm2-out serve
+  // router's backward (↓) AND the gate/up replay (⇓)
+  btn(ac, 'recompute', 'none').click(); await T.tick(300);
+  ac.querySelector('button[data-mark="gate_up"]').click(); await T.tick(400);
+  T.check('a both-roles tensor shows both arrows (↓⇓ norm2 out)',
+    [...ac.querySelectorAll('.lv-scroll text.tsave')].some(t => t.textContent.startsWith('↓⇓') && t.textContent.includes('norm2')), '');
+  btn(ac, 'recompute', 'dsv3').click(); await T.tick(300);
   btn(ac, 'recompute', 'none').click(); await T.tick(400);
   T.check('the block-output add wears the locked \ud83d\udd12 (its output IS next-x0)',
     [...ac.querySelectorAll('.lv-scroll button:disabled')].filter(b => b.textContent === '\ud83d\udd12').length === 1, '');
