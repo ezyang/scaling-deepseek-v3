@@ -34,6 +34,14 @@
     <dsv3-anatomy style="min-height:820px" layer="sq-ac" controls="marks" recipe="bf16" recompute="dsv3"
       xlayers="8" xinflight="8.5" xtag="an interior rank of PP8 · DualPipeV steady state" flopsq></dsv3-anatomy>
 
+    <h2>2b · solid GEMM rects at their literal dims (no atomization)</h2>
+    <p class="note">Eyeball prototype: each matmul drawn as ONE solid rectangle,
+      input dim = height, output dim = width (1px = 100 dims), so area ∝
+      FLOPs/token by construction (2 per weight). Grouped experts are 9 slabs;
+      attention is the odd one out — its width is CONTEXT (seq/2), not a weight
+      dim; the lm head runs off the panel (vocab).</p>
+    <dsv3-gemm-shapes style="min-height:560px"></dsv3-gemm-shapes>
+
     <p class="note">Earlier riff, kept for reference — the same unit rolled up
       per RANK (it surfaced that s0 runs 0.80× an interior rank's compute):</p>
     <dsv3-pp-flops style="min-height:400px"></dsv3-pp-flops>
@@ -125,6 +133,56 @@
       }
     }
     customElements.define('dsv3-pp-flops', Dsv3PpFlops);
+
+    // ---- <dsv3-gemm-shapes> (page-local prototype): every GEMM in the MoE
+    // block as a SOLID rect at its literal matrix dims — input dim = height,
+    // output dim = width — so area ∝ FLOPs/token with no atomization.
+    class Dsv3GemmShapes extends HTMLElement {
+      connectedCallback() {
+        const K = 0.01;                       // 1px = 100 dims
+        const DT = { bf16: '#52514e', mxfp8: '#2a78d6', fp32: '#9c3a96' };
+        const OPS = [
+          // [col, name, d_in, d_out, count, dtype, note]
+          [0, 'q/kv down-proj', 7168, 2112, 1, 'bf16', '7168 → 1536+512+64'],
+          [0, 'q up-proj', 1536, 24576, 1, 'bf16', '1536 → 128×192'],
+          [0, 'kv up-proj', 512, 32768, 1, 'bf16', '512 → 128×(128+128)'],
+          [0, 'attention', 2048, 57344, 1, 'bf16', 'CONTEXT (seq/2 = 2048) × 128 heads × (320+128) — no weights'],
+          [0, 'attn out-proj', 16384, 7168, 1, 'bf16', '128×128 → 7168'],
+          [1, 'router', 7168, 256, 1, 'bf16', '7168 → 256 (a sliver)'],
+          [1, 'ffn gate/up', 7168, 4096, 9, 'bf16', '7168 → 2×2048, ×9 fired experts'],
+          [1, 'ffn down', 2048, 7168, 9, 'bf16', '2048 → 7168, ×9 fired experts'],
+          [2, 'lm head', 7168, 129280, 1, 'bf16', '7168 → 129280 — the vocab dim dwarfs everything (scroll →)'],
+        ];
+        const COLX = [30, 640], PW = 1420;
+        const colY = [16, 16];
+        const P = [];
+        const draw = (x, y, name, di, dout, cnt, dt, note) => {
+          const h = Math.max(2, di * K), w0 = Math.max(2, dout * K);
+          P.push(`<text x="${x}" y="${y + 10}" font-size="10" font-weight="600" fill="#0b0b0b">${name}</text>` +
+            `<text x="${x}" y="${y + 21}" font-size="8.5" fill="#898781">${note}</text>`);
+          let cx = x;
+          for (let i = 0; i < cnt; i++) {
+            const w = Math.min(w0, PW - cx - 8);
+            P.push(`<rect x="${cx}" y="${y + 26}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" fill="${DT[dt]}" fill-opacity="0.16" stroke="${DT[dt]}" stroke-width="1"/>`);
+            if (w < w0) {   // torn edge: it kept going
+              P.push(`<path d="M ${(cx + w + 2).toFixed(1)} ${y + 26} l 3 ${h / 4} l -3 ${h / 4} l 3 ${h / 4} l -3 ${h / 4}" stroke="${DT[dt]}" fill="none"/>`);
+              break;
+            }
+            cx += w0 + 3;
+          }
+          return y + 26 + h + 14;
+        };
+        for (const [c, name, di, dout, cnt, dt, note] of OPS) {
+          if (c === 2) { const y = Math.max(colY[0], colY[1]); colY[0] = draw(COLX[0], y, 'lm head', di, dout, cnt, dt, note); continue; }
+          colY[c] = draw(COLX[c], colY[c], name, di, dout, cnt, dt, note);
+        }
+        const H = Math.max(colY[0], colY[1]) + 8;
+        this.innerHTML = `<div style="font:12px system-ui;color:#0b0b0b;border:1px solid #e1e0d9;border-radius:6px;background:#fcfcfb;padding:8px 10px;width:max-content;max-width:100%;box-sizing:border-box;overflow-x:auto;">`
+          + `<div style="font-size:11.5px;color:#52514e;padding-bottom:4px;">the MoE block's GEMMs to scale — height = input dim, width = output dim (1px = 100), area ∝ FLOPs/token</div>`
+          + `<svg width="${PW}" height="${H}" viewBox="0 0 ${PW} ${H}" font-family="system-ui">${P.join('')}</svg></div>`;
+      }
+    }
+    customElements.define('dsv3-gemm-shapes', Dsv3GemmShapes);
   </script>
 </body>
 
