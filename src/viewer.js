@@ -2508,7 +2508,7 @@ export class Dsv3Layer extends HTMLElement {
       const replayed = ana.replayed.has(id); // a replay regenerates its aux
       // attention sits inside the MLA group: its lse label starts past the
       // group border so the border never cuts through the text
-      const xt = (id === 'attn' && MLAGW) ? Math.max(x + W + 14, C1 - 10 + MLAGW + 8) : x + W + 14;
+      const xt = (id === 'attn' && MLAGW && !(this._ctl.quant && this.detail)) ? Math.max(x + W + 14, C1 - 10 + MLAGW + 8) : x + W + 14;
       const txt = (rep) => rep
         ? `<text class="tensor tredo" x="${xt}" y="${yMid + 3}">↻ ${esc(n.aux.name)}</text>`
         : !this._ctl.quant
@@ -2611,7 +2611,10 @@ export class Dsv3Layer extends HTMLElement {
     y = wireOut(['norm1'], SX1, y); g1 = y + 3; y += 27;
     let bypX = 0;                                // k_rope rail x (set in the MLA fork block)
     {
-      const RX = C1 + 150 + 22;
+      // the AC tiers widen the fork (+50) so saved-chip lines never wrap;
+      // static/params/local keep the published 150 (01 is live)
+      const KVO = this._ctl.quant && DET ? 200 : 150;
+      const RX = C1 + KVO + 22;
       // the down-projection is two separate GEMMs in production stacks
       // (wq_a | wkv_a in every production stack), so it is split at every tier:
       // fork norm1-out first
@@ -2635,7 +2638,7 @@ export class Dsv3Layer extends HTMLElement {
       const pQ = pk(DSV3.hidden * DSV3.qRank), pKV = pk(DSV3.hidden * (DSV3.kvRank + DSV3.qkRope));
       const exQ = dhalf(C1, 'q down-proj', '7168 → 1536',
         `2 · 7168 · 1536 FLOP/token — wq_a; a separate GEMM from kv down-proj in production stacks\nparameters: ${(DSV3.hidden * DSV3.qRank).toLocaleString('en-US')}`, qFrac, true, pQ, DSV3.hidden * DSV3.qRank);
-      const exKV = dhalf(C1 + 150, 'kv down-proj', '7168 → 512 + 64',
+      const exKV = dhalf(C1 + KVO, 'kv down-proj', '7168 → 512 + 64',
         `2 · 7168 · (512 + 64) FLOP/token — wkv_a; shares q down-proj’s mark and dtype (one graph node — the buttons are MIRRORS)\nparameters: ${(DSV3.hidden * (DSV3.kvRank + DSV3.qkRope)).toLocaleString('en-US')}`, 1 - qFrac, true, pKV, DSV3.hidden * (DSV3.kvRank + DSV3.qkRope));
       y += HBH + Math.max(exQ, exKV);   // the pair advances together
       // display-split of the one latents stash. What backward keeps is the
@@ -2644,10 +2647,10 @@ export class Dsv3Layer extends HTMLElement {
       // (64) leaves from its bottom-right corner immediately and rides an
       // outer rail (clear of chip text) down to the kv-side RoPE.
       const latTot = DSV3.qRank + DSV3.kvRank;   // the k_rope dims are never stashed
-      bypX = C1 + 358;                           // k_rope rail, clear of all chip text
+      bypX = C1 + 208 + KVO;                     // k_rope rail, clear of all chip text
       let bypTop = 0;
       if (DET) {
-        const kx = C1 + 272;
+        const kx = C1 + KVO + 122;
         bypTop = y + 14;
         P.push(`<path class="wire" d="M ${kx} ${y} L ${kx} ${bypTop} L ${bypX} ${bypTop}"/>`);
         if (!PONLY) P.push(`<text class="tensor tidle" x="${kx + 6}" y="${bypTop - 4}">· k_rope · ${DSV3.qkRope}</text>`);
@@ -2655,9 +2658,9 @@ export class Dsv3Layer extends HTMLElement {
         // pre-norm latent chips: real graph state (saved at no-AC — the latent
         // norms' backward input; the replay anchor under recompute presets)
         tensorChip(['qkv_down'], SX1 + 14, y + 24,
-          { name: 'q latent', tdims: String(DSV3.qRank), frac: DSV3.qRank / latTot, short: true, readers: ['q_norm'] });
+          { name: 'q latent', tdims: String(DSV3.qRank), frac: DSV3.qRank / latTot, short: !this._ctl.quant, readers: ['q_norm'] });
         tensorChip(['qkv_down'], RX + 14, y + 24,
-          { name: 'kv latent', tdims: String(DSV3.kvRank), frac: DSV3.kvRank / latTot, short: true, readers: ['kv_norm'] });
+          { name: 'kv latent', tdims: String(DSV3.kvRank), frac: DSV3.kvRank / latTot, short: !this._ctl.quant, readers: ['kv_norm'] });
         wire(SX1, y, y + 48);
         P.push(`<path class="wire" d="M ${RX} ${y} L ${RX} ${y + 48}" marker-end="url(#arr)"/>`);
         y += 48;
@@ -2666,11 +2669,11 @@ export class Dsv3Layer extends HTMLElement {
           'The pre-norm latent is not stashed; it is exactly recoverable from the post-norm stash, ' +
           '\u03b3, and rstd (x = y / (\u03b3\u00b7rstd)), which is why one latent copy suffices.';
         micro('RMSNorm', C1, y, 140, normTip, pk(DSV3.qRank).trim(), 'q_norm');
-        micro('RMSNorm', C1 + 150, y, 140, normTip, pk(DSV3.kvRank).trim(), 'kv_norm');
+        micro('RMSNorm', C1 + KVO, y, 140, normTip, pk(DSV3.kvRank).trim(), 'kv_norm');
         y += 18;
         // their rstd: exits the bottom, elbows right (\u2191 = read by the op
         // above, the norm's own backward); a replayed norm regenerates it
-        if (!PONLY) for (const [nid, bx] of [['q_norm', C1], ['kv_norm', C1 + 150]]) {
+        if (!PONLY) for (const [nid, bx] of [['q_norm', C1], ['kv_norm', C1 + KVO]]) {
           const rep = ana.replayed.has(nid);
           P.push(`<path class="wire" d="M ${bx + 112} ${y} L ${bx + 112} ${y + 7} L ${bx + 124} ${y + 7}" marker-end="url(#arr)"/>` +
             `<text class="tensor ${rep ? 'tredo' : 'tsave'}" x="${bx + 128}" y="${y + 10}">${rep ? '\u21bb' : '\u2191'} rstd</text>`);
@@ -2679,13 +2682,13 @@ export class Dsv3Layer extends HTMLElement {
       }
       if (DET) {
         // the normed latents are their own graph nodes (q_norm / kv_norm)
-        tensorChip(['q_norm'], SX1 + 14, y + 4, { short: true });
-        tensorChip(['kv_norm'], RX + 14, y + 4, { short: true });
+        tensorChip(['q_norm'], SX1 + 14, y + 4, { short: !this._ctl.quant });
+        tensorChip(['kv_norm'], RX + 14, y + 4, { short: !this._ctl.quant });
       } else {
         tensorChip(['qkv_down'], SX1 + 14, y + 4,
-          { name: 'q latent', tdims: String(DSV3.qRank), frac: DSV3.qRank / latTot, short: true, readers: ['q_norm'] });
+          { name: 'q latent', tdims: String(DSV3.qRank), frac: DSV3.qRank / latTot, short: !this._ctl.quant, readers: ['q_norm'] });
         tensorChip(['qkv_down'], RX + 14, y + 4,
-          { name: 'kv latent', tdims: String(DSV3.kvRank), frac: DSV3.kvRank / latTot, short: true, readers: ['kv_norm'] });
+          { name: 'kv latent', tdims: String(DSV3.kvRank), frac: DSV3.kvRank / latTot, short: !this._ctl.quant, readers: ['kv_norm'] });
       }
       // consolidated: the narrow fork chips are two lines tall (name / bytes)
       const latGap = Math.max(CONS ? 36 : 26, chipSpace(['qkv_down']) + 8);
@@ -2707,7 +2710,7 @@ export class Dsv3Layer extends HTMLElement {
         paramBlocks(x + 6, y + 52, sqParam(id), 'd', 21);
         return ex;
       };
-      y += HBH + Math.max(halfBox('q_up', C1), halfBox('kv_up', C1 + 150));   // the pair advances together
+      y += HBH + Math.max(halfBox('q_up', C1), halfBox('kv_up', C1 + KVO));   // the pair advances together
       if (DET) {
         // the up-proj outputs get names before RoPE; then two separate RoPE
         // kernels (Megatron: apply_mla_rope_for_q / _for_kv) — the kv one is
@@ -2718,8 +2721,8 @@ export class Dsv3Layer extends HTMLElement {
           // marked \u21bb and an up-proj marked \ud83d\udcbe, THIS is where the stash
           // lives — the ledger must be visible wherever it lands. (Static/params
           // tiers keep the plain idle labels — 01 is published.)
-          tensorChip(['q_up'], SX1 + 14, y + 2, { short: true });
-          tensorChip(['kv_up'], RX + 14, y + 2, { short: true });
+          tensorChip(['q_up'], SX1 + 14, y + 2);
+          tensorChip(['kv_up'], RX + 14, y + 2);
           wire(SX1, y, y + 28);
           P.push(`<path class="wire" d="M ${RX} ${y} L ${RX} ${y + 28}" marker-end="url(#arr)"/>`);
           y += 28;
@@ -2733,7 +2736,7 @@ export class Dsv3Layer extends HTMLElement {
         micro('RoPE', C1, y, 140,
           'fused_apply_mla_rope_for_q — rotate the 64 rope dims of every q head (fp32), make Q contiguous. '
           + 'A real (zero-byte) mark: save the rotated q — the SAME bytes as pre-RoPE — or re-run the rotation in backward (bandwidth-bound, unmetered here)', '', 'rope_q');
-        micro('RoPE + build K,V', C1 + 150, y, 140,
+        micro('RoPE + build K,V', C1 + KVO, y, 140,
           'fused_apply_mla_rope_for_kv — split kv_heads into k_nope and V, rotate k_rope, broadcast it across the 128 heads, concat K = [k_nope | k_rope], make K and V contiguous. '
           + 'Same zero-byte mark as RoPE (q): rotated vs pre-RoPE k,v are the same size', '', 'rope_kv');
         P.push(`<path class="wire" d="M ${bypX} ${bypTop} L ${bypX} ${y + 9} L ${C1 + W + 1} ${y + 9}" marker-end="url(#arr)"/>`);
