@@ -14,8 +14,8 @@ T.check('A8 jumps to the dispatched-tokens chip', layer().querySelector('g[data-
 trOf('A6b').querySelector('td.nm').click(); await T.tick(100);
 T.check('lse row jumps to the aux label', layer().querySelector('g[data-chip="attn:aux"]')?.classList.contains('jump-hl'), '');
 // S inputs → the ZeRO segment
-trOf('S5').querySelector('td.nm').click(); await T.tick(100);
-T.check('S5 jumps to the ZeRO segment', layer().parentElement.querySelector('.stp[data-knob="zero"]')?.classList.contains('jump-hl'), '');
+trOf('S6').querySelector('td.nm').click(); await T.tick(100);
+T.check('S6 jumps to the ZeRO segment', layer().parentElement.querySelector('.stp[data-knob="zero"]')?.classList.contains('jump-hl'), '');
 // consistent sizes: redo chips report the would-be bytes
 const dia = layer().querySelector('.lv-scroll svg');
 const redo = [...dia.querySelectorAll('text.tredo')].find(t => t.textContent.includes('norm1 out'));

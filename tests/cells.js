@@ -62,9 +62,9 @@ T.check('sheet T1 equals the chart total', t1row.textContent.includes('61.7 GiB'
 // input rows for the formula switches: ZeRO level, fp8 params, per-bucket ↻
 const rowOf = (id) => rows().find(r => r.querySelector('.nm')?.textContent === id)?.textContent;
 const valOf = (id) => rows().find(r => r.querySelector('.nm')?.textContent === id)?.querySelector('td.vl')?.textContent.trim();
-T.check('input rows present: Z1 / S / F1 / R / B / E-H', rowOf('Z1')?.includes('ZeRO level') && rowOf('F1')?.includes('0/1')
-  && rowOf('R8')?.includes('kept?') && rowOf('S5')?.includes('shard group · optimizer')
-  && rowOf('B8')?.includes('precision (B/elem)') && rowOf('H1')?.includes('lm head'), '');
+T.check('input rows present: S1 (ZeRO) / shard groups / F1 / R / B / L4-L5', rowOf('S1')?.includes('ZeRO level') && rowOf('F1')?.includes('0/1')
+  && rowOf('R8')?.includes('kept?') && rowOf('S6')?.includes('shard group · optimizer')
+  && rowOf('B8')?.includes('precision (B/elem)') && rowOf('L5')?.includes('lm head'), '');
 T.check('recompute choices read as 0/1 (dsv3: dispatched kept, norm1 replayed)',
   valOf('R8') === '1' && valOf('R3a') === '0', `${valOf('R3a')}`);
 // breakout buckets: per-TENSOR rows, each a whole 0/1 — the motivating case
@@ -104,7 +104,7 @@ const fx0 = fxAll();
 const zseg = () => layer().parentElement.querySelector('.stp[data-knob="zero"]');
 const zpick = async (k) => { [...zseg().querySelectorAll('button')].find(b => b.textContent === k).click(); await T.tick(700); };
 await zpick('off');
-T.check('ZeRO off: formulas unchanged, S5 flips 4 → 1', fxAll() === fx0 && valOf('S5') === '1', valOf('S5'));
+T.check('ZeRO off: formulas unchanged, S6 flips 4 → 1', fxAll() === fx0 && valOf('S6') === '1', valOf('S6'));
 await zpick('1');
 const p8 = layer().parentElement.querySelector('input[data-knob="fp8params"]');
 p8.click(); await T.tick(700);

@@ -118,7 +118,12 @@ URL state.
 ## `<dsv3-sheet layer=…>` — the full model's formula sheet
 
 A spreadsheet-like readout of the CELL GRAPH (`src/cells.js`) that the bound
-local widget prices from: one row per cell — coordinate name (`P1`/`Q2`/`W1`…),
+local widget prices from: one row per cell — coordinate names lettered by SECTION (P parallelism &
+schedule · S sharding: S1 the ZeRO level, S2–S7 its shard groups · L this
+rank's layout incl. emb?/head? L4/L5 · N param counts · Q params/GPU · F
+format flags · W/G/O byte components · D stash rates · A activations with
+per-tensor a/b/c sub-rows · R kept? and B precision inputs numbered to
+match their A row · T1 the total),
 a one-line label, the formula, the EXACT value (primary column; byte counts
 are exact — every divisor is a power of two and every dtype rate a dyadic
 rational on integer counts ≪ 2^53), and a rounded `≈` column. The formula
@@ -128,7 +133,7 @@ shard math independently and asserts `===` across a config matrix (totals
 AND sub-cells). The ACCORDION computes the totals: `W1 = W2 + W3 + W4` (per
 sharding class), `A1 = A2 + … + A11` (per stash bucket — the buckets
 partition the op graph's savedBytes exactly), `T1 = W1 + G1 + O1 + A1`.
-Formula-switching INPUTS get explicit rows: `Z1` (ZeRO level), `F1`
+Formula-switching INPUTS get explicit rows: `S1` (ZeRO level), `F1`
 (fp8-resident params as a 0/1 that rides the weights formulas —
 `(2 + F1 × 2 × 4/128) × Q1`), and per-bucket `R•` recompute choices (0/1)
 multiplying the bucket's SAVE-EVERYTHING rates at the current recipe, so
@@ -141,8 +146,8 @@ as literals — built from the op graph and VALIDATED (the string must
 evaluate back to the exact rate, else the literal stands). FORMULA
 STABILITY is the design rule: toggling a model input changes input VALUES,
 never a formula's shape — ZeRO resolves to per-component shard-group cells
-(S1–S6 — real formulas via the language's 0/1 indicator ≥: (Z1 ≥ 3) × (P5 - 1) + 1, value 1 when unsharded), emb/head presence to E1/H1 (0/1, L3 =
-E1 + H1), fp8 params to F1, precision/ᵀ to B•. BREAKOUT buckets (residual, norm outs, mla latents, attention out, the
+(S2–S7 — real formulas via the language's 0/1 indicator ≥: (S1 ≥ 3) × (P5 - 1) + 1, value 1 when unsharded), emb/head presence to L4/L5 (0/1, L3 =
+L4 + L5), fp8 params to F1, precision/ᵀ to B•. BREAKOUT buckets (residual, norm outs, mla latents, attention out, the
 remainder — every bucket a preset can split) get per-TENSOR sub-cells
 (`A3a`…) so each row stays a whole 0/1 `kept?` choice, with per-tensor
 precision inputs (`B4a`… — a bucket may mix bf16 latents with e4m3-rate
@@ -167,7 +172,7 @@ credited roofline's exact config (fp8 GEMMs, BF16 attn-out stash,
 e4m3+ᵀ-resident params, his stash policy) — and lights up when the state
 matches. Rows carry JUMP affordances (click the
 coordinate cell): a model input lands on its controlling knob (P1→GPUs,
-Z1/S•→ZeRO, F1→the e4m3+ᵀ checkbox, L•/E1/H1→the rank picker, P6→sched)
+S•→ZeRO, F1→the e4m3+ᵀ checkbox, L•→the rank picker, P6→sched)
 and an activation row on its chip in the diagram (`data-chip` on every
 local chip; aux labels are `<id>:aux`), pulsing amber on arrival. Model
 inputs are also EDITABLE from the sheet, IN the exact-value cell: steppable
@@ -180,8 +185,8 @@ the dashed underline was too subtle); a ± at its bound dims and inerts, and
 a pinned toggle (x0's kept?, a recipe-pinned precision) renders as a plain
 untinted cell — enabled-ness is READ from the widget's own controls, so the
 sheet can't disagree with the diagram. The formula is the rightmost column. Every edit drives the widget's OWN control — steppers
-step (P1/P2/P3), the ZeRO segment steps (Z1), two-chip segments flip
-(P6→sched, L•/E1/H1→rank), checkboxes click (F1, o_proj's B via E5M6),
+step (P1/P2/P3), the ZeRO segment steps (S1), two-chip segments flip
+(P6→sched, L•→rank), checkboxes click (F1, o_proj's B via E5M6),
 precision rows click their dtype button (B• via the node's `dtc` channel,
 recorded in blockGraph where the rate is priced), and kept? rows click the
 mark button — so bounds, tweens, URL state and the diagram stay linked

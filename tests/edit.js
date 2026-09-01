@@ -18,9 +18,9 @@ T.check('the widget stepper shows 32 too', layer().parentElement.querySelector('
 step('P3', 'up'); await T.tick(700);
 T.check('and back (total restores exactly)', total() === t0, total());
 // seg: ZeRO down to off
-step('Z1', 'dn'); await T.tick(700);
-T.check('Z1 − steps ZeRO 1 → off', valOf('Z1') === '0' && total() > t0, valOf('Z1'));
-step('Z1', 'up'); await T.tick(700);
+step('S1', 'dn'); await T.tick(700);
+T.check('S1 − steps ZeRO 1 → off', valOf('S1') === '0' && total() > t0, valOf('S1'));
+step('S1', 'up'); await T.tick(700);
 // toggle: F1
 tgl('F1'); await T.tick(700);
 T.check('F1 ⇄ flips the e4m3+ᵀ params checkbox', layer().parentElement.querySelector('input[data-knob="fp8params"]').checked
