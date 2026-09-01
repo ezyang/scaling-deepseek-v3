@@ -20,6 +20,8 @@ const pick = (name) => !filters.length || filters.some(f => name.includes(f));
 const jobs = [];
 if (pick('sanity')) jobs.push({ name: 'sanity', args: ['scripts/sanity.mjs'] });
 if (pick('stamp')) jobs.push({ name: 'stamp', args: ['scripts/stamp.mjs', '--check'] });
+if (pick('goldens')) jobs.push({ name: 'goldens', args: ['scripts/goldens.mjs'] });
+if (pick('pixel')) jobs.push({ name: 'pixel', args: ['scripts/pixelgold.mjs'] });
 if (pick('diagramlint')) jobs.push({ name: 'diagramlint', args: ['scripts/diagramlint.mjs'] });
 for (const f of (await readdir(join(root, 'tests'))).filter(f => f.endsWith('.js')).sort()) {
   const name = f.replace(/\.js$/, '');

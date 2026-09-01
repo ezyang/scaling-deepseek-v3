@@ -37,6 +37,16 @@ generality.
   `?v=`) in the public pages, so a GitHub Pages deploy (10-min cache) never
   pairs fresh HTML with stale JS. Rerun after editing any src/ or studies/
   module; the battery's `stamp` job fails while stale.
+- `node scripts/goldens.mjs` — numeric goldens (tests/goldens.json): stash
+  rates, FLOP counts, sim step times, memory watermarks, story-config cell
+  totals. Changing a number is fine; changing one invisibly is not — on
+  drift, `--update` and review the git diff.
+- `node scripts/pixelgold.mjs` — pixel goldens (tests/pixel/*.png): every
+  widget renderer at its published resting state. On drift open the A/B
+  report (/tmp/pixelgold-report.html: hold to flip golden↔new, `d` = diff
+  mask), then `--update`. Machine-tied (local fonts + Playwright's pinned
+  chrome-headless-shell): expect a wholesale re-baseline after Chrome/OS
+  updates.
 - `node scripts/battery.mjs [filter…]` — the whole battery (sanity +
   diagramlint + every scenario in tests/) in parallel, ~3 s. Run this one.
   Browser drivers prefer Playwright's chrome-headless-shell (~10× faster
