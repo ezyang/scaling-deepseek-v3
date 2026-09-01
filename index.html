@@ -81,8 +81,9 @@
         slide, that is simultaneously detailed enough to. e.g., accurately report all the
         parameters and matrix multiplies in the model.</li>
       <li><a href="./studies/02-hopper-memory.html">Memory: a Hopper case study</a>
-        (PP8 · EP64, FP8 tile scaling, attn-replay recompute, DualPipe in-flight) — does it even
-        fit on 80 GiB, and what the aggressive recompute policy buys and costs.</li>
+        — How to fit it on 80 GiB. We identify all of the main uses of memory
+        in training, and then walk through the impact of pipeline parallelism,
+        activation checkpointing and low precision on your memory usage.</li>
     </ul>
 
   </main>
