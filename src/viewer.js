@@ -856,13 +856,17 @@ ${knobCss('.lv-head')}
    (left of the card, below the plan — saves a whole head row on laptops).
    Coordinates assume the anatomy grid: 186px column + 28px gap, plan ends
    ~400px into the card. Narrow viewports return it to the flow. */
-.lv .lv-side { position: absolute; left: -215px; top: 412px; width: 188px; display: block; padding: 0; }
-.lv-side .pargrp { display: flex; width: 100%; box-sizing: border-box; }
-.lv-side .stp { flex-direction: column; align-items: stretch; }
-.lv-side .stp button { text-align: left; border-left: 1px solid #c3c2b7; border-radius: 0; }
-.lv-side .stp button + button { border-top: none; }
-.lv-side .stp button:first-child { border-radius: 4px 4px 0 0; }
-.lv-side .stp button:last-child { border-radius: 0 0 4px 4px; }
+.lv .lv-side { position: absolute; left: -215px; top: 412px; width: 186px; display: block; padding: 0; }
+/* in the margin the segment dissolves into a SPACED STACK of rounded chips
+   (the plan column's language: standalone rounded boxes, air between them) —
+   no group border, no fused segment edges */
+.lv-side .pargrp { display: flex; width: 100%; box-sizing: border-box; border: none; padding: 0; gap: 4px; }
+.lv-side .parlab { margin-bottom: 1px; }
+.lv-side .parrow { min-height: 0; }
+.lv-side .stp { flex-direction: column; align-items: stretch; gap: 5px; width: 100%; }
+.lv-side .stp button { text-align: center; padding: 3px 8px 4px; border: 1px solid #c3c2b7; border-radius: 5px; }
+.lv-side .stp button + button { border-left: 1px solid #c3c2b7; border-top: 1px solid #c3c2b7; }
+.lv-side .stp button:disabled { border-color: #e1e0d9; }
 @media (max-width: 1040px) {
   .lv .lv-side { position: static; width: auto; display: flex; padding-bottom: 4px; }
   .lv-side .pargrp { display: inline-flex; width: auto; }
@@ -1419,8 +1423,9 @@ export class Dsv3Layer extends HTMLElement {
     tl2.style.cssText = 'display:inline-flex;align-items:center;gap:4px;margin-left:8px;color:#52514e;';
     tl2.title = 'DeepSeek’s customized 12-bit stash format, exclusively for the attention output (it feeds both ' +
       'attention backward and the attn-out wgrad — too sensitive for e4m3, and pow-2 scales make the 1×128 → 128×1 ' +
-      'orientation flip lossless from ONE copy). OFF = stash it bf16 instead (+2.1 GiB here). ' +
-      'The GEMM runs e4m3 either way — this checkbox chooses the SAVE format only.';
+      'orientation flip lossless from ONE copy). OFF = stash it bf16 instead' +
+      (this.marks.attn === true ? ` (+${(16384 * 0.5 * 4096 * this.dispLayers * this.dispInflight / 2 ** 30).toFixed(1)} GiB at this policy)` : ' (moot right now: this recompute policy replays attention, so attn-out is never stashed)') +
+      '. This checkbox chooses the SAVE format only — the GEMM’s compute dtype follows the recipe (its 🔒 tag).';
     const t2cb = document.createElement('input');
     t2cb.type = 'checkbox'; t2cb.checked = this.matmuls.o_proj === 'e5m6'; t2cb.dataset.knob = 'e5m6';
     t2cb.disabled = this.matmuls.o_proj === 'e4m3' || this.matmuls.o_proj === 'mxfp8';
@@ -1930,7 +1935,7 @@ export class Dsv3Layer extends HTMLElement {
       'e4m3/mxfp8 counted half \u2014 2\u00d7 peak; fp32 counted double \u2014 half peak; dtype colors here and on the saved-tensor tags: pink e4m3, purple e5m6, dark bf16, brick fp32); ' +
       'the lm head uses the same unit \u2014 per-token vocab work, independent of depth. Norms/SwiGLU ' +
       'get a hollow dashed fig-leaf (bandwidth-bound, compute precision unspecified).',
-      this._ctl.dtype ? 'One click on a dtype button toggles bf16 \u21c4 e4m3 (attn out: bf16 \u21c4 e5m6; the router is pinned).' : '',
+      this._ctl.dtype ? 'One click on a dtype button toggles bf16 \u21c4 e4m3 (attn-out and the router are pinned \ud83d\udd12; the E5M6 checkbox picks the attn-out save format).' : '',
       this._ctl.quant
         ? 'The tally at right totals fwd + bwd (2\u00d7 fwd \u2014 dgrad + wgrad; sdpa likewise) + replay'
           + (this._ctl.marks ? ' \u2014 marking ops \u21bb grows its replay row.' : '.')
@@ -2538,7 +2543,7 @@ export class Dsv3Layer extends HTMLElement {
         const tip = s2 === 'save' || s2 === 'pin'
           ? ` data-tip="${needTip(ids, ov?.readers)}${s2 === 'pin' ? escAttr('\n\ud83d\udd12 always saved: the checkpoint anchor.') : ''}"`
           : s2 === 'redo'
-            ? ` data-tip="${escAttr('\u21bb recomputed in backward, not stashed \u2014 the hollow squares price what saving it WOULD cost.')}"`
+            ? ` data-tip="${escAttr('\u21bb recomputed in backward, not stashed' + (this._ctl.marks ? ' \u2014 the hollow squares price what saving it WOULD cost.' : '.'))}"`
             : ` data-tip="${escAttr('\u00b7 not needed: no backward op or replay reads this tensor \u2014 saved or not, it is never stashed.')}"`;
         if (s2 === 'save' || s2 === 'pin') {
           const n2 = A.byId[id] ?? n;
@@ -2808,9 +2813,9 @@ export class Dsv3Layer extends HTMLElement {
         P.push(`<path class="wire" d="M ${RX} ${y} L ${RX} ${y + 48}" marker-end="url(#arr)"/>`);
         y += 48;
         // MLA-internal RMSNorms (q_a_layernorm; kv_a_layernorm norms the 512 only)
-        const normTip = 'input-form backward: reads its INPUT (pre-norm) + rstd — never its output. ' +
-          'The pre-norm latent is not stashed; it is exactly recoverable from the post-norm stash, ' +
-          '\u03b3, and rstd (x = y / (\u03b3\u00b7rstd)), which is why one latent copy suffices.';
+        const normTip = 'input-form backward: reads its INPUT (the pre-norm latent) + rstd — never its own output. ' +
+          'That input is the bf16 latent chip above (kept wide — a disclosed inference; the paper doesn\u2019t state the anchor format). ' +
+          'The normed OUTPUT is the up-proj\u2019s cached fp8 input — stashed only if this norm is saved AND the up-proj isn\u2019t replaying.';
         micro('RMSNorm', C1, y, 140, normTip, pk(DSV3.qRank).trim(), 'q_norm');
         micro('RMSNorm', C1 + KVO, y, 140, normTip, pk(DSV3.kvRank).trim(), 'kv_norm');
         y += 18;
