@@ -99,6 +99,13 @@ generality.
   dependent overlays tween together, nothing pops.
 - Widget state persists in the URL hash (shareable, refresh-stable); presets
   recognize themselves when controls return to a preset's exact state.
+- Night mode: src/theme.js is the single color source (light literals ↔ the
+  DARK map). Never hardcode a hex: CSS strings say var(--c-xxxxxx); SVG and
+  canvas emissions call C('#xxxxxx') AT RENDER TIME (fills stay concrete
+  hexes — the fit chart lerps them and tests read the attributes — so a
+  theme flip re-renders widgets via the 'dsv3-theme' event). New colors must
+  be added to DARK; stamp.mjs regenerates the CSS variable blocks and head
+  anti-flash snippets; pixel goldens cover BOTH themes. og images stay light.
 - Micro-typography: parameter counts are grey, never italic, consistently
   styled; dtype colors are the warm-magenta precision family (bf16 ink · e4m3 pink · e5m6 purple · fp32 brick), kept clear of the byte-component blue/orange/green; no
   space-wasting negative labels ("not needed").

@@ -4,6 +4,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script data-theme>document.documentElement.classList.toggle('dark', (localStorage.getItem('dsv3-theme') ?? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')) === 'dark');</script>
   <title>An infra-oriented diagram of the DeepSeek-V3 architecture</title>
   <meta name="description" content="An infra-oriented description of the DeepSeek-V3 architecture: the kernels you actually run, their parameter counts, and what gets saved for backward.">
   <meta property="og:title" content="An infra-oriented diagram of the DeepSeek-V3 architecture">
@@ -13,7 +14,7 @@
   <meta property="og:image:width" content="2400">
   <meta property="og:image:height" content="1260">
   <meta name="twitter:card" content="summary_large_image">
-  <link rel="stylesheet" href="./study.css?v=392500f0">
+  <link rel="stylesheet" href="./study.css?v=9abf5fa0">
   <style>
     /* inline recreations of the diagram's visual vocabulary, for the bullets */
     .ivmm, .ivop { display: inline-block; padding: 0 6px; border-radius: 4px; line-height: 1.45; white-space: nowrap; }
@@ -175,8 +176,8 @@ i don't need perfect, i need done
   <script type="importmap">
   {
     "imports": {
-      "../src/anatomy.js": "../src/anatomy.js?v=da676667",
-      "../src/audit.js": "../src/audit.js?v=03d69f62",
+      "../src/anatomy.js": "../src/anatomy.js?v=bc490174",
+      "../src/audit.js": "../src/audit.js?v=55bebb06",
       "../src/blockgraph.js": "../src/blockgraph.js?v=fb26fb76",
       "../src/cells.js": "../src/cells.js?v=96e37b7d",
       "../src/compare.js": "../src/compare.js?v=d3cae233",
@@ -185,8 +186,9 @@ i don't need perfect, i need done
       "../src/model.js": "../src/model.js?v=3345c2f3",
       "../src/params.js": "../src/params.js?v=13936278",
       "../src/sim.js": "../src/sim.js?v=0edadd66",
+      "../src/theme.js": "../src/theme.js?v=cf07b25a",
       "../src/trace.js": "../src/trace.js?v=61553c96",
-      "../src/viewer.js": "../src/viewer.js?v=665a79f4",
+      "../src/viewer.js": "../src/viewer.js?v=1220cbe0",
       "./mobile.js": "./mobile.js?v=9d15b75d",
       "./series.js": "./series.js?v=1901fecd",
       "./toc.js": "./toc.js?v=11b69b8b"

@@ -37,7 +37,9 @@ const SHOTS = [
 
 const update = process.argv.includes('--update');
 const filters = process.argv.slice(2).filter((a) => !a.startsWith('--'));
-const picked = SHOTS.filter((s) => !filters.length || filters.some((f) => s.name.includes(f)));
+// every shot has a night twin: same widget, theme flipped through setTheme()
+const ALL = SHOTS.flatMap((s) => [s, { ...s, name: s.name + '-dark', dark: true }]);
+const picked = ALL.filter((s) => !filters.length || filters.some((f) => s.name.includes(f)));
 const GOLD = join(root, 'tests/pixel');
 mkdirSync(GOLD, { recursive: true });
 
@@ -67,7 +69,7 @@ await Promise.all(Array.from({ length: 4 }, async () => {
   while (next < picked.length) {
     const s = picked[next++];
     const tmp = join('/tmp', `pixelgold-${s.name}.png`);
-    await shoot(s.page, s.sel, { origin: 24, w: W, h: H, dsf: 1, out: tmp });
+    await shoot(s.page, s.sel, { origin: 24, dark: s.dark, w: W, h: H, dsf: 1, out: tmp });
     const img = trim(decode(readFileSync(tmp)));
     const goldPath = join(GOLD, s.name + '.png');
     const gold = existsSync(goldPath) ? decode(readFileSync(goldPath)) : null;

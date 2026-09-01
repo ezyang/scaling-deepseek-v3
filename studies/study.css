@@ -1,17 +1,20 @@
-:root { color-scheme: light; }
-    body { font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; color: #0b0b0b; background: #f9f9f7; margin: 0; }
+/* theme: generated from src/theme.js — node scripts/stamp.mjs */
+:root { color-scheme: light; --c-f9f9f7: #f9f9f7; --c-fcfcfb: #fcfcfb; --c-ffffff: #ffffff; --c-f7f6f1: #f7f6f1; --c-f3f2ee: #f3f2ee; --c-f0efe9: #f0efe9; --c-eeede7: #eeede7; --c-e9e8e2: #e9e8e2; --c-e1e0d9: #e1e0d9; --c-dedcd3: #dedcd3; --c-dcdad2: #dcdad2; --c-d8d6cb: #d8d6cb; --c-d5d4cb: #d5d4cb; --c-d5d4cc: #d5d4cc; --c-c3c2b7: #c3c2b7; --c-aba89f: #aba89f; --c-a8a69e: #a8a69e; --c-8f8d86: #8f8d86; --c-898781: #898781; --c-52514e: #52514e; --c-1c1c1a: #1c1c1a; --c-0b0b0b: #0b0b0b; --c-2a78d6: #2a78d6; --c-eb6834: #eb6834; --c-1baf7a: #1baf7a; --c-bcd8f3: #bcd8f3; --c-dcebfa: #dcebfa; --c-eef4fc: #eef4fc; --c-0b3d75: #0b3d75; --c-134a8e: #134a8e; --c-eda100: #eda100; --c-b05f00: #b05f00; --c-a86e00: #a86e00; --c-8a5f00: #8a5f00; --c-875600: #875600; --c-7a5200: #7a5200; --c-6f4712: #6f4712; --c-5c3d00: #5c3d00; --c-4a3000: #4a3000; --c-3a2500: #3a2500; --c-8c5a19: #8c5a19; --c-fff8ea: #fff8ea; --c-fdeab5: #fdeab5; --c-fff3d1: #fff3d1; --c-f8f2e6: #f8f2e6; --c-fdefe8: #fdefe8; --c-f6cd74: #f6cd74; --c-d19023: #d19023; --c-d69432: #d69432; --c-c98800: #c98800; --c-eab04a: #eab04a; --c-fbd4c0: #fbd4c0; --c-f9ded0: #f9ded0; --c-f3c8b3: #f3c8b3; --c-f3ac8b: #f3ac8b; --c-ecb298: #ecb298; --c-e58a63: #e58a63; --c-d16b42: #d16b42; --c-c74e1d: #c74e1d; --c-a63c12: #a63c12; --c-88300c: #88300c; --c-7a2f12: #7a2f12; --c-5c2410: #5c2410; --c-471b09: #471b09; --c-361406: #361406; --c-d6408b: #d6408b; --c-7b2fa8: #7b2fa8; --c-8a3324: #8a3324; --c-e87ba4: #e87ba4; --c-008300: #008300; --c-d03b3b: #d03b3b; --c-4a3aa7: #4a3aa7; --c-4636a3: #4636a3; --c-6b5bd2: #6b5bd2; --c-f3f1fb: #f3f1fb; --c-fdf1f1: #fdf1f1; --c-f0faf4: #f0faf4; --c-1a7a43: #1a7a43; --spot: rgba(252, 252, 251, 0.78); }
+:root.dark { color-scheme: dark; --c-f9f9f7: #161614; --c-fcfcfb: #191917; --c-ffffff: #232320; --c-f7f6f1: #262521; --c-f3f2ee: #2a2923; --c-f0efe9: #282720; --c-eeede7: #2a2822; --c-e9e8e2: #2e2c26; --c-e1e0d9: #3d3b34; --c-dedcd3: #3b3931; --c-dcdad2: #3d3b33; --c-d8d6cb: #403d33; --c-d5d4cb: #423f35; --c-d5d4cc: #423f35; --c-c3c2b7: #615e51; --c-aba89f: #6a675e; --c-a8a69e: #6c6960; --c-8f8d86: #7b786f; --c-898781: #97948b; --c-52514e: #b0ada4; --c-1c1c1a: #d6d3ca; --c-0b0b0b: #e8e5dc; --c-2a78d6: #5c9ae6; --c-eb6834: #f0824f; --c-1baf7a: #2bbd88; --c-bcd8f3: #2b4767; --c-dcebfa: #223950; --c-eef4fc: #1d2b3c; --c-0b3d75: #a5c8f0; --c-134a8e: #8fb8ea; --c-eda100: #eaa620; --c-b05f00: #d18d3c; --c-a86e00: #c08b2e; --c-8a5f00: #b28438; --c-875600: #ae7f3c; --c-7a5200: #c08e46; --c-6f4712: #b98e5c; --c-5c3d00: #a87f4b; --c-4a3000: #997347; --c-3a2500: #8c6a45; --c-8c5a19: #bb8649; --c-fff8ea: #2a2416; --c-fdeab5: #3d3213; --c-fff3d1: #322a10; --c-f8f2e6: #2b271d; --c-fdefe8: #2d221b; --c-f6cd74: #6e5522; --c-d19023: #a3762a; --c-d69432: #a1752c; --c-c98800: #a5761f; --c-eab04a: #8a6c2b; --c-fbd4c0: #4a2c1e; --c-f9ded0: #40291d; --c-f3c8b3: #573424; --c-f3ac8b: #6f4128; --c-ecb298: #67402c; --c-e58a63: #935134; --c-d16b42: #b95e37; --c-c74e1d: #d4632f; --c-a63c12: #e0714a; --c-88300c: #eb8666; --c-7a2f12: #f0916f; --c-5c2410: #f6a888; --c-471b09: #fcbda0; --c-361406: #ffd0b8; --c-d6408b: #e0559b; --c-7b2fa8: #b675e8; --c-8a3324: #d97862; --c-e87ba4: #d76d97; --c-008300: #43a83c; --c-d03b3b: #e25555; --c-4a3aa7: #948ee8; --c-4636a3: #8f88e4; --c-6b5bd2: #9a8df0; --c-f3f1fb: #272438; --c-fdf1f1: #322323; --c-f0faf4: #1e2a23; --c-1a7a43: #3dae6e; --spot: rgba(14, 14, 13, 0.82); }
+/* /theme */
+    body { font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--c-0b0b0b); background: var(--c-f9f9f7); margin: 0; }
     main { max-width: 980px; margin: 0 auto; padding: 32px 20px 120px; }
     h1 { font-size: 24px; line-height: 1.25; margin: 8px 0 4px; }
     h2 { font-size: 18px; margin: 36px 0 8px; }
-    p, li { max-width: 760px; color: #1c1c1a; }
+    p, li { max-width: 760px; color: var(--c-1c1c1a); }
     /* lists are indented, so cap the whole list at the prose column — otherwise
        long items reach into the margin-note gutter */
     ul, ol { max-width: 760px; box-sizing: border-box; }
-    .sub, .note { color: #52514e; font-size: 13.5px; }
-    code { font: 13px ui-monospace, Menlo, monospace; background: #f3f2ee; border-radius: 4px; padding: 1px 5px; }
+    .sub, .note { color: var(--c-52514e); font-size: 13.5px; }
+    code { font: 13px ui-monospace, Menlo, monospace; background: var(--c-f3f2ee); border-radius: 4px; padding: 1px 5px; }
     table.xcheck { border-collapse: collapse; font-size: 13.5px; margin: 12px 0; width: 100%; }
-    .xcheck th, .xcheck td { text-align: left; padding: 5px 12px 5px 0; border-bottom: 1px solid #e1e0d9; font-variant-numeric: tabular-nums; vertical-align: top; }
-    .xcheck th { color: #52514e; font-weight: 600; }
+    .xcheck th, .xcheck td { text-align: left; padding: 5px 12px 5px 0; border-bottom: 1px solid var(--c-e1e0d9); font-variant-numeric: tabular-nums; vertical-align: top; }
+    .xcheck th { color: var(--c-52514e); font-weight: 600; }
     .xcheck .note { font-size: 12px; }
     /* pre-upgrade reservation: custom elements are INLINE until their module
        defines them — inline elements ignore min-height, so without these
@@ -24,18 +27,18 @@
        viewport, so it reads as one framed stage (site-card border + white
        ground on the warm page) rather than prose-adjacent furniture */
     dsv3-beat-deck { display: block; margin: 14px 0 26px; padding: 12px 16px 10px;
-      border: 1px solid #d5d4cb; border-radius: 8px; background: #fff;
+      border: 1px solid var(--c-d5d4cb); border-radius: 8px; background: var(--c-ffffff);
       box-shadow: 0 1px 6px rgba(11, 11, 11, 0.05); }
 
 /* series navigation (injected by series.js) */
-.series-strip { font-size: 13px; color: #52514e; margin: 0 0 6px; }
+.series-strip { font-size: 13px; color: var(--c-52514e); margin: 0 0 6px; }
 .series-strip a { color: inherit; }
-.series-nav { display: flex; gap: 12px; margin-top: 48px; border-top: 1px solid #e1e0d9; padding-top: 16px; }
-.series-nav .card { flex: 1; border: 1px solid #e1e0d9; border-radius: 8px; padding: 10px 14px;
-  text-decoration: none; color: #1c1c1a; background: #fff; display: flex; flex-direction: column;
+.series-nav { display: flex; gap: 12px; margin-top: 48px; border-top: 1px solid var(--c-e1e0d9); padding-top: 16px; }
+.series-nav .card { flex: 1; border: 1px solid var(--c-e1e0d9); border-radius: 8px; padding: 10px 14px;
+  text-decoration: none; color: var(--c-1c1c1a); background: var(--c-ffffff); display: flex; flex-direction: column;
   gap: 2px; min-width: 0; }
-@media (hover: hover) { .series-nav a.card:hover { border-color: #c3c2b7; box-shadow: 0 1px 6px rgba(11,11,11,0.06); } }
-.series-nav .card small { color: #898781; font-size: 12px; }
+@media (hover: hover) { .series-nav a.card:hover { border-color: var(--c-c3c2b7); box-shadow: 0 1px 6px rgba(11,11,11,0.06); } }
+.series-nav .card small { color: var(--c-898781); font-size: 12px; }
 .series-nav .card b { font-size: 14px; line-height: 1.35; font-weight: 600; }
 .series-nav .next { text-align: right; align-items: flex-end; }
 .series-nav .empty { border: none; background: none; }
@@ -43,7 +46,7 @@
 h3 { font-size: 16.5px; margin: 30px 0 6px; }
 
 /* end-of-post footnotes */
-.fnotes { border-top: 1px solid #e1e0d9; margin-top: 36px; padding-top: 10px; }
+.fnotes { border-top: 1px solid var(--c-e1e0d9); margin-top: 36px; padding-top: 10px; }
 .fnotes p { max-width: 760px; }
 sup a { text-decoration: none; }
 
@@ -57,19 +60,19 @@ sup a { text-decoration: none; }
 main { counter-reset: mn; }
 .mn-ref { counter-increment: mn; }
 .mn-ref::after { content: counter(mn); font-size: 11px; vertical-align: super;
-  line-height: 0; color: #b05f00; font-weight: 600; padding-left: 1px; }
+  line-height: 0; color: var(--c-b05f00); font-weight: 600; padding-left: 1px; }
 .mn { float: right; clear: right; width: 178px; margin-right: -220px;
   margin-top: 4px; margin-bottom: 8px; font-size: 12.5px; line-height: 1.5;
-  color: #52514e; }
-.mn::before { content: counter(mn) ". "; color: #b05f00; font-weight: 600; }
+  color: var(--c-52514e); }
+.mn::before { content: counter(mn) ". "; color: var(--c-b05f00); font-weight: 600; }
 dsv3-layer, dsv3-trace, dsv3-anatomy, dsv3-beat-deck, dsv3-pp-schedule, dsv3-pp-fold, figure, table.xcheck { clear: right; }
 @media (max-width: 1040px) {
   /* !important: authors shunt gutter notes past tall figures with inline
      negative margin-tops (style="margin-top:-9em") — those offsets are
      meaningless once the note sits in the flow */
   .mn { float: none; clear: none; width: auto; margin: 8px 0 !important;
-    display: block; padding: 6px 10px; border-left: 3px solid #e1e0d9;
-    background: #f3f2ee; border-radius: 0 4px 4px 0; }
+    display: block; padding: 6px 10px; border-left: 3px solid var(--c-e1e0d9);
+    background: var(--c-f3f2ee); border-radius: 0 4px 4px 0; }
 }
 
 /* mobile (≤860px) framing, built by studies/mobile.js: widgets become inert
@@ -83,11 +86,11 @@ dsv3-layer, dsv3-trace, dsv3-anatomy, dsv3-beat-deck, dsv3-pp-schedule, dsv3-pp-
    host's width instead of the 430px viewport */
 .mwide .anat-grid { width: 100% !important; left: 0 !important; transform: none !important; }
 .mopen { display: block; margin: -12px 0 26px; font: 12px ui-monospace, Menlo, monospace;
-  padding: 6px 12px; border: 1px solid #c3c2b7; border-radius: 6px;
-  background: #fff; color: #52514e; cursor: pointer; }
+  padding: 6px 12px; border: 1px solid var(--c-c3c2b7); border-radius: 6px;
+  background: var(--c-ffffff); color: var(--c-52514e); cursor: pointer; }
 body.mfocus main > :not(.mfull-top) { display: none !important; }
 .mclose { position: fixed; top: 10px; right: 10px; z-index: 1000; font: 18px/1 system-ui;
-  padding: 10px 13px; border: 1px solid #c3c2b7; border-radius: 999px; background: #fff;
+  padding: 10px 13px; border: 1px solid var(--c-c3c2b7); border-radius: 999px; background: var(--c-ffffff);
   box-shadow: 0 1px 6px rgba(11, 11, 11, 0.15); cursor: pointer;
   transform-origin: 100% 0; }   /* visualViewport glue scales it from its own corner */
 /* focus mode: block native pinch zoom (it can't be programmatically undone
@@ -99,9 +102,9 @@ html.mta, html.mta body { touch-action: pan-x pan-y; }
    them to the page — free the chain while focused */
 body.mfocus .mfull-top * { overscroll-behavior: auto !important; }
 .mn-ref.live::after { content: none; }
-.mn-ref.live a { color: #b05f00; font-weight: 600; text-decoration: none;
+.mn-ref.live a { color: var(--c-b05f00); font-weight: 600; text-decoration: none;
   padding: 10px; margin: 0 -10px; }   /* phone-sized hitbox for an 11px superscript (inline v-padding doesn't move lines) */
-.mnotes li { font-size: 13.5px; color: #52514e; margin: 6px 0; }
+.mnotes li { font-size: 13.5px; color: var(--c-52514e); margin: 6px 0; }
 .mnotes .mn { float: none; clear: none; width: auto; margin: 0 !important; display: inline;
   padding: 0; border: 0; background: none; font-size: 13.5px; }
 .mnotes .mn::before { content: none; }
@@ -120,12 +123,12 @@ body.mfocus .mfull-top * { overscroll-behavior: auto !important; }
    and well past the ticks vertically — the panel itself stays compact */
 .toc::before { content: ''; position: absolute; top: -70px; bottom: -70px; left: 0; right: -50px; }
 .toc a { display: flex; align-items: center; gap: 8px; cursor: pointer; position: relative; }
-.toc .tick { width: 12px; height: 3px; border-radius: 1.5px; background: #c3c2b7;
+.toc .tick { width: 12px; height: 3px; border-radius: 1.5px; background: var(--c-c3c2b7);
   flex: none; transition: background 0.15s, width 0.15s; }
-.toc a.on .tick { background: #b05f00; width: 18px; }
-.toc .lab { font-size: 12.5px; color: #52514e; white-space: nowrap;
+.toc a.on .tick { background: var(--c-b05f00); width: 18px; }
+.toc .lab { font-size: 12.5px; color: var(--c-52514e); white-space: nowrap;
   max-width: 0; overflow: hidden; opacity: 0; transition: opacity 0.06s; }   /* no width tween: the panel snaps open (slide reads as lag) */
-.toc:hover { background: #fff; border-color: #e1e0d9; box-shadow: 2px 2px 8px rgba(0, 0, 0, 0.08); }
+.toc:hover { background: var(--c-ffffff); border-color: var(--c-e1e0d9); box-shadow: 2px 2px 8px rgba(0, 0, 0, 0.08); }
 .toc:hover .lab { max-width: 280px; opacity: 1; }
-.toc a:hover .lab, .toc a.on .lab { color: #0b0b0b; }
+.toc a:hover .lab, .toc a.on .lab { color: var(--c-0b0b0b); }
 @media (max-width: 1100px) { .toc { display: none; } }

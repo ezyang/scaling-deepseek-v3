@@ -21,6 +21,7 @@
 // checkpoint) live in scripts/sanity.mjs. The audit proves the RENDERING
 // tells one coherent story; sanity proves the model tells the true one;
 // data-true is the bridge between them.
+import { C } from './theme.js';
 import { fmtBytes, facNum, BAR_GEO } from './viewer.js';
 
 // Besides pass/fail (findings), the audit narrates WHAT it verified: each
@@ -130,19 +131,19 @@ export function auditFitCharts(root = document) {
 // deliberately between two truths, and auditing it would cry wolf.
 const AUD_CSS = `
 .aud-chip { position: absolute; top: -6px; right: 0; z-index: 30; cursor: pointer;
-  font: 600 10px ui-monospace, monospace; color: #1a7a43; background: #f0faf4;
-  border: 1px solid #1baf7a; border-radius: 9px; padding: 1px 7px; opacity: 0.92; }
-.aud-chip.bad { color: #d03b3b; background: #fdf1f1; border-color: #d03b3b; }
+  font: 600 10px ui-monospace, monospace; color: var(--c-1a7a43); background: var(--c-f0faf4);
+  border: 1px solid var(--c-1baf7a); border-radius: 9px; padding: 1px 7px; opacity: 0.92; }
+.aud-chip.bad { color: var(--c-d03b3b); background: var(--c-fdf1f1); border-color: var(--c-d03b3b); }
 .aud-panel { display: none; position: absolute; top: 14px; right: 0; z-index: 31;
   max-width: 620px; max-height: 260px; overflow: auto; overscroll-behavior: contain;
-  font: 11px ui-monospace, monospace; color: #52514e; text-align: left;
-  background: #fff; border: 1px solid #c3c2b7; border-radius: 6px;
+  font: 11px ui-monospace, monospace; color: var(--c-52514e); text-align: left;
+  background: var(--c-ffffff); border: 1px solid var(--c-c3c2b7); border-radius: 6px;
   box-shadow: 0 2px 10px rgba(11, 11, 11, 0.12); padding: 6px 10px; }
 .aud-panel.open { display: block; }
-.aud-panel .aud-hd { color: #898781; font-style: italic; margin: 2px 0; }
+.aud-panel .aud-hd { color: var(--c-898781); font-style: italic; margin: 2px 0; }
 .aud-panel .aud-ln { line-height: 1.55; white-space: nowrap; }
-.aud-panel .aud-ln:hover { color: #0b0b0b; }
-.aud-panel .aud-ln.bad { color: #d03b3b; }`;
+.aud-panel .aud-ln:hover { color: var(--c-0b0b0b); }
+.aud-panel .aud-ln.bad { color: var(--c-d03b3b); }`;
 let audObs = null;
 const audOpen = new Set();   // chart ids whose report is pinned open — the
                              // charts re-render wholesale, so DOM can't hold this

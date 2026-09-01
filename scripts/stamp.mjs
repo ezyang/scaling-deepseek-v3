@@ -15,6 +15,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync, readdirSync } from 'node:fs';
 import { join, relative, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { themeCss, FLASH_SNIPPET } from '../src/theme.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const check = process.argv.includes('--check');
@@ -26,6 +27,22 @@ const pages = ['index.html',
   ...readdirSync(join(root, 'studies')).filter((f) => /^\d\d-.*\.html$/.test(f)).map((f) => 'studies/' + f)];
 
 const stale = [];
+
+// theme variable blocks (single source: src/theme.js) — study.css and
+// index.html carry them statically so pre-JS paint is already themed; the
+// anti-flash snippet in each page's head applies .dark before first paint
+const T_OPEN = '/* theme: generated from src/theme.js — node scripts/stamp.mjs */';
+const T_CLOSE = '/* /theme */';
+const tBlock = `${T_OPEN}\n${themeCss()}\n${T_CLOSE}`;
+const esc = (s) => s.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
+const spliceTheme = (t) => t.includes(T_OPEN)
+  ? t.replace(new RegExp(esc(T_OPEN) + '[\\s\\S]*?' + esc(T_CLOSE)), tBlock)
+  : t.replace(':root { color-scheme: light; }', tBlock);
+{
+  const css = readFileSync(join(root, 'studies/study.css'), 'utf8');
+  const next = spliceTheme(css);
+  if (next !== css) { stale.push('studies/study.css'); if (!check) writeFileSync(join(root, 'studies/study.css'), next); }
+}
 for (const page of pages) {
   const dir = dirname(page);
   const rel = (p) => { const r = relative(dir, p); return r.startsWith('.') ? r : './' + r; };
@@ -34,6 +51,11 @@ for (const page of pages) {
 
   let html = readFileSync(join(root, page), 'utf8');
   const orig = html;
+  html = spliceTheme(html);   // index.html's inline <style> carries the block
+  const flash = `<script data-theme>${FLASH_SNIPPET}</script>`;
+  html = html.includes('<script data-theme>')
+    ? html.replace(/<script data-theme>[\s\S]*?<\/script>/, flash)
+    : html.replace(/(<meta name="viewport"[^>]*>)/, `$1\n  ${flash}`);
   html = html.replace(/href="([^"?]+\.css)(?:\?v=[0-9a-f]+)?"/g, (_, href) =>
     `href="${href}?v=${hash(join(dir, href))}"`);
   if (html.includes('<script type="importmap">')) {

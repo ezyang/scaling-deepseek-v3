@@ -345,3 +345,19 @@ nav): refs turn into numbered links, notes get ↩ backlinks, and the inline
 negative `margin-top` shunts that position notes in the desktop gutter are
 cleared (study.css also neutralizes them for the 861–1040px note-boxes).
 tests/mobile.js (01) and tests/mobile02.js (02) pin all of this at 430px.
+
+## Night mode (src/theme.js)
+
+One palette, two renderings: the light hexes the renderers were written in
+are canonical, and `DARK` maps each to its night counterpart (OKLCH
+lightness-flip, hand-tuned — accents lift instead of darken, card/paper
+elevation inverts, heat ramps reverse so "hotter" stays the brighter end).
+CSS strings consume `var(--c-xxxxxx)`; SVG/canvas emissions call
+`C('#xxxxxx')` at render time so fills remain concrete hexes (the fit chart
+lerps colors; tests read fill attributes) — a theme flip therefore
+re-renders every widget (the `dsv3-theme` event). Choice = 
+prefers-color-scheme overridden by the fixed ◐ toggle (localStorage
+`dsv3-theme`); pages carry a head anti-flash snippet and static variable
+blocks, both spliced by stamp.mjs from theme.js. Pixel goldens exist for
+both themes (`<name>-dark.png`); og images stay light. Dark accents were
+contrast-checked ≥4.3:1 against both dark surfaces.

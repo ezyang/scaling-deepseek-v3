@@ -8,6 +8,18 @@ import { resolveMatmuls, MATMULS, RECIPES, RECIPE_T } from './memory.js';
 import { blockGraph, analyze, RECOMPUTE_PRESETS, MARKABLE } from './blockgraph.js';
 import { PARAMS } from './params.js';
 import { buildCells, evalExpr } from './cells.js';
+import { C, initTheme } from './theme.js';
+// theme boot + flip: C()-colors live in rendered attributes, so a theme
+// change re-renders every widget (their followers re-sync off the events
+// those renders already fire)
+if (typeof document !== 'undefined') {
+  initTheme();
+  addEventListener('dsv3-theme', () => {
+    for (const el of document.querySelectorAll(
+      'dsv3-layer, dsv3-anatomy-plan, dsv3-param-tally, dsv3-pp-schedule, dsv3-pp-fold, dsv3-beat-deck, dsv3-sheet'))
+      (el.render ?? el.draw ?? el.build)?.call(el);
+  });
+}
 import { BYTE_COMPS, ACT_BUCKETS, actBucketsOf, PP_CHOICES, LOCAL_PAR, CFG_DEFAULTS,
   vstagesOf, ppStage, actLayerBytes, inflightOf, peakStage } from './localmodel.js';
 
@@ -131,13 +143,13 @@ function fitSvg(L) {
   // the infeasible region is SHADED, not a line; its label sits ON TOP,
   // leaving the bottom axis to the power-of-two labels
   B.push(`<rect x="${f1(L.capPx)}" y="${topY - 2}" width="${f1(x0 + bw - L.capPx)}" ` +
-    `height="${f1(aY - topY - 1)}" fill="#0b0b0b" opacity="0.07"/>`);
+    `height="${f1(aY - topY - 1)}" fill="${C('#0b0b0b')}" opacity="0.07"/>`);
   // unit swatch legend floats right in the header — only when the strip
   // squares it explains are actually mounted (pointless on bars-only views)
-  if (L.unit) B.push(`<rect x="${x0 + bw - 96}" y="3" width="5" height="4" fill="#898781"/>` +
+  if (L.unit) B.push(`<rect x="${x0 + bw - 96}" y="3" width="5" height="4" fill="${C('#898781')}"/>` +
     `<text class="dims" x="${x0 + bw - 87}" y="9">${L.unit}</text>`);
   for (let e = LO; e <= HI; e += 1)   // the ×2 grid
-    B.push(`<line x1="${f1(gx(e))}" y1="${topY - 2}" x2="${f1(gx(e))}" y2="${f1(aY - 3)}" stroke="#e1e0d9" stroke-width="1"/>`);
+    B.push(`<line x1="${f1(gx(e))}" y1="${topY - 2}" x2="${f1(gx(e))}" y2="${f1(aY - 3)}" stroke="${C('#e1e0d9')}" stroke-width="1"/>`);
   for (const [e, lab] of [[30, '1 GiB'], [33, '8 GiB'], [36, '64 GiB'], [40, '1 TiB'], [43, '8 TiB']])
     B.push(`<text class="dims" x="${f1(gx(e) + 3)}" y="${f1(aY + 8)}">${lab}</text>`);
   for (const r of L.rows) {
@@ -180,9 +192,9 @@ function fitSvg(L) {
   const dy = aY + 18;
   const dpx = (f) => x0 + Math.log2(f) / (HI - LO) * bw;
   B.push(`<text class="dims" x="2" y="${f1(dy + 3)}">a span is a factor:</text>`);
-  B.push(`<line x1="${x0}" y1="${f1(dy)}" x2="${f1(dpx(2048))}" y2="${f1(dy)}" stroke="#898781" stroke-width="1"/>`);
+  B.push(`<line x1="${x0}" y1="${f1(dy)}" x2="${f1(dpx(2048))}" y2="${f1(dy)}" stroke="${C('#898781')}" stroke-width="1"/>`);
   for (const [f, lab] of [[1, ''], [2, '×2'], [8, '×8 (PP)'], [64, '×64 (EP)'], [2048, '×2048 (GPUs)']]) {
-    B.push(`<line data-fac="${f}" x1="${f1(dpx(f))}" y1="${f1(dy - 4)}" x2="${f1(dpx(f))}" y2="${f1(dy + 4)}" stroke="#898781" stroke-width="1"/>`);
+    B.push(`<line data-fac="${f}" x1="${f1(dpx(f))}" y1="${f1(dy - 4)}" x2="${f1(dpx(f))}" y2="${f1(dy + 4)}" stroke="${C('#898781')}" stroke-width="1"/>`);
     if (lab) B.push(`<text class="dims" x="${f1(dpx(f))}" y="${f1(dy + 13)}" text-anchor="middle">${lab}</text>`);
   }
   // the pinned save label shares the legend band, right-aligned (its line is
@@ -209,10 +221,10 @@ export const fmtP = (n) => n >= 1e9 ? (n / 1e9).toFixed(1) + 'B'
 import { downloadTrace, openInPerfetto } from './trace.js';
 
 // shared light-card tooltip style (trace, memory bars, schematic)
-const TIP_CARD = 'position: absolute; pointer-events: none; background: #fff; color: #1c1c1a; padding: 6px 9px;' +
-  ' border: 1px solid #c3c2b7; border-radius: 5px; display: none; box-shadow: 0 2px 10px rgba(11,11,11,0.12);';
+const TIP_CARD = 'position: absolute; pointer-events: none; background: var(--c-ffffff); color: var(--c-1c1c1a); padding: 6px 9px;' +
+  ' border: 1px solid var(--c-c3c2b7); border-radius: 5px; display: none; box-shadow: 0 2px 10px rgba(11,11,11,0.12);';
 
-// Validated categorical palette (dataviz skill, light surface #fcfcfb).
+// Validated categorical palette (dataviz skill, light surface var(--c-fcfcfb)).
 export const CATS = {
   gemm: { c: '#2a78d6', ink: '#fff', label: 'GEMM' },
   attn: { c: '#eb6834', ink: '#fff', label: 'attention' },
@@ -227,26 +239,26 @@ export const CATS = {
 
 const GUTTER = 120, RULER = 20, LANE = 17, HEADER = 16;
 const CSS = `
-.tv { font: 12px system-ui, -apple-system, "Segoe UI", sans-serif; color: #0b0b0b;
-  border: 1px solid #e1e0d9; border-radius: 6px; background: #fcfcfb; overflow: hidden; }
-.tv-bar { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-bottom: 1px solid #e1e0d9; flex-wrap: wrap; }
+.tv { font: 12px system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--c-0b0b0b);
+  border: 1px solid var(--c-e1e0d9); border-radius: 6px; background: var(--c-fcfcfb); overflow: hidden; }
+.tv-bar { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-bottom: 1px solid var(--c-e1e0d9); flex-wrap: wrap; }
 .tv-title { font-weight: 600; }
-.tv-stats { color: #52514e; }
+.tv-stats { color: var(--c-52514e); }
 .tv-sp { flex: 1; }
-.tv button { font: 11px system-ui; padding: 2px 8px; border: 1px solid #c3c2b7; border-radius: 4px;
-  background: #fff; color: #0b0b0b; cursor: pointer; }
-@media (hover: hover) { .tv button:hover { background: #f3f2ee; } }
-.tv-legend { display: flex; gap: 10px; padding: 3px 8px; border-bottom: 1px solid #e1e0d9;
-  color: #52514e; font-size: 11px; flex-wrap: wrap; }
+.tv button { font: 11px system-ui; padding: 2px 8px; border: 1px solid var(--c-c3c2b7); border-radius: 4px;
+  background: var(--c-ffffff); color: var(--c-0b0b0b); cursor: pointer; }
+@media (hover: hover) { .tv button:hover { background: var(--c-f3f2ee); } }
+.tv-legend { display: flex; gap: 10px; padding: 3px 8px; border-bottom: 1px solid var(--c-e1e0d9);
+  color: var(--c-52514e); font-size: 11px; flex-wrap: wrap; }
 .tv-legend span { display: inline-flex; align-items: center; gap: 4px; }
 .tv-legend i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
 .tv-wrap { position: relative; }
 .tv canvas { display: block; outline: none; }
 .tv-tip { ${TIP_CARD} font-size: 11px; max-width: 340px; z-index: 5; line-height: 1.45; }
-.tv-tip b { color: #0b0b0b; }
-.tv-foot { padding: 3px 8px; border-top: 1px solid #e1e0d9; color: #52514e; font-size: 11px;
+.tv-tip b { color: var(--c-0b0b0b); }
+.tv-foot { padding: 3px 8px; border-top: 1px solid var(--c-e1e0d9); color: var(--c-52514e); font-size: 11px;
   min-height: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tv-help { position: absolute; top: 6px; right: 6px; background: rgba(11,11,11,.92); color: #fff;
+.tv-help { position: absolute; top: 6px; right: 6px; background: rgba(11,11,11,.92); color: var(--c-ffffff);
   padding: 8px 12px; border-radius: 6px; font-size: 11px; z-index: 6; display: none; line-height: 1.7; }
 `;
 
@@ -308,14 +320,14 @@ export class TraceViewer {
       const m = stats.mem;
       const memEl = el('span');
       memEl.textContent = ` · mem ${m.worst.total.toFixed(0)}/${m.capacityGB} GiB` + (m.fits ? '' : ' — does not fit ✗');
-      memEl.style.color = m.fits ? '#52514e' : '#d03b3b';
+      memEl.style.color = m.fits ? C('#52514e') : C('#d03b3b');
       if (!m.fits) memEl.style.fontWeight = '600';
       this.statsEl.append(memEl);
     }
     this.buildRows();
     this.legendEl.innerHTML = '';
     for (const cat of this.catsPresent) {
-      const s = el('span'); const i = el('i'); i.style.background = CATS[cat].c;
+      const s = el('span'); const i = el('i'); i.style.background = C(CATS[cat].c);
       s.append(i, document.createTextNode(CATS[cat].label)); this.legendEl.append(s);
     }
     this.resize(); this.fit();
@@ -386,7 +398,7 @@ export class TraceViewer {
     if (!ctx) return;
     this.clampView();
     ctx.clearRect(0, 0, w, h);
-    ctx.fillStyle = '#fcfcfb'; ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = C('#fcfcfb'); ctx.fillRect(0, 0, w, h);
     this.drawRuler();
     ctx.save();
     ctx.beginPath(); ctx.rect(0, RULER, w, h - RULER); ctx.clip();
@@ -402,11 +414,11 @@ export class TraceViewer {
 
   drawRuler() {
     const { ctx } = this;
-    ctx.fillStyle = '#f9f9f7'; ctx.fillRect(0, 0, this.w, RULER);
+    ctx.fillStyle = C('#f9f9f7'); ctx.fillRect(0, 0, this.w, RULER);
     const target = 110 * this.tpp;
     const pow = Math.pow(10, Math.floor(Math.log10(target)));
     const step = [1, 2, 5, 10].map(m => m * pow).find(s => s >= target) ?? pow * 10;
-    ctx.font = '10px system-ui'; ctx.fillStyle = '#898781'; ctx.strokeStyle = '#e1e0d9';
+    ctx.font = '10px system-ui'; ctx.fillStyle = C('#898781'); ctx.strokeStyle = C('#e1e0d9');
     const start = Math.floor(this.tl / step) * step;
     for (let t = start; t < this.tOf(this.w); t += step) {
       const x = this.xOf(t);
@@ -414,19 +426,19 @@ export class TraceViewer {
       ctx.beginPath(); ctx.moveTo(x, RULER - 4); ctx.lineTo(x, this.h); ctx.stroke();
       ctx.fillText(fmtUs(t), x + 3, 12);
     }
-    ctx.strokeStyle = '#c3c2b7';
+    ctx.strokeStyle = C('#c3c2b7');
     ctx.beginPath(); ctx.moveTo(0, RULER + .5); ctx.lineTo(this.w, RULER + .5); ctx.stroke();
   }
 
   drawRow(row, y) {
     const { ctx } = this;
     if (row.kind === 'header') {
-      ctx.fillStyle = '#f3f2ee'; ctx.fillRect(0, y, this.w, row.h);
-      ctx.fillStyle = '#0b0b0b'; ctx.font = 'bold 10px system-ui';
+      ctx.fillStyle = C('#f3f2ee'); ctx.fillRect(0, y, this.w, row.h);
+      ctx.fillStyle = C('#0b0b0b'); ctx.font = 'bold 10px system-ui';
       ctx.fillText(row.label, 6, y + 12);
       return;
     }
-    ctx.fillStyle = '#898781'; ctx.font = '10px system-ui';
+    ctx.fillStyle = C('#898781'); ctx.font = '10px system-ui';
     ctx.fillText(row.label, 14, y + 12);
     const tr = this.tOf(this.w);
     row.lanes.forEach((lane, li) => {
@@ -436,7 +448,7 @@ export class TraceViewer {
       let mx0 = null, mx1 = 0, mcat = null; // merged run of sub-pixel slices
       const flushMerged = () => {
         if (mx0 == null) return;
-        ctx.fillStyle = CATS[mcat]?.c ?? '#898781';
+        ctx.fillStyle = C(CATS[mcat]?.c ?? '#898781');
         ctx.fillRect(mx0, ly, Math.max(mx1 - mx0, 0.6), lh);
         mx0 = null;
       };
@@ -451,11 +463,11 @@ export class TraceViewer {
           continue;
         }
         flushMerged();
-        const cat = CATS[s.cat] ?? { c: '#898781', ink: '#fff' };
-        ctx.fillStyle = cat.c;
+        const cat = CATS[s.cat] ?? { c: C('#898781'), ink: C('#ffffff') };
+        ctx.fillStyle = C(cat.c);
         ctx.fillRect(x0, ly, Math.max(sw - 0.5, 0.6), lh);
         if (sw > 34) {
-          ctx.fillStyle = cat.ink;
+          ctx.fillStyle = C(cat.ink);
           const chars = Math.floor(sw / 6);
           ctx.fillText(s.name.length > chars ? s.name.slice(0, chars - 1) + '…' : s.name, x0 + 3, ly + 12);
         }
@@ -470,20 +482,20 @@ export class TraceViewer {
     const x0 = Math.max(this.xOf(this.mark.t0), GUTTER), x1 = this.xOf(this.mark.t1);
     if (x1 < GUTTER || x0 > this.w) return;
     ctx.fillStyle = 'rgba(42,120,214,0.10)'; ctx.fillRect(x0, RULER, x1 - x0, this.h - RULER);
-    ctx.strokeStyle = '#2a78d6';
+    ctx.strokeStyle = C('#2a78d6');
     for (const x of [x0, x1]) { ctx.beginPath(); ctx.moveTo(x, RULER); ctx.lineTo(x, this.h); ctx.stroke(); }
     const label = fmtUs(this.mark.t1 - this.mark.t0);
     ctx.font = 'bold 10px system-ui';
     const tw = ctx.measureText(label).width;
-    ctx.fillStyle = '#2a78d6'; ctx.fillRect((x0 + x1) / 2 - tw / 2 - 4, RULER + 2, tw + 8, 14);
-    ctx.fillStyle = '#fff'; ctx.fillText(label, (x0 + x1) / 2 - tw / 2, RULER + 13);
+    ctx.fillStyle = C('#2a78d6'); ctx.fillRect((x0 + x1) / 2 - tw / 2 - 4, RULER + 2, tw + 8, 14);
+    ctx.fillStyle = C('#ffffff'); ctx.fillText(label, (x0 + x1) / 2 - tw / 2, RULER + 13);
   }
 
   drawSelection() {
     const s = this.sel;
     const y = this.rowY(this.selRow) + this.selLane * LANE + 1;
     if (y == null) return;
-    this.ctx.strokeStyle = '#0b0b0b'; this.ctx.lineWidth = 1.5;
+    this.ctx.strokeStyle = C('#0b0b0b'); this.ctx.lineWidth = 1.5;
     this.ctx.strokeRect(this.xOf(s.ts), y, Math.max(s.dur / this.tpp, 1.5), LANE - 2);
     this.ctx.lineWidth = 1;
   }
@@ -699,60 +711,60 @@ const COMPUTE_DT = (d) => d === 'e5m6' ? 'e4m3' : d;
 // the diagram's visual-language tokens (docs/diagram-grammar.md) — one
 // definition, scoped into each widget's stylesheet (the anatomy plan too)
 export const tokensCss = (s) => `
-${s} .wire { stroke: #898781; stroke-width: 1.2; fill: none; }
-${s} .box { fill: #fff; stroke: #c3c2b7; }
-${s} .op { fill: #f3f2ee; stroke: #e1e0d9; }
-${s} .comm { fill: #f3f1fb; stroke: #6b5bd2; }
-${s} .res { fill: #fcfcfb; stroke: #c3c2b7; stroke-dasharray: 3 2; }
-${s} .grp { fill: none; stroke: #e1e0d9; }
-${s} .name { font: 600 11px system-ui; fill: #0b0b0b; }
-${s} .dims { font: 9px system-ui; fill: #898781; }
-${s} .oplabel { font: 10.5px system-ui; fill: #52514e; }
-${s} .grplabel { font: italic 10px system-ui; fill: #898781; }
-${s} .plus { font: 600 12px system-ui; fill: #52514e; }
+${s} .wire { stroke: var(--c-898781); stroke-width: 1.2; fill: none; }
+${s} .box { fill: var(--c-ffffff); stroke: var(--c-c3c2b7); }
+${s} .op { fill: var(--c-f3f2ee); stroke: var(--c-e1e0d9); }
+${s} .comm { fill: var(--c-f3f1fb); stroke: var(--c-6b5bd2); }
+${s} .res { fill: var(--c-fcfcfb); stroke: var(--c-c3c2b7); stroke-dasharray: 3 2; }
+${s} .grp { fill: none; stroke: var(--c-e1e0d9); }
+${s} .name { font: 600 11px system-ui; fill: var(--c-0b0b0b); }
+${s} .dims { font: 9px system-ui; fill: var(--c-898781); }
+${s} .oplabel { font: 10.5px system-ui; fill: var(--c-52514e); }
+${s} .grplabel { font: italic 10px system-ui; fill: var(--c-898781); }
+${s} .plus { font: 600 12px system-ui; fill: var(--c-52514e); }
 `;
 // the local-knob control-strip styles (steppers, grouped rows) — shared by
 // the layer's mini-head and <dsv3-pp-schedule>'s replicated pipeline group
 const knobCss = (s) => `
 ${s} .pargrp { display: inline-flex; flex-direction: column; gap: 2px;
-  border: 1px solid #e1e0d9; border-radius: 6px; padding: 3px 8px 5px; align-self: stretch; }
+  border: 1px solid var(--c-e1e0d9); border-radius: 6px; padding: 3px 8px 5px; align-self: stretch; }
 ${s} .pargrp.center { justify-content: center; }
-${s} .parlab { font: italic 10px system-ui; color: #898781; }
+${s} .parlab { font: italic 10px system-ui; color: var(--c-898781); }
 ${s} .parrow { display: flex; align-items: center; gap: 5px; min-height: 20px; }
 ${s} .stp { display: inline-flex; align-items: stretch; }
-${s} .stp button { font: 12px ui-monospace, monospace; width: 20px; padding: 0 0 1px; border: 1px solid #c3c2b7; background: #fff; color: #52514e; cursor: pointer; }
-@media (hover: hover) { ${s} .stp button:hover:not(:disabled) { background: #f3f2ee; } }
-${s} .stp button:disabled { color: #dedcd3; cursor: default; }
+${s} .stp button { font: 12px ui-monospace, monospace; width: 20px; padding: 0 0 1px; border: 1px solid var(--c-c3c2b7); background: var(--c-ffffff); color: var(--c-52514e); cursor: pointer; }
+@media (hover: hover) { ${s} .stp button:hover:not(:disabled) { background: var(--c-f3f2ee); } }
+${s} .stp button:disabled { color: var(--c-dedcd3); cursor: default; }
 ${s} .stp button:first-child { border-radius: 4px 0 0 4px; }
 ${s} .stp button:last-child { border-radius: 0 4px 4px 0; }
 ${s} .stp button + button { border-left: none; }
-${s} .stp button.on { background: #f3f2ee; color: #0b0b0b; font-weight: 600; cursor: default; }
+${s} .stp button.on { background: var(--c-f3f2ee); color: var(--c-0b0b0b); font-weight: 600; cursor: default; }
 ${s} .stp button { width: auto; min-width: 20px; padding: 0 5px 1px; }
 ${s} .stp select.v { font: 11px ui-monospace, monospace; min-width: 4ch; padding: 2px 5px;
-  border: 1px solid #c3c2b7; border-left: none; border-right: none; border-radius: 0;
-  background: #fff; appearance: none; -webkit-appearance: none; text-align: center;
+  border: 1px solid var(--c-c3c2b7); border-left: none; border-right: none; border-radius: 0;
+  background: var(--c-ffffff); appearance: none; -webkit-appearance: none; text-align: center;
   text-align-last: center; cursor: pointer; }
-${s} select { font: 12px system-ui; padding: 2px 6px; border: 1px solid #c3c2b7; border-radius: 4px; background: #fff; }
+${s} select { font: 12px system-ui; padding: 2px 6px; border: 1px solid var(--c-c3c2b7); border-radius: 4px; background: var(--c-ffffff); }
 `;
 
 const LAYER_CSS = `
 dsv3-layer { display: block; margin: 14px 0 26px; }
-.lv { font: 12px system-ui, -apple-system, "Segoe UI", sans-serif; color: #0b0b0b;
-  border: 1px solid #e1e0d9; border-radius: 6px; background: #fcfcfb; padding: 10px 12px; position: relative; }
+.lv { font: 12px system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--c-0b0b0b);
+  border: 1px solid var(--c-e1e0d9); border-radius: 6px; background: var(--c-fcfcfb); padding: 10px 12px; position: relative; }
 .lv-tip { ${TIP_CARD} font-size: 11.5px; max-width: 360px; z-index: 7; line-height: 1.5; white-space: pre-line; }
-.lv-tip.pinned { border-color: #eda100; box-shadow: 0 2px 10px rgba(237,161,0,0.3); }
+.lv-tip.pinned { border-color: var(--c-eda100); box-shadow: 0 2px 10px rgba(237,161,0,0.3); }
 /* cell (formula) tooltips: entries stack downward as the pinned drill deepens */
-.lv-cellent + .lv-cellent { border-top: 1px dashed #e1e0d9; margin-top: 5px; padding-top: 5px; }
-.lv-cellfx { font: 11px ui-monospace, monospace; color: #52514e; margin-top: 1px; }
-.lv-tip .cellref { color: #2a78d6; font-weight: 600; }
+.lv-cellent + .lv-cellent { border-top: 1px dashed var(--c-e1e0d9); margin-top: 5px; padding-top: 5px; }
+.lv-cellfx { font: 11px ui-monospace, monospace; color: var(--c-52514e); margin-top: 1px; }
+.lv-tip .cellref { color: var(--c-2a78d6); font-weight: 600; }
 .lv-tip.pinned .cellref { cursor: pointer; text-decoration: underline dotted; }
 .lv-tip.pinned .celljump { cursor: pointer; }
 @media (hover: hover) { .lv-tip.pinned .celljump:hover { text-decoration: underline; } }
-.lv-cellhint { color: #898781; font-size: 10px; margin-top: 5px; }
-.lv-head { display: flex; align-items: center; gap: 8px; padding-bottom: 6px; color: #52514e; flex-wrap: wrap; }
-.lv-head select { font: 12px system-ui; padding: 2px 6px; border: 1px solid #c3c2b7; border-radius: 4px; background: #fff; }
+.lv-cellhint { color: var(--c-898781); font-size: 10px; margin-top: 5px; }
+.lv-head { display: flex; align-items: center; gap: 8px; padding-bottom: 6px; color: var(--c-52514e); flex-wrap: wrap; }
+.lv-head select { font: 12px system-ui; padding: 2px 6px; border: 1px solid var(--c-c3c2b7); border-radius: 4px; background: var(--c-ffffff); }
 .lv-head .savebox { margin-left: auto; display: inline-flex; gap: 6px; align-items: flex-start;
-  padding-left: 12px; border-left: 1px solid #e1e0d9; align-self: flex-start; }
+  padding-left: 12px; border-left: 1px solid var(--c-e1e0d9); align-self: flex-start; }
 ${knobCss('.lv-head')}
 .lv.lv-compact { padding: 6px 12px; }
 .lv-compact .lv-head { padding-bottom: 4px; }
@@ -768,15 +780,15 @@ ${knobCss('.lv-head')}
 .lv-side .parlab { margin-bottom: 1px; }
 .lv-side .parrow { min-height: 0; }
 .lv-side .stp { flex-direction: column; align-items: stretch; gap: 5px; width: 100%; }
-.lv-side .stp button { text-align: left; padding: 3px 10px 4px; border: 1px solid #c3c2b7; border-radius: 5px; }
-.lv-side .stp button + button { border-left: 1px solid #c3c2b7; border-top: 1px solid #c3c2b7; }
-.lv-side .stp button:disabled { border-color: #e1e0d9; }
+.lv-side .stp button { text-align: left; padding: 3px 10px 4px; border: 1px solid var(--c-c3c2b7); border-radius: 5px; }
+.lv-side .stp button + button { border-left: 1px solid var(--c-c3c2b7); border-top: 1px solid var(--c-c3c2b7); }
+.lv-side .stp button:disabled { border-color: var(--c-e1e0d9); }
 @media (max-width: 1040px) {
   .lv .lv-side { position: static; width: auto; display: flex; padding-bottom: 4px; }
   .lv-side .pargrp { display: inline-flex; width: auto; }
   .lv-side .stp { flex-direction: row; }
-  .lv-side .stp button { border-left: none; border-top: 1px solid #c3c2b7; border-radius: 0; }
-  .lv-side .stp button:first-child { border-left: 1px solid #c3c2b7; border-radius: 4px 0 0 4px; }
+  .lv-side .stp button { border-left: none; border-top: 1px solid var(--c-c3c2b7); border-radius: 0; }
+  .lv-side .stp button:first-child { border-left: 1px solid var(--c-c3c2b7); border-radius: 4px 0 0 4px; }
   .lv-side .stp button:last-child { border-radius: 0 4px 4px 0; }
 }
 .lv-compact .lv-foot2 svg { padding-top: 2px; }
@@ -792,43 +804,43 @@ dsv3-layer[snapshot] .lv-bar [data-part], dsv3-layer[snapshot] .lv-bar [data-pro
 dsv3-layer[hypothetical] .lv { border-style: dashed; }
 /* snapshot knob panels are READOUTS: values stay ink, ± steppers hide,
    segment selections keep their face */
-dsv3-layer[snapshot] .lv-head button:disabled, dsv3-layer[snapshot] .lv-head select:disabled { opacity: 1; color: #0b0b0b; cursor: default; }
-dsv3-layer[snapshot] .lv-head .stp button.on:disabled { background: #f3f2ee; color: #0b0b0b; }
+dsv3-layer[snapshot] .lv-head button:disabled, dsv3-layer[snapshot] .lv-head select:disabled { opacity: 1; color: var(--c-0b0b0b); cursor: default; }
+dsv3-layer[snapshot] .lv-head .stp button.on:disabled { background: var(--c-f3f2ee); color: var(--c-0b0b0b); }
 /* read-only knob chips (the ctx group): a locked value keeps its ink */
-.lv-head .stp button.on:disabled { background: #f3f2ee; color: #0b0b0b; opacity: 1; cursor: default; }
-dsv3-layer[snapshot] .lv-head .stp button:disabled:not(.on) { color: #c3c2b7; }
+.lv-head .stp button.on:disabled { background: var(--c-f3f2ee); color: var(--c-0b0b0b); opacity: 1; cursor: default; }
+dsv3-layer[snapshot] .lv-head .stp button:disabled:not(.on) { color: var(--c-c3c2b7); }
 dsv3-layer[snapshot] .lv-head .stp:has(select.v) button { display: none; }
-dsv3-layer[snapshot] .lv-head .stp:has(select.v) select.v { border-left: 1px solid #c3c2b7; border-right: 1px solid #c3c2b7; border-radius: 4px; }
-dsv3-layer[snapshot] .lv-head select:disabled { appearance: none; -webkit-appearance: none; background: #fff; }
-.lv-hyptag { font: italic 10.5px system-ui; color: #898781; padding-bottom: 4px; }
+dsv3-layer[snapshot] .lv-head .stp:has(select.v) select.v { border-left: 1px solid var(--c-c3c2b7); border-right: 1px solid var(--c-c3c2b7); border-radius: 4px; }
+dsv3-layer[snapshot] .lv-head select:disabled { appearance: none; -webkit-appearance: none; background: var(--c-ffffff); }
+.lv-hyptag { font: italic 10.5px system-ui; color: var(--c-898781); padding-bottom: 4px; }
 .lv-bar svg { display: block; margin: 2px 0 6px; max-width: 100%; height: auto; }
 .lv-bar { position: relative; }
 .lv-ruler { display: none; position: absolute; background: rgba(237, 161, 0, 0.12);
-  border-left: 1px solid #0b0b0b; border-right: 1px solid #0b0b0b; pointer-events: none; }
+  border-left: 1px solid var(--c-0b0b0b); border-right: 1px solid var(--c-0b0b0b); pointer-events: none; }
 .lv-ruler-lab { position: absolute; top: -2px; left: 100%; margin-left: 5px; white-space: nowrap;
-  font: 11px ui-monospace, monospace; color: #0b0b0b; background: #fff8ea; padding: 1px 4px;
-  border: 1px solid #eda100; border-radius: 3px; }
+  font: 11px ui-monospace, monospace; color: var(--c-0b0b0b); background: var(--c-fff8ea); padding: 1px 4px;
+  border: 1px solid var(--c-eda100); border-radius: 3px; }
 ${tokensCss('.lv')}
-.lv select.dt { font: 600 10px system-ui; width: 100%; height: 20px; border: 1px solid #c3c2b7;
-  border-radius: 3px; background: #fff; }
+.lv select.dt { font: 600 10px system-ui; width: 100%; height: 20px; border: 1px solid var(--c-c3c2b7);
+  border-radius: 3px; background: var(--c-ffffff); }
 .lv button.st { display: block; width: 100%; height: 18px; font: 10px system-ui; border-radius: 3px;
   cursor: pointer; text-align: left; padding: 0 5px; overflow: hidden; white-space: nowrap; }
-.lv .st-save { background: #fff8ea; border: 1px solid #eda100; color: #0b0b0b; }
-.lv .st-redo { background: #f3f2ee; border: 1px dashed #898781; color: #52514e; }
-.lv .st-keep { background: #fff; border: 1px solid #c3c2b7; color: #898781; text-decoration: line-through; }
+.lv .st-save { background: var(--c-fff8ea); border: 1px solid var(--c-eda100); color: var(--c-0b0b0b); }
+.lv .st-redo { background: var(--c-f3f2ee); border: 1px dashed var(--c-898781); color: var(--c-52514e); }
+.lv .st-keep { background: var(--c-ffffff); border: 1px solid var(--c-c3c2b7); color: var(--c-898781); text-decoration: line-through; }
 .lv button.st.mode { width: 24px; padding: 0; text-align: center; height: 20px; }
 .lv button.st.dtb { width: 52px; padding: 0; text-align: center; height: 20px; font-weight: 600;
-  background: #fff; border: 1px solid #c3c2b7; }
+  background: var(--c-ffffff); border: 1px solid var(--c-c3c2b7); }
 .lv text.tensor { font: 10px system-ui; }
-.lv .tsave { fill: #7a5200; font-weight: 600; }
-.lv .tdim { fill: #898781; font-weight: 400; }
-.lv .micro { fill: #f7f6f1; stroke: #d8d6cb; }
+.lv .tsave { fill: var(--c-7a5200); font-weight: 600; }
+.lv .tdim { fill: var(--c-898781); font-weight: 400; }
+.lv .micro { fill: var(--c-f7f6f1); stroke: var(--c-d8d6cb); }
 .lv svg.hlm > :not(.hl):not(defs) { opacity: 0.3; }
-.lv g[data-op].hl .dims { fill: #52514e; font-weight: 600; }
-.lv .microlabel { font: italic 10px system-ui; fill: #52514e; }
-.lv .tredo { fill: #52514e; font-style: italic; }
-.lv .tidle { fill: #a8a69e; }
-.lv-note { color: #898781; font-size: 11px; padding-top: 6px; max-width: 640px; }
+.lv g[data-op].hl .dims { fill: var(--c-52514e); font-weight: 600; }
+.lv .microlabel { font: italic 10px system-ui; fill: var(--c-52514e); }
+.lv .tredo { fill: var(--c-52514e); font-style: italic; }
+.lv .tidle { fill: var(--c-a8a69e); }
+.lv-note { color: var(--c-898781); font-size: 11px; padding-top: 6px; max-width: 640px; }
 .lv-foot2 { display: flex; gap: 24px; align-items: flex-start; flex-wrap: wrap; }
 .lv-foot2 .lv-note { flex: 1 1 420px; }
 .lv-foot2 svg { flex: none; padding-top: 8px; }
@@ -1280,7 +1292,7 @@ export class Dsv3Layer extends HTMLElement {
     const numIn = (label, get, set) => {
       head.append(' ' + label + ' ');
       const i = document.createElement('input');
-      i.type = 'number'; i.value = get(); i.style.cssText = 'width:44px;font:12px system-ui;padding:1px 4px;border:1px solid #c3c2b7;border-radius:3px;';
+      i.type = 'number'; i.value = get(); i.style.cssText = 'width:44px;font:12px system-ui;padding:1px 4px;border:1px solid var(--c-c3c2b7);border-radius:3px;';
       i.onchange = () => { set(Math.max(1, +i.value || 1)); this.render(); this.changed(true); };
       head.append(i);
     };
@@ -1290,7 +1302,7 @@ export class Dsv3Layer extends HTMLElement {
     }
     const reset = document.createElement('button');
     reset.textContent = 'reset';
-    reset.style.cssText = 'font:11px system-ui;margin-left:auto;padding:2px 8px;border:1px solid #c3c2b7;border-radius:4px;background:#fff;cursor:pointer;';
+    reset.style.cssText = 'font:11px system-ui;margin-left:auto;padding:2px 8px;border:1px solid var(--c-c3c2b7);border-radius:4px;background:var(--c-ffffff);cursor:pointer;';
     reset.onclick = () => {
       this.setAttribute('recipe', this._origRecipe);
       this.matmuls = resolveMatmuls({ recipe: this._origRecipe });
@@ -1317,7 +1329,7 @@ export class Dsv3Layer extends HTMLElement {
       this.render(); this.changed(false);
     };
     const tl = document.createElement('label');
-    tl.style.cssText = 'display:inline-flex;align-items:center;gap:4px;margin-left:8px;color:#52514e;';
+    tl.style.cssText = 'display:inline-flex;align-items:center;gap:4px;margin-left:8px;color:var(--c-52514e);';
     tl.title = 'The wgrad GEMM reads its saved activations TRANSPOSED, and 1×128 tile scales don’t survive that. ' +
       'ON = pay in memory: quantize with transpose at forward, stash BOTH orientations. ' +
       'OFF = pay in compute: one copy, re-quantized (dequant → transpose → requant) during backward — DeepSeek’s own convention. ' +
@@ -1332,7 +1344,7 @@ export class Dsv3Layer extends HTMLElement {
     // (e5m6 ⇄ bf16), so recipe recognition sees it automatically; the all-fp8
     // recipe pins the attn-out stash to e4m3 and the checkbox greys out.
     const tl2 = document.createElement('label');
-    tl2.style.cssText = 'display:inline-flex;align-items:center;gap:4px;margin-left:8px;color:#52514e;';
+    tl2.style.cssText = 'display:inline-flex;align-items:center;gap:4px;margin-left:8px;color:var(--c-52514e);';
     tl2.title = 'DeepSeek’s customized 12-bit stash format, exclusively for the attention output (it feeds both ' +
       'attention backward and the attn-out wgrad — too sensitive for e4m3, and pow-2 scales make the 1×128 → 128×1 ' +
       'orientation flip lossless from ONE copy). OFF = stash it bf16 instead' +
@@ -1352,8 +1364,8 @@ export class Dsv3Layer extends HTMLElement {
       : this.kind === 'dense' ? (DSV3.denseLayers ?? 3) : DSV3.layers - (DSV3.denseLayers ?? 3);
     const mkCumBtn = () => {
       const b = document.createElement('button');
-      b.style.cssText = 'font:11px ui-monospace,monospace;padding:2px 8px;border:1px solid #c3c2b7;' +
-        'border-radius:4px;background:#fff;cursor:pointer;margin-left:8px;min-width:9ch;box-sizing:content-box;';
+      b.style.cssText = 'font:11px ui-monospace,monospace;padding:2px 8px;border:1px solid var(--c-c3c2b7);' +
+        'border-radius:4px;background:var(--c-ffffff);cursor:pointer;margin-left:8px;min-width:9ch;box-sizing:content-box;';
       b.textContent = this.cumulative ? `\u00d7${KBLK} blocks` : 'per block';
       b.title = 'toggle parameter counts: one block vs cumulative over all blocks of this kind ' +
         '(the tabs hide in cumulative mode \u2014 the multiplier follows the selected block kind)';
@@ -1376,15 +1388,15 @@ export class Dsv3Layer extends HTMLElement {
     };
     const mkDimsBtn = () => {
       const b = document.createElement('button');
-      b.style.cssText = 'font:11px ui-monospace,monospace;padding:2px 8px;border:1px solid #c3c2b7;' +
-        'border-radius:4px;background:#fff;cursor:pointer;margin-left:8px;';
+      b.style.cssText = 'font:11px ui-monospace,monospace;padding:2px 8px;border:1px solid var(--c-c3c2b7);' +
+        'border-radius:4px;background:var(--c-ffffff);cursor:pointer;margin-left:8px;';
       b.textContent = this.flatDims ? '24576' : '128\u00d7192';
       b.title = 'toggle sizes: factored (128\u00d7192) vs multiplied out (24576)';
       b.onclick = () => { this.flatDims = !this.flatDims; this.render(); this.changed(true); };
       return b;
     };
     const dl = document.createElement('label');
-    dl.style.cssText = 'display:inline-flex;align-items:center;gap:4px;margin-left:8px;color:#52514e;';
+    dl.style.cssText = 'display:inline-flex;align-items:center;gap:4px;margin-left:8px;color:var(--c-52514e);';
     dl.title = 'Also draw the kernels the terse view folds away: the latent RMSNorms, RoPE, the router’s ' +
       'sigmoid/top-k, the shared-expert GEMMs, the dispatched top-k weights, and the gating multiply. ' +
       'Display only — they are cheap, carry no marks, and don’t change the model.';
@@ -1525,7 +1537,7 @@ export class Dsv3Layer extends HTMLElement {
         hr = el('div', 'lv-head');
         const grp3 = (label) => { const g = el('span', 'pargrp'); const l5 = el('div', 'parlab'); l5.textContent = label; g.append(l5); return g; };
         const row3 = (...kids) => { const d = el('div', 'parrow'); d.append(...kids); return d; };
-        const txt3 = (t3) => { const sp = el('span'); sp.style.cssText = 'color:#52514e;font-size:11px;'; sp.textContent = t3; return sp; };
+        const txt3 = (t3) => { const sp = el('span'); sp.style.cssText = 'color:var(--c-52514e);font-size:11px;'; sp.textContent = t3; return sp; };
         const seg3 = (name, opts, onIdx) => {
           const w5 = el('span', 'stp'); w5.dataset.knob = name;
           opts.forEach((t3, i) => {
@@ -1554,8 +1566,8 @@ export class Dsv3Layer extends HTMLElement {
         gZ.append(row3(seg3('zero', ['off', '1', '2', '3'], C.zero)));
         hr.append(gC, gP, gM, gZ);
       }
-      reset.style.cssText = 'font:11px ui-monospace,monospace;padding:2px 8px;border:1px solid #c3c2b7;' +
-        'border-radius:4px;background:#fff;cursor:pointer;margin-left:auto;';
+      reset.style.cssText = 'font:11px ui-monospace,monospace;padding:2px 8px;border:1px solid var(--c-c3c2b7);' +
+        'border-radius:4px;background:var(--c-ffffff);cursor:pointer;margin-left:auto;';
       // the marks tier gets NO reset: the preset chips ARE the reset (clicking
       // dsv3 is it). The dtype tier keeps one — it also clears fp8ᵀ.
       if (this._ctl.dtype) hh.append(reset);   // no sizes toggle here: shapes are 01's story, not this section's
@@ -1630,7 +1642,7 @@ export class Dsv3Layer extends HTMLElement {
           return g;
         };
         const row2 = (...kids) => { const d = el('div', 'parrow'); d.append(...kids); return d; };
-        const txt2 = (t3) => { const sp = el('span'); sp.style.cssText = 'color:#52514e;font-size:11px;'; sp.textContent = t3; return sp; };
+        const txt2 = (t3) => { const sp = el('span'); sp.style.cssText = 'color:var(--c-52514e);font-size:11px;'; sp.textContent = t3; return sp; };
         const knob = (n, e2) => { e2.dataset.knob = n; return e2; };
         const gCluster = grp2('cluster');
         gCluster.append(row2(txt2('GPUs'), knob('gpus', mkStep(() => world,
@@ -1704,7 +1716,7 @@ export class Dsv3Layer extends HTMLElement {
         const absP = this.getAttribute('strips') === 'absolute' || this.hasAttribute('local');
         const unit = PARAMS.largestOp.moe * (this.cumulative && !absP ? KM2 : 1) / 32 * 2;
         const leg = el('span');
-        leg.style.cssText = 'color:#52514e;margin-left:10px;font-size:11px;white-space:nowrap;';
+        leg.style.cssText = 'color:var(--c-52514e);margin-left:10px;font-size:11px;white-space:nowrap;';
         // the swatch is a real 5×4 rect — the same size as the strip squares
         // (a text ▪ renders at whatever the font says)
         // inline-block + zero margin: the .lv svg{display:block;margin:0 auto}
@@ -1729,17 +1741,17 @@ export class Dsv3Layer extends HTMLElement {
             return lab;
           };
           const comps2 = cons2 ? BYTE_COMPS : [BYTE_COMPS[0], BYTE_COMPS[2]];
-          leg.append(...comps2.map((c) => cb(c.label, c.color, c.prop)));
+          leg.append(...comps2.map((c) => cb(c.label, C(c.color), c.prop)));
           if (cons2) leg.append(cb(this.hasAttribute('local')
             ? `saved activations (bf16, ×4096 tok × ${inflightOf(this.sched ?? '1f1b', this.stage ?? 1, this.pp ?? LOCAL_PAR.pp, this.vpp, this.fold)} in flight)`
-            : 'saved activations (bf16, ×4096 tokens)', '#eda100', 'showActs'));
+            : 'saved activations (bf16, ×4096 tokens)', C('#eda100'), 'showActs'));
           const u = el('span');
           u.style.cssText = 'display:inline-flex;align-items:center;gap:3px;';   // swatch centers regardless of baseline
-          u.innerHTML = `· ${sw('#898781')} <span>= ${fmtBytes(unit)}</span>`;
+          u.innerHTML = `· ${sw(C('#898781'))} <span>= ${fmtBytes(unit)}</span>`;
           leg.append(u);
         } else {
           leg.style.cssText += 'display:inline-flex;align-items:center;gap:3px;';
-          leg.innerHTML = `${sw('#2a78d6')} <span>= ${fmtBytes(unit)}</span>`;
+          leg.innerHTML = `${sw(C('#2a78d6'))} <span>= ${fmtBytes(unit)}</span>`;
         }
         if (KN('legend')) mini2.append(leg);
       }
@@ -1748,8 +1760,8 @@ export class Dsv3Layer extends HTMLElement {
         // values and ×N/÷N factors — "I ×256'ed this and it /256'ed that"
         const mkBtn = (txt, title, fn) => {
           const b = document.createElement('button');
-          b.style.cssText = 'font:11px ui-monospace,monospace;padding:2px 8px;border:1px solid #c3c2b7;' +
-            'border-radius:4px;background:#fff;cursor:pointer;';
+          b.style.cssText = 'font:11px ui-monospace,monospace;padding:2px 8px;border:1px solid var(--c-c3c2b7);' +
+            'border-radius:4px;background:var(--c-ffffff);cursor:pointer;';
           b.textContent = txt; b.title = title; b.onclick = fn;
           return b;
         };
@@ -1768,11 +1780,11 @@ export class Dsv3Layer extends HTMLElement {
             { marks: { ...this._pinCfg.state.marks }, matmuls: { ...this._pinCfg.state.matmuls } });
           this._tweenLocal(prev);
         });
-        if (!this._pinCfg?.state) { rst.disabled = true; rst.title = 'save a config first'; rst.style.color = '#c3c2b7'; rst.style.cursor = 'default'; }
+        if (!this._pinCfg?.state) { rst.disabled = true; rst.title = 'save a config first'; rst.style.color = C('#c3c2b7'); rst.style.cursor = 'default'; }
         saveBox.append(rst, reset);   // factory reset (built above; also clears the save)
         reset.textContent = 'reset all';
-        reset.style.cssText = 'font:11px ui-monospace,monospace;padding:2px 8px;border:1px solid #c3c2b7;' +
-          'border-radius:4px;background:#fff;cursor:pointer;';   // match the save cluster's face
+        reset.style.cssText = 'font:11px ui-monospace,monospace;padding:2px 8px;border:1px solid var(--c-c3c2b7);' +
+          'border-radius:4px;background:var(--c-ffffff);cursor:pointer;';   // match the save cluster's face
         if (KN('save')) mini.append(saveBox);
         // the AC + precision knobs, wearing the SAME house segments as the
         // AC and low-precision sections (recipe chips with recognition +
@@ -1782,7 +1794,7 @@ export class Dsv3Layer extends HTMLElement {
           // the activation stashes): weights = the fp8 copies themselves,
           // both orientations, at 1×128-scale cost
           const tl3 = document.createElement('label');
-          tl3.style.cssText = 'display:inline-flex;align-items:center;gap:4px;margin-left:8px;color:#52514e;';
+          tl3.style.cssText = 'display:inline-flex;align-items:center;gap:4px;margin-left:8px;color:var(--c-52514e);';
           const p8 = document.createElement('input');
           p8.type = 'checkbox'; p8.checked = !!this.fp8Params; p8.dataset.knob = 'fp8params';
           p8.disabled = this.matmuls.ffn_gate_up === 'bf16';
@@ -1991,8 +2003,8 @@ export class Dsv3Layer extends HTMLElement {
       const r = cur / base;
       if (Math.abs(Math.log2(r)) < 0.05) return '';
       return r > 1
-        ? `<tspan fill="#d03b3b" font-weight="600"> ▲×${facNum(r)}</tspan>`
-        : `<tspan fill="#0b0b0b" font-weight="600"> ▼×${facNum(1 / r)}</tspan>`;
+        ? `<tspan fill="${C('#d03b3b')}" font-weight="600"> ▲×${facNum(r)}</tspan>`
+        : `<tspan fill="${C('#0b0b0b')}" font-weight="600"> ▼×${facNum(1 / r)}</tspan>`;
     };
     const facTxt = (cls) => {
       const pin2 = this._pinCfg;
@@ -2144,12 +2156,12 @@ export class Dsv3Layer extends HTMLElement {
       // right edge stays put inside the box
       `<foreignObject x="${id === 'router' || id === 'o_proj' ? x - 6 : x}" y="${y}" width="${id === 'router' || id === 'o_proj' ? 60 : 52}" height="20">` +
       (id === 'router'
-        ? `<button xmlns="http://www.w3.org/1999/xhtml" class="st dtb" data-dt="${id}" disabled style="color:${DT_STYLE[dt(id)]};cursor:default;opacity:0.8;width:56px" ` +
+        ? `<button xmlns="http://www.w3.org/1999/xhtml" class="st dtb" data-dt="${id}" disabled style="color:${C(DT_STYLE[dt(id)])};cursor:default;opacity:0.8;width:56px" ` +
           `title="🔒 pinned: the router runs fp32 in production (tiny GEMM, numerically sensitive) — it follows the recipe, not a per-op lever">${dt(id)} 🔒</button>`
         : id === 'o_proj'
-          ? `<button xmlns="http://www.w3.org/1999/xhtml" class="st dtb" data-dt="${id}" disabled style="color:${DT_STYLE[COMPUTE_DT(dt(id))]};cursor:default;opacity:0.8;width:56px" ` +
+          ? `<button xmlns="http://www.w3.org/1999/xhtml" class="st dtb" data-dt="${id}" disabled style="color:${C(DT_STYLE[COMPUTE_DT(dt(id))])};cursor:default;opacity:0.8;width:56px" ` +
             `title="🔒 pinned: the GEMM's COMPUTE dtype, which follows the recipe — its input's SAVE format is the 'E5M6 attn-out stash' checkbox above (the one GEMM whose stash and compute formats differ)">${COMPUTE_DT(dt(id))} 🔒</button>`
-          : `<button xmlns="http://www.w3.org/1999/xhtml" class="st dtb" data-dt="${id}" style="color:${DT_STYLE[dt(id)]}" ` +
+          : `<button xmlns="http://www.w3.org/1999/xhtml" class="st dtb" data-dt="${id}" style="color:${C(DT_STYLE[dt(id)])}" ` +
             `title="toggle precision: bf16 ⇄ ${FP8K}">${dt(id)}</button>`) + '</foreignObject>';
     // the block-output add has NO free mark: its output IS the next block's
     // x0 — the checkpoint anchor, always saved (and charged there). It wears
@@ -2170,7 +2182,7 @@ export class Dsv3Layer extends HTMLElement {
           `<text x="${x - 14}" y="${y + 15}" font-size="11">\u26a0\ufe0f</text></g>`
         : redo && NEUTRAL.has(ids[0])
           ? `<g data-tip="${escAttr('\u21c4 byte-NEUTRAL recompute: the replay is free (~0 FLOPs) and the stash just moves to an equal-sized tensor on the other side — net memory unchanged. On its own this mark buys nothing; it pays off as part of a longer replay chain (mark its inputs \u21bb too and the stash walks up toward x0).')}">` +
-            `<text x="${x - 14}" y="${y + 15}" font-size="11" fill="#52514e" font-weight="600">\u21c4</text></g>`
+            `<text x="${x - 14}" y="${y + 15}" font-size="11" fill="${C('#52514e')}" font-weight="600">\u21c4</text></g>`
           : '';
       // the mark is a BOOLEAN — recompute in backward, yes/no. The old 💾
       // face overclaimed: an unmarked op's output is stashed only where
@@ -2200,10 +2212,10 @@ export class Dsv3Layer extends HTMLElement {
       let s = '';
       for (let i = 0; i < n; i++)
         s += i >= nSolid
-          ? `<rect x="${x + i * 6 + 0.4}" y="${y + 0.4}" width="4.2" height="4.2" fill="none" stroke="#eda100" stroke-width="0.8"/>`
-          : `<rect x="${x + i * 6}" y="${y}" width="5" height="5" fill="#eda100"/>`;
+          ? `<rect x="${x + i * 6 + 0.4}" y="${y + 0.4}" width="4.2" height="4.2" fill="none" stroke="${C('#eda100')}" stroke-width="0.8"/>`
+          : `<rect x="${x + i * 6}" y="${y}" width="5" height="5" fill="${C('#eda100')}"/>`;
       for (let i = n; i < nPh; i++)
-        s += `<rect x="${x + i * 6 + 0.4}" y="${y + 0.4}" width="4.2" height="4.2" fill="none" stroke="#d19023" stroke-width="0.8" stroke-dasharray="1.6 1.4"/>`;
+        s += `<rect x="${x + i * 6 + 0.4}" y="${y + 0.4}" width="4.2" height="4.2" fill="none" stroke="${C('#d19023')}" stroke-width="0.8" stroke-dasharray="1.6 1.4"/>`;
       return { svg: s, rows: 1, pitch: 11 };
     };
     const fmtB = (bytes) => bytes >= 1024 ? (bytes / 1024).toFixed(1) + ' KiB' : bytes + ' B';
@@ -2307,11 +2319,11 @@ export class Dsv3Layer extends HTMLElement {
       let g = '', i = 0;
       for (const { c, n } of cells)
         for (let k = 0; k < n; k++, i++)
-          g += `<rect x="${x + (i % row) * 6}" y="${y + Math.floor(i / row) * 6}" width="5" height="4" fill="${c.color}"/>`;
+          g += `<rect x="${x + (i % row) * 6}" y="${y + Math.floor(i / row) * 6}" width="5" height="4" fill="${C(c.color)}"/>`;
       if (!i) {
         const top = cells.reduce((b2, r) => r.f > b2.f ? r : b2, { f: 0 });
         if (top.f > 0.02)
-          g += `<rect x="${x + 0.4}" y="${y + 0.4}" width="4.2" height="3.2" fill="none" stroke="${top.c.color}" stroke-width="0.8"/>`;
+          g += `<rect x="${x + 0.4}" y="${y + 0.4}" width="4.2" height="3.2" fill="none" stroke="${C(top.c.color)}" stroke-width="0.8"/>`;
       }
       P.push(g);
     };
@@ -2345,8 +2357,8 @@ export class Dsv3Layer extends HTMLElement {
     const dtPm = (id) => VQ?.prev?.mm?.[id];                 // undefined = unchanged
     const eqT = (flopsTok, dt2, dtp) => !dtp || dtp === dt2 ? flopEq(flopsTok, dt2)
       : lerpQ(flopEq(flopsTok, dtp), flopEq(flopsTok, dt2));
-    const barColor = (dt2, dtp) => !VQ || !dtp || dtp === dt2 ? (DT_STYLE[dt2] ?? '#c3c2b7')
-      : fitColor(DT_STYLE[dtp] ?? '#c3c2b7', DT_STYLE[dt2] ?? '#c3c2b7', VQ.t);
+    const barColor = (dt2, dtp) => !VQ || !dtp || dtp === dt2 ? (C(DT_STYLE[dt2]) ?? C('#c3c2b7'))
+      : fitColor(C(DT_STYLE[dtp]) ?? C('#c3c2b7'), C(DT_STYLE[dt2]) ?? C('#c3c2b7'), VQ.t);
     // compute = PICKETS: a tally of time quanta (2×5 rects at 3px pitch,
     // dtype-colored) — the 1D shape for the 1D quantity; squares stay bytes.
     // Sub-picket ops wear the hollow trace; the last picket is a partial-
@@ -2373,8 +2385,8 @@ export class Dsv3Layer extends HTMLElement {
         anaP ? (anaP.replayed.has(id) ? flopEq(flopsTok, dtp ?? dt2) : 0) : (ana.replayed.has(id) ? flopEq(flopsTok, dt2) : 0),
         ana.replayed.has(id) ? flopEq(flopsTok, dt2) : 0) / FUNIT;
       if (dt2 === 'vector') {   // unpriced fig leaf: bandwidth-bound, and we model no epilogue fusions
-        P.push(`<rect x="${x}" y="${y}" width="5" height="4" fill="none" stroke="#c3c2b7" stroke-width="0.8" stroke-dasharray="1.5 1"/>`);
-        if (rT > 0.001) P.push(`<g opacity="${Math.min(1, rT * 40).toFixed(2)}"><rect x="${x + 8}" y="${y}" width="5" height="4" fill="none" stroke="#c3c2b7" stroke-opacity="0.7" stroke-width="0.8" stroke-dasharray="1.5 1"/></g>`);
+        P.push(`<rect x="${x}" y="${y}" width="5" height="4" fill="none" stroke="${C('#c3c2b7')}" stroke-width="0.8" stroke-dasharray="1.5 1"/>`);
+        if (rT > 0.001) P.push(`<g opacity="${Math.min(1, rT * 40).toFixed(2)}"><rect x="${x + 8}" y="${y}" width="5" height="4" fill="none" stroke="${C('#c3c2b7')}" stroke-opacity="0.7" stroke-width="0.8" stroke-dasharray="1.5 1"/></g>`);
         return;
       }
       const color = barColor(dt2, dtp);
@@ -2446,7 +2458,7 @@ export class Dsv3Layer extends HTMLElement {
         // the earlier bf16 pedagogy — tags there just cross the enclosure)
         const dtag = !LOCAL ? () => '' : (A) => {
           const n2 = A.byId[id] ?? n;
-          return ` <tspan fill="${DT_STYLE[dtOf(n2)]}">${dtOf(n2)}${ids.some(i2 => A.dual.has(i2)) ? ' ᵀ×2' : ''}</tspan>`;
+          return ` <tspan fill="${C(DT_STYLE[dtOf(n2)])}">${dtOf(n2)}${ids.some(i2 => A.dual.has(i2)) ? ' ᵀ×2' : ''}</tspan>`;
         };
         // tips ride the NAME tspan only (the byte value keeps its raw-B
         // hover free of conflicts); data-chip makes the chip a jump target
@@ -2462,7 +2474,7 @@ export class Dsv3Layer extends HTMLElement {
               `<text class="tensor tredo" x="${x}" y="${y + 21}">${cfLbl}${dtag(ana)}</text>`
             : `<text class="tensor tredo" x="${x}" y="${y + 8}">${rTip}↻ ${name}</tspan>${cfLbl}${dtag(ana)}</text>`;
           for (let i = 0; i < cf; i++)
-            g += `<rect x="${x + (i % CROW) * 6 + 0.4}" y="${y + 12 + Math.floor(i / CROW) * 6 + 0.4}" width="4.2" height="3.2" fill="none" stroke="#eda100" stroke-width="0.8"/>`;
+            g += `<rect x="${x + (i % CROW) * 6 + 0.4}" y="${y + 12 + Math.floor(i / CROW) * 6 + 0.4}" width="4.2" height="3.2" fill="none" stroke="${C('#eda100')}" stroke-width="0.8"/>`;
           P.push(`<g data-chip="${ov?.chip ?? id}" opacity="${m.toFixed(3)}">${g}</g>`);
           return 12;
         }
@@ -2505,11 +2517,11 @@ export class Dsv3Layer extends HTMLElement {
           ? `<text class="tensor tsave" x="${x}" y="${y + 8}">${svTip}${needDir(ids, ov?.readers)} ${name}${lock}</tspan></text>` +
             `<text class="tensor tsave" x="${x}" y="${y + 21}">${bLbl}${dtag(ana)}${facTxt('a')}</text>`
           : `<text class="tensor tsave" x="${x}" y="${y + 8}">${svTip}${needDir(ids, ov?.readers)} ${name}</tspan> · ${bLbl}${dtag(ana)}${facTxt('a')}${lock}</text>`;
-        if (hollow) g += `<rect x="${sqX + 0.4}" y="${sqY + 0.4}" width="4.2" height="3.2" fill="none" stroke="#eda100" stroke-width="0.8"/>`;
+        if (hollow) g += `<rect x="${sqX + 0.4}" y="${sqY + 0.4}" width="4.2" height="3.2" fill="none" stroke="${C('#eda100')}" stroke-width="0.8"/>`;
         else for (let i = 0; i < Math.max(nsq, nPh); i++)
           g += i < nsq
-            ? `<rect x="${sqX + (i % CROW) * 6}" y="${sqY + Math.floor(i / CROW) * 6}" width="5" height="4" fill="#eda100"/>`
-            : `<rect x="${sqX + (i % CROW) * 6 + 0.4}" y="${sqY + Math.floor(i / CROW) * 6 + 0.4}" width="4.2" height="3.2" fill="none" stroke="#d19023" stroke-width="0.8" stroke-dasharray="1.6 1.4"/>`;
+            ? `<rect x="${sqX + (i % CROW) * 6}" y="${sqY + Math.floor(i / CROW) * 6}" width="5" height="4" fill="${C('#eda100')}"/>`
+            : `<rect x="${sqX + (i % CROW) * 6 + 0.4}" y="${sqY + Math.floor(i / CROW) * 6 + 0.4}" width="4.2" height="3.2" fill="none" stroke="${C('#d19023')}" stroke-width="0.8" stroke-dasharray="1.6 1.4"/>`;
         P.push(`<g data-chip="${ov?.chip ?? id}" opacity="${m.toFixed(3)}">${g}</g>`);
         return 12;
       }
@@ -2542,9 +2554,9 @@ export class Dsv3Layer extends HTMLElement {
           // narrow fork/shared columns (ov.short) go TWO lines — one line
           // runs into the neighbouring column (the CONS chips' pattern)
           if (ov?.short) return `<text class="tensor tsave"${tip} x="${x}" y="${y + 8}">${needDir(ids, ov?.readers)} ${esc(name0)}${s2 === 'pin' ? ' 🔒' : ''}</text>` +
-            `<text class="tensor tsave" x="${x}" y="${y + 21}">${fmtMem(bytesA(A))} <tspan fill="${DT_STYLE[dtOf(n2)]}">${dtOf(n2)}${dtag}</tspan></text>`;
+            `<text class="tensor tsave" x="${x}" y="${y + 21}">${fmtMem(bytesA(A))} <tspan fill="${C(DT_STYLE[dtOf(n2)])}">${dtOf(n2)}${dtag}</tspan></text>`;
           return `<text class="tensor tsave"${tip} x="${x}" y="${y + 8}">${needDir(ids, ov?.readers)} ${esc(name0)} · ${fmtMem(bytesA(A))} ` +
-            `<tspan fill="${DT_STYLE[dtOf(n2)]}">${dtOf(n2)}${dtag}</tspan>${s2 === 'pin' ? ' 🔒' : ''}</text>`;
+            `<tspan fill="${C(DT_STYLE[dtOf(n2)])}">${dtOf(n2)}${dtag}</tspan>${s2 === 'pin' ? ' 🔒' : ''}</text>`;
         }
         // dtype-bearing tiers state EVERY intermediate's precision, saved or
         // not (the paper is explicit even about unsaved wires — the combine
@@ -2552,7 +2564,7 @@ export class Dsv3Layer extends HTMLElement {
         // convention the saved chips use
         const wdt = this.getAttribute('controls') === 'dtype' ? (() => {   // the dtype TIER only: the full tier's narrower kv column can't fit the longer labels
           const n3 = A.byId[id] ?? n;
-          return ` <tspan fill="${DT_STYLE[dtOf(n3)]}">${dtOf(n3)}</tspan>`;
+          return ` <tspan fill="${C(DT_STYLE[dtOf(n3)])}">${dtOf(n3)}</tspan>`;
         })() : '';
         // ov.short: narrow fork columns drop the suffix (the ↻ glyph carries it)
         if (s2 === 'redo') return `<text class="tensor tredo"${tip} x="${x}" y="${y + 8}">↻ ${esc(name0)}${ov?.short ? '' : ' — recomputed'}${wdt}</text>`;
@@ -2729,15 +2741,15 @@ export class Dsv3Layer extends HTMLElement {
         `<button xmlns="http://www.w3.org/1999/xhtml" class="st" data-regionact="${act}" data-mem="${memKey}" ` +
         `data-rids="${rids.join(',')}" data-on="${on ? 1 : 0}"${dis ? ' disabled' : ''} ` +
         `style="width:auto;padding:0 7px;height:18px;` +
-        `${on ? onStyle + 'font-weight:600;' + (pv ? 'cursor:pointer;' : 'cursor:default;') : 'background:#fff;border:1px solid #c3c2b7;color:#52514e;'}` +
+        `${on ? onStyle + 'font-weight:600;' + (pv ? 'cursor:pointer;' : 'cursor:default;') : 'background:var(--c-ffffff);border:1px solid var(--c-c3c2b7);color:var(--c-52514e);'}` +
         `${dis ? 'opacity:0.45;cursor:default;' : ''}" title="${on && pv ? `click again \u2014 back to ${pv.sel}` : title}">${label}</button>`;
       return `<foreignObject x="${fx}" y="${fy}" width="${fw}" height="22">` +
         `<div xmlns="http://www.w3.org/1999/xhtml" style="display:flex;gap:4px;justify-content:flex-end;">` +
-        rb('save', '\u21bb none', 'background:#fff;border:1px solid #898781;color:#0b0b0b;', st3 === 'save', false,
+        rb('save', '\u21bb none', 'background:var(--c-ffffff);border:1px solid var(--c-898781);color:var(--c-0b0b0b);', st3 === 'save', false,
           'recompute nothing in this region \u2014 outputs stay available (stashed only where backward reads them)') +
-        rb('redo', '\u21bb all', 'background:#f3f2ee;border:1px dashed #898781;color:#52514e;', st3 === 'redo', false,
+        rb('redo', '\u21bb all', 'background:var(--c-f3f2ee);border:1px dashed var(--c-898781);color:var(--c-52514e);', st3 === 'redo', false,
           'recompute this ENTIRE region in backward') +
-        rb('mixed', 'mixed', 'background:#f3f2ee;border:1px solid #898781;color:#0b0b0b;', st3 === 'mixed', !hasMix && st3 !== 'mixed',
+        rb('mixed', 'mixed', 'background:var(--c-f3f2ee);border:1px solid var(--c-898781);color:var(--c-0b0b0b);', st3 === 'mixed', !hasMix && st3 !== 'mixed',
           'your last mixed set of marks for this region') +
         '</div></foreignObject>';
     };
@@ -2765,7 +2777,7 @@ export class Dsv3Layer extends HTMLElement {
       // outside the GEMM boxes
       const swIn = id === 'swiglu' && this._ctl.dtype
         ? `<foreignObject x="${x + W - 92}" y="${y + 1}" width="58" height="20">` +
-          `<button xmlns="http://www.w3.org/1999/xhtml" class="st dtb" data-dt="swiglu_in" style="color:${DT_STYLE[this.matmuls.swiglu_in ?? 'bf16']};width:56px" ` +
+          `<button xmlns="http://www.w3.org/1999/xhtml" class="st dtb" data-dt="swiglu_in" style="color:${C(DT_STYLE[this.matmuls.swiglu_in ?? 'bf16'])};width:56px" ` +
           `title="the SwiGLU INPUT's save format (the gate/up stash) — free-floating: no GEMM reads it in forward or backward (SwiGLU backward is elementwise), ` +
           `so no GEMM forces its precision. The paper CHOOSES fp8 for it (§3.3.3: 'cache the inputs of the SwiGLU operator in FP8'). Toggle bf16 ⇄ ${FP8K}.">in: ${this.matmuls.swiglu_in ?? 'bf16'}</button></foreignObject>`
         : '';
@@ -2797,7 +2809,7 @@ export class Dsv3Layer extends HTMLElement {
       // the down-projection is two separate GEMMs in production stacks
       // (wq_a | wkv_a in every production stack), so it is split at every tier:
       // fork norm1-out first
-      P.push(`<circle cx="${SX1}" cy="${y - 10}" r="2.5" fill="#898781"/>` +
+      P.push(`<circle cx="${SX1}" cy="${y - 10}" r="2.5" fill="${C('#898781')}"/>` +
         `<path class="wire" d="M ${SX1} ${y - 10} L ${RX} ${y - 10} L ${RX} ${y}" marker-end="url(#arr)"/>`);
       const qFrac = DSV3.qRank / (DSV3.qRank + DSV3.kvRank + DSV3.qkRope);
       const HALF_ROW = 21;   // 140px half boxes: strip rows wrap inside the box
@@ -2932,7 +2944,7 @@ export class Dsv3Layer extends HTMLElement {
       const gap = Math.max(24, csp + 16);
       wire(SX1, y, y + gap);
       P.push(`<path class="wire" d="M ${RX} ${y} L ${RX} ${elb} L ${SX1 + 3} ${elb}"/>` +
-        `<circle cx="${SX1}" cy="${elb}" r="2.5" fill="#898781"/>`);
+        `<circle cx="${SX1}" cy="${elb}" r="2.5" fill="${C('#898781')}"/>`);
       y += gap;
     }
     MLAGW = DET ? bypX - C1 + 22 : 336;   // before the attn row: its lse label clears this edge
@@ -2991,11 +3003,11 @@ export class Dsv3Layer extends HTMLElement {
           `L ${x + w - r} ${y0} Q ${x + w} ${y0} ${x + w} ${y0 + r} L ${x + w} ${y1}`;
         return `<g data-kind="${kind}" style="cursor:${on ? 'default' : 'pointer'}">` +
           (on
-            ? `<path d="${shape} Z" fill="#fcfcfb" stroke="none"/>` +
-              `<path d="${shape}" fill="none" stroke="#c3c2b7"/>`
-            : `<path d="${shape} Z" fill="#eeede7" stroke="#d8d6cb"/>`) +
-          `<text x="${x + 10}" y="${y0 + 17}" style="font:600 11px system-ui" fill="${on ? '#0b0b0b' : '#898781'}">${label}` +
-          `<tspan style="font:10px system-ui" fill="${on ? '#898781' : '#a8a69e'}"> ${sub}</tspan></text></g>`;
+            ? `<path d="${shape} Z" fill="${C('#fcfcfb')}" stroke="none"/>` +
+              `<path d="${shape}" fill="none" stroke="${C('#c3c2b7')}"/>`
+            : `<path d="${shape} Z" fill="${C('#eeede7')}" stroke="${C('#d8d6cb')}"/>`) +
+          `<text x="${x + 10}" y="${y0 + 17}" style="font:600 11px system-ui" fill="${on ? C('#0b0b0b') : C('#898781')}">${label}` +
+          `<tspan style="font:10px system-ui" fill="${on ? C('#898781') : C('#a8a69e')}"> ${sub}</tspan></text></g>`;
       };
       if (HIDT < 1) {   // cumulative mode: the plan selector alone carries the kind (tabs fade with the tween)
         P.push(`<g opacity="${(1 - HIDT).toFixed(3)}">` +
@@ -3073,7 +3085,7 @@ export class Dsv3Layer extends HTMLElement {
         // mirror clears it (foreignObject buttons are invisible to the
         // linter's text rules — the geometry here is hand-checked)
         P.push(`<foreignObject x="${SHX + 96}" y="${yy + 12}" width="42" height="20">` +
-          `<button xmlns="http://www.w3.org/1999/xhtml" class="st dtb" data-dt="${dtId}" style="color:${DT_STYLE[dt(dtId)]};width:40px" ` +
+          `<button xmlns="http://www.w3.org/1999/xhtml" class="st dtb" data-dt="${dtId}" style="color:${C(DT_STYLE[dt(dtId)])};width:40px" ` +
           `title="toggle precision: bf16 ⇄ ${FP8K} — mirrors the grouped box (one matmul, two buttons)">${dt(dtId)}</button></foreignObject>`);
     };
     if (!DET) {
@@ -3092,7 +3104,7 @@ export class Dsv3Layer extends HTMLElement {
       // expert feed rail (which runs 10px over the router row)
       if (TABS) { if (FLAPS) drawTabs(z + nGap - 46); encTop = z + nGap - (FLAPS ? 20 : 28); }
       shTop = z + nGap - 10;
-      P.push(`<circle cx="${SX2}" cy="${shTop}" r="2.5" fill="#898781"/>` +
+      P.push(`<circle cx="${SX2}" cy="${shTop}" r="2.5" fill="${C('#898781')}"/>` +
         `<path class="wire" d="M ${SX2} ${shTop} L ${shMid} ${shTop}"/>`);
       z += nGap;
     }
@@ -3235,7 +3247,7 @@ export class Dsv3Layer extends HTMLElement {
       `<text class="tensor tidle" x="${SX2 + 8}" y="${z + 24}">x2 (block output)</text>`);
       P.push(`<path class="wire" d="M ${SX1} ${x1Y + 9} L ${SX1} ${z} L ${SX2 - 11} ${z}" marker-end="url(#arr)"/>`);
       // branch off the bottom rail up to norm2 (single output from the x1 add)
-      P.push(`<circle cx="${midX}" cy="${z}" r="2.5" fill="#898781"/>` +
+      P.push(`<circle cx="${midX}" cy="${z}" r="2.5" fill="${C('#898781')}"/>` +
         `<path class="wire" d="M ${midX} ${z} L ${midX} 6 L ${SX2} 6 L ${SX2} ${norm2Top}" marker-end="url(#arr)"/>`);
     }
     if (TABS) {
@@ -3255,7 +3267,7 @@ export class Dsv3Layer extends HTMLElement {
           const rx0 = Math.max(x1 - 210, C2 + 348);   // right of the shared-expert spine (shMid = C2+342)
           const regionCtl = regionToggle(FFN_RIDS, 'ffnMixed', rx0, y0 + 2, x1 - rx0 - 4);
           P[P.indexOf('__ENC__')] =
-            `<rect x="${x0}" y="${y0}" width="${x1 - x0}" height="${y1 - y0}" rx="${r}" fill="#fcfcfb" stroke="#c3c2b7"/>` +
+            `<rect x="${x0}" y="${y0}" width="${x1 - x0}" height="${y1 - y0}" rx="${r}" fill="${C('#fcfcfb')}" stroke="${C('#c3c2b7')}"/>` +
             `<text class="grplabel" x="${x0 + 56}" y="${y0 + 11}">MoE FFN ${this.getAttribute('ctx') ? '' : `\u00d7${DSV3.layers - (DSV3.denseLayers ?? 3)} `}\u00b7 ${fmtPV(PARAMS.moeFfnBlk)}</text>` +
             regionCtl;
         } else {
@@ -3264,10 +3276,10 @@ export class Dsv3Layer extends HTMLElement {
           const [tx, tw] = this.kind === 'dense' ? [C2 + 42, 148] : [C2 + 198, 168];
           P[P.indexOf('__ENC__')] = HIDT >= 1 ? '' :
             `<g opacity="${(1 - HIDT).toFixed(3)}">` +
-            `<rect x="${x0}" y="${y0}" width="${x1 - x0}" height="${y1 - y0}" rx="${r}" fill="#fcfcfb" stroke="none"/>` +
+            `<rect x="${x0}" y="${y0}" width="${x1 - x0}" height="${y1 - y0}" rx="${r}" fill="${C('#fcfcfb')}" stroke="none"/>` +
             `<path d="M ${tx + tw} ${y0} L ${x1 - r} ${y0} Q ${x1} ${y0} ${x1} ${y0 + r} L ${x1} ${y1 - r} ` +
             `Q ${x1} ${y1} ${x1 - r} ${y1} L ${x0 + r} ${y1} Q ${x0} ${y1} ${x0} ${y1 - r} ` +
-            `L ${x0} ${y0 + r} Q ${x0} ${y0} ${x0 + r} ${y0} L ${tx} ${y0}" fill="none" stroke="#c3c2b7"/></g>`;
+            `L ${x0} ${y0 + r} Q ${x0} ${y0} ${x0 + r} ${y0} L ${tx} ${y0}" fill="none" stroke="${C('#c3c2b7')}"/></g>`;
         }
       }
     }
@@ -3449,7 +3461,7 @@ export class Dsv3Layer extends HTMLElement {
       const rowH = FIT_ROWH, topY = 14;
       const px = (b) => x0 + Math.max(0, Math.min(1, (Math.log2(Math.max(b, 1)) - LO) / (HI - LO))) * bw;
       const on = [...COMPS.map((c) => this[c.prop] ? 1 : 0), this.showActs ? 1 : 0];
-      const colors = [...COMPS.map((c) => c.color), '#eda100'];
+      const colors = [...COMPS.map((c) => C(c.color)), C('#eda100')];
       const IF2 = inflightOf(SCHED, STG, PPn, VPPn, FOLD);
       const names = ['weights', 'gradients (fp32)', 'optimizer states', `activations ×${IF2}mb`];
       const totalN = nowB.reduce((t2, b) => t2 + b, 0);
@@ -3501,7 +3513,7 @@ export class Dsv3Layer extends HTMLElement {
           cell: ['W1', 'G1', 'O1', 'A1'][i],   // the cell whose formula this row's tooltip shows
           prop: i < COMPS.length ? COMPS[i].prop : 'showActs', abs,
           segs: [
-            { key: 'base', x0, x1: grey ? px(grey) : x0, color: '#c3c2b7', op: 1 },
+            { key: 'base', x0, x1: grey ? px(grey) : x0, color: C('#c3c2b7'), op: 1 },
             { key: 'tip', x0: grey ? px(grey) + 1 : x0, x1: px(b), color: colors[i],
               op: on[i] ? 1 : 0.35, bar: String(i), true: b },
           ],
@@ -3546,11 +3558,11 @@ export class Dsv3Layer extends HTMLElement {
           return { key: `tip:${j}`, x0: t0, x1: px(acc), color: colors[j], op: 1 };
         });
         rows.push({ key: 'total', type: 'comp', id: 'total', y: yOf(4), op: 1, nameOp: 1,
-          name: 'total', color: '#52514e', prop: null, abs: totalN, cell: 'T1',
+          name: 'total', color: C('#52514e'), prop: null, abs: totalN, cell: 'T1',
           segs: [{ key: 'base', x0, x1: px(stacked ? totalN - topSum : totalN),
-            color: stacked ? '#c3c2b7' : '#52514e', op: 1,
+            color: stacked ? C('#c3c2b7') : C('#52514e'), op: 1,
             bar: stacked ? null : 'total', true: stacked ? null : totalN }, ...tips],
-          ghost: ghostOf(totalN, pinTotal, '#898781'),
+          ghost: ghostOf(totalN, pinTotal, C('#898781')),
           val: { x: px(totalN) + 5, op: 1, text: `${fmtBytes(totalN)}${badge(totalN, pinTotal)}`,
             true: totalN, pin: pinTotal || '' } });
       }
@@ -3639,17 +3651,17 @@ export class Dsv3Layer extends HTMLElement {
       T.push(`<text class="dims" x="0" y="${cy0 + 10}">total</text>`);
       const aPx = lerpQ(pxT(anchorPx0), pxT(anchor));
       if (aPx > totPx + 1)
-        T.push(`<rect x="${totPx.toFixed(1)}" y="${cy0 + 2}" width="${(aPx - totPx).toFixed(1)}" height="9" fill="none" stroke="#d19023" stroke-dasharray="2 2"/>`);
+        T.push(`<rect x="${totPx.toFixed(1)}" y="${cy0 + 2}" width="${(aPx - totPx).toFixed(1)}" height="9" fill="none" stroke="${C('#d19023')}" stroke-dasharray="2 2"/>`);
       else if (aPx < totPx - 1)
-        T.push(`<line x1="${aPx.toFixed(1)}" y1="${cy0 - 1}" x2="${aPx.toFixed(1)}" y2="${cy0 + 13}" stroke="#d19023" stroke-dasharray="2 2"/>`);
-      T.push(`<rect x="${TB_X}" y="${cy0 + 2}" width="${(totPx - TB_X).toFixed(1)}" height="9" fill="#eda100" data-true="${totNow}"/>`);
+        T.push(`<line x1="${aPx.toFixed(1)}" y1="${cy0 - 1}" x2="${aPx.toFixed(1)}" y2="${cy0 + 13}" stroke="${C('#d19023')}" stroke-dasharray="2 2"/>`);
+      T.push(`<rect x="${TB_X}" y="${cy0 + 2}" width="${(totPx - TB_X).toFixed(1)}" height="9" fill="${C('#eda100')}" data-true="${totNow}"/>`);
       const rext = Math.max(totPx, aPx, pxT(88 * 2 ** 30)) - TB_X + 6;
       const ry = cy0 + 14;
-      T.push(`<line x1="${TB_X}" y1="${ry}" x2="${(TB_X + rext).toFixed(1)}" y2="${ry}" stroke="#c3c2b7" stroke-width="1"/>`);
+      T.push(`<line x1="${TB_X}" y1="${ry}" x2="${(TB_X + rext).toFixed(1)}" y2="${ry}" stroke="${C('#c3c2b7')}" stroke-width="1"/>`);
       for (let u = 0; u * 6 <= rext; u++) {
         const x = TB_X + u * 6, major = u % 8 === 0;
-        T.push(`<line x1="${x}" y1="${ry}" x2="${x}" y2="${ry + (major ? 5 : 2.5)}" stroke="#c3c2b7" stroke-width="1"/>`);
-        if (major && u > 0) T.push(`<text x="${x}" y="${ry + 14}" text-anchor="middle" font-size="8.5" fill="#898781">${u}</text>`);
+        T.push(`<line x1="${x}" y1="${ry}" x2="${x}" y2="${ry + (major ? 5 : 2.5)}" stroke="${C('#c3c2b7')}" stroke-width="1"/>`);
+        if (major && u > 0) T.push(`<text x="${x}" y="${ry + 14}" text-anchor="middle" font-size="8.5" fill="${C('#898781')}">${u}</text>`);
       }
       T.push(`<text class="dims" x="${(TB_X + rext + 10).toFixed(1)}" y="${ry + 14}">GiB · minor tick = 1 GiB · LINEAR</text>`);
       const capX = pxT(80 * 2 ** 30);
@@ -3659,8 +3671,8 @@ export class Dsv3Layer extends HTMLElement {
       if (bdgX > capX - 4 && bdgX < capX + 44) bdgX = capX + 44;
       const bdg = facBadge(totNow, anchor);
       if (bdg) T.push(`<text class="dims" x="${bdgX.toFixed(1)}" y="${cy0 + 10}">${bdg}</text>`);
-      T.push(`<line x1="${capX}" y1="${cy0 - 2}" x2="${capX}" y2="${cy0 + 14}" stroke="#d03b3b"/>` +
-        `<text class="dims" x="${capX + 3}" y="${cy0 + 1}" fill="#d03b3b">80 GiB</text>`);
+      T.push(`<line x1="${capX}" y1="${cy0 - 2}" x2="${capX}" y2="${cy0 + 14}" stroke="${C('#d03b3b')}"/>` +
+        `<text class="dims" x="${capX + 3}" y="${cy0 + 1}" fill="${C('#d03b3b')}">80 GiB</text>`);
       ty = cy0 + 32;
     }
     T.push(`<text class="grplabel" x="0" y="${ty + 9}">per-layer compute as TIME at H100 peak — one picket ≈ 41 µs per 4096-token microbatch (10 MFLOP/token at the bf16 rate):</text>`);
@@ -3698,9 +3710,9 @@ export class Dsv3Layer extends HTMLElement {
       if (comm?.length)     // replayed a2a wears the diagram's violet comm pill
         pill(`a2a ${comm.join(' + ')}`,
           'communication, not FLOPs — the replay re-runs the all-to-all; its exposed cost depends on overlap, so no number is claimed.',
-          '#f3f1fb', '#6b5bd2', '#4636a3');
+          C('#f3f1fb'), C('#6b5bd2'), C('#4636a3'));
       if (traffic)          // HBM traffic (quantization round trips): bronze — bytes on the move
-        pill(traffic.txt, traffic.tip, '#f8f2e6', '#8c5a19', '#6f4712', traffic.s ?? 1);
+        pill(traffic.txt, traffic.tip, C('#f8f2e6'), C('#8c5a19'), C('#6f4712'), traffic.s ?? 1);
       ty = cy + 13;
     };
     const wFwd = (n) => lerpQ(eqP(n), eq(n));
@@ -3750,11 +3762,11 @@ export class Dsv3Layer extends HTMLElement {
       const FPMS = HARDWARE.h100.flops.bf16 / 4096 / 1e3;   // FLOP/token per ms of peak bf16
       const rext = 2 * fwdEq * PPF + 12;           // bwd is always the longest ribbon
       const ry = ty + 2;
-      T.push(`<line x1="${TB_X}" y1="${ry}" x2="${(TB_X + rext).toFixed(1)}" y2="${ry}" stroke="#c3c2b7" stroke-width="1"/>`);
+      T.push(`<line x1="${TB_X}" y1="${ry}" x2="${(TB_X + rext).toFixed(1)}" y2="${ry}" stroke="${C('#c3c2b7')}" stroke-width="1"/>`);
       for (let u = 0; u * 0.5 * FPMS * PPF <= rext; u++) {
         const x = TB_X + u * 0.5 * FPMS * PPF, major = u % 10 === 0;
-        T.push(`<line x1="${x.toFixed(1)}" y1="${ry}" x2="${x.toFixed(1)}" y2="${ry + (major ? 5 : 2.5)}" stroke="#c3c2b7" stroke-width="1"/>`);
-        if (u > 0 && u % 2 === 0) T.push(`<text x="${x.toFixed(1)}" y="${ry + 14}" text-anchor="middle" font-size="8.5" fill="#898781">${u / 2}</text>`);
+        T.push(`<line x1="${x.toFixed(1)}" y1="${ry}" x2="${x.toFixed(1)}" y2="${ry + (major ? 5 : 2.5)}" stroke="${C('#c3c2b7')}" stroke-width="1"/>`);
+        if (u > 0 && u % 2 === 0) T.push(`<text x="${x.toFixed(1)}" y="${ry + 14}" text-anchor="middle" font-size="8.5" fill="${C('#898781')}">${u / 2}</text>`);
       }
       T.push(`<text class="dims" x="${(TB_X + rext + 10).toFixed(1)}" y="${ry + 14}">ms per mb·layer · LINEAR</text>`);
       ty = ry + 20;
@@ -3793,7 +3805,7 @@ export class Dsv3Layer extends HTMLElement {
     // disables it in favor of horizontal scroll) — no inline style, it would win
     // the cascade over the media rule
     svgEl.innerHTML = `<defs><marker id="arr" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto-start-reverse">` +
-      `<path d="M 0 0 L 8 4 L 0 8 z" fill="#898781"/></marker></defs>` + P.join('');
+      `<path d="M 0 0 L 8 4 L 0 8 z" fill="${C('#898781')}"/></marker></defs>` + P.join('');
     for (const b of svgEl.querySelectorAll('button[data-dt]')) {
       b.onclick = () => {
         const mutate = () => {
@@ -3961,42 +3973,42 @@ if (typeof customElements !== 'undefined' && !customElements.get('dsv3-layer')) 
 // the widget's knobs move — same cells, one source of truth by construction.
 const SHEET_CSS = `
 dsv3-sheet { display: block; margin: 14px 0; position: relative; }
-.cellsheet { font: 12px system-ui, -apple-system, "Segoe UI", sans-serif; color: #0b0b0b;
-  border: 1px solid #e1e0d9; border-radius: 6px; background: #fcfcfb; padding: 8px 12px; position: relative; }
+.cellsheet { font: 12px system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--c-0b0b0b);
+  border: 1px solid var(--c-e1e0d9); border-radius: 6px; background: var(--c-fcfcfb); padding: 8px 12px; position: relative; }
 .cellsheet td.fx .cellref { cursor: pointer; }
-.cellsheet .hd { color: #52514e; font-size: 11.5px; margin-bottom: 5px; }
+.cellsheet .hd { color: var(--c-52514e); font-size: 11.5px; margin-bottom: 5px; }
 .cellsheet table { border-collapse: collapse; width: 100%; table-layout: fixed; }   /* fixed columns: values changing never resizes them */
 .cellsheet td.lb { overflow: hidden; text-overflow: ellipsis; }
-.cellsheet th { text-align: left; font-size: 10.5px; color: #898781; font-weight: 600; padding: 1px 10px 3px 2px; }
+.cellsheet th { text-align: left; font-size: 10.5px; color: var(--c-898781); font-weight: 600; padding: 1px 10px 3px 2px; }
 .cellsheet th.vl, .cellsheet td.vl { text-align: right; }
-.cellsheet td { padding: 1.5px 10px 1.5px 2px; border-top: 1px solid #f0efe9; font-size: 11.5px; vertical-align: baseline; }
-.cellsheet td.nm { font: 600 11px ui-monospace, monospace; color: #2a78d6; }
-.cellsheet td.fx { font: 11px ui-monospace, monospace; color: #52514e; }   /* long rate decompositions wrap */
-.cellsheet td.fx .cellref { color: #2a78d6; font-weight: 600; }
+.cellsheet td { padding: 1.5px 10px 1.5px 2px; border-top: 1px solid var(--c-f0efe9); font-size: 11.5px; vertical-align: baseline; }
+.cellsheet td.nm { font: 600 11px ui-monospace, monospace; color: var(--c-2a78d6); }
+.cellsheet td.fx { font: 11px ui-monospace, monospace; color: var(--c-52514e); }   /* long rate decompositions wrap */
+.cellsheet td.fx .cellref { color: var(--c-2a78d6); font-weight: 600; }
 .cellsheet td.vl { font-variant-numeric: tabular-nums; white-space: nowrap; }
-.cellsheet td.ap { color: #898781; }
-.cellsheet tr.hl td { background: #fff8ea; }
+.cellsheet td.ap { color: var(--c-898781); }
+.cellsheet tr.hl td { background: var(--c-fff8ea); }
 .cellsheet td.lb { white-space: nowrap; }   /* labels are one line by fiat */
 /* edit affordances live IN the exact-value cell: the ± glyphs are ::before/
    ::after content (never copied), with generous padding for the hitbox;
    toggle values wear button language (dashed underline, hover face) and
    the WHOLE cell is the target */
-.cellsheet .sb { cursor: pointer; color: #52514e; padding: 2px 8px; user-select: none; }
-@media (hover: hover) { .cellsheet .sb:hover { color: #0b0b0b; } }
+.cellsheet .sb { cursor: pointer; color: var(--c-52514e); padding: 2px 8px; user-select: none; }
+@media (hover: hover) { .cellsheet .sb:hover { color: var(--c-0b0b0b); } }
 .cellsheet .sb.dn::before { content: '−'; font: 600 11px ui-monospace, monospace; }
 .cellsheet .sb.up::after { content: '+'; font: 600 11px ui-monospace, monospace; }
-.cellsheet .sb.dis, .cellsheet .sb.dis:hover { color: #d5d4cc; cursor: default; }
+.cellsheet .sb.dis, .cellsheet .sb.dis:hover { color: var(--c-d5d4cc); cursor: default; }
 /* EDITABLE cells wear a tinted face (the button language); a pinned toggle
    renders as a plain cell — clearly not clickable */
-.cellsheet td.vl.edv, .cellsheet td.vl.tg { background: #eef4fc; }
+.cellsheet td.vl.edv, .cellsheet td.vl.tg { background: var(--c-eef4fc); }
 .cellsheet td.vl.tg { cursor: pointer; }
-@media (hover: hover) { .cellsheet td.vl.tg:hover { background: #dcebfa; } }
-.cellsheet td.lb .lnk { color: #2a78d6; cursor: pointer; }
+@media (hover: hover) { .cellsheet td.vl.tg:hover { background: var(--c-dcebfa); } }
+.cellsheet td.lb .lnk { color: var(--c-2a78d6); cursor: pointer; }
 @media (hover: hover) { .cellsheet td.lb .lnk:hover { text-decoration: underline; } }
 /* the jump spotlight: everything but the target grays out behind the
    ring's giant veil; a click/scroll/key anywhere dismisses it */
 .cell-spot { position: fixed; z-index: 60; pointer-events: none; border-radius: 8px;
-  box-shadow: 0 0 0 2px #eda100, 0 0 0 200vmax rgba(252, 252, 251, 0.78);
+  box-shadow: 0 0 0 2px var(--c-eda100), 0 0 0 200vmax rgba(252, 252, 251, 0.78);
   animation: spotin 0.18s ease-out; }
 @keyframes spotin { from { box-shadow: 0 0 0 2px rgba(237, 161, 0, 0), 0 0 0 200vmax rgba(252, 252, 251, 0); } }
 `;
@@ -4297,7 +4309,7 @@ class Dsv3Sheet extends HTMLElement {
     const approx = (c) => c.unit === 'B' ? fmtBytes(c.value)
       : c.unit === 'p' ? fmtP(c.value)
         : c.unit === 'B/tok' ? `${(c.value / 1024).toFixed(1)} KiB` : '';
-    const fx = (c) => !c.expr ? '<span style="color:#898781">(model input)</span>'
+    const fx = (c) => !c.expr ? '<span style="color:var(--c-898781)">(model input)</span>'
       : '= ' + c.expr.split(/([A-Z]\d+[a-z]?)/).map((tok) =>
         /^[A-Z]\d+[a-z]?$/.test(tok) ? `<span class="cellref">${tok}</span>` : esc(tok)).join('');
     this._root.innerHTML = '<div class="hd">the fit chart’s formula sheet — every number the chart below shows is one of these cells, '
@@ -4306,7 +4318,7 @@ class Dsv3Sheet extends HTMLElement {
       + (() => {
         const on = this._hzOn();
         return `<button class="hzb" style="font:11px ui-monospace,monospace;padding:1px 8px;border:1px solid `
-          + (on ? '#eda100;background:#fff8ea;font-weight:600;' : '#c3c2b7;background:#fff;')
+          + (on ? 'var(--c-eda100);background:var(--c-fff8ea);font-weight:600;' : 'var(--c-c3c2b7);background:var(--c-ffffff);')
           + `border-radius:4px;cursor:pointer;" title="${on
             ? 'click again — back to the config you came from'
             : 'the roofline analysis this essay credits (Daniel Haziza): dsv3-style fp8 GEMMs with a BF16 attn-out stash, '
@@ -4314,10 +4326,10 @@ class Dsv3Sheet extends HTMLElement {
       })()
       + `<label class="simp" style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox"${this._sim ? ' checked' : ''}> simplify — drop negligible terms</label>`
       + `<label class="nos" style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox"${this._nos ? ' checked' : ''}> no act scale factors</label>`
-      + `<button class="dlb" style="font:11px ui-monospace,monospace;padding:1px 8px;border:1px solid #c3c2b7;background:#fff;border-radius:4px;cursor:pointer;" `
+      + `<button class="dlb" style="font:11px ui-monospace,monospace;padding:1px 8px;border:1px solid var(--c-c3c2b7);background:var(--c-ffffff);border-radius:4px;cursor:pointer;" `
       + `title="download this sheet as .xlsx with LIVE formulas (ids become cell references) — edit the inputs in Excel/Sheets and it recomputes">⤓ .xlsx</button>`
       + '</span>'
-      + (this._sim || this._nos ? `<div style="color:#8c5a19">${[
+      + (this._sim || this._nos ? `<div style="color:var(--c-8c5a19)">${[
         this._sim ? 'the lse/rstd artifacts and the final norm are dropped' : '',
         this._nos ? 'fp8 ACTIVATION stashes counted at their payload rate (the 1×128 tile-scale share dropped; weights keep theirs)' : '',
       ].filter(Boolean).join('; ')} — these values drift slightly from the (exact) chart</div>` : '')
@@ -4362,12 +4374,12 @@ if (typeof customElements !== 'undefined' && !customElements.get('dsv3-sheet')) 
 // its own; standalone instances read pp/sched/stage attributes instead.
 const PPS_CSS = `
 dsv3-pp-schedule { display: block; margin: 14px 0; }
-.pps { font: 12px system-ui, -apple-system, "Segoe UI", sans-serif; color: #0b0b0b;
-  border: 1px solid #e1e0d9; border-radius: 6px; background: #fcfcfb; padding: 8px 10px;
+.pps { font: 12px system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--c-0b0b0b);
+  border: 1px solid var(--c-e1e0d9); border-radius: 6px; background: var(--c-fcfcfb); padding: 8px 10px;
   width: max-content; max-width: 100%; box-sizing: border-box; }   /* cards hug their strip (wide strips cap + scroll) */
 .pps .top { display: flex; align-items: flex-start; gap: 12px; padding-bottom: 8px; flex-wrap: wrap; }
 ${knobCss('.pps .top')}
-.pps .hd { color: #52514e; font-size: 11.5px; align-self: center; }
+.pps .hd { color: var(--c-52514e); font-size: 11.5px; align-self: center; }
 .pps .stghit { cursor: pointer; }
 .pps g.lane { cursor: pointer; }
 .pps g.lane.pin rect[data-stash] { stroke-width: 1.6; }
@@ -4690,23 +4702,23 @@ class Dsv3PpSchedule extends HTMLElement {
     const rowY = (s) => s * (RH + GAP);
     const laneY = (ln) => laneY0 + ln * (RH2 + GAP);
     const P = [`<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" font-family="system-ui">`];
-    if (FLIGHT && pp > 1) P.push(`<rect class="stghl" x="0" y="${rowY(stage)}" width="${W}" height="${RH}" fill="#fff3d1"/>`);
+    if (FLIGHT && pp > 1) P.push(`<rect class="stghl" x="0" y="${rowY(stage)}" width="${W}" height="${RH}" fill="${C('#fff3d1')}"/>`);
     for (let s = 0; s < pp; s++) {
       const on = FLIGHT && s === stage;
       P.push(`<text x="${GUT - 6}" y="${rowY(s) + RH - 4}" text-anchor="end" font-size="9.5"`
-        + ` font-weight="${on ? 600 : 400}" fill="${on ? '#0b0b0b' : '#898781'}">s${s}</text>`);
-      if (FLIGHT) P.push(`<rect class="stghit" data-stage="${s}" x="0" y="${rowY(s)}" width="${GUT - 2}" height="${RH}" fill="#fff3d1" opacity="0"/>`);
+        + ` font-weight="${on ? 600 : 400}" fill="${on ? C('#0b0b0b') : C('#898781')}">s${s}</text>`);
+      if (FLIGHT) P.push(`<rect class="stghit" data-stage="${s}" x="0" y="${rowY(s)}" width="${GUT - 2}" height="${RH}" fill="${C('#fff3d1')}" opacity="0"/>`);
     }
     // later chunks wear progressively deeper shades of the same hues
     // (VPP2 reflect: light down pass, dark up pass); W = deferred weight
     // grads, the pale dashed cells of the zero-bubble split
     const STY = {
-      F: [['#fdeab5', '#eda100', '#7a5200'], ['#f6cd74', '#c98800', '#5c3d00'],
-        ['#eab04a', '#a86e00', '#4a3000'], ['#d69432', '#875600', '#3a2500']],
-      B: [['#fbd4c0', '#eb6834', '#7a2f12'], ['#f3ac8b', '#c74e1d', '#5c2410'],
-        ['#e58a63', '#a63c12', '#471b09'], ['#d16b42', '#88300c', '#361406']],
-      W: [['#fdefe8', '#eb6834', '#7a2f12'], ['#f9ded0', '#c74e1d', '#5c2410'],
-        ['#f3c8b3', '#a63c12', '#471b09'], ['#ecb298', '#88300c', '#361406']],
+      F: [[C('#fdeab5'), C('#eda100'), C('#7a5200')], [C('#f6cd74'), C('#c98800'), C('#5c3d00')],
+        [C('#eab04a'), C('#a86e00'), C('#4a3000')], [C('#d69432'), C('#875600'), C('#3a2500')]],
+      B: [[C('#fbd4c0'), C('#eb6834'), C('#7a2f12')], [C('#f3ac8b'), C('#c74e1d'), C('#5c2410')],
+        [C('#e58a63'), C('#a63c12'), C('#471b09')], [C('#d16b42'), C('#88300c'), C('#361406')]],
+      W: [[C('#fdefe8'), C('#eb6834'), C('#7a2f12')], [C('#f9ded0'), C('#c74e1d'), C('#5c2410')],
+        [C('#f3c8b3'), C('#a63c12'), C('#471b09')], [C('#ecb298'), C('#88300c'), C('#361406')]],
     };
     for (const c of cells) {
       const [fill, stroke, ink] = STY[c.ph][c.chunk];
@@ -4727,7 +4739,7 @@ class Dsv3PpSchedule extends HTMLElement {
     if (FLIGHT) {
     const law = inflightOf(sched, stage, pp, vpp, fold);
     const lawTag = Math.abs(IFm - law) > 1e-9 ? ` — the model charges ${law} (its 1F1B law)` : '';
-    P.push(`<text x="0" y="${laneY0 - 7}" font-size="10" fill="#52514e">in flight on s${Math.min(stage, pp - 1)}`
+    P.push(`<text x="0" y="${laneY0 - 7}" font-size="10" fill="${C('#52514e')}">in flight on s${Math.min(stage, pp - 1)}`
       + ` — each bar: the F that stashes a microbatch, held (amber) until the B that frees it.`
       + ` The peak is what the memory bars charge</text>`);
     for (const e of stash) {
@@ -4736,7 +4748,7 @@ class Dsv3PpSchedule extends HTMLElement {
       P.push(`<g class="lane" data-mb="${e.mb}" data-v="${e.v}">`);
       // hitbox: the whole row band over the stash's span, not just the marks
       P.push(`<rect x="${GUT + e.f0 * U}" y="${y - GAP / 2}" width="${(e.b1 - e.f0) * U}" height="${RH2 + GAP}" fill="transparent"/>`);
-      P.push(`<rect x="${GUT + e.f1 * U}" y="${y + RH2 / 2 - 2}" width="${(e.b0 - e.f1) * U}" height="4" fill="#fdeab5" data-stash-tail="1"/>`);
+      P.push(`<rect x="${GUT + e.f1 * U}" y="${y + RH2 / 2 - 2}" width="${(e.b0 - e.f1) * U}" height="4" fill="${C('#fdeab5')}" data-stash-tail="1"/>`);
       P.push(`<rect data-stash="F${e.mb}" x="${GUT + e.f0 * U + 0.5}" y="${y + 0.5}" width="${(e.f1 - e.f0) * U - 1}" height="${RH2 - 1}" fill="${f}" stroke="${fs2}" stroke-width="0.8"/>`);
       P.push(`<rect data-stash="B${e.mb}" x="${GUT + e.b0 * U + 0.5}" y="${y + 0.5}" width="${(e.b1 - e.b0) * U - 1}" height="${RH2 - 1}" fill="${bf}" stroke="${bs}" stroke-width="0.8"/>`);
       if (pp <= 32 && e.mb < 100) {
@@ -4754,8 +4766,8 @@ class Dsv3PpSchedule extends HTMLElement {
     }
     const bx = GUT + (tPk + tPkEnd) / 2 * U;
     const by0 = laneY(0) + 1, by1 = laneY(peakN - 1) + RH2 - 1;
-    P.push(`<path d="M ${bx - 4} ${by0} h 8 M ${bx} ${by0} V ${by1} M ${bx - 4} ${by1} h 8" stroke="#0b0b0b" stroke-width="1.2" fill="none" pointer-events="none"/>`);
-    P.push(`<text data-peak="${IFm}" x="${bx + 7}" y="${(by0 + by1) / 2 + 3.5}" font-size="10" font-weight="600" fill="#0b0b0b" stroke="#fcfcfb" stroke-width="3" paint-order="stroke" pointer-events="none">${IFm} mb in flight (peak)${vpp > 1 ? ` = ${peakN} chunks` : ''}${lawTag}</text>`);
+    P.push(`<path d="M ${bx - 4} ${by0} h 8 M ${bx} ${by0} V ${by1} M ${bx - 4} ${by1} h 8" stroke="${C('#0b0b0b')}" stroke-width="1.2" fill="none" pointer-events="none"/>`);
+    P.push(`<text data-peak="${IFm}" x="${bx + 7}" y="${(by0 + by1) / 2 + 3.5}" font-size="10" font-weight="600" fill="${C('#0b0b0b')}" stroke="${C('#fcfcfb')}" stroke-width="3" paint-order="stroke" pointer-events="none">${IFm} mb in flight (peak)${vpp > 1 ? ` = ${peakN} chunks` : ''}${lawTag}</text>`);
     }
     P.push('</svg>');
     const ppTag = this._layer ? '' : `PP${pp} · `;   // the knob group already names PP
@@ -4788,16 +4800,16 @@ class Dsv3PpSchedule extends HTMLElement {
 // arrives here with EP64 already applied; ep="" overrides).
 const PPF_CSS = `
 dsv3-pp-fold { display: block; margin: 14px 0; }
-.pf { font: 12px system-ui, -apple-system, "Segoe UI", sans-serif; color: #0b0b0b;
-  border: 1px solid #e1e0d9; border-radius: 6px; background: #fcfcfb; padding: 8px 10px;
+.pf { font: 12px system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--c-0b0b0b);
+  border: 1px solid var(--c-e1e0d9); border-radius: 6px; background: var(--c-fcfcfb); padding: 8px 10px;
   width: max-content; max-width: 100%; box-sizing: border-box; }   /* hug the chart, like snapshot cards */
 .pf .top { display: flex; align-items: flex-end; gap: 14px; padding-bottom: 6px; }
 ${knobCss('.pf .top')}
-.pf .top button.cyc { font: 12px ui-monospace, monospace; padding: 3px 12px; border: 1px solid #c3c2b7;
-  border-radius: 4px; background: #fff; cursor: pointer; }
-@media (hover: hover) { .pf .top button.cyc:hover { background: #f3f2ee; } }
+.pf .top button.cyc { font: 12px ui-monospace, monospace; padding: 3px 12px; border: 1px solid var(--c-c3c2b7);
+  border-radius: 4px; background: var(--c-ffffff); cursor: pointer; }
+@media (hover: hover) { .pf .top button.cyc:hover { background: var(--c-f3f2ee); } }
 .pf svg { display: block; }
-.pf .ro { font-size: 11.5px; color: #52514e; min-height: 17px; margin-top: 2px; }
+.pf .ro { font-size: 11.5px; color: var(--c-52514e); min-height: 17px; margin-top: 2px; }
 `;
 class Dsv3PpFold extends HTMLElement {
   connectedCallback() {
@@ -4822,7 +4834,7 @@ class Dsv3PpFold extends HTMLElement {
     const grp = el('span', 'pargrp');
     const lab = el('div', 'parlab'); lab.textContent = 'expert sharding'; grp.append(lab);
     const row = el('div', 'parrow');
-    const txt = el('span'); txt.style.cssText = 'color:#52514e;font-size:11px;'; txt.textContent = 'EP';
+    const txt = el('span'); txt.style.cssText = 'color:var(--c-52514e);font-size:11px;'; txt.textContent = 'EP';
     const eg = el('span', 'stp'); eg.dataset.knob = 'ep';
     const OPTS = [1, 2, 4, 8, 16, 32, 64];
     const sel = document.createElement('select'); sel.className = 'v';
@@ -4955,13 +4967,13 @@ class Dsv3PpFold extends HTMLElement {
     const B = [`<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" font-family="system-ui">`];
     for (let row = 0; row < 16; row++) {
       const k = this.chunks[row];
-      if (hotRow(row)) B.push(`<rect x="0" y="${row * PV}" width="${W}" height="${PV}" fill="#fff3d1"/>`);
+      if (hotRow(row)) B.push(`<rect x="0" y="${row * PV}" width="${W}" height="${PV}" fill="${C('#fff3d1')}"/>`);
       // axis: v-labels crossfade into s-labels on rows 0–7; the vacated
       // rows keep their v-labels, dimmed (the chunks still live THERE)
       const sOp = row < 8 ? t : 0, vOp = row < 8 ? 1 - t : 1 - 0.65 * t;
-      B.push(`<text x="${GUT - 4}" y="${yRow(row) + RH - 3}" text-anchor="end" font-size="9.5" fill="#898781" opacity="${vOp.toFixed(2)}">v${row}</text>`);
-      if (row < 8) B.push(`<text x="${GUT - 4}" y="${yRow(row) + RH - 3}" text-anchor="end" font-size="9.5" font-weight="600" fill="#52514e" opacity="${sOp.toFixed(2)}">s${row}</text>`);
-      B.push(`<text x="${LX}" y="${yRow(row) + RH - 3}" font-size="9" fill="#898781">${k.emb ? 'emb·' : ''}L${k.lo}–${k.hi - 1}${k.head ? '·head' : ''}</text>`);
+      B.push(`<text x="${GUT - 4}" y="${yRow(row) + RH - 3}" text-anchor="end" font-size="9.5" fill="${C('#898781')}" opacity="${vOp.toFixed(2)}">v${row}</text>`);
+      if (row < 8) B.push(`<text x="${GUT - 4}" y="${yRow(row) + RH - 3}" text-anchor="end" font-size="9.5" font-weight="600" fill="${C('#52514e')}" opacity="${sOp.toFixed(2)}">s${row}</text>`);
+      B.push(`<text x="${LX}" y="${yRow(row) + RH - 3}" font-size="9" fill="${C('#898781')}">${k.emb ? 'emb·' : ''}L${k.lo}–${k.hi - 1}${k.head ? '·head' : ''}</text>`);
     }
     // the model strip: 63 slots top-to-bottom, UNBROKEN (verticality is the
     // point — the fold moves cost, never the model). Chunk spans wear a
@@ -4978,8 +4990,8 @@ class Dsv3PpFold extends HTMLElement {
         .some((k) => k && sl >= chunkSlots(k).s0 && sl < chunkSlots(k).s1);
       // highlight keeps each cell KIND's relative darkness (caps darkest,
       // dense mid, MoE light) — amber says "selected", shade still says what
-      const fill = inHot ? (cap ? '#8a5f00' : l < 3 ? '#d19023' : '#f6cd74')
-        : cap ? '#8f8d86' : l < 3 ? '#aba89f' : '#dcdad2';
+      const fill = inHot ? (cap ? C('#8a5f00') : l < 3 ? C('#d19023') : C('#f6cd74'))
+        : cap ? C('#8f8d86') : l < 3 ? C('#aba89f') : C('#dcdad2');
       B.push(`<rect${cap ? '' : ` data-layer="${l}"`} x="${SL}" y="${slotY(sl).toFixed(1)}" width="${STW}" height="${(SH - 1).toFixed(1)}"${cap ? ' rx="2"' : ''} fill="${fill}"/>`);
     }
     for (const k of this.chunks) {
@@ -4989,7 +5001,7 @@ class Dsv3PpFold extends HTMLElement {
       const rx = RX0 + r * 1.6;                        // the pair shares a lane
       const yb = lerpC(yRow(k.c), yRow(down ? k.c : r), k.c) + RH / 2;   // leaders ride their chunk's stagger
       const hot2 = hotRow(k.c);
-      const st = hot2 ? 'stroke="#7a5200" stroke-width="1.3"' : 'stroke="#c3c2b7" stroke-width="0.9"';
+      const st = hot2 ? `stroke="${C('#7a5200')}" stroke-width="1.3"` : `stroke="${C('#c3c2b7')}" stroke-width="0.9"`;
       B.push(`<path d="M ${BRX} ${y0.toFixed(1)} h 3 V ${y1.toFixed(1)} h -3" fill="none" ${st}/>`);
       B.push(`<path d="M ${BRX + 3} ${ym.toFixed(1)} H ${rx.toFixed(1)} V ${yb.toFixed(1)} H ${GUT - 12}" fill="none" ${st}${hot2 ? '' : ' opacity="0.75"'}/>`);
     }
@@ -5020,8 +5032,8 @@ class Dsv3PpFold extends HTMLElement {
         // Folded, a rank's two pieces wear complementary shades, and rank 0
         // holds both extremes — the V as a color story.
         const gT = (chunkSlots(k).s0 + i2) / 62;
-        const segFill = fitColor('#bcd8f3', '#134a8e', gT);
-        const ink = gT < 0.5 ? '#0b3d75' : '#dcebfa';
+        const segFill = fitColor(C('#bcd8f3'), C('#134a8e'), gT);
+        const ink = gT < 0.5 ? C('#0b3d75') : C('#dcebfa');
         B.push(`<rect x="${sx.toFixed(1)}" y="${y.toFixed(1)}" width="${Math.max(0.5, w2 - 1).toFixed(1)}" height="${RH}" fill="${segFill}"/>`);
         // only the ODD segments name themselves: emb/head (below) and the
         // dense blocks — ordinary MoE layers stay blank (they're the norm)
@@ -5030,29 +5042,29 @@ class Dsv3PpFold extends HTMLElement {
         if (vocab) {
           // the dashed outline alone says not-a-layer — no white wash: the
           // depth ramp must hold (head is slot 62, the DARKEST point)
-          B.push(`<rect x="${sx.toFixed(1)}" y="${y.toFixed(1)}" width="${Math.max(0.5, w2 - 1).toFixed(1)}" height="${RH}" fill="none" stroke="${gT < 0.5 ? '#0b3d75' : '#bcd8f3'}" stroke-dasharray="2.5 2"/>`);
+          B.push(`<rect x="${sx.toFixed(1)}" y="${y.toFixed(1)}" width="${Math.max(0.5, w2 - 1).toFixed(1)}" height="${RH}" fill="none" stroke="${gT < 0.5 ? C('#0b3d75') : C('#bcd8f3')}" stroke-dasharray="2.5 2"/>`);
           if (w2 > 30) B.push(`<text x="${(sx + w2 / 2).toFixed(1)}" y="${y + RH - 4}" text-anchor="middle" font-size="8.5" fill="${ink}">${k.emb && i2 === 0 ? 'emb' : 'head'}</text>`);
         }
         sx += w2;
       }
-      if (hot2) B.push(`<rect x="${(x - 1).toFixed(1)}" y="${(y - 1).toFixed(1)}" width="${(w + 1).toFixed(1)}" height="${RH + 2}" fill="none" stroke="#7a5200" stroke-width="1.2"/>`);
+      if (hot2) B.push(`<rect x="${(x - 1).toFixed(1)}" y="${(y - 1).toFixed(1)}" width="${(w + 1).toFixed(1)}" height="${RH + 2}" fill="none" stroke="${C('#7a5200')}" stroke-width="1.2"/>`);
       B.push('</g>');
       const val = (pp2) => fmtBytes(pp2 * 2);   // bytes: the ruler's currency
-      B.push(`<text x="${(x + w + 4).toFixed(1)}" y="${(y + RH - 3).toFixed(1)}" font-size="9.5" fill="#898781" opacity="${(1 - t).toFixed(2)}">${val(k.p)}</text>`);
-      if (!down) B.push(`<text data-ranktotal="${r}" data-params="${rankP(r)}" x="${(x + w + 4).toFixed(1)}" y="${(y + RH - 3).toFixed(1)}" font-size="9.5" fill="#898781" opacity="${t.toFixed(2)}">${val(rankP(r))}</text>`);
+      B.push(`<text x="${(x + w + 4).toFixed(1)}" y="${(y + RH - 3).toFixed(1)}" font-size="9.5" fill="${C('#898781')}" opacity="${(1 - t).toFixed(2)}">${val(k.p)}</text>`);
+      if (!down) B.push(`<text data-ranktotal="${r}" data-params="${rankP(r)}" x="${(x + w + 4).toFixed(1)}" y="${(y + RH - 3).toFixed(1)}" font-size="9.5" fill="${C('#898781')}" opacity="${t.toFixed(2)}">${val(rankP(r))}</text>`);
     }
     // the x-axis: these bars are LINEAR (everything else on the site is
     // log₂) — the unit RULER says so out loud, without atomizing the bars
     {
       const ay = 16 * PV + 4;
       const ext = Math.max(...Array.from({ length: 8 }, (_, r) => wOf(this.chunks[r]) + wOf(this.chunks[15 - r]))) + UPX;
-      B.push(`<line x1="${X0}" y1="${ay}" x2="${(X0 + ext).toFixed(1)}" y2="${ay}" stroke="#c3c2b7" stroke-width="1"/>`);
+      B.push(`<line x1="${X0}" y1="${ay}" x2="${(X0 + ext).toFixed(1)}" y2="${ay}" stroke="${C('#c3c2b7')}" stroke-width="1"/>`);
       for (let u = 0; u * UPX <= ext; u++) {
         const x = X0 + u * UPX, major = u % 8 === 0;
-        B.push(`<line x1="${x}" y1="${ay}" x2="${x}" y2="${ay + (major ? 5 : 2.5)}" stroke="#c3c2b7" stroke-width="1"/>`);
-        if (major && u > 0) B.push(`<text x="${x}" y="${ay + 14}" text-anchor="middle" font-size="8.5" fill="#898781">${u / 8}</text>`);
+        B.push(`<line x1="${x}" y1="${ay}" x2="${x}" y2="${ay + (major ? 5 : 2.5)}" stroke="${C('#c3c2b7')}" stroke-width="1"/>`);
+        if (major && u > 0) B.push(`<text x="${x}" y="${ay + 14}" text-anchor="middle" font-size="8.5" fill="${C('#898781')}">${u / 8}</text>`);
       }
-      B.push(`<text x="${(X0 + ext + 10).toFixed(1)}" y="${ay + 14}" font-size="9" fill="#52514e">GiB bf16 · minor tick = 128 MiB · LINEAR</text>`);
+      B.push(`<text x="${(X0 + ext + 10).toFixed(1)}" y="${ay + 14}" font-size="9" fill="${C('#52514e')}">GiB bf16 · minor tick = 128 MiB · LINEAR</text>`);
     }
     // whole-row hitboxes (stack, label, and bar band alike — easy hovering)
     for (let row = 0; row < 16; row++)
@@ -5107,15 +5119,15 @@ if (typeof customElements !== 'undefined' && !customElements.get('dsv3-pp-schedu
 const DECK_CSS = `
 dsv3-beat-deck { display: block; margin: 14px 0 26px; }
 .deck-nav { display: flex; align-items: center; gap: 10px; margin: 0 0 6px; }
-.deck-nav button { font: 12px ui-monospace, monospace; padding: 2px 12px; border: 1px solid #c3c2b7;
-  border-radius: 4px; background: #fff; cursor: pointer; }
-@media (hover: hover) { .deck-nav button:hover:not(:disabled) { background: #f3f2ee; } }
-.deck-nav button:disabled { color: #dedcd3; cursor: default; }
-.deck-step { font: 11px ui-monospace, monospace; color: #52514e; }
-.deck-hyp { font: italic 11px system-ui; color: #898781; }
-.deck-mod { font: italic 11px system-ui; color: #b05f00; }
-.deck-nav button.deck-rst { color: #b05f00; border-color: #b05f00; padding: 1px 8px; }
-.deck-cap { max-width: 760px; font-size: 15px; color: #1c1c1a; line-height: 1.5; }
+.deck-nav button { font: 12px ui-monospace, monospace; padding: 2px 12px; border: 1px solid var(--c-c3c2b7);
+  border-radius: 4px; background: var(--c-ffffff); cursor: pointer; }
+@media (hover: hover) { .deck-nav button:hover:not(:disabled) { background: var(--c-f3f2ee); } }
+.deck-nav button:disabled { color: var(--c-dedcd3); cursor: default; }
+.deck-step { font: 11px ui-monospace, monospace; color: var(--c-52514e); }
+.deck-hyp { font: italic 11px system-ui; color: var(--c-898781); }
+.deck-mod { font: italic 11px system-ui; color: var(--c-b05f00); }
+.deck-nav button.deck-rst { color: var(--c-b05f00); border-color: var(--c-b05f00); padding: 1px 8px; }
+.deck-cap { max-width: 760px; font-size: 15px; color: var(--c-1c1c1a); line-height: 1.5; }
 .deck-cap p { margin: 6px 0; }
 `;
 class Dsv3BeatDeck extends HTMLElement {

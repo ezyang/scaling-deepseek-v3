@@ -4,6 +4,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script data-theme>document.documentElement.classList.toggle('dark', (localStorage.getItem('dsv3-theme') ?? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')) === 'dark');</script>
   <title>DeepSeek-V3: from roofline to reality</title>
   <meta name="description" content="A series of worked performance analyses of DeepSeek-V3: from a roofline model to predicting real training profiles, with an interactive memory and timing model.">
   <meta property="og:title" content="DeepSeek-V3: from roofline to reality">
@@ -14,7 +15,10 @@
   <meta property="og:image:height" content="1260">
   <meta name="twitter:card" content="summary_large_image">
   <style>
-    :root { color-scheme: light; }
+    /* theme: generated from src/theme.js — node scripts/stamp.mjs */
+:root { color-scheme: light; --c-f9f9f7: #f9f9f7; --c-fcfcfb: #fcfcfb; --c-ffffff: #ffffff; --c-f7f6f1: #f7f6f1; --c-f3f2ee: #f3f2ee; --c-f0efe9: #f0efe9; --c-eeede7: #eeede7; --c-e9e8e2: #e9e8e2; --c-e1e0d9: #e1e0d9; --c-dedcd3: #dedcd3; --c-dcdad2: #dcdad2; --c-d8d6cb: #d8d6cb; --c-d5d4cb: #d5d4cb; --c-d5d4cc: #d5d4cc; --c-c3c2b7: #c3c2b7; --c-aba89f: #aba89f; --c-a8a69e: #a8a69e; --c-8f8d86: #8f8d86; --c-898781: #898781; --c-52514e: #52514e; --c-1c1c1a: #1c1c1a; --c-0b0b0b: #0b0b0b; --c-2a78d6: #2a78d6; --c-eb6834: #eb6834; --c-1baf7a: #1baf7a; --c-bcd8f3: #bcd8f3; --c-dcebfa: #dcebfa; --c-eef4fc: #eef4fc; --c-0b3d75: #0b3d75; --c-134a8e: #134a8e; --c-eda100: #eda100; --c-b05f00: #b05f00; --c-a86e00: #a86e00; --c-8a5f00: #8a5f00; --c-875600: #875600; --c-7a5200: #7a5200; --c-6f4712: #6f4712; --c-5c3d00: #5c3d00; --c-4a3000: #4a3000; --c-3a2500: #3a2500; --c-8c5a19: #8c5a19; --c-fff8ea: #fff8ea; --c-fdeab5: #fdeab5; --c-fff3d1: #fff3d1; --c-f8f2e6: #f8f2e6; --c-fdefe8: #fdefe8; --c-f6cd74: #f6cd74; --c-d19023: #d19023; --c-d69432: #d69432; --c-c98800: #c98800; --c-eab04a: #eab04a; --c-fbd4c0: #fbd4c0; --c-f9ded0: #f9ded0; --c-f3c8b3: #f3c8b3; --c-f3ac8b: #f3ac8b; --c-ecb298: #ecb298; --c-e58a63: #e58a63; --c-d16b42: #d16b42; --c-c74e1d: #c74e1d; --c-a63c12: #a63c12; --c-88300c: #88300c; --c-7a2f12: #7a2f12; --c-5c2410: #5c2410; --c-471b09: #471b09; --c-361406: #361406; --c-d6408b: #d6408b; --c-7b2fa8: #7b2fa8; --c-8a3324: #8a3324; --c-e87ba4: #e87ba4; --c-008300: #008300; --c-d03b3b: #d03b3b; --c-4a3aa7: #4a3aa7; --c-4636a3: #4636a3; --c-6b5bd2: #6b5bd2; --c-f3f1fb: #f3f1fb; --c-fdf1f1: #fdf1f1; --c-f0faf4: #f0faf4; --c-1a7a43: #1a7a43; --spot: rgba(252, 252, 251, 0.78); }
+:root.dark { color-scheme: dark; --c-f9f9f7: #161614; --c-fcfcfb: #191917; --c-ffffff: #232320; --c-f7f6f1: #262521; --c-f3f2ee: #2a2923; --c-f0efe9: #282720; --c-eeede7: #2a2822; --c-e9e8e2: #2e2c26; --c-e1e0d9: #3d3b34; --c-dedcd3: #3b3931; --c-dcdad2: #3d3b33; --c-d8d6cb: #403d33; --c-d5d4cb: #423f35; --c-d5d4cc: #423f35; --c-c3c2b7: #615e51; --c-aba89f: #6a675e; --c-a8a69e: #6c6960; --c-8f8d86: #7b786f; --c-898781: #97948b; --c-52514e: #b0ada4; --c-1c1c1a: #d6d3ca; --c-0b0b0b: #e8e5dc; --c-2a78d6: #5c9ae6; --c-eb6834: #f0824f; --c-1baf7a: #2bbd88; --c-bcd8f3: #2b4767; --c-dcebfa: #223950; --c-eef4fc: #1d2b3c; --c-0b3d75: #a5c8f0; --c-134a8e: #8fb8ea; --c-eda100: #eaa620; --c-b05f00: #d18d3c; --c-a86e00: #c08b2e; --c-8a5f00: #b28438; --c-875600: #ae7f3c; --c-7a5200: #c08e46; --c-6f4712: #b98e5c; --c-5c3d00: #a87f4b; --c-4a3000: #997347; --c-3a2500: #8c6a45; --c-8c5a19: #bb8649; --c-fff8ea: #2a2416; --c-fdeab5: #3d3213; --c-fff3d1: #322a10; --c-f8f2e6: #2b271d; --c-fdefe8: #2d221b; --c-f6cd74: #6e5522; --c-d19023: #a3762a; --c-d69432: #a1752c; --c-c98800: #a5761f; --c-eab04a: #8a6c2b; --c-fbd4c0: #4a2c1e; --c-f9ded0: #40291d; --c-f3c8b3: #573424; --c-f3ac8b: #6f4128; --c-ecb298: #67402c; --c-e58a63: #935134; --c-d16b42: #b95e37; --c-c74e1d: #d4632f; --c-a63c12: #e0714a; --c-88300c: #eb8666; --c-7a2f12: #f0916f; --c-5c2410: #f6a888; --c-471b09: #fcbda0; --c-361406: #ffd0b8; --c-d6408b: #e0559b; --c-7b2fa8: #b675e8; --c-8a3324: #d97862; --c-e87ba4: #d76d97; --c-008300: #43a83c; --c-d03b3b: #e25555; --c-4a3aa7: #948ee8; --c-4636a3: #8f88e4; --c-6b5bd2: #9a8df0; --c-f3f1fb: #272438; --c-fdf1f1: #322323; --c-f0faf4: #1e2a23; --c-1a7a43: #3dae6e; --spot: rgba(14, 14, 13, 0.82); }
+/* /theme */
     body {
       font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
       color: #0b0b0b; background: #f9f9f7; margin: 0;
@@ -95,8 +99,8 @@
   <script type="importmap">
   {
     "imports": {
-      "./src/anatomy.js": "./src/anatomy.js?v=da676667",
-      "./src/audit.js": "./src/audit.js?v=03d69f62",
+      "./src/anatomy.js": "./src/anatomy.js?v=bc490174",
+      "./src/audit.js": "./src/audit.js?v=55bebb06",
       "./src/blockgraph.js": "./src/blockgraph.js?v=fb26fb76",
       "./src/cells.js": "./src/cells.js?v=96e37b7d",
       "./src/compare.js": "./src/compare.js?v=d3cae233",
@@ -105,8 +109,9 @@
       "./src/model.js": "./src/model.js?v=3345c2f3",
       "./src/params.js": "./src/params.js?v=13936278",
       "./src/sim.js": "./src/sim.js?v=0edadd66",
+      "./src/theme.js": "./src/theme.js?v=cf07b25a",
       "./src/trace.js": "./src/trace.js?v=61553c96",
-      "./src/viewer.js": "./src/viewer.js?v=665a79f4",
+      "./src/viewer.js": "./src/viewer.js?v=1220cbe0",
       "./studies/mobile.js": "./studies/mobile.js?v=9d15b75d",
       "./studies/series.js": "./studies/series.js?v=1901fecd",
       "./studies/toc.js": "./studies/toc.js?v=11b69b8b"

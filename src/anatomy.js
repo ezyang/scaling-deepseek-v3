@@ -9,6 +9,7 @@
 
 import { DSV3 } from './model.js';
 import { fmtP, fmtBytes, tokensCss, applyHighlight } from './viewer.js';
+import { C } from './theme.js';
 import { BYTE_COMPS, LOCAL_PAR, ppStage, inflightOf } from './localmodel.js';
 import { PARAMS } from './params.js';
 
@@ -19,27 +20,27 @@ const { embed: E, mla: MLA, denseBlock: DENSE, moeBlock: MOE } = PARAMS;
 // the block diagram's visual-language tokens, plus the plan's own bits
 const CSS = `
 dsv3-anatomy-plan { display: block; }
-.anp { font: 12px system-ui, -apple-system, "Segoe UI", sans-serif; color: #0b0b0b; }
+.anp { font: 12px system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--c-0b0b0b); }
 .anp svg { display: block; max-width: 100%; height: auto; }
 ${tokensCss('.anp')}
-.anp .box.on { fill: #fff8ea; stroke: #eda100; }
+.anp .box.on { fill: var(--c-fff8ea); stroke: var(--c-eda100); }
 .anp [data-kind] { cursor: pointer; }
 .anp [data-kind].on { cursor: default; }
 .anp svg.hlm > :not(.hl):not(defs) { opacity: 0.3; }
 .anp-leg { margin-top: 12px; display: flex; flex-direction: column; gap: 2px;
-  font-size: 11px; color: #52514e; width: 166px; }
+  font-size: 11px; color: var(--c-52514e); width: 166px; }
 .anp-leg .row, .anp-leg .anp-unit { display: flex; align-items: center; gap: 5px;
   padding: 2px 4px; border-radius: 4px; }
 .anp-leg .row { cursor: pointer; }
-@media (hover: hover) { .anp-leg .row:hover { background: #f3f2ee; } }
+@media (hover: hover) { .anp-leg .row:hover { background: var(--c-f3f2ee); } }
 .anp-leg .row.off { opacity: 0.4; }
-.anp-leg .row .val { margin-left: auto; font-variant-numeric: tabular-nums; color: #0b0b0b; }
+.anp-leg .row .val { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--c-0b0b0b); }
 .anp-leg .row.off .val { color: inherit; }
 .anp-leg svg { display: inline-block; max-width: none; height: 4px; flex: none; }
 /* the plan's tally-highlighted items wear the same save-yellow as the
    active block kind — grey pills alone were too understated */
-.anp g[data-op].hl rect { fill: #fff8ea; stroke: #eda100; }
-.anp g[data-op].hl .dims { fill: #52514e; font-weight: 600; }
+.anp g[data-op].hl rect { fill: var(--c-fff8ea); stroke: var(--c-eda100); }
+.anp g[data-op].hl .dims { fill: var(--c-52514e); font-weight: 600; }
 `;
 
 export class Dsv3AnatomyPlan extends HTMLElement {
@@ -85,7 +86,7 @@ export class Dsv3AnatomyPlan extends HTMLElement {
       const g = Math.max(24, (x2 - x1) * 0.6);
       return `<path d="M ${x1 - h.left} ${y1 - h.top} C ${x1 - h.left + g} ${y1 - h.top}, ` +
         `${x2 - h.left - g} ${y2 - h.top}, ${x2 - h.left} ${y2 - h.top}" ` +
-        `fill="none" stroke="#c3c2b7" stroke-width="1.2" stroke-dasharray="5 4"/>`;
+        `fill="none" stroke="${C('#c3c2b7')}" stroke-width="1.2" stroke-dasharray="5 4"/>`;
     };
     this._ov.innerHTML = L(a.right, a.top, b.left, b.top) + L(a.right, a.bottom, b.left, b.bottom);
   }
@@ -145,11 +146,11 @@ export class Dsv3AnatomyPlan extends HTMLElement {
       let g = '', i = 0;
       for (const { c, n } of cells)
         for (let k = 0; k < n; k++, i++)
-          g += `<rect x="${x + (i % 30) * 5}" y="${y + Math.floor(i / 30) * 5}" width="4" height="3.5" fill="${c.color}"/>`;
+          g += `<rect x="${x + (i % 30) * 5}" y="${y + Math.floor(i / 30) * 5}" width="4" height="3.5" fill="${C(c.color)}"/>`;
       if (!i) {
         const top = cells.reduce((b2, r) => r.f > b2.f ? r : b2, { f: 0 });
         if (top.f > 0.02)
-          g += `<rect x="${x + 0.4}" y="${y + 0.4}" width="3.2" height="2.7" fill="none" stroke="${top.c.color}" stroke-width="0.8"/>`;
+          g += `<rect x="${x + 0.4}" y="${y + 0.4}" width="3.2" height="2.7" fill="none" stroke="${C(top.c.color)}" stroke-width="0.8"/>`;
       }
       return g;
     };
@@ -157,7 +158,7 @@ export class Dsv3AnatomyPlan extends HTMLElement {
     const pw = (n) => { const v = pv(n); return v ? `(${v})` : ''; };   // parenthesized, or nothing at all
     const S = [];
     S.push(`<defs><marker id="planarr" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto-start-reverse">` +
-      `<path d="M 0 0 L 8 4 L 0 8 z" fill="#898781"/></marker></defs>`);
+      `<path d="M 0 0 L 8 4 L 0 8 z" fill="${C('#898781')}"/></marker></defs>`);
     const BX = 8, W = 158, CX = BX + W / 2;   // spine runs through the box centers
     // named intermediates on the wires, in the diagram's tensor-label style
     const wire = (gap, name) => {
@@ -239,15 +240,15 @@ export class Dsv3AnatomyPlan extends HTMLElement {
         showGrads: ['gradients (fp32)', 'fp32 gradient accumulators, 4 B/param'],
         showOptim: ['optimizer states', 'fp32 master + two bf16 moments, 8 B/param'],
       };
-      const rows = COMPS.map((c) => ({ prop: c.prop, color: c.color, name: META[c.prop][0], title: META[c.prop][1] }));
-      if (CONS) rows.push({ prop: 'showActs', color: '#eda100',
+      const rows = COMPS.map((c) => ({ prop: c.prop, color: C(c.color), name: META[c.prop][0], title: META[c.prop][1] }));
+      if (CONS) rows.push({ prop: 'showActs', color: C('#eda100'),
         name: LOC ? `activations (× ${inflightOf(l.sched ?? '1f1b', Sg, PPl, l.vpp, l.fold)} mb)` : 'activations (×4096 tok)',
         title: 'saved for backward, bf16, 4096-token microbatches' });
       const vals = l._segTotals ?? [];
       lg = `<div class="anp-leg">` + rows.map((r, i) =>
         `<div class="row${l[r.prop] ? '' : ' off'}" data-prop="${r.prop}" title="${r.title}">` +
         `${sw(r.color)}<span>${r.name}</span><span class="val">${vals[i] != null ? fmtBytes(vals[i]) : ''}</span></div>`).join('') +
-        `<div class="anp-unit">${sw('#898781')}<span>= ${fmtBytes(UNIT * 2)} / square</span></div></div>`;
+        `<div class="anp-unit">${sw(C('#898781'))}<span>= ${fmtBytes(UNIT * 2)} / square</span></div></div>`;
     }
     this._root.innerHTML = `<svg viewBox="0 0 ${WD} ${H}" width="${WD}" height="${H}">${S.join('')}</svg>` + lg;
     for (const r of this._root.querySelectorAll('.anp-leg .row'))
@@ -389,42 +390,42 @@ for (const r of TALLY_ROWS) {
 const rowIn = (r, mode) => mode === 'active' && r.active ? { ...r, ...r.active } : r;
 const TALLY_CSS = `
 dsv3-param-tally { display: block; margin: 14px 0; }
-.ptal { font: 13.5px system-ui, -apple-system, "Segoe UI", sans-serif; color: #0b0b0b; position: relative; }
+.ptal { font: 13.5px system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--c-0b0b0b); position: relative; }
 .ptal .pnum { cursor: pointer; }
-.ptal .ptip { display: none; position: absolute; z-index: 6; background: #fff;
-  border: 1px solid #c3c2b7; border-radius: 4px; padding: 2px 8px; font: 11px ui-monospace, Menlo, monospace;
+.ptal .ptip { display: none; position: absolute; z-index: 6; background: var(--c-ffffff);
+  border: 1px solid var(--c-c3c2b7); border-radius: 4px; padding: 2px 8px; font: 11px ui-monospace, Menlo, monospace;
   box-shadow: 0 2px 8px rgba(11,11,11,0.12); pointer-events: none; white-space: nowrap; }
 .ptal table { border-collapse: collapse; width: 100%; max-width: 760px; }
-.ptal th, .ptal td { text-align: left; padding: 5px 12px 5px 7px; border-bottom: 1px solid #e1e0d9;
+.ptal th, .ptal td { text-align: left; padding: 5px 12px 5px 7px; border-bottom: 1px solid var(--c-e1e0d9);
   font-variant-numeric: tabular-nums; vertical-align: top; }
-.ptal th { color: #52514e; font-weight: 600; font-size: 12.5px; }
+.ptal th { color: var(--c-52514e); font-weight: 600; font-size: 12.5px; }
 .ptal td.num { text-align: right; padding-right: 0; white-space: nowrap; }
 .ptal .title, .ptal .note { padding-left: 7px; }
-.ptal .formula { color: #898781; font-size: 12.5px; }
-.ptal td .fterm { border-bottom: 1px dotted #c3c2b7; }
-@media (hover: hover) { .ptal .fterm:hover { color: #0b0b0b; } }
-@media (hover: hover) { .ptal td .fterm:hover { border-bottom-color: #52514e; } }
-.ptal .fterm.pin { color: #0b0b0b; font-weight: 600; }
-.ptal td .fterm.pin { border-bottom: 1px solid #52514e; }
+.ptal .formula { color: var(--c-898781); font-size: 12.5px; }
+.ptal td .fterm { border-bottom: 1px dotted var(--c-c3c2b7); }
+@media (hover: hover) { .ptal .fterm:hover { color: var(--c-0b0b0b); } }
+@media (hover: hover) { .ptal td .fterm:hover { border-bottom-color: var(--c-52514e); } }
+.ptal .fterm.pin { color: var(--c-0b0b0b); font-weight: 600; }
+.ptal td .fterm.pin { border-bottom: 1px solid var(--c-52514e); }
 .ptal .fxline { display: grid; grid-template-columns: 10px 1fr auto; gap: 0 6px; align-items: baseline; }
-.ptal .fxline .fxop { color: #a8a69e; }
+.ptal .fxline .fxop { color: var(--c-a8a69e); }
 .ptal .fxline .fxval { text-align: right; font-variant-numeric: tabular-nums; }
 .ptal tbody tr { cursor: pointer; }
-@media (hover: hover) { .ptal tbody tr:hover { background: #f7f6f1; } }
-.ptal tbody tr.sel { background: #fff; box-shadow: inset 3px 0 0 #52514e; }
+@media (hover: hover) { .ptal tbody tr:hover { background: var(--c-f7f6f1); } }
+.ptal tbody tr.sel { background: var(--c-ffffff); box-shadow: inset 3px 0 0 var(--c-52514e); }
 .ptal tbody tr.sel td:first-child { font-weight: 600; }
 .ptal tfoot td { font-weight: 600; border-bottom: none; }
-.ptal .note { color: #898781; font-size: 12px; margin-top: 4px; }
+.ptal .note { color: var(--c-898781); font-size: 12px; margin-top: 4px; }
 .ptal.compact { font-size: 11.5px; }
-.ptal.compact .title { font: 600 11px system-ui; color: #52514e; margin: 0 0 2px; }
-.ptal .title { font: 600 12px system-ui; color: #52514e; margin: 0 0 4px; }
-.ptal .mbtn { font-weight: 400; color: #898781; cursor: pointer; border-bottom: 1px dotted #c3c2b7; }
-.ptal .mbtn.on { font-weight: 600; color: #0b0b0b; border-bottom: 1px solid #52514e; cursor: default; }
+.ptal.compact .title { font: 600 11px system-ui; color: var(--c-52514e); margin: 0 0 2px; }
+.ptal .title { font: 600 12px system-ui; color: var(--c-52514e); margin: 0 0 4px; }
+.ptal .mbtn { font-weight: 400; color: var(--c-898781); cursor: pointer; border-bottom: 1px dotted var(--c-c3c2b7); }
+.ptal .mbtn.on { font-weight: 600; color: var(--c-0b0b0b); border-bottom: 1px solid var(--c-52514e); cursor: default; }
 .ptal.compact td { padding: 3px 6px 3px 7px; }
 .ptal.compact .formula { font-size: 10px; display: block; }
 .ptal.compact .note { font-size: 10px; font-style: italic; }
 .ptal.compact .fxout { min-height: 96px; padding: 4px 0 0 7px; font-size: 10px;
-  color: #52514e; line-height: 1.5; }   /* fixed slot sized for the six-line MoE equation */
+  color: var(--c-52514e); line-height: 1.5; }   /* fixed slot sized for the six-line MoE equation */
 `;
 export class Dsv3ParamTally extends HTMLElement {
   connectedCallback() {

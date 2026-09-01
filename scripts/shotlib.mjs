@@ -23,6 +23,11 @@ const CHROME = chromePath();
 // opts.origin = N: scale 1, painted union anchored at (N, N) (pixel mode).
 const ISOLATE = (sel, o) => `
   await new Promise((r) => setTimeout(r, 700));   // let widgets mount (virtual time)
+  if (${!!o.dark}) {   // flip through the real theme path: class + C() re-renders
+    const { setTheme } = await import(${JSON.stringify(o.themePath ?? '../src/theme.js')});
+    setTheme(true);
+    await new Promise((r) => setTimeout(r, 150));
+  }
   const el = document.querySelector(${JSON.stringify(sel)});
   const subtree = [el, ...el.querySelectorAll('*')];
   const union = () => {

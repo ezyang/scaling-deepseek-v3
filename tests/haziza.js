@@ -22,9 +22,9 @@ T.check('columns hold their widths across knob changes', widths() === w0, `${w0}
 [...layer().parentElement.querySelector('.stp[data-knob="zero"]').querySelectorAll('button')].find(b => b.textContent === '1').click(); await T.tick(700);
 // the Haziza preset
 const hz = () => sheet.querySelector('button.hzb');
-T.check('Haziza button present, not lit at defaults', !!hz() && hz().style.background.includes('255, 255, 255'), hz()?.style.background);
+T.check('Haziza button present, not lit at defaults', !!hz() && getComputedStyle(hz()).backgroundColor === 'rgb(255, 255, 255)', getComputedStyle(hz()).backgroundColor);
 hz().click(); await T.tick(800);
-T.check('Haziza lights up after applying', hz().style.background.includes('255, 248, 234'), hz()?.style.background);
+T.check('Haziza lights up after applying', getComputedStyle(hz()).backgroundColor === 'rgb(255, 248, 234)', getComputedStyle(hz()).backgroundColor);
 T.check('o_proj stash goes bf16, fp8 params on, recipe reads custom',
   layer().matmuls.o_proj === 'bf16' && layer().fp8Params === true
   && layer().parentElement.querySelector('.stp[data-knob="recipe"] button.on')?.textContent === 'custom', '');
@@ -33,10 +33,10 @@ T.log('Haziza T1', t1);
 T.check('Haziza T1 pinned', t1 === '65,102,913,728 B', t1);
 // clicking the LIT button toggles back to the config you came from
 hz().click(); await T.tick(800);
-T.check('click again returns to the og config', !hz().style.background.includes('255, 248, 234')
+T.check('click again returns to the og config', getComputedStyle(hz()).backgroundColor !== 'rgb(255, 248, 234)'
   && layer().matmuls.o_proj === 'e5m6' && layer().fp8Params === false
   && trOf('T1')?.querySelector('td.vl')?.textContent === '66,296,545,344 B', trOf('T1')?.querySelector('td.vl')?.textContent);
 // and forward again (ping-pong)
 hz().click(); await T.tick(800);
-T.check('ping-pong: forward again', hz().style.background.includes('255, 248, 234'), '');
+T.check('ping-pong: forward again', getComputedStyle(hz()).backgroundColor === 'rgb(255, 248, 234)', '');
 T.done();
