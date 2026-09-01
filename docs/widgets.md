@@ -124,11 +124,21 @@ are exact — every divisor is a power of two and every dtype rate a dyadic
 rational on integer counts ≪ 2^53), and a rounded `≈` column. The formula
 STRING shown is what the engine evaluates (`evalExpr`) — the chart, the
 tooltips and the sheet cannot diverge, and `scripts/sanity.mjs` replays the
-shard math independently and asserts `===` across a config matrix. Cells
-without a formula are model INPUTS (slot-split layer counts, the op-graph
-stash rates D1/D2) — drill-down ends at their labels. Binds like the
-pp-schedule strip (poll for the layer id, resync on its `recipe` event), so
-rows update live as knobs move.
+shard math independently and asserts `===` across a config matrix (totals
+AND sub-cells). The ACCORDION computes the totals: `W1 = W2 + W3 + W4` (per
+sharding class), `A1 = A2 + … + A11` (per stash bucket — the buckets
+partition the op graph's savedBytes exactly), `T1 = W1 + G1 + O1 + A1`.
+Formula-switching INPUTS get explicit rows: `Z1` (ZeRO level), `F1`
+(fp8-resident params as a 0/1 that rides the weights formulas —
+`(2 + F1 × 2 × 4/128) × Q1`), and per-bucket `R•` recompute choices (0/1)
+multiplying the bucket's SAVE-EVERYTHING rates at the current recipe, so
+flipping the policy flips the 0/1, not the formula (a partially-kept bucket
+— the catch-all's aux, x1 under `full` — falls back to as-is rates, labeled
+so). Cells without a formula are model INPUTS (slot-split layer counts, the
+op-graph stash rates D1/D2) — drill-down ends at their labels. Binds like
+the pp-schedule strip (poll for the layer id, resync on its `recipe`
+event), so rows update live as knobs move; `reveal(id)` scrolls to a row
+and highlights it — the tooltip's bold coordinate is the jump affordance.
 
 The same cells power the fit chart's FORMULA TOOLTIPS: chart value/name
 labels carry `data-cell`; hovering shows that cell's entry (name · label,

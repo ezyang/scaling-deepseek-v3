@@ -177,14 +177,21 @@ const { ppStage, inflightOf } = await import('../src/viewer.js');
 // rounding — bytes are exact, not float-ish.
 {
   const { buildCells } = await import('../src/cells.js');
+  const { actBucketsOf, ACT_BUCKETS } = await import('../src/viewer.js');
   const moeExp = PARAMS.expert * DSV3.routedExperts;
   const mmS = resolveMatmuls({ recipe: 'dsv3-fp8' });
-  const aM = analyze(blockGraph('moe', DSV3, mmS, 4096), RECOMPUTE_PRESETS.dsv3, false).savedBytes;
-  const aD = analyze(blockGraph('dense', DSV3, mmS, 4096), RECOMPUTE_PRESETS.dsv3, false).savedBytes;
+  const anaM = analyze(blockGraph('moe', DSV3, mmS, 4096), RECOMPUTE_PRESETS.dsv3, false);
+  const anaD = analyze(blockGraph('dense', DSV3, mmS, 4096), RECOMPUTE_PRESETS.dsv3, false);
+  const aM = anaM.savedBytes, aD = anaD.savedBytes;
+  const bM = actBucketsOf(anaM), bD = actBucketsOf(anaD);
+  // the save-everything rates at the same recipe (the R• factorization)
+  const bMF = actBucketsOf(analyze(blockGraph('moe', DSV3, mmS, 4096), RECOMPUTE_PRESETS.none, false));
+  const bDF = actBucketsOf(analyze(blockGraph('dense', DSV3, mmS, 4096), RECOMPUTE_PRESETS.none, false));
   const envOf = (S) => ({
     world: 2048, pp: S.pp, ep: S.ep, zero: S.zero, sched: '1f1b', fp8p: !!S.fp8p,
     g: ppStage(Math.min(S.stage, S.pp - 1), S.pp, S.pp > 1 ? 2 : 1, 'reflect'),
-    aM, aD, N: { restLayer: PARAMS.moeBlock - moeExp, denseLayer: PARAMS.denseBlock },
+    aM, aD, bM, bD, bMF, bDF, bLabels: ACT_BUCKETS.map((b) => b.label),
+    N: { restLayer: PARAMS.moeBlock - moeExp, denseLayer: PARAMS.denseBlock },
   });
   // the essay's endpoint (step 6, the peak rank): pin the exact integer
   const c6 = buildCells(envOf({ pp: 8, ep: 64, zero: 1, stage: 1 }));
@@ -213,8 +220,24 @@ const { ppStage, inflightOf } = await import('../src/viewer.js');
       if (!got.every((v, i) => v === want[i])) { worst = `${JSON.stringify(S)}: ${got} ≠ ${want}`; }
       if (get('P6') !== IF) worst = `${JSON.stringify(S)}: P6 ${get('P6')} ≠ inflightOf ${IF}`;
       if (get('N1') !== moeExp || get('N4') !== PARAMS.embed) worst = `${JSON.stringify(S)}: N-cells drifted from PARAMS`;
+      // the accordion sub-cells: per-class components and per-bucket stashes
+      // (their sums ARE the parents' formulas — verified against the
+      // aggregate math above)
+      const clsWant = (bpp, zt, w = 1) => {
+        const se = zero >= zt ? bpp / edp : bpp, sd = zero >= zt ? bpp / dp : bpp;
+        return [q.e * se * w, q.d * sd * w, q.v * sd];
+      };
+      const partWant = [clsWant(2, 3, fp8p ? 2.0625 / 2 : 1), clsWant(4, 2), clsWant(8, 1)];
+      const partIds = [['W2', 'W3', 'W4'], ['G2', 'G3', 'G4'], ['O2', 'O3', 'O4']];
+      for (let j = 0; j < 3; j++) for (let k = 0; k < 3; k++)
+        if (get(partIds[j][k]) !== partWant[j][k]) worst = `${JSON.stringify(S)}: ${partIds[j][k]} ${get(partIds[j][k])} ≠ ${partWant[j][k]}`;
+      const vocab = ((g.emb ? 2 * DSV3.hidden : 0) + (g.head ? 6 * DSV3.vocab : 0)) * 4096;
+      for (let k = 0; k < bM.length; k++) {
+        const bw = (g.moe * bM[k] + g.dense * bD[k]) * 4096 * IF + (k === bM.length - 1 ? vocab : 0);
+        if (get(`A${k + 2}`) !== bw) worst = `${JSON.stringify(S)}: A${k + 2} ${get(`A${k + 2}`)} ≠ ${bw}`;
+      }
     }
-  check('cells ≡ independent shard math EXACTLY (96 configs, === not epsilon)', worst === null, worst ?? '');
+  check('cells ≡ independent shard math EXACTLY, sub-cells included (96 configs, ===)', worst === null, worst ?? '');
 }
 
 function check(name, ok, detail) {

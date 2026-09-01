@@ -239,12 +239,12 @@ function fitSvg(L) {
       const s = r.segs[0];
       B.push(`<g opacity="${r.op.toFixed(3)}"${r.part != null ? ` data-part="${r.part}" style="cursor:pointer"` : ''}>` +
         `<rect x="0" y="${f1(y - 2)}" width="${x0 - 4}" height="${FIT_ROWH - 2}" fill="transparent"/>` +
-        `<text class="dims" x="12" y="${f1(y + 5.5)}">· ${r.name}</text>` +
+        `<text class="dims"${r.cell ? ` data-cell="${r.cell}"` : ''} x="12" y="${f1(y + 5.5)}">· ${r.name}</text>` +
         `<rect data-bar="${s.bar}" data-true="${s.true}" x="${f1(s.x0)}" y="${f1(y)}" width="${f1(Math.max(0.5, s.x1 - s.x0))}" height="5" fill="${s.color}" opacity="${fo(s.op)}"/>` +
         (r.ghost ? `<rect x="${x0}" y="${f1(y)}" width="${f1(Math.max(0.5, r.ghost.px - x0))}" height="5" ` +
           `fill="none" stroke="${r.ghost.color}" stroke-width="1" stroke-dasharray="2 2" opacity="${fo(r.ghost.op)}"/>` : '') +
         `</g>`);
-      if (r.val) VALS.push(`<text class="dims" data-role="val:${r.id}" data-true="${r.val.true}" data-pin="${r.val.pin}" x="${f1(r.val.x)}" y="${f1(y + 5.5)}"${op(r.val.op * r.op)}>${r.val.text}</text>`);
+      if (r.val) VALS.push(`<text class="dims" data-role="val:${r.id}" data-true="${r.val.true}" data-pin="${r.val.pin}"${r.cell ? ` data-cell="${r.cell}"` : ''} x="${f1(r.val.x)}" y="${f1(y + 5.5)}"${op(r.val.op * r.op)}>${r.val.text}</text>`);
       continue;
     }
     // gutter: the name alone (whole-row hitbox; click to solo)
@@ -858,6 +858,8 @@ dsv3-layer { display: block; margin: 14px 0 26px; }
 .lv-cellfx { font: 11px ui-monospace, monospace; color: #52514e; margin-top: 1px; }
 .lv-tip .cellref { color: #2a78d6; font-weight: 600; }
 .lv-tip.pinned .cellref { cursor: pointer; text-decoration: underline dotted; }
+.lv-tip.pinned .celljump { cursor: pointer; }
+.lv-tip.pinned .celljump:hover { text-decoration: underline; }
 .lv-cellhint { color: #898781; font-size: 10px; margin-top: 5px; }
 .lv-head { display: flex; align-items: center; gap: 8px; padding-bottom: 6px; color: #52514e; flex-wrap: wrap; }
 .lv-head select { font: 12px system-ui; padding: 2px 6px; border: 1px solid #c3c2b7; border-radius: 4px; background: #fff; }
@@ -1521,6 +1523,15 @@ export class Dsv3Layer extends HTMLElement {
         // front's layers stash at the DENSE rate (same marks/recipe)
         anaD: this.hasAttribute('local') && this.getAttribute('lens') === 'param-bytes' && this.kind !== 'dense'
           ? analyze(blockGraph('dense', DSV3, this.matmuls, 4096), marksEff2, this.transposed)
+          : null,
+        // …and the SAVE-EVERYTHING rates at the same recipe/ᵀ: the cell
+        // graph's bucket formulas factor the recompute choice out as a 0/1
+        // (R•) times these policy-independent rates
+        anaMF: this.hasAttribute('local') && this.getAttribute('lens') === 'param-bytes'
+          ? analyze(blockGraph('moe', DSV3, this.matmuls, 4096), RECOMPUTE_PRESETS.none, this.transposed)
+          : null,
+        anaDF: this.hasAttribute('local') && this.getAttribute('lens') === 'param-bytes'
+          ? analyze(blockGraph('dense', DSV3, this.matmuls, 4096), RECOMPUTE_PRESETS.none, this.transposed)
           : null,
       };
     }
@@ -3348,55 +3359,37 @@ export class Dsv3Layer extends HTMLElement {
     if (LOCAL) {   // the fit bar renders in its own row under the controls (this._barHtml)
       const cap = 80 * 2 ** 30;
       const moeExp = PARAMS.expert * DSV3.routedExperts;
-      const stageParts = (S) => {   // this rank's params by class: experts / non-expert blocks / emb+lm head (+final norm)
-        const g = ppStage(Math.min(S.stage, S.pp - 1), S.pp, S.vpp, S.fold);
-        return {
-          e: g.moe * moeExp / S.ep,
-          d: g.dense * PARAMS.denseBlock + g.moe * (PARAMS.moeBlock - moeExp),
-          v: ((g.emb ? 1 : 0) + (g.head ? 1 : 0)) * PARAMS.embed
-            + (g.head ? DSV3.hidden : 0),
-          layers: g.layers, dLay: g.dense, mLay: g.moe, emb: g.emb, head: g.head,
-        };
-      };
       // activation bytes are priced BY KIND: the dense front stashes at the
       // dense rate (no router state, no dispatched tokens), the MoE layers
-      // at theirs — same marks/recipe for both (cells D1/D2)
+      // at theirs — same marks/recipe for both (cells D1/D2). Vocab-side
+      // activations charge ×1 microbatch (D3: the head's logits + fp32 loss
+      // live only across that microbatch; the embed residual is chunk 0's
+      // x0) — memory.js's head/embed convention.
       const anaD = this._anaMemo.anaD ?? ana;
-      // vocab-side activations, charged ×1 microbatch (they don't scale with
-      // pipeline depth: the head's logits + fp32 softmax live only across
-      // that microbatch's loss fwd/bwd, and the embed residual is the first
-      // chunk's x0) — memory.js's head/embed convention, so the chart and
-      // the model agree (the acts row used to count block stashes only)
-      const vocabActs = (q) => ((q.emb ? 2 * DSV3.hidden : 0) + (q.head ? 6 * DSV3.vocab : 0)) * 4096;
-      const shardOf = (S, c, cls) =>
-        (S.zero ?? 1) >= c.zthresh ? c.bpp / (cls === 'e' ? (S.world ?? LOCAL_PAR.world) / S.pp / S.ep : (S.world ?? LOCAL_PAR.world) / S.pp) : c.bpp;
-      // per component: [experts, non-expert blocks, emb+lm head] bytes — the solo
-      // breakdown and its pin factors ride these
-      const partsFor = (S) => {
-        const q = stageParts(S);
-        const IFn = inflightOf(S.sched ?? '1f1b', S.stage, S.pp, S.vpp, S.fold);
-        const bM = actBucketsOf(ana), bD = actBucketsOf(anaD);
-        const actP = bM.map((b, i) => (q.mLay * b + q.dLay * bD[i]) * 4096 * IFn);
-        actP[actP.length - 1] += vocabActs(q);   // the catch-all keeps the partition exact
-        const w8 = (c, cls) => c.prop === 'showWeights' && S.fp8p ? (cls === 'v' ? 1 : 2.0625 / 2) : 1;
-        return COMPS.map((c) => [q.e * shardOf(S, c, 'e') * w8(c, 'e'), q.d * shardOf(S, c, 'd') * w8(c, 'd'), q.v * shardOf(S, c, 'd')])
-          .concat([actP]);
-      };
-      // the CELL GRAPH (src/cells.js): every chart total is a cell — a value
-      // computed by evaluating the same formula string the tooltips and the
-      // spreadsheet display, so the numbers and their shown derivations
-      // cannot diverge. partsFor above stays independent math: the visual
-      // audit's partition rule cross-checks the two every test run.
+      // the CELL GRAPH (src/cells.js): every chart number is a cell — a
+      // value computed by evaluating the same formula string the tooltips
+      // and the spreadsheet display, so the numbers and their shown
+      // derivations cannot diverge (scripts/sanity.mjs replays the shard
+      // math independently and asserts === across a config matrix).
       const envOf = (S) => ({
         world: S.world ?? LOCAL_PAR.world, pp: S.pp, ep: S.ep, zero: S.zero ?? 1,
         sched: S.sched ?? '1f1b', fp8p: !!S.fp8p,
         g: ppStage(Math.min(S.stage, S.pp - 1), S.pp, S.vpp, S.fold),
         aM: ana.savedBytes, aD: anaD.savedBytes,
+        bM: actBucketsOf(ana), bD: actBucketsOf(anaD), bLabels: ACT_BUCKETS.map((b) => b.label),
+        bMF: actBucketsOf(this._anaMemo.anaMF ?? ana), bDF: actBucketsOf(this._anaMemo.anaDF ?? anaD),
         N: { restLayer: PARAMS.moeBlock - moeExp, denseLayer: PARAMS.denseBlock },
       });
       const segB = (S) => {
         const { get } = buildCells(envOf(S));
         return [get('W1'), get('G1'), get('O1'), get('A1')];
+      };
+      // per component: [experts, non-expert blocks, emb+lm head] sub-cells —
+      // the solo breakdown and its pin factors ride these
+      const partsFor = (S) => {
+        const { get } = buildCells(envOf(S));
+        return [['W2', 'W3', 'W4'], ['G2', 'G3', 'G4'], ['O2', 'O3', 'O4']].map((ids) => ids.map(get))
+          .concat([ACT_BUCKETS.map((_, k) => get(`A${k + 2}`))]);
       };
       this._cells = () => buildCells(envOf(Snow));   // tooltips + the bound <dsv3-sheet> read this
       this._segParts = partsFor(Snow);
@@ -3484,6 +3477,7 @@ export class Dsv3Layer extends HTMLElement {
             rows.push({ key: `part:${i}:${k2}`, type: 'part', id: `part:${i}:${k2}`,
               y: yOf(i) + rowH + k3 * rowH + 2, nameOp: 1,
               op: 0.4 + 0.6 * (clickable && i === sIdx ? psel(this.partSel ?? null, k2) : 1),   // dim unselected parts
+              cell: i === 3 ? `A${k2 + 2}` : 'WGO'[i] + (k2 + 2),   // the sub-cell this row IS
               name: names2[k2], color: colors[i], part: clickable ? k2 : null,
               segs: [{ key: 'bar', x0, x1: px(bP), color: colors[i], op: 0.55, bar: `part:${i}:${k2}`, true: bP }],
               ghost: pinP ? { px: px(pinP), op: 0.7, color: colors[i], true: pinP } : null,
@@ -3841,6 +3835,7 @@ export class Dsv3Layer extends HTMLElement {
       d.dataset.k = k;
       const h = el('div');
       const b = document.createElement('b'); b.textContent = c.id;
+      b.dataset.jump = c.id; b.className = 'celljump'; b.title = 'show this row in the formula sheet';
       h.append(b, ` · ${c.label}`);
       const f = el('div', 'lv-cellfx');
       if (c.expr) {
@@ -3884,6 +3879,8 @@ export class Dsv3Layer extends HTMLElement {
     tip.addEventListener('click', (ev) => {
       if (!pinned) return;
       ev.stopPropagation();
+      const j = ev.target.closest?.('b[data-jump]');
+      if (j) { document.querySelector(`dsv3-sheet[layer="${this.id}"]`)?.reveal(j.dataset.jump); return; }
       const ref = ev.target.closest?.('.cellref');
       if (!ref) return;
       stack = stack.slice(0, +ref.closest('.lv-cellent').dataset.k + 1).concat(ref.dataset.cell);
@@ -3893,7 +3890,7 @@ export class Dsv3Layer extends HTMLElement {
     root.addEventListener('click', (ev) => {
       if (pinned) { unpin(); return; }
       const cellEl = ev.target.closest?.('[data-cell]');
-      if (cellEl && this._cells && !ev.target.closest('button, select')) {
+      if (cellEl && this._cells && !ev.target.closest('button, select, [data-prop], [data-part]')) {
         pinned = true; tip.classList.add('pinned'); tip.style.pointerEvents = 'auto';
         stack = [cellEl.dataset.cell];
         renderStack(); tip.style.display = 'block'; place(ev);
@@ -3931,6 +3928,7 @@ dsv3-sheet { display: block; margin: 14px 0; }
 .cellsheet td.fx .cellref { color: #2a78d6; font-weight: 600; }
 .cellsheet td.vl { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .cellsheet td.ap { color: #898781; }
+.cellsheet tr.hl td { background: #fff8ea; }
 `;
 class Dsv3Sheet extends HTMLElement {
   connectedCallback() {
@@ -3944,6 +3942,13 @@ class Dsv3Sheet extends HTMLElement {
       else setTimeout(bind, 30);
     };
     if (lid) bind();
+  }
+  // tooltip jump target: scroll the row into view and highlight it (the
+  // highlight survives re-syncs until the next jump)
+  reveal(id) {
+    this._hl = id;
+    this.sync();
+    this._root.querySelector(`tr[data-cell="${id}"]`)?.scrollIntoView({ block: 'center' });
   }
   sync() {
     const cells = this._layer?._cells?.();
@@ -3962,7 +3967,7 @@ class Dsv3Sheet extends HTMLElement {
     this._root.innerHTML = '<div class="hd">the fit chart’s formula sheet — every number the chart below shows is one of these cells, '
       + 'computed by evaluating exactly the formula printed here (hover a chart number for its formula; click to pin, then click names to drill)</div>'
       + '<table><tr><th>cell</th><th>quantity</th><th>formula</th><th class="vl">value (exact)</th><th class="vl">≈</th></tr>'
-      + cells.cells.map((c) => `<tr><td class="nm">${c.id}</td><td>${esc(c.label)}</td>`
+      + cells.cells.map((c) => `<tr data-cell="${c.id}"${c.id === this._hl ? ' class="hl"' : ''}><td class="nm">${c.id}</td><td>${esc(c.label)}</td>`
         + `<td class="fx">${fx(c)}</td>`
         + `<td class="vl">${raw(c)}</td><td class="vl ap">${approx(c)}</td></tr>`).join('')
       + '</table>';
