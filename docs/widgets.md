@@ -115,6 +115,31 @@ length change, honestly — and exact values snap). `ep` seeds the default;
 `view="physical"` opens folded. Attributes are figure-authoring only; no
 URL state.
 
+## `<dsv3-sheet layer=…>` — the full model's formula sheet
+
+A spreadsheet-like readout of the CELL GRAPH (`src/cells.js`) that the bound
+local widget prices from: one row per cell — coordinate name (`P1`/`Q2`/`W1`…),
+a one-line label, the formula, the EXACT value (primary column; byte counts
+are exact — every divisor is a power of two and every dtype rate a dyadic
+rational on integer counts ≪ 2^53), and a rounded `≈` column. The formula
+STRING shown is what the engine evaluates (`evalExpr`) — the chart, the
+tooltips and the sheet cannot diverge, and `scripts/sanity.mjs` replays the
+shard math independently and asserts `===` across a config matrix. Cells
+without a formula are model INPUTS (slot-split layer counts, the op-graph
+stash rates D1/D2) — drill-down ends at their labels. Binds like the
+pp-schedule strip (poll for the layer id, resync on its `recipe` event), so
+rows update live as knobs move.
+
+The same cells power the fit chart's FORMULA TOOLTIPS: chart value/name
+labels carry `data-cell`; hovering shows that cell's entry (name · label,
+`= formula = value (exact B)`), clicking PINS it, and clicking a coordinate
+inside a pinned tip pushes that cell's entry below — a STACK growing
+downward, one path through the graph at a time (clicking a name higher up
+truncates the path there first). Clicking elsewhere unpins. Op-box tooltips
+no longer carry hand-written FLOP expression strings (the divergence-prone
+pattern the cells replace) — just the FLOP count, dims note and exact
+parameter count.
+
 ## The visual audit (src/audit.js)
 
 The audit keys on the VISUAL LANGUAGE, never the model: each pattern the

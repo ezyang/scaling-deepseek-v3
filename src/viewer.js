@@ -7,6 +7,7 @@ import { simulate, LEVELS } from './sim.js';
 import { resolveMatmuls, MATMULS, RECIPES, RECIPE_T } from './memory.js';
 import { blockGraph, analyze, RECOMPUTE_PRESETS, MARKABLE } from './blockgraph.js';
 import { PARAMS } from './params.js';
+import { buildCells } from './cells.js';
 
 // spreadsheet-style highlighting, shared by the layer and the anatomy plan:
 // mark the [data-op] groups in `hl` and fade the rest (the tabs' visual
@@ -249,7 +250,7 @@ function fitSvg(L) {
     // gutter: the name alone (whole-row hitbox; click to solo)
     B.push(`<g${r.prop ? ` data-prop="${r.prop}" style="cursor:pointer"` : ''}${op(r.nameOp)}>` +
       (r.prop ? `<rect x="0" y="${f1(y - 2)}" width="${x0 - 4}" height="${FIT_ROWH}" fill="transparent"/>` : '') +
-      `<text class="dims" data-role="name:${r.id}" data-true="${r.abs}" x="2" y="${f1(y + 7)}" fill="${r.color}" font-weight="600">${r.name}</text></g>`);
+      `<text class="dims" data-role="name:${r.id}" data-true="${r.abs}"${r.cell ? ` data-cell="${r.cell}"` : ''} x="2" y="${f1(y + 7)}" fill="${r.color}" font-weight="600">${r.name}</text></g>`);
     // canonical segs [grey base | colored tips]: degenerate ones (a closed
     // stack) carry no data and skip rendering
     for (const s of r.segs) {
@@ -262,7 +263,7 @@ function fitSvg(L) {
     if (r.ghost) B.push(`<rect data-ghost="${r.id}" data-true="${r.ghost.true}" x="${x0}" y="${f1(y)}" width="${f1(Math.max(0.5, r.ghost.px - x0))}" height="8" ` +
       `fill="none" stroke="${r.ghost.color}" stroke-width="1" stroke-dasharray="2 2" opacity="${fo(r.ghost.op)}"/>`);
     // bar end: the ABSOLUTE value (+ the vs-save badge when saved)
-    if (r.val) VALS.push(`<text class="dims" data-role="val:${r.id}" data-true="${r.val.true}" data-pin="${r.val.pin}" x="${f1(r.val.x)}" y="${f1(y + 7)}"${op(r.val.op)}>${r.val.text}</text>`);
+    if (r.val) VALS.push(`<text class="dims" data-role="val:${r.id}" data-true="${r.val.true}" data-pin="${r.val.pin}"${r.cell ? ` data-cell="${r.cell}"` : ''} x="${f1(r.val.x)}" y="${f1(y + 7)}"${op(r.val.op)}>${r.val.text}</text>`);
   }
   // map-style DISTANCES legend: on a log axis a span IS a factor, so anchor
   // the important ones — the mesh dims (DP 2048 · EP 64 · PP 16) and a
@@ -852,6 +853,12 @@ dsv3-layer { display: block; margin: 14px 0 26px; }
   border: 1px solid #e1e0d9; border-radius: 6px; background: #fcfcfb; padding: 10px 12px; position: relative; }
 .lv-tip { ${TIP_CARD} font-size: 11.5px; max-width: 360px; z-index: 7; line-height: 1.5; white-space: pre-line; }
 .lv-tip.pinned { border-color: #eda100; box-shadow: 0 2px 10px rgba(237,161,0,0.3); }
+/* cell (formula) tooltips: entries stack downward as the pinned drill deepens */
+.lv-cellent + .lv-cellent { border-top: 1px dashed #e1e0d9; margin-top: 5px; padding-top: 5px; }
+.lv-cellfx { font: 11px ui-monospace, monospace; color: #52514e; margin-top: 1px; }
+.lv-tip .cellref { color: #2a78d6; font-weight: 600; }
+.lv-tip.pinned .cellref { cursor: pointer; text-decoration: underline dotted; }
+.lv-cellhint { color: #898781; font-size: 10px; margin-top: 5px; }
 .lv-head { display: flex; align-items: center; gap: 8px; padding-bottom: 6px; color: #52514e; flex-wrap: wrap; }
 .lv-head select { font: 12px system-ui; padding: 2px 6px; border: 1px solid #c3c2b7; border-radius: 4px; background: #fff; }
 .lv-head .savebox { margin-left: auto; display: inline-flex; gap: 6px; align-items: flex-start;
@@ -2326,28 +2333,12 @@ export class Dsv3Layer extends HTMLElement {
       if (n.opKind === 'matmul' || n.opKind === 'attn') return COMPUTE_DT(dt(id === 'gate_up' ? 'ffn_gate_up' : id));
       return 'vector';
     };
-    // per-op FLOP formulas (per token) for the hover tooltips
-    const FLOP_EXPR = {
-      norm1: '≈ 8 · 7168 — bandwidth-bound vector op, compute precision unspecified',
-      norm2: '≈ 8 · 7168 — bandwidth-bound vector op, compute precision unspecified',
-      qkv_down: '2 · 7168 · (1536 + 576)',
-      q_up: '2 · 1536 · 128·192', kv_up: '2 · 512 · 128·256',
-      attn: '2 · 128 heads · (192 + 128) · 4096/2 (causal average context)',
-      o_proj: '2 · 128·128 · 7168', router: '2 · 7168 · 256',
-      ...(this.kind === 'dense' ? {
-        gate_up: '2 · (2 · 7168 · 18432)', swiglu: '≈ 6 · 18432 — elementwise',
-        ffn_down: '2 · (18432 · 7168)',
-      } : {
-        gate_up: '2 · (2 · 7168 · 2048) · 9 experts', swiglu: '≈ 6 · 2048 · 9 — elementwise',
-        ffn_down: '2 · (2048 · 7168) · 9 experts',
-      }),
-      lm_head: '2 · 7168 · 129280',
-      dispatch: 'a2a communication — no FLOPs', combine: 'a2a communication — no FLOPs',
-    };
     const escAttr = (s) => esc(s).replace(/"/g, '&quot;').replace(/\n/g, '&#10;');
     const boxTip = (id, dimsNote, paramId = id) => {
       const n = ana.byId[id];
-      const f = n?.flopsTok ? `${fmtNum(n.flopsTok)} FLOP/token = ${FLOP_EXPR[id] ?? ''}` : (FLOP_EXPR[id] ?? '');
+      // the FLOP number only — its derivation lives in the cell sheet /
+      // formula tooltips now (hand-written expression strings could diverge)
+      const f = n?.flopsTok ? `${fmtNum(n.flopsTok)} FLOP/token` : '';
       const pc = exactParam(paramId);
       return ` data-tip="${escAttr([f, dimsNote, pc == null ? '' : `parameters: ${pc.toLocaleString('en-US')}`].filter(Boolean).join('\n'))}"`;
     };
@@ -3367,11 +3358,10 @@ export class Dsv3Layer extends HTMLElement {
           layers: g.layers, dLay: g.dense, mLay: g.moe, emb: g.emb, head: g.head,
         };
       };
-      // per-(rank, microbatch) activation bytes, priced BY KIND: the dense
-      // front stashes at the dense rate (no router state, no dispatched
-      // tokens), the MoE layers at theirs — same marks/recipe for both
+      // activation bytes are priced BY KIND: the dense front stashes at the
+      // dense rate (no router state, no dispatched tokens), the MoE layers
+      // at theirs — same marks/recipe for both (cells D1/D2)
       const anaD = this._anaMemo.anaD ?? ana;
-      const actQ = (q) => (q.dLay * anaD.savedBytes + q.mLay * ana.savedBytes) * 4096;
       // vocab-side activations, charged ×1 microbatch (they don't scale with
       // pipeline depth: the head's logits + fp32 softmax live only across
       // that microbatch's loss fwd/bwd, and the embed residual is the first
@@ -3392,13 +3382,23 @@ export class Dsv3Layer extends HTMLElement {
         return COMPS.map((c) => [q.e * shardOf(S, c, 'e') * w8(c, 'e'), q.d * shardOf(S, c, 'd') * w8(c, 'd'), q.v * shardOf(S, c, 'd')])
           .concat([actP]);
       };
+      // the CELL GRAPH (src/cells.js): every chart total is a cell — a value
+      // computed by evaluating the same formula string the tooltips and the
+      // spreadsheet display, so the numbers and their shown derivations
+      // cannot diverge. partsFor above stays independent math: the visual
+      // audit's partition rule cross-checks the two every test run.
+      const envOf = (S) => ({
+        world: S.world ?? LOCAL_PAR.world, pp: S.pp, ep: S.ep, zero: S.zero ?? 1,
+        sched: S.sched ?? '1f1b', fp8p: !!S.fp8p,
+        g: ppStage(Math.min(S.stage, S.pp - 1), S.pp, S.vpp, S.fold),
+        aM: ana.savedBytes, aD: anaD.savedBytes,
+        N: { restLayer: PARAMS.moeBlock - moeExp, denseLayer: PARAMS.denseBlock },
+      });
       const segB = (S) => {
-        const q = stageParts(S);
-        const w8 = (c, cls) => c.prop === 'showWeights' && S.fp8p ? (cls === 'v' ? 1 : 2.0625 / 2) : 1;
-        return COMPS.map((c) => q.d * shardOf(S, c, 'd') * w8(c, 'd') + q.v * shardOf(S, c, 'd')
-          + q.e * shardOf(S, c, 'e') * w8(c, 'e'))
-          .concat([actQ(q) * inflightOf(S.sched ?? '1f1b', S.stage, S.pp, S.vpp, S.fold) + vocabActs(q)]);
+        const { get } = buildCells(envOf(S));
+        return [get('W1'), get('G1'), get('O1'), get('A1')];
       };
+      this._cells = () => buildCells(envOf(Snow));   // tooltips + the bound <dsv3-sheet> read this
       this._segParts = partsFor(Snow);
       const nowB = segB(Snow);
       this._segTotals = nowB;
@@ -3461,6 +3461,7 @@ export class Dsv3Layer extends HTMLElement {
         const pinB = pin ? pin.segs[i] : 0;
         rows.push({ key: `seg:${i}`, type: 'comp', id: String(i), y: yOf(i), op: 1,
           nameOp: on[i] ? 1 : 0.35, name: names[i], color: colors[i],
+          cell: ['W1', 'G1', 'O1', 'A1'][i],   // the cell whose formula this row's tooltip shows
           prop: i < COMPS.length ? COMPS[i].prop : 'showActs', abs,
           segs: [
             { key: 'base', x0, x1: grey ? px(grey) : x0, color: '#c3c2b7', op: 1 },
@@ -3507,7 +3508,7 @@ export class Dsv3Layer extends HTMLElement {
           return { key: `tip:${j}`, x0: t0, x1: px(acc), color: colors[j], op: 1 };
         });
         rows.push({ key: 'total', type: 'comp', id: 'total', y: yOf(4), op: 1, nameOp: 1,
-          name: 'total', color: '#52514e', prop: null, abs: totalN,
+          name: 'total', color: '#52514e', prop: null, abs: totalN, cell: 'T1',
           segs: [{ key: 'base', x0, x1: px(stacked ? totalN - topSum : totalN),
             color: stacked ? '#c3c2b7' : '#52514e', op: 1,
             bar: stacked ? null : 'total', true: stacked ? null : totalN }, ...tips],
@@ -3540,7 +3541,7 @@ export class Dsv3Layer extends HTMLElement {
       const lmFlops = 2 * DSV3.hidden * DSV3.vocab / (this.view === 'combined' ? this.dispLayers : 1);
       const lmRows = this._ctl.quant ? barRows(lmFlops, dt('lm_head'), 224, dtPm('lm_head')) : 0;
       lmH = (BQ ? 38 : 34) + lmRows * 6;   // lm-head text sits 2px lower than mmBox text
-      P.push(`<g data-op="lm_head" data-tip="${escAttr(`${fmtNum(lmFlops)} FLOP/token = ${FLOP_EXPR.lm_head}\n${lm.dimsNote}\nparameters: ${PARAMS.embed.toLocaleString('en-US')}`)}">` +
+      P.push(`<g data-op="lm_head" data-tip="${escAttr(`${fmtNum(lmFlops)} FLOP/token\n${lm.dimsNote}\nparameters: ${PARAMS.embed.toLocaleString('en-US')}`)}">` +
         `<rect class="box" x="${C1 + 184}" y="${h}" width="240" height="${lmH}" rx="4"/>` +
         `<text class="name" x="${C1 + 192}" y="${h + 14}">${lm.label}</text>` +
         `<text class="dims" x="${C1 + 192}" y="${h + 28}">${PONLY ? pstr('lm_head').trim() : flatten(lm.dims) + pstr('lm_head')}</text></g>` + dtBtn('lm_head', C1 + 184 + 240 - 58, h + 7));
@@ -3815,6 +3816,7 @@ export class Dsv3Layer extends HTMLElement {
     const tip = el('div', 'lv-tip');
     root.append(tip);
     let pinned = false;
+    let stack = [];   // pinned CELL drill-down: one path through the formula graph, growing downward
     const place = (ev) => {
       const r = root.getBoundingClientRect();
       tip.style.left = Math.min(ev.clientX - r.left + 14, r.width - 280) + 'px';
@@ -3825,16 +3827,78 @@ export class Dsv3Layer extends HTMLElement {
       const v = t && +(t.dataset.raw ?? t.dataset.true);
       return Number.isFinite(v) ? `${v.toLocaleString('en-US', { maximumFractionDigits: 2 })} B` : null;
     };
+    // ---- cell tooltips (the full model's quantity graph, src/cells.js):
+    // hover = the quantity's formula; pin (click) = the formula's names
+    // become clickable and each click pushes that cell's own entry below —
+    // a stack, so only one path through the graph is ever on screen
+    const fmtVal = (c) => c.unit === 'B'
+      ? `${fmtBytes(c.value)} (${c.value.toLocaleString('en-US', { maximumFractionDigits: 2 })} B)`
+      : c.unit === 'p' ? `${fmtP(c.value)} params (${c.value.toLocaleString('en-US', { maximumFractionDigits: 2 })})`
+        : c.unit === 'B/tok' ? `${c.value.toLocaleString('en-US', { maximumFractionDigits: 2 })} B/token`
+          : c.value.toLocaleString('en-US', { maximumFractionDigits: 2 });
+    const entry = (c, k) => {
+      const d = el('div', 'lv-cellent');
+      d.dataset.k = k;
+      const h = el('div');
+      const b = document.createElement('b'); b.textContent = c.id;
+      h.append(b, ` · ${c.label}`);
+      const f = el('div', 'lv-cellfx');
+      if (c.expr) {
+        f.append('= ');
+        for (const tok of c.expr.split(/([A-Z]\d+)/)) {
+          if (/^[A-Z]\d+$/.test(tok)) {
+            const s = el('span', 'cellref'); s.textContent = tok; s.dataset.cell = tok; f.append(s);
+          } else if (tok) f.append(tok);
+        }
+        f.append(` = ${fmtVal(c)}`);
+      } else f.append(`= ${fmtVal(c)}`);   // a leaf: the label says where it comes from
+      d.append(h, f);
+      return d;
+    };
+    const renderStack = () => {
+      const cells = this._cells?.();
+      if (!cells) return false;
+      tip.replaceChildren(...stack.map((id, k) => entry(cells.byId.get(id), k)));
+      if (pinned) {
+        const hint = el('div', 'lv-cellhint');
+        hint.textContent = 'click a name to expand it below · click elsewhere to close';
+        tip.append(hint);
+      }
+      return true;
+    };
     root.addEventListener('mousemove', (ev) => {
       if (pinned) return;
+      const cellEl = ev.target.closest?.('[data-cell]');
+      if (cellEl && this._cells) {
+        stack = [cellEl.dataset.cell];
+        if (renderStack()) { tip.style.display = 'block'; place(ev); return; }
+      }
       const raw = rawOf(ev);
       const t = ev.target.closest?.('[data-tip]');
       if (raw) { tip.textContent = raw; tip.style.display = 'block'; place(ev); }
       else if (t) { tip.textContent = t.dataset.tip; tip.style.display = 'block'; place(ev); }
       else tip.style.display = 'none';
     });
+    // clicks INSIDE the pinned tip drill (and never close it): a formula
+    // name truncates the stack to its own entry and pushes its cell below
+    tip.addEventListener('click', (ev) => {
+      if (!pinned) return;
+      ev.stopPropagation();
+      const ref = ev.target.closest?.('.cellref');
+      if (!ref) return;
+      stack = stack.slice(0, +ref.closest('.lv-cellent').dataset.k + 1).concat(ref.dataset.cell);
+      renderStack();
+    });
+    const unpin = () => { pinned = false; stack = []; tip.classList.remove('pinned'); tip.style.pointerEvents = 'none'; tip.style.display = 'none'; };
     root.addEventListener('click', (ev) => {
-      if (pinned) { pinned = false; tip.classList.remove('pinned'); tip.style.display = 'none'; return; }
+      if (pinned) { unpin(); return; }
+      const cellEl = ev.target.closest?.('[data-cell]');
+      if (cellEl && this._cells && !ev.target.closest('button, select')) {
+        pinned = true; tip.classList.add('pinned'); tip.style.pointerEvents = 'auto';
+        stack = [cellEl.dataset.cell];
+        renderStack(); tip.style.display = 'block'; place(ev);
+        return;
+      }
       const t = ev.target.closest?.('[data-tip]');
       if (t && !ev.target.closest('button, select')) {
         pinned = true; tip.classList.add('pinned');
@@ -3846,6 +3910,66 @@ export class Dsv3Layer extends HTMLElement {
 }
 if (typeof customElements !== 'undefined' && !customElements.get('dsv3-layer')) {
   customElements.define('dsv3-layer', Dsv3Layer);
+}
+
+// ---- <dsv3-sheet> — the full model's formula sheet --------------------------
+// A spreadsheet-like readout of the cell graph (src/cells.js) that the bound
+// local widget prices from: NAME · quantity · formula · live value. The names
+// are the coordinates the fit chart's tooltips speak; rows update live as
+// the widget's knobs move — same cells, one source of truth by construction.
+const SHEET_CSS = `
+dsv3-sheet { display: block; margin: 14px 0; }
+.cellsheet { font: 12px system-ui, -apple-system, "Segoe UI", sans-serif; color: #0b0b0b;
+  border: 1px solid #e1e0d9; border-radius: 6px; background: #fcfcfb; padding: 8px 12px; }
+.cellsheet .hd { color: #52514e; font-size: 11.5px; margin-bottom: 5px; }
+.cellsheet table { border-collapse: collapse; width: 100%; }
+.cellsheet th { text-align: left; font-size: 10.5px; color: #898781; font-weight: 600; padding: 1px 10px 3px 2px; }
+.cellsheet th.vl, .cellsheet td.vl { text-align: right; }
+.cellsheet td { padding: 1.5px 10px 1.5px 2px; border-top: 1px solid #f0efe9; font-size: 11.5px; vertical-align: baseline; }
+.cellsheet td.nm { font: 600 11px ui-monospace, monospace; color: #2a78d6; }
+.cellsheet td.fx { font: 11px ui-monospace, monospace; color: #52514e; white-space: nowrap; }
+.cellsheet td.fx .cellref { color: #2a78d6; font-weight: 600; }
+.cellsheet td.vl { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.cellsheet td.ap { color: #898781; }
+`;
+class Dsv3Sheet extends HTMLElement {
+  connectedCallback() {
+    const style = document.createElement('style'); style.textContent = SHEET_CSS;
+    this._root = el('div', 'cellsheet');
+    this.append(style, this._root);
+    const lid = this.getAttribute('layer');
+    const bind = () => {   // the layer upgrades async; poll briefly until it's live
+      const l = document.getElementById(lid);
+      if (l?._cells) { this._layer = l; l.addEventListener('recipe', () => this.sync()); this.sync(); }
+      else setTimeout(bind, 30);
+    };
+    if (lid) bind();
+  }
+  sync() {
+    const cells = this._layer?._cells?.();
+    if (!cells) return;
+    // the exact value is the PRIMARY column (byte counts are exact — every
+    // divisor is a power of two on integer counts); the rounded reading is
+    // its own convenience column
+    const raw = (c) => c.value.toLocaleString('en-US', { maximumFractionDigits: 2 })
+      + (c.unit === 'B' ? ' B' : c.unit === 'B/tok' ? ' B/tok' : '');
+    const approx = (c) => c.unit === 'B' ? fmtBytes(c.value)
+      : c.unit === 'p' ? fmtP(c.value)
+        : c.unit === 'B/tok' ? `${(c.value / 1024).toFixed(1)} KiB` : '';
+    const fx = (c) => !c.expr ? '<span style="color:#898781">(model input)</span>'
+      : '= ' + c.expr.split(/([A-Z]\d+)/).map((tok) =>
+        /^[A-Z]\d+$/.test(tok) ? `<span class="cellref">${tok}</span>` : esc(tok)).join('');
+    this._root.innerHTML = '<div class="hd">the fit chart’s formula sheet — every number the chart below shows is one of these cells, '
+      + 'computed by evaluating exactly the formula printed here (hover a chart number for its formula; click to pin, then click names to drill)</div>'
+      + '<table><tr><th>cell</th><th>quantity</th><th>formula</th><th class="vl">value (exact)</th><th class="vl">≈</th></tr>'
+      + cells.cells.map((c) => `<tr><td class="nm">${c.id}</td><td>${esc(c.label)}</td>`
+        + `<td class="fx">${fx(c)}</td>`
+        + `<td class="vl">${raw(c)}</td><td class="vl ap">${approx(c)}</td></tr>`).join('')
+      + '</table>';
+  }
+}
+if (typeof customElements !== 'undefined' && !customElements.get('dsv3-sheet')) {
+  customElements.define('dsv3-sheet', Dsv3Sheet);
 }
 
 // ---- <dsv3-pp-schedule> custom element -------------------------------------------

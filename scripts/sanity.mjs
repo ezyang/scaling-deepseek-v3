@@ -151,7 +151,7 @@ check('a2a toggles on without pipeline', solo.trace.ranks.some(r => r.tracks.som
 // AND head on rank 0). The visual audit (src/audit.js) deliberately never
 // re-derives the model — this is where that identity is enforced.
 globalThis.HTMLElement = class {};   // viewer.js defines custom elements; the math exports are DOM-free
-const { ppStage } = await import('../src/viewer.js');
+const { ppStage, inflightOf } = await import('../src/viewer.js');
 {
   const moeExp = PARAMS.expert * DSV3.routedExperts;
   let worst = null;
@@ -167,6 +167,54 @@ const { ppStage } = await import('../src/viewer.js');
         if (t !== PARAMS.total) worst = `pp${pp}·vpp${vpp}·${fold}: ${t}`;
       }
   check('stage split partitions the exact total (42 geometries)', worst === null, worst ?? PARAMS.total.toLocaleString('en-US'));
+}
+
+// The CELL GRAPH (src/cells.js): the formula strings the fit chart's
+// tooltips and the sheet display are what the chart itself evaluates. An
+// independent replay of the shard math must agree EXACTLY (===, no epsilon):
+// every divisor is a power of two and every dtype rate a dyadic rational on
+// integer counts ≪ 2^53, so IEEE doubles carry the byte counts with zero
+// rounding — bytes are exact, not float-ish.
+{
+  const { buildCells } = await import('../src/cells.js');
+  const moeExp = PARAMS.expert * DSV3.routedExperts;
+  const mmS = resolveMatmuls({ recipe: 'dsv3-fp8' });
+  const aM = analyze(blockGraph('moe', DSV3, mmS, 4096), RECOMPUTE_PRESETS.dsv3, false).savedBytes;
+  const aD = analyze(blockGraph('dense', DSV3, mmS, 4096), RECOMPUTE_PRESETS.dsv3, false).savedBytes;
+  const envOf = (S) => ({
+    world: 2048, pp: S.pp, ep: S.ep, zero: S.zero, sched: '1f1b', fp8p: !!S.fp8p,
+    g: ppStage(Math.min(S.stage, S.pp - 1), S.pp, S.pp > 1 ? 2 : 1, 'reflect'),
+    aM, aD, N: { restLayer: PARAMS.moeBlock - moeExp, denseLayer: PARAMS.denseBlock },
+  });
+  // the essay's endpoint (step 6, the peak rank): pin the exact integer
+  const c6 = buildCells(envOf({ pp: 8, ep: 64, zero: 1, stage: 1 }));
+  check('cells: step-6 endpoint total = exactly 66,296,545,344 B (an integer)',
+    c6.get('T1') === 66296545344, String(c6.get('T1')));
+  let worst = null;
+  for (const pp of [1, 8]) for (const ep of [1, 4, 64]) for (const zero of [0, 1, 2, 3])
+    for (const stage of [0, 1]) for (const fp8p of [false, true]) {
+      const S = { pp, ep, zero, stage, fp8p };
+      const env = envOf(S), { get } = buildCells(env);
+      const g = env.g, dp = 2048 / pp, edp = dp / ep;
+      const q = {
+        e: g.moe * moeExp / ep,
+        d: g.dense * PARAMS.denseBlock + g.moe * (PARAMS.moeBlock - moeExp),
+        v: ((g.emb ? 1 : 0) + (g.head ? 1 : 0)) * PARAMS.embed + (g.head ? DSV3.hidden : 0),
+      };
+      const comp = (bpp, zt, w = 1) => {
+        const se = zero >= zt ? bpp / edp : bpp, sd = zero >= zt ? bpp / dp : bpp;
+        return q.e * se * w + q.d * sd * w + q.v * sd;
+      };
+      const IF = inflightOf('1f1b', stage, pp, pp > 1 ? 2 : 1, 'reflect');
+      const acts = (g.dense * aD + g.moe * aM) * 4096 * IF
+        + ((g.emb ? 2 * DSV3.hidden : 0) + (g.head ? 6 * DSV3.vocab : 0)) * 4096;
+      const want = [comp(2, 3, fp8p ? 2.0625 / 2 : 1), comp(4, 2), comp(8, 1), acts];
+      const got = ['W1', 'G1', 'O1', 'A1'].map(get);
+      if (!got.every((v, i) => v === want[i])) { worst = `${JSON.stringify(S)}: ${got} ≠ ${want}`; }
+      if (get('P6') !== IF) worst = `${JSON.stringify(S)}: P6 ${get('P6')} ≠ inflightOf ${IF}`;
+      if (get('N1') !== moeExp || get('N4') !== PARAMS.embed) worst = `${JSON.stringify(S)}: N-cells drifted from PARAMS`;
+    }
+  check('cells ≡ independent shard math EXACTLY (96 configs, === not epsilon)', worst === null, worst ?? '');
 }
 
 function check(name, ok, detail) {

@@ -23,7 +23,8 @@ const vr = val.getBoundingClientRect();
 const hitEl = document.elementFromPoint(vr.left + 4, vr.top + vr.height / 2);
 T.check('value label reachable by pointer (not under scrub)', hitEl === val || val.contains(hitEl), `${hitEl?.tagName} ${hitEl?.getAttribute?.('data-role')}`);
 hover(val); await T.tick(30);
-T.check('fit value hover shows raw B', tip().style.display === 'block' && tip().textContent.endsWith(' B'), tip().textContent);
+T.check('fit value hover shows the cell entry (formula + raw B)', tip().style.display === 'block'
+  && /= W1 \+ G1 \+ O1 \+ A1 = .* \([\d,]+ B\)/.test(tip().textContent), tip().textContent);
 // act chip labels too
 const chip = layer().querySelector('.lv-scroll text.tsave tspan[data-raw]');
 T.check('act chip label carries data-raw', !!chip, '');
