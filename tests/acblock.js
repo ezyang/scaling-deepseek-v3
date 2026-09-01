@@ -103,7 +103,7 @@ T.check('fp8 widget: the fp8 recipe shrinks the tally (76 pickets — o_proj run
 // DOUBLED rows: recomputed ops carry a second picket row in the recompute
 // color; saved ops don't. Hollow amber grids price the counterfactual stash.
 {
-  const redoRows = () => ac.querySelectorAll('.lv-scroll rect[height="5"][fill-opacity="0.38"]').length;   // recompute = fwd dtype color, lighter
+  const redoRows = () => ac.querySelectorAll('.lv-scroll rect[height="5"][fill-opacity="0.55"]').length;   // recompute = fwd dtype color, lighter
   const hollows = () => ac.querySelectorAll('.lv-scroll rect[height="4.2"][stroke="#eda100"]').length;
   T.check('dsv3: recompute picket rows drawn (the cheap up-projs replay)', redoRows() >= 8, redoRows());
   T.check('dsv3: hollow amber counterfactual grids on ↻ chips', hollows() > 20, hollows());

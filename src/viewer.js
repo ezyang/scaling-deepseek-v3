@@ -791,11 +791,11 @@ export function patchTargets(forAttr, patch) {
 // Every matmul carries a dtype <select>; the chosen per-matmul precisions are
 // pushed to the widgets named in `for="id1 id2"` (memory now, rooflines later).
 // dtype colors are the PRECISION family — warm magentas graded by element
-// width (fp8 pink → e5m6 plum → fp32 maroon), deliberately clear of the
+// width (e4m3 pink → e5m6 purple → fp32 brick), deliberately clear of the
 // byte-component language (weights blue / grads orange / optim green) so a
 // picket never impersonates a byte bar. fp8 (Hopper tile-scaled) and mxfp8
 // (Blackwell MX) share the pink — same bytes, different provenance.
-const DT_STYLE = { bf16: '#52514e', e4m3: '#d6408b', mxfp8: '#d6408b', e5m6: '#9c3a96', fp32: '#7a2c2c' };
+const DT_STYLE = { bf16: '#52514e', e4m3: '#d6408b', mxfp8: '#d6408b', e5m6: '#7b2fa8', fp32: '#8a3324' };
 // the diagram's visual-language tokens (docs/diagram-grammar.md) — one
 // definition, scoped into each widget's stylesheet (the anatomy plan too)
 export const tokensCss = (s) => `
@@ -1884,7 +1884,7 @@ export class Dsv3Layer extends HTMLElement {
           + `RoPE carries its own mark${this._ctl.quant ? ' (every preset replays it; saving it stashes the same bytes post-rotation)' : ''}.`,
       !this._ctl.quant ? '' :
       'The picket run inside each op is its FLOP cost as time at peak \u2014 one picket = 10 MFLOP/token \u2248 41 \u00b5s per 4096-token microbatch (' +
-      'e4m3/mxfp8 counted half \u2014 2\u00d7 peak; fp32 counted double \u2014 half peak; dtype colors here and on the saved-tensor tags: pink e4m3, plum e5m6, dark bf16, maroon fp32); ' +
+      'e4m3/mxfp8 counted half \u2014 2\u00d7 peak; fp32 counted double \u2014 half peak; dtype colors here and on the saved-tensor tags: pink e4m3, purple e5m6, dark bf16, brick fp32); ' +
       'the lm head uses the same unit \u2014 per-token vocab work, independent of depth. Norms/SwiGLU ' +
       'get a hollow dashed fig-leaf (bandwidth-bound, compute precision unspecified).',
       this._ctl.dtype ? 'One click on a dtype button toggles bf16 \u21c4 e4m3 (attn out: bf16 \u21c4 e5m6; the router is pinned).' : '',
@@ -2362,7 +2362,7 @@ export class Dsv3Layer extends HTMLElement {
     // (fill-opacity): with dtypes owning the hue axis, a foreign recompute
     // hue would read as a fifth precision. Position (the second row / its
     // own ribbon) + lightness carry the replay meaning.
-    const REDO_OP = ' fill-opacity="0.38"';
+    const REDO_OP = ' fill-opacity="0.55"';
     const flopBar = (x, y, flopsTok, dt2, maxW = W - 16, dtp, id) => {
       if (!flopsTok || !this._ctl.quant) return;
       // recompute share, tweened: membership pours in/out with the marks
@@ -2378,7 +2378,7 @@ export class Dsv3Layer extends HTMLElement {
       const n = eqT(flopsTok, dt2, dtp) / FUNIT, per = Math.floor(maxW / 3);
       if (n < 1) {   // sub-picket: the hollow trace
         P.push(`<rect x="${x + 0.3}" y="${y + 0.3}" width="1.4" height="4.4" fill="none" stroke="${color}" stroke-width="0.7"/>`);
-        if (rT > 0.001) P.push(`<rect x="${x + 0.3}" y="${y + 7.3}" width="1.4" height="4.4" fill="none" stroke="${color}" stroke-width="0.7" opacity="${(Math.min(1, rT * 40) * 0.5).toFixed(2)}"/>`);
+        if (rT > 0.001) P.push(`<rect x="${x + 0.3}" y="${y + 7.3}" width="1.4" height="4.4" fill="none" stroke="${color}" stroke-width="0.7" opacity="${(Math.min(1, rT * 40) * 0.65).toFixed(2)}"/>`);
         return;
       }
       const rows = Math.ceil(n / per);
@@ -3453,7 +3453,7 @@ export class Dsv3Layer extends HTMLElement {
         cum += wOf(n) / FUNIT;
         const color = !cOv || lite ? barColor(opDt(n.id), opDtP(n.id)) : cOv;
         for (const upto = Math.round(cum); drawn < upto; drawn++)
-          T.push(`<rect x="${TB_X + (drawn % per) * 3}" y="${cy + Math.floor(drawn / per) * 7}" width="2" height="5" fill="${color}"${lite ? ' fill-opacity="0.38"' : ''}/>`);
+          T.push(`<rect x="${TB_X + (drawn % per) * 3}" y="${cy + Math.floor(drawn / per) * 7}" width="2" height="5" fill="${color}"${lite ? ' fill-opacity="0.55"' : ''}/>`);
       }
       cx = TB_X + (drawn % per) * 3; cy += Math.floor(drawn / per) * 7;
       T.push(`<text class="dims" x="${(cx + 10).toFixed(1)}" y="${cy + 6}">${num}</text>`);

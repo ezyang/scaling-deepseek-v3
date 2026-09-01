@@ -94,7 +94,7 @@ the rest are conventions to uphold when editing the renderer.
 | `.micro` | elided kernel (detail-only, italic) |
 | `.grp` | grouping enclosure (thin, `grplabel` inside top) |
 | `.tsave/.tredo/.tidle` | tensor chip states (saved amber / replayed italic / idle grey) |
-| *dtype colors* | the warm-magenta PRECISION family (bf16 ink `#52514e` · e4m3/mxfp8 pink `#d6408b` · e5m6 plum `#9c3a96` · fp32 maroon `#7a2c2c`); recompute pickets reuse the op's FORWARD dtype color at fill-opacity 0.38 — lighter, never a foreign hue (a fifth hue would read as a fifth precision), deliberately clear of the byte-component blue/orange/green |
+| *dtype colors* | the warm-magenta PRECISION family (bf16 ink `#52514e` · e4m3/mxfp8 pink `#d6408b` · e5m6 purple `#7b2fa8` · fp32 brick `#8a3324`); recompute pickets reuse the op's FORWARD dtype color at fill-opacity 0.55 — lighter, never a foreign hue (a fifth hue would read as a fifth precision), deliberately clear of the byte-component blue/orange/green |
 | *dashed phantom squares* (`#d19023`, dashed) | the bf16-equivalent edge of a sub-bf16 stash — dashed = the baseline being beaten, same ghost language as the overhang |
 | `.wire` | all dataflow, `#898781`, 1.2px, right angles |
 
