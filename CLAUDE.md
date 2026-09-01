@@ -19,6 +19,10 @@ generality.
   edits files mid-session: check `git status` before committing so unrelated
   WIP doesn't get swept into a commit.
 - Delete dead sections outright; version control is the archive.
+- Shipping a new post: uncomment its entry in BOTH studies/series.js
+  (`SERIES` — drives the prev/next cards and the "post N of M" strip) and
+  index.html's posts list. The two must stay in step; tests/seriesnav*.js
+  pin the links.
 
 ## Testing (run after any renderer change)
 

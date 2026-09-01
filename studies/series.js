@@ -5,8 +5,8 @@
 import './toc.js';   // floating section rail — inert on short pages (gate inside)
 export const SERIES = [
   { href: '01-deepseek-diagram.html', title: 'An infra-oriented diagram of the DeepSeek-V3 architecture' },
+  { href: '02-hopper-memory.html', title: 'Memory: a Hopper case study' },
   // published incrementally — uncomment as posts go live (keep in step with index.html's list)
-  // { href: '02-hopper-memory.html', title: 'A DSv3-family MoE on 2048 H100s: memory' },
 ];
 
 const i = SERIES.findIndex(p => location.pathname.endsWith('/' + p.href));
