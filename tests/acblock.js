@@ -295,7 +295,7 @@ T.check('sub-picket GEMMs wear the hollow trace',
   T.check('and lands on the full count', fwdN(f8) === 134, fwdN(f8));
   btn(f8, 'recipe', 'dsv3-fp8').click(); await T.tick(400);
 }
-// per-op dtype buttons: bf16 ⇄ mxfp8 only (the article anchors on bf16 — no
+// per-op dtype buttons: bf16 ⇄ fp8 only (the article anchors on bf16 — no
 // fp32 stop), and the ROUTER is pinned (production fp32, not a lever)
 {
   const dbtn = (id) => f8.querySelector(`button[data-dt="${id}"]`);
@@ -311,11 +311,11 @@ T.check('sub-picket GEMMs wear the hollow trace',
   dbtn('o_proj').click(); await T.tick(400);
   T.check('and back to e5m6 (recipe chip re-lights)',
     dbtn('o_proj').textContent === 'e5m6' && btn(f8, 'recipe', 'dsv3-fp8').classList.contains('on'), '');
-  dbtn('qkv_down').click(); await T.tick(400);   // mxfp8 → bf16 (not fp32)
-  T.check('dtype click toggles mxfp8 → bf16 (no fp32 in the cycle)',
+  dbtn('qkv_down').click(); await T.tick(400);   // fp8 → bf16 (not fp32)
+  T.check('dtype click toggles fp8 → bf16 (no fp32 in the cycle)',
     dbtn('qkv_down').textContent === 'bf16', dbtn('qkv_down').textContent);
-  dbtn('qkv_down').click(); await T.tick(400);   // bf16 → mxfp8, back on the preset
-  T.check('second click returns to mxfp8 (recipe chip re-lights)',
-    dbtn('qkv_down').textContent === 'mxfp8' && btn(f8, 'recipe', 'dsv3-fp8').classList.contains('on'), '');
+  dbtn('qkv_down').click(); await T.tick(400);   // bf16 → fp8, back on the preset
+  T.check('second click returns to fp8 — the Hopper tile-scaled label, NOT mxfp8 (recipe chip re-lights)',
+    dbtn('qkv_down').textContent === 'fp8' && btn(f8, 'recipe', 'dsv3-fp8').classList.contains('on'), '');
 }
 T.done();

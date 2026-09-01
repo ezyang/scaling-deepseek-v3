@@ -790,7 +790,7 @@ export function patchTargets(forAttr, patch) {
 // Top-down SVG schematic of one DSv3 transformer block (plus the head).
 // Every matmul carries a dtype <select>; the chosen per-matmul precisions are
 // pushed to the widgets named in `for="id1 id2"` (memory now, rooflines later).
-const DT_STYLE = { bf16: '#52514e', mxfp8: '#2a78d6', e5m6: '#128a72', fp32: '#9c3a96' };
+const DT_STYLE = { bf16: '#52514e', fp8: '#2a78d6', mxfp8: '#2a78d6', e5m6: '#128a72', fp32: '#9c3a96' };   // fp8 (Hopper tile-scaled) and mxfp8 (Blackwell MX) share the blue — same bytes, different provenance
 // the diagram's visual-language tokens (docs/diagram-grammar.md) — one
 // definition, scoped into each widget's stylesheet (the anatomy plan too)
 export const tokensCss = (s) => `
@@ -1867,10 +1867,10 @@ export class Dsv3Layer extends HTMLElement {
           + `RoPE carries its own mark${this._ctl.quant ? ' (every preset replays it; saving it stashes the same bytes post-rotation)' : ''}.`,
       !this._ctl.quant ? '' :
       'The picket run inside each op is its FLOP cost as time at peak \u2014 one picket = 10 MFLOP/token \u2248 41 \u00b5s per 4096-token microbatch (' +
-      'mxfp8 counted half \u2014 2\u00d7 peak; fp32 counted double \u2014 half peak; dtype colors here and on the saved-tensor tags: blue mxfp8, dark bf16, plum fp32); ' +
+      'fp8 counted half \u2014 2\u00d7 peak; fp32 counted double \u2014 half peak; dtype colors here and on the saved-tensor tags: blue fp8, teal e5m6, dark bf16, plum fp32); ' +
       'the lm head uses the same unit \u2014 per-token vocab work, independent of depth. Norms/SwiGLU ' +
       'get a hollow dashed fig-leaf (bandwidth-bound, compute precision unspecified).',
-      this._ctl.dtype ? 'One click on a dtype button toggles bf16 \u21c4 mxfp8 (attn out: bf16 \u21c4 e5m6; the router is pinned).' : '',
+      this._ctl.dtype ? 'One click on a dtype button toggles bf16 \u21c4 fp8 (attn out: bf16 \u21c4 e5m6; the router is pinned).' : '',
       this._ctl.quant
         ? 'The tally at right totals fwd + bwd (2\u00d7 fwd \u2014 dgrad + wgrad; sdpa likewise) + replay'
           + (this._ctl.marks ? ' \u2014 marking ops \u21bb grows its replay row.' : '.')
@@ -2115,7 +2115,7 @@ export class Dsv3Layer extends HTMLElement {
       return A.neededSaved.has(id) ? 'save' : 'idle';
     };
     const state = (id) => stateA(ana, marks, id);
-    // one-click precision toggle (bf16 ⇄ mxfp8 — the article is anchored on
+    // one-click precision toggle (bf16 ⇄ the fp8 flavor — the article is anchored on
     // bf16, so fp32 compute is not a lever here), hidden below the dtype tier.
     // The ROUTER is not a lever at all: production runs it fp32 (a tiny,
     // numerically sensitive GEMM) — its tag is a pinned readout of the recipe.
@@ -2128,7 +2128,7 @@ export class Dsv3Layer extends HTMLElement {
           ? `<button xmlns="http://www.w3.org/1999/xhtml" class="st dtb" data-dt="${id}" style="color:${DT_STYLE[dt(id)]}" ` +
             `title="toggle the attn-out STASH: bf16 ⇄ e5m6 (DeepSeek's customized 12-bit format — read by attention backward too, so it's kept wider than fp8; the GEMM itself runs fp8 either way)">${dt(id)}</button>`
           : `<button xmlns="http://www.w3.org/1999/xhtml" class="st dtb" data-dt="${id}" style="color:${DT_STYLE[dt(id)]}" ` +
-            `title="toggle precision: bf16 ⇄ mxfp8">${dt(id)}</button>`) + '</foreignObject>';
+            `title="toggle precision: bf16 ⇄ ${FP8K}">${dt(id)}</button>`) + '</foreignObject>';
     // the block-output add has NO free mark: its output IS the next block's
     // x0 — the checkpoint anchor, always saved (and charged there). It wears
     // a locked 🔒 so every op still shows its state.
@@ -2181,7 +2181,7 @@ export class Dsv3Layer extends HTMLElement {
     // the lm head takes however many rows it needs at the same scale.
     // Colored by the op's precision; vector ops get a muted fig-leaf block.
     // e5m6 names a STASH format (the attn-out linear) — its GEMM runs fp8
-    const flopEq = (flopsTok, d) => flopsTok * (d === 'mxfp8' || d === 'e5m6' ? 0.5 : d === 'fp32' ? 2 : 1);
+    const flopEq = (flopsTok, d) => flopsTok * (d === 'fp8' || d === 'mxfp8' || d === 'e5m6' ? 0.5 : d === 'fp32' ? 2 : 1);
     const opDt = (id) => {
       const n = ana.byId[id];
       if (!n) return 'vector';
@@ -2215,9 +2215,12 @@ export class Dsv3Layer extends HTMLElement {
     };
     // dtype the sim ascribes to a stashed tensor (the dtype of the matmul whose
     // backward reads it — a real degree of freedom, so we surface it)
+    // which fp8 FLAVOR this instance speaks (bytes are identical; the label
+    // carries provenance): mxfp8 only if the current recipe actually uses it
+    const FP8K = Object.values(this.matmuls).includes('mxfp8') ? 'mxfp8' : 'fp8';
     const dtOf = (n) => {
       const b = n.outBytes / n.elems;
-      return b >= 3.5 ? 'fp32' : b >= 1.7 ? 'bf16' : b >= 1.2 ? 'e5m6' : 'mxfp8';
+      return b >= 3.5 ? 'fp32' : b >= 1.7 ? 'bf16' : b >= 1.2 ? 'e5m6' : FP8K;
     };
     // 32/row: a power of two, so parallelism shards divide the strips cleanly
     // (EP64 on the ×58 MoE gate/up strip = 32·58/64 = 29 whole squares/rank),
@@ -3368,7 +3371,7 @@ export class Dsv3Layer extends HTMLElement {
     }
     T.push(`<text class="grplabel" x="0" y="${ty + 9}">per-layer FLOPs as time at peak — one picket = 10 MFLOP/token (bf16-eq) ≈ 41 µs per 4096-token microbatch:</text>`);
     ty += 14;
-    const DT_ORDER = { bf16: 0, e5m6: 1, mxfp8: 2, fp32: 3 };
+    const DT_ORDER = { bf16: 0, e5m6: 1, fp8: 2, mxfp8: 2, fp32: 3 };
     const ribbon = (label, list, wOf, num, comm, cOv) => {
       T.push(`<text class="dims" x="0" y="${ty + 9}">${label}</text>`);
       let cx = TB_X, cy = ty + 3;
@@ -3454,11 +3457,12 @@ export class Dsv3Layer extends HTMLElement {
       b.onclick = () => {
         const mutate = () => {
           // per-op two-state toggles: attn-out's realistic pair is bf16 ⇄ e5m6
-          // (the paper's stash format); every other GEMM is bf16 ⇄ mxfp8.
-          // Anything else (stale fp32 URL states) exits via bf16.
+          // (the paper's stash format); every other GEMM is bf16 ⇄ the
+          // instance's fp8 flavor (fp8 tile-scaled on Hopper recipes, mxfp8 on
+          // the Blackwell one). Anything else (stale states) exits via bf16.
           const cycle = b.dataset.dt === 'o_proj'
             ? { bf16: 'e5m6', e5m6: 'bf16' }
-            : { bf16: 'mxfp8', mxfp8: 'bf16' };
+            : { bf16: FP8K, fp8: 'bf16', mxfp8: 'bf16' };
           this.matmuls[b.dataset.dt] = cycle[this.matmuls[b.dataset.dt]] ?? 'bf16';
         };
         if (this.hasAttribute('local') && this.getAttribute('lens') === 'param-bytes') {

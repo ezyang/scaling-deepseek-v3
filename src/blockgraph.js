@@ -20,14 +20,16 @@
 // their op replays — a replay regenerates them as a byproduct.
 // Simplification: each replayed op runs exactly once per layer backward.
 
-// MXFP8: 1-byte E4M3 elements + one UE8M0 scale byte per 32-element block
-// = 1 + 1/32 B/elem. (DeepSeek's tile-wise recipe — 4 fp32 scale bytes per
-// 128 elements — has the identical overhead, so this constant covers both.)
+// fp8: DeepSeek's Hopper flavor — 1-byte E4M3 elements + 4 fp32 scale bytes
+// per 1×128 tile = 1 + 1/32 B/elem. MXFP8: the Blackwell flavor — E4M3 +
+// one UE8M0 scale byte per 32-element block, the IDENTICAL overhead. Two
+// keys, same bytes: the labels carry provenance (and the fp8ᵀ transpose tax
+// applies only to the tile-scaled flavor's per-row scales).
 // E5M6: DeepSeek's customized 12-bit format (§3.3.3) exclusively for the
 // attention output — read by BOTH attention backward and the attn-out
 // linear's wgrad, too precision-sensitive for fp8. 1.5 B/elem, no scales
 // documented. The GEMM that reads it still RUNS fp8 (e5m6 names the stash).
-export const DTYPE_BYTES = { bf16: 2, mxfp8: 1 + 1 / 32, e5m6: 1.5, fp32: 4 };
+export const DTYPE_BYTES = { bf16: 2, fp8: 1 + 1 / 32, mxfp8: 1 + 1 / 32, e5m6: 1.5, fp32: 4 };
 
 // Marking is SAVE-driven (torch_remat's authoring direction): the checkpoint
 // region starts as RECOMPUTE-EVERYTHING, and a policy writes saves in.
