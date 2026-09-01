@@ -40,7 +40,7 @@ function footnotes(main) {
   (main.querySelector('.series-nav') ?? { before: (x) => main.append(x) }).before(sec);
 }
 
-function focus(el, saved) {
+function focus(el, saved, pt) {
   if (document.body.classList.contains('mfocus')) return;
   const at = { x: scrollX, y: scrollY };
   let top = el;
@@ -54,7 +54,13 @@ function focus(el, saved) {
   const x = document.createElement('button');
   x.type = 'button'; x.className = 'mclose'; x.textContent = '✕';
   document.body.append(x);
-  scrollTo(0, 0);
+  // start zoomed in ON the tapped spot (photo-viewer style): map the tap
+  // through the preview scale and center it; the explore button (no spot)
+  // opens at the widget's top
+  const r = el.getBoundingClientRect();
+  if (pt) scrollTo(Math.max(0, r.left + scrollX + pt.x - innerWidth / 2),
+    Math.max(0, r.top + scrollY + pt.y - innerHeight / 3));
+  else scrollTo(0, 0);
   const esc = (e) => { if (e.key === 'Escape') close(); };
   const close = () => {
     x.remove();
@@ -112,9 +118,11 @@ function previews(main) {
     btn.type = 'button'; btn.className = 'mopen';
     btn.textContent = '⤢ tap to explore';
     el.after(btn);
-    const open = () => focus(el, saved);
-    btn.onclick = open;
-    el.addEventListener('click', open);          // children are pointer-inert, so taps land here
+    btn.onclick = () => focus(el, saved, null);
+    el.addEventListener('click', (e) => {        // children are pointer-inert, so taps land here
+      const r = el.getBoundingClientRect();      // preview box (scaled): map the tap to natural coords
+      focus(el, saved, { x: (e.clientX - r.left) / k, y: (e.clientY - r.top) / k });
+    });
   }
 }
 

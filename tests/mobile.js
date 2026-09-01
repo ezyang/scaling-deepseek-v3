@@ -31,4 +31,17 @@ await T.tick();
 T.check('close: preview restored, scroll sane',
   !document.body.classList.contains('mfocus') && l.classList.contains('mprev')
   && /^scale\(0\./.test(l.style.transform) && document.documentElement.scrollWidth <= innerWidth + 1, '');
+
+// tapping a SPOT on the preview opens focus zoomed to that spot (mapped
+// through the preview scale, centered) — not the widget's top
+const r = l.getBoundingClientRect();
+l.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: r.right - 10, clientY: r.bottom - 10 }));
+await T.tick();
+// (only x is assertable: the harness window is 4000px tall, so the page
+// never has vertical overflow here — y-centering clamps to 0)
+T.check('spot tap: focus opens scrolled to the tapped region',
+  document.body.classList.contains('mfocus') && scrollX > 0, `${scrollX},${scrollY}`);
+T.click('.mclose');
+await T.tick();
+T.check('close restores original scroll', !document.body.classList.contains('mfocus') && scrollX === 0, scrollX);
 T.done();

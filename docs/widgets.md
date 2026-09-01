@@ -327,7 +327,9 @@ pointer events, so taps land on the host; an `.mopen` "tap to explore"
 button follows it). Tapping enters FOCUS MODE: everything else in main is
 display-none'd, the widget drops its transform, and the PAGE scrolls it at
 natural width — native two-axis pan, pinch zoom, full-size hit targets, a
-fixed `.mclose` pill (Escape also closes). Widgets are never moved in the
+fixed `.mclose` pill (Escape also closes). A tap on the preview itself opens
+ZOOMED TO THE TAPPED SPOT (photo-viewer style: the point maps through the
+preview scale and is centered); the explore button opens at the top. Widgets are never moved in the
 DOM: `connectedCallback` does not tolerate a re-mount.
 
 Margin notes become real end-of-post footnotes (`.mnotes` before the series
