@@ -20,10 +20,18 @@ T.check('fp8 head: recompute segment is LIVE but PRESETS-ONLY (no custom chip â€
   && [...seg(f8, 'recompute').querySelectorAll('button')].every(b => !b.disabled)
   && seg(f8, 'recompute').querySelector('button.on').textContent === 'dsv3'
   && !f8.querySelector('button[data-mark]'), '');
-{ // the policy composes with the recipe live
+{ // the policy composes with the recipe live, and the GHOST follows it:
+  // the dtype tier baselines all-bf16 AT THE CURRENT POLICY, so the
+  // overhang isolates what precision alone bought
+  const ghostEnd = () => {
+    const g = f8.querySelector('.lv-foot2 rect[stroke-dasharray="2 2"]');
+    return g ? Math.round(+g.getAttribute('x') + +g.getAttribute('width')) : null;
+  };
+  T.check('dtype ghost = bf16 at the dsv3 policy (66.6 GiB)', Math.abs(ghostEnd() - (62 + 66.6 * 6)) < 2, ghostEnd());
   btn(f8, 'recompute', 'none').click(); await T.tick(450);
   T.check('fp8 widget at recompute none: 84.1 GiB (dsv3-fp8 recipe, nothing replayed)',
     /= 84\.1 GiB/.test(tHead(f8)), tHead(f8));
+  T.check('the ghost moved with the policy (bf16 at none = 118.6 GiB)', Math.abs(ghostEnd() - (62 + 118.6 * 6)) < 2, ghostEnd());
   btn(f8, 'recompute', 'dsv3').click(); await T.tick(450);
   T.check('back on the dsv3 preset: 40.8 GiB', /= 40\.8 GiB/.test(tHead(f8)), tHead(f8));
 }

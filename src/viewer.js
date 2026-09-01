@@ -3441,13 +3441,19 @@ export class Dsv3Layer extends HTMLElement {
         ` × ${this.dispInflight} in flight × 4096 tokens = ${(totNow / 2 ** 30).toFixed(1)} GiB` +
         (xt ? `<tspan class="dims"> (${esc(xt)})</tspan>` : '') + '</text>');
       ty += 18;
-      // the consolidated stash as ONE bar on the essay's shared log axis
-      // (256 MiB … 16 TiB, gridline = ×2), with the 80 GiB card line and a
-      // dotted ghost at the untreated anchor (recompute none, all-bf16, no
-      // fp8ᵀ) — the ▼×N badge is the whole figure's lever, exact. Width
-      // lerps in pixel space (= geometric byte motion, rule 9).
-      const anchor = analyze(blockGraph(this.kind, DSV3, resolveMatmuls({ recipe: 'bf16' }), 4096), RECOMPUTE_PRESETS.none, false)
-        .savedBytes * M2b;
+      // the ghost baselines THIS widget's lever at its do-nothing setting,
+      // HOLDING the other lever where the reader put it: the dtype tier
+      // ghosts all-bf16 at the CURRENT recompute policy (so it moves when
+      // the policy segment moves — the overhang isolates what precision
+      // alone bought); every other tier ghosts the untreated anchor
+      // (recompute none · all-bf16 · no fp8ᵀ). The ▼×N badge is the
+      // lever's exact factor. Width lerps in pixel space (rule 9).
+      const DT_TIER = this.getAttribute('controls') === 'dtype';
+      const anchorOf = (mks) => analyze(blockGraph(this.kind, DSV3, resolveMatmuls({ recipe: 'bf16' }), 4096),
+        DT_TIER ? mks : RECOMPUTE_PRESETS.none, false).savedBytes * M2b;
+      const anchor = anchorOf(this.marks);
+      // a policy flip moves the anchor too — its edge lerps like the bar
+      const anchorPx0 = anchorOf(VQ?.prev?.marks ?? this.marks);
       // the total: a SOLID LINEAR bar over a unit RULER (minor = 1 GiB,
       // major = 8 GiB) — length-first reading, countability on the axis.
       // The AC section lives in the near-fitting regime, exactly where
@@ -3458,7 +3464,7 @@ export class Dsv3Layer extends HTMLElement {
       const totPx = lerpQ(pxT((anaP?.savedBytes ?? ana.savedBytes) * M2b), pxT(totNow));
       const cy0 = ty + 3;
       T.push(`<text class="dims" x="0" y="${cy0 + 10}">total</text>`);
-      const aPx = pxT(anchor);
+      const aPx = lerpQ(pxT(anchorPx0), pxT(anchor));
       if (aPx > totPx + 1)
         T.push(`<rect x="${totPx.toFixed(1)}" y="${cy0 + 2}" width="${(aPx - totPx).toFixed(1)}" height="9" fill="none" stroke="#d19023" stroke-dasharray="2 2"/>`);
       else if (aPx < totPx - 1)
