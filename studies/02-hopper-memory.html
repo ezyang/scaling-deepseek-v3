@@ -11,12 +11,11 @@
 <body>
   <main>
     <h1>Memory: a Hopper case study</h1>
-    <p class="sub">How to fit it on 80 GiB.<span class="mn-ref"></span><span class="mn">Pedantically
-    79.65 GiB — an H100's &ldquo;80 GB&rdquo; is decimal. The budget line
-    stays a round 80 on purpose: this model is a roofline that ignores
-    allocator slack, workspace, and other unmodeled intermediates, so a
-    third significant figure on the capacity would be false precision.
-    (AI-drafted note.)</span></p>
+    <p class="sub">How to fit it on 80 GiB.<span class="mn-ref"></span><span class="mn">Well, technically,
+    <code>nvidia-smi</code> will report only 79.65 GiB. But we'll use
+    80 GiB as our yardstick in our post because this is a roofline analysis
+    and we need to have some headroom anyway to account for intermediates which
+    aren't modeled here.</span></p>
 
     <p>GPU memory is like oxygen: you don't really think about it
     until you run out, at which point you care about nothing else.  If your
@@ -387,47 +386,36 @@
     <p>We can now step through an iterative process by which we can get
     DeepSeek-V3 to fit on 2048 H100s without OOMing.</p>
 
-    <dsv3-beat-deck id="fitdeck" style="min-height:697px">
+    <dsv3-beat-deck id="fitdeck" style="min-height:625px">
       <section data-config='{"world":2048,"pp":1,"ep":1,"zero":0}'>
         <b>Step 1 — Global memory usage.</b>
       </section>
       <section data-config='{"world":2048,"pp":1,"ep":1,"zero":1}'>
         <b>Step 2 — ZeRO-1.</b> Sharding optimizer states (including
-        master FP32 parameters) over DP reduces their local size by factor of 2048.
+        master FP32 parameters) over DP reduces their local size by a factor of 2048.
         ZeRO-3 doesn't work because we are comms bound.
       </section>
       <section data-config='{"world":2048,"pp":1,"ep":64,"zero":1}'>
         <b>Step 3 — Expert parallelism.</b> Sharding expert parameters over EP
         reduces their local size by a factor of 64 (this nets out to a 25x
-        reduction overall, since not all parameters get sharded.
+        reduction overall, since not all parameters get sharded).
       </section>
       <section data-config='{"world":2048,"pp":8,"ep":64,"zero":1}'>
         <b>Step 4 — Pipeline parallelism, with DualPipeV.</b> Splitting weights
         across pipeline stages reduces their local size by roughly a factor of eight
-        (modulo imbalance).  The DualPipeV schedule slightly increases the cost
-        of saved activations (1.1x)
-
-        Gradients alone are
-        101.8 GiB — over the card by themselves, with every avoid-PP lever
-        spent. Eight ranks each run two chunks of the V: DSv3&rsquo;s published
-        16 pipeline stages. Pipelining divides the layers per GPU (▼×8.4
-        weights, ▼×8.4 grads) but NOT the activations: a pipeline only stays
-        busy with ~PP microbatches in flight, and DualPipeV holds a uniform
-        PP+½ on every rank (see the schedule widget above), so the stash even
-        grows ▲×1.1. Total: 139.6 GiB — the tallest bar is now the one
-        pipelining cannot touch, and DualPipeV&rsquo;s actual payoff, pipeline
-        bubbles, is off this chart. Second warning: this chart cannot see
-        time.]
+        (modulo imbalance).  The consequent increase in local batch size is mostly cancelled
+        out by microbatching, but the DualPipeV schedule slightly increases the cost
+        of saved activations (1.1x) to reduce bubbles.
       </section>
       <section data-config='{"world":2048,"pp":8,"ep":64,"zero":1,"recompute":"dsv3"}'>
-        [<b>Step 5 — activation checkpointing.</b> The only bar left. The
-        dsv3 recompute policy trades FLOPs for stashes — the per-op rows show
-        exactly which ones die. 139.6 → 87.5 GiB. Still 7.5 GiB over.]
+        <b>Step 5 — Activation checkpointing.</b> Recomputing cheap operations lets
+        us avoid saving certain quantities for backwards, reducing memory spent by
+        saved activations for the first time.
       </section>
       <section data-config='{"world":2048,"pp":8,"ep":64,"zero":1,"recompute":"dsv3","recipe":"dsv3-fp8"}'>
-        [<b>Step 6 — fp8 stashes.</b> The fp8 recipe cuts what the GEMMs
-        keep for backward: 87.5 → 61.7 GiB. It fits, with headroom to
-        spend.]
+        <b>Step 6 — Low precision.</b> Switching GEMMs to lower precision gives us the
+        opportunity to also save activations for backwards in low precision, giving
+        further savings to the expensive expert activations.
       </section>
     </dsv3-beat-deck>
 

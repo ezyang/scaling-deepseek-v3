@@ -57,7 +57,7 @@ T.check('ArrowLeft goes back (animated)', L().getAttribute('recompute') === 'non
   && cap().includes('DualPipeV'), '');
 // jump to the end
 deck().querySelector('.deck-last').click(); await T.tick(1200);
-T.check('end » jumps to fp8', cap().includes('fp8')
+T.check('end » jumps to the last step', cap().includes('Step 6')
   && deck().querySelector('.deck-next').disabled && deck().querySelector('.deck-last').disabled, '');
 T.check('audit clean at the end', auditFitCharts(deck()).findings.length === 0, '');
 // the sub-row SET is fixed across slides: stashes killed by AC/fp8 keep

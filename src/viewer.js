@@ -4527,7 +4527,7 @@ dsv3-beat-deck { display: block; margin: 14px 0 26px; }
 .deck-hyp { font: italic 11px system-ui; color: #898781; }
 .deck-mod { font: italic 11px system-ui; color: #b05f00; }
 .deck-nav button.deck-rst { color: #b05f00; border-color: #b05f00; padding: 1px 8px; }
-.deck-cap { max-width: 760px; font-size: 13.5px; color: #1c1c1a; line-height: 1.5; }
+.deck-cap { max-width: 760px; font-size: 15px; color: #1c1c1a; line-height: 1.5; }
 .deck-cap p { margin: 6px 0; }
 `;
 class Dsv3BeatDeck extends HTMLElement {
