@@ -19,6 +19,9 @@ generality.
   edits files mid-session: check `git status` before committing so unrelated
   WIP doesn't get swept into a commit.
 - Delete dead sections outright; version control is the archive.
+- URL previews: each post's og:image is assets/og-NN.png, a prerendered
+  screenshot of its signature widget; `node scripts/ogshot.mjs` regenerates
+  them after visual changes to those widgets (not battery-enforced).
 - Shipping a new post: uncomment its entry in BOTH studies/series.js
   (`SERIES` — drives the prev/next cards and the "post N of M" strip) and
   index.html's posts list. The two must stay in step; tests/seriesnav*.js
@@ -30,6 +33,10 @@ generality.
   exact-asserted against the published checkpoint.
 - `node scripts/diagramlint.mjs` — geometric grammar (arrowheads/text/wires)
   plus placeholder-height drift across a widget matrix.
+- `node scripts/stamp.mjs` — content-hash cache stamps (import maps + css
+  `?v=`) in the public pages, so a GitHub Pages deploy (10-min cache) never
+  pairs fresh HTML with stale JS. Rerun after editing any src/ or studies/
+  module; the battery's `stamp` job fails while stale.
 - `node scripts/battery.mjs [filter…]` — the whole battery (sanity +
   diagramlint + every scenario in tests/) in parallel, ~3 s. Run this one.
   Browser drivers prefer Playwright's chrome-headless-shell (~10× faster

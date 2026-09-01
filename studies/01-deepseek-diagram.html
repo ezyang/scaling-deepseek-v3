@@ -9,7 +9,11 @@
   <meta property="og:title" content="An infra-oriented diagram of the DeepSeek-V3 architecture">
   <meta property="og:description" content="An infra-oriented description of the DeepSeek-V3 architecture: the kernels you actually run, their parameter counts, and what gets saved for backward.">
   <meta property="og:type" content="article">
-  <link rel="stylesheet" href="./study.css">
+  <meta property="og:image" content="https://deepseek-v3.ezyang.com/assets/og-01.png">
+  <meta property="og:image:width" content="2400">
+  <meta property="og:image:height" content="1260">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="stylesheet" href="./study.css?v=7f5739df">
   <style>
     /* inline recreations of the diagram's visual vocabulary, for the bullets */
     .ivmm, .ivop { display: inline-block; padding: 0 6px; border-radius: 4px; line-height: 1.45; white-space: nowrap; }
@@ -167,6 +171,27 @@ i don't need perfect, i need done
       <a href="#fnref1">↩</a></p>
     </div>
   </main>
+  <!-- cache stamps: regenerate with `node scripts/stamp.mjs` -->
+  <script type="importmap">
+  {
+    "imports": {
+      "../src/anatomy.js": "../src/anatomy.js?v=27daa64b",
+      "../src/audit.js": "../src/audit.js?v=03d69f62",
+      "../src/blockgraph.js": "../src/blockgraph.js?v=fb26fb76",
+      "../src/cells.js": "../src/cells.js?v=96e37b7d",
+      "../src/compare.js": "../src/compare.js?v=d3cae233",
+      "../src/memory.js": "../src/memory.js?v=c2df8635",
+      "../src/model.js": "../src/model.js?v=3345c2f3",
+      "../src/params.js": "../src/params.js?v=13936278",
+      "../src/sim.js": "../src/sim.js?v=0edadd66",
+      "../src/trace.js": "../src/trace.js?v=61553c96",
+      "../src/viewer.js": "../src/viewer.js?v=e8c36376",
+      "./02-hopper-memory.js": "./02-hopper-memory.js?v=f5421807",
+      "./series.js": "./series.js?v=d042708e",
+      "./toc.js": "./toc.js?v=11b69b8b"
+    }
+  }
+  </script>
   <script type="module">
     import '../src/viewer.js';
     import '../src/anatomy.js';

@@ -5,7 +5,15 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Memory: a Hopper case study</title>
-  <link rel="stylesheet" href="./study.css">
+  <meta name="description" content="How to fit it on 80 GiB. We identify all of the main uses of memory in training, and then walk through the impact of pipeline parallelism, activation checkpointing and low precision on your memory usage.">
+  <meta property="og:title" content="Memory: a Hopper case study">
+  <meta property="og:description" content="How to fit it on 80 GiB. We identify all of the main uses of memory in training, and then walk through the impact of pipeline parallelism, activation checkpointing and low precision on your memory usage.">
+  <meta property="og:type" content="article">
+  <meta property="og:image" content="https://deepseek-v3.ezyang.com/assets/og-02.png">
+  <meta property="og:image:width" content="2400">
+  <meta property="og:image:height" content="1260">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="stylesheet" href="./study.css?v=7f5739df">
 </head>
 
 <body>
@@ -458,6 +466,27 @@
     <dsv3-sheet layer="local-diagram" style="min-height:1908px"></dsv3-sheet>
 
   </main>
+  <!-- cache stamps: regenerate with `node scripts/stamp.mjs` -->
+  <script type="importmap">
+  {
+    "imports": {
+      "../src/anatomy.js": "../src/anatomy.js?v=27daa64b",
+      "../src/audit.js": "../src/audit.js?v=03d69f62",
+      "../src/blockgraph.js": "../src/blockgraph.js?v=fb26fb76",
+      "../src/cells.js": "../src/cells.js?v=96e37b7d",
+      "../src/compare.js": "../src/compare.js?v=d3cae233",
+      "../src/memory.js": "../src/memory.js?v=c2df8635",
+      "../src/model.js": "../src/model.js?v=3345c2f3",
+      "../src/params.js": "../src/params.js?v=13936278",
+      "../src/sim.js": "../src/sim.js?v=0edadd66",
+      "../src/trace.js": "../src/trace.js?v=61553c96",
+      "../src/viewer.js": "../src/viewer.js?v=e8c36376",
+      "./02-hopper-memory.js": "./02-hopper-memory.js?v=f5421807",
+      "./series.js": "./series.js?v=d042708e",
+      "./toc.js": "./toc.js?v=11b69b8b"
+    }
+  }
+  </script>
   <script type="module">
     import '../src/viewer.js';
     import '../src/anatomy.js';

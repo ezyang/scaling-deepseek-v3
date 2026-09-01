@@ -19,6 +19,7 @@ const pick = (name) => !filters.length || filters.some(f => name.includes(f));
 
 const jobs = [];
 if (pick('sanity')) jobs.push({ name: 'sanity', args: ['scripts/sanity.mjs'] });
+if (pick('stamp')) jobs.push({ name: 'stamp', args: ['scripts/stamp.mjs', '--check'] });
 if (pick('diagramlint')) jobs.push({ name: 'diagramlint', args: ['scripts/diagramlint.mjs'] });
 for (const f of (await readdir(join(root, 'tests'))).filter(f => f.endsWith('.js')).sort()) {
   const name = f.replace(/\.js$/, '');
