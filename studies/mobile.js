@@ -16,6 +16,24 @@
 const MQ = matchMedia('(max-width: 860px)');
 const W = 'dsv3-anatomy, dsv3-layer, dsv3-pp-schedule, dsv3-pp-fold, dsv3-beat-deck, dsv3-sheet';
 
+// footnote hops follow the toc convention: scroll, NEVER touch the hash —
+// location.hash is widget-state territory. A real #mnote anchor would
+// clobber the widget params, and the widgets' replaceState writes then
+// rewrite the pushed history entry (adjacent entries with identical URLs is
+// why back-swipe after a footnote tap behaved erratically on-device).
+// House-speed scroll, 12 frames ≈ 200 ms, like toc.js.
+const hop = (to) => (e) => {
+  e.preventDefault();
+  const y0 = scrollY, y1 = y0 + to.getBoundingClientRect().top - innerHeight / 4;
+  let f = 0;
+  const step = () => {   // timeout-stepped (deterministic under virtual time, unlike rAF)
+    f++;
+    scrollTo(0, y0 + (y1 - y0) * (1 - (1 - f / 12) ** 3));
+    if (f < 12) setTimeout(step, 16);
+  };
+  step();
+};
+
 function footnotes(main) {
   const refs = [...main.querySelectorAll('.mn-ref')].filter((r) => r.nextElementSibling?.classList.contains('mn'));
   if (!refs.length) return;
@@ -32,6 +50,8 @@ function footnotes(main) {
     back.href = `#mnref-${n}`; back.textContent = '↩'; back.className = 'mback';
     li.append(note, ' ', back);
     ol.append(li);
+    ref.querySelector('a').onclick = hop(li);
+    back.onclick = hop(ref);
   });
   const sec = document.createElement('section');
   sec.className = 'fnotes mnotes-sec';

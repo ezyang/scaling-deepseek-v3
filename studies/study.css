@@ -34,7 +34,7 @@
 .series-nav .card { flex: 1; border: 1px solid #e1e0d9; border-radius: 8px; padding: 10px 14px;
   text-decoration: none; color: #1c1c1a; background: #fff; display: flex; flex-direction: column;
   gap: 2px; min-width: 0; }
-.series-nav a.card:hover { border-color: #c3c2b7; box-shadow: 0 1px 6px rgba(11,11,11,0.06); }
+@media (hover: hover) { .series-nav a.card:hover { border-color: #c3c2b7; box-shadow: 0 1px 6px rgba(11,11,11,0.06); } }
 .series-nav .card small { color: #898781; font-size: 12px; }
 .series-nav .card b { font-size: 14px; line-height: 1.35; font-weight: 600; }
 .series-nav .next { text-align: right; align-items: flex-end; }
@@ -99,7 +99,8 @@ html.mta, html.mta body { touch-action: pan-x pan-y; }
    them to the page — free the chain while focused */
 body.mfocus .mfull-top * { overscroll-behavior: auto !important; }
 .mn-ref.live::after { content: none; }
-.mn-ref.live a { color: #b05f00; font-weight: 600; text-decoration: none; }
+.mn-ref.live a { color: #b05f00; font-weight: 600; text-decoration: none;
+  padding: 10px; margin: 0 -10px; }   /* phone-sized hitbox for an 11px superscript (inline v-padding doesn't move lines) */
 .mnotes li { font-size: 13.5px; color: #52514e; margin: 6px 0; }
 .mnotes .mn { float: none; clear: none; width: auto; margin: 0 !important; display: inline;
   padding: 0; border: 0; background: none; font-size: 13.5px; }

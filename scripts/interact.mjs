@@ -35,7 +35,7 @@ const HARNESS = `
 const T = {
   el: (sel) => document.querySelector(sel),
   text: (sel) => document.querySelector(sel)?.textContent.trim() ?? null,
-  click: (sel) => document.querySelector(sel)?.dispatchEvent(new MouseEvent('click', { bubbles: true })),
+  click: (sel) => document.querySelector(sel)?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })),   // real clicks are cancelable (preventDefault must work)
   hover: (sel) => document.querySelector(sel)?.dispatchEvent(new MouseEvent('mouseenter')),
   unhover: (sel) => document.querySelector(sel)?.dispatchEvent(new MouseEvent('mouseleave')),
   tick: (ms = 120) => new Promise(r => setTimeout(r, ms)),

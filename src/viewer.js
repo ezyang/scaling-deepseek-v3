@@ -235,7 +235,7 @@ const CSS = `
 .tv-sp { flex: 1; }
 .tv button { font: 11px system-ui; padding: 2px 8px; border: 1px solid #c3c2b7; border-radius: 4px;
   background: #fff; color: #0b0b0b; cursor: pointer; }
-.tv button:hover { background: #f3f2ee; }
+@media (hover: hover) { .tv button:hover { background: #f3f2ee; } }
 .tv-legend { display: flex; gap: 10px; padding: 3px 8px; border-bottom: 1px solid #e1e0d9;
   color: #52514e; font-size: 11px; flex-wrap: wrap; }
 .tv-legend span { display: inline-flex; align-items: center; gap: 4px; }
@@ -721,7 +721,7 @@ ${s} .parlab { font: italic 10px system-ui; color: #898781; }
 ${s} .parrow { display: flex; align-items: center; gap: 5px; min-height: 20px; }
 ${s} .stp { display: inline-flex; align-items: stretch; }
 ${s} .stp button { font: 12px ui-monospace, monospace; width: 20px; padding: 0 0 1px; border: 1px solid #c3c2b7; background: #fff; color: #52514e; cursor: pointer; }
-${s} .stp button:hover:not(:disabled) { background: #f3f2ee; }
+@media (hover: hover) { ${s} .stp button:hover:not(:disabled) { background: #f3f2ee; } }
 ${s} .stp button:disabled { color: #dedcd3; cursor: default; }
 ${s} .stp button:first-child { border-radius: 4px 0 0 4px; }
 ${s} .stp button:last-child { border-radius: 0 4px 4px 0; }
@@ -747,7 +747,7 @@ dsv3-layer { display: block; margin: 14px 0 26px; }
 .lv-tip .cellref { color: #2a78d6; font-weight: 600; }
 .lv-tip.pinned .cellref { cursor: pointer; text-decoration: underline dotted; }
 .lv-tip.pinned .celljump { cursor: pointer; }
-.lv-tip.pinned .celljump:hover { text-decoration: underline; }
+@media (hover: hover) { .lv-tip.pinned .celljump:hover { text-decoration: underline; } }
 .lv-cellhint { color: #898781; font-size: 10px; margin-top: 5px; }
 .lv-head { display: flex; align-items: center; gap: 8px; padding-bottom: 6px; color: #52514e; flex-wrap: wrap; }
 .lv-head select { font: 12px system-ui; padding: 2px 6px; border: 1px solid #c3c2b7; border-radius: 4px; background: #fff; }
@@ -3982,7 +3982,7 @@ dsv3-sheet { display: block; margin: 14px 0; position: relative; }
    toggle values wear button language (dashed underline, hover face) and
    the WHOLE cell is the target */
 .cellsheet .sb { cursor: pointer; color: #52514e; padding: 2px 8px; user-select: none; }
-.cellsheet .sb:hover { color: #0b0b0b; }
+@media (hover: hover) { .cellsheet .sb:hover { color: #0b0b0b; } }
 .cellsheet .sb.dn::before { content: '−'; font: 600 11px ui-monospace, monospace; }
 .cellsheet .sb.up::after { content: '+'; font: 600 11px ui-monospace, monospace; }
 .cellsheet .sb.dis, .cellsheet .sb.dis:hover { color: #d5d4cc; cursor: default; }
@@ -3990,9 +3990,9 @@ dsv3-sheet { display: block; margin: 14px 0; position: relative; }
    renders as a plain cell — clearly not clickable */
 .cellsheet td.vl.edv, .cellsheet td.vl.tg { background: #eef4fc; }
 .cellsheet td.vl.tg { cursor: pointer; }
-.cellsheet td.vl.tg:hover { background: #dcebfa; }
+@media (hover: hover) { .cellsheet td.vl.tg:hover { background: #dcebfa; } }
 .cellsheet td.lb .lnk { color: #2a78d6; cursor: pointer; }
-.cellsheet td.lb .lnk:hover { text-decoration: underline; }
+@media (hover: hover) { .cellsheet td.lb .lnk:hover { text-decoration: underline; } }
 /* the jump spotlight: everything but the target grays out behind the
    ring's giant veil; a click/scroll/key anywhere dismisses it */
 .cell-spot { position: fixed; z-index: 60; pointer-events: none; border-radius: 8px;
@@ -4371,7 +4371,7 @@ ${knobCss('.pps .top')}
 .pps .stghit { cursor: pointer; }
 .pps g.lane { cursor: pointer; }
 .pps g.lane.pin rect[data-stash] { stroke-width: 1.6; }
-.pps .stghit:hover { opacity: 0.6; }
+@media (hover: hover) { .pps .stghit:hover { opacity: 0.6; } }
 .pps .scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; overscroll-behavior-x: none; }
 .pps .scroll.pannable { cursor: grab; }
 .pps .scroll.panning { cursor: grabbing; user-select: none; }
@@ -4795,7 +4795,7 @@ dsv3-pp-fold { display: block; margin: 14px 0; }
 ${knobCss('.pf .top')}
 .pf .top button.cyc { font: 12px ui-monospace, monospace; padding: 3px 12px; border: 1px solid #c3c2b7;
   border-radius: 4px; background: #fff; cursor: pointer; }
-.pf .top button.cyc:hover { background: #f3f2ee; }
+@media (hover: hover) { .pf .top button.cyc:hover { background: #f3f2ee; } }
 .pf svg { display: block; }
 .pf .ro { font-size: 11.5px; color: #52514e; min-height: 17px; margin-top: 2px; }
 `;
@@ -5109,7 +5109,7 @@ dsv3-beat-deck { display: block; margin: 14px 0 26px; }
 .deck-nav { display: flex; align-items: center; gap: 10px; margin: 0 0 6px; }
 .deck-nav button { font: 12px ui-monospace, monospace; padding: 2px 12px; border: 1px solid #c3c2b7;
   border-radius: 4px; background: #fff; cursor: pointer; }
-.deck-nav button:hover:not(:disabled) { background: #f3f2ee; }
+@media (hover: hover) { .deck-nav button:hover:not(:disabled) { background: #f3f2ee; } }
 .deck-nav button:disabled { color: #dedcd3; cursor: default; }
 .deck-step { font: 11px ui-monospace, monospace; color: #52514e; }
 .deck-hyp { font: italic 11px system-ui; color: #898781; }

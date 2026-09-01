@@ -31,7 +31,7 @@ ${tokensCss('.anp')}
 .anp-leg .row, .anp-leg .anp-unit { display: flex; align-items: center; gap: 5px;
   padding: 2px 4px; border-radius: 4px; }
 .anp-leg .row { cursor: pointer; }
-.anp-leg .row:hover { background: #f3f2ee; }
+@media (hover: hover) { .anp-leg .row:hover { background: #f3f2ee; } }
 .anp-leg .row.off { opacity: 0.4; }
 .anp-leg .row .val { margin-left: auto; font-variant-numeric: tabular-nums; color: #0b0b0b; }
 .anp-leg .row.off .val { color: inherit; }
@@ -402,15 +402,15 @@ dsv3-param-tally { display: block; margin: 14px 0; }
 .ptal .title, .ptal .note { padding-left: 7px; }
 .ptal .formula { color: #898781; font-size: 12.5px; }
 .ptal td .fterm { border-bottom: 1px dotted #c3c2b7; }
-.ptal .fterm:hover { color: #0b0b0b; }
-.ptal td .fterm:hover { border-bottom-color: #52514e; }
+@media (hover: hover) { .ptal .fterm:hover { color: #0b0b0b; } }
+@media (hover: hover) { .ptal td .fterm:hover { border-bottom-color: #52514e; } }
 .ptal .fterm.pin { color: #0b0b0b; font-weight: 600; }
 .ptal td .fterm.pin { border-bottom: 1px solid #52514e; }
 .ptal .fxline { display: grid; grid-template-columns: 10px 1fr auto; gap: 0 6px; align-items: baseline; }
 .ptal .fxline .fxop { color: #a8a69e; }
 .ptal .fxline .fxval { text-align: right; font-variant-numeric: tabular-nums; }
 .ptal tbody tr { cursor: pointer; }
-.ptal tbody tr:hover { background: #f7f6f1; }
+@media (hover: hover) { .ptal tbody tr:hover { background: #f7f6f1; } }
 .ptal tbody tr.sel { background: #fff; box-shadow: inset 3px 0 0 #52514e; }
 .ptal tbody tr.sel td:first-child { font-weight: 600; }
 .ptal tfoot td { font-weight: 600; border-bottom: none; }

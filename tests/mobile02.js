@@ -13,6 +13,24 @@ T.check('gutter shunts cleared on relocated notes',
   notes.every((li) => (li.querySelector('.mn')?.style.marginTop ?? 'x') === ''), '');
 T.check('Notes section sits before the series nav', !!document.querySelector('.mnotes-sec + .series-nav'), '');
 
+// footnote hops scroll WITHOUT putting their anchors in the hash (that's
+// widget-state territory — a real anchor jump clobbers widget params and
+// corrupts history entries; widgets may legitimately write state meanwhile)
+T.click('#mnref-1');
+await T.tick(400);
+T.check('ref hop scrolls to the note, no anchor in the hash',
+  !location.hash.includes('mnote') && scrollY > 0
+  && document.querySelector('#mnote-1').getBoundingClientRect().top >= 0
+  && document.querySelector('#mnote-1').getBoundingClientRect().top < innerHeight,
+  `y=${scrollY} hash='${location.hash}'`);
+T.click('#mnote-1 .mback');
+await T.tick(400);
+const refTop = document.querySelector('#mnref-1').getBoundingClientRect().top;
+T.check('backlink returns to the ref, no anchor in the hash',
+  !location.hash.includes('mnref') && scrollY < 200 && refTop >= 0 && refTop < innerHeight,
+  `top=${Math.round(refTop)} y=${scrollY}`);
+scrollTo(0, 0); await T.tick(50);
+
 const prevs = [...document.querySelectorAll('.mprev')];
 T.log('previews', prevs.map((p) => p.tagName.replace('DSV3-', '')).join(','));
 T.check('every top-level widget previews (13 on 02)', prevs.length === 13, prevs.length);
