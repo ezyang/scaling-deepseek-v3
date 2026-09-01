@@ -97,6 +97,17 @@
       local cumulative lens="param-bytes" recipe="bf16" recompute="none" controls="static" detail
       nocaption></dsv3-layer>
 
+    <p>Note: treating the FP32 master weights as "optimizer state" is a
+    DeepSpeed convention.  With PyTorch FSDP (the implementation, not to be
+    confused with ZeRO-3), the master weights are just thought of as the
+    parameters, and FSDP is responsible for casting the master weights
+    to the compute precision and all-gathering them.  When <code>reshard_after_forward=False</code>, the
+    compute weights just get kept around, so both the master and compute
+    weights need to be accounted for in a roofline.  Because in this essay
+    we'll be using ZeRO to describe the sharding we're doing, we'll stick
+    to the DeepSpeed convention instead of using an explanation that is more
+    natural for PyTorch FSDP's implementation.</p>
+
     <p><strong>Activations.</strong>  Intermediate activations that are saved
     for backwards typically contribute to the high watermark memory usage
     (which usually occurs at the end of forwards / beginning of backwards).
@@ -122,7 +133,8 @@
     DP) and expert parallelism (reducing expert weights by a factor of EP).
     However, we cannot do full ZeRO-3, as it turns out a communication
     roofline shows we will be communication bound (we leave this analysis to a
-    future post).  And with only ZeRO-1 (optimizer state only) and EP, we
+    future post).  And with only ZeRO-1 (optimizer state only--including the
+    FP32 master parameters) and EP, we
     still cannot fit, so we need to bring out the big guns.</p>
 
     <h2>Pipeline parallelism</h2>
@@ -222,8 +234,14 @@
     it needs for backwards--however, the inputs to the operation be available
     somehow during recompute, either because: (1) it was independently saved for
     backwards by another operation, (2) the producer is being recomputed, or (3) we
-    manually saved it (potentially increasing your memory usage!)  You can play around with
-    this below:</p>
+    manually saved it (potentially increasing your memory usage!)</p>
+
+    <p>You can play around with this below--every GEMM is also annotated with
+    tall black/gray rectangles indicating how many FLOPs we are spending on
+    forward/recompute (respectively). The chart is preset to the DeepSeek-V3
+    published recompute strategy, but you should also try setting full
+    recompute and then picking which specific operations you want to save
+    activations for backwards for.</p>
 
     <dsv3-anatomy style="min-height:991px" layer="ac-layer" ctx='{"world":2048,"pp":8,"ep":64,"zero":1}' controls="marks" recipe="bf16" recompute="dsv3"
       xlayers="8" xinflight="8.5" xtag="an interior rank of PP8 · DualPipeV steady state"></dsv3-anatomy>
@@ -231,64 +249,131 @@
     <p>Note that the FLOP counts here are per token, so the mixture of experts FLOPs are
     8x'ed because each token gets processed by eight experts.</p>
 
-    <p>Some things to notice as you play with the marks:</p>
+    <p>You have some degrees of freedom in how you setup your recompute/save strategy.  However,
+    there are some primary themes:</p>
 
     <ul>
-      <li><strong>Marks go on operations, not tensors.</strong>  If you mark an
-      op ↻, its output no longer needs to be saved — but the inputs it reads
-      now <em>do</em>, because the replay has to start from something.  The
-      diagram computes this transitive closure for you.  (A diagram that let
-      you mark tensors directly would let you express incoherent policies.)</li>
+      <li>You want to avoid recomputing expensive operations, like the FFN GEMMs and the
+      EP communication.  On the other hand, non-GEMMs are often cheap (or free, if they
+      are fused) to recompute, so we choose to recompute them even when it's only
+      a very small (or no) memory improvement.</li>
 
-      <li><strong>The block is the checkpoint region.</strong>  Its input x0 is
-      always saved (the 🔒): it is the anchor that every chain of recomputation
-      eventually terminates at.  The block's output is the next block's x0, so
-      it is charged there.</li>
-
-      <li><strong>The DeepSeek-V3 paper states its policy outright</strong>:
-      recompute the RMSNorms, the MLA up-projections, and SwiGLU.  That's the
-      <em>dsv3</em> preset the diagram starts in.  Notice what these ops have in
-      common: they are cheap to rerun (elementwise, or small GEMMs) and their
-      outputs are large.  That's the whole game — spend FLOPs where they are
-      cheap, save bytes where they are big.  The tally in the caption prices
-      the replay.</li>
-
-      <li><strong>Production policies go much further.</strong>  Try marking
-      every op in the MLA column ↻ (norms, projections, attention, even the
-      residual add).  Backward then replays the entire attention half from x0 —
-      about +40% of forward FLOPs — and in exchange the attention side of the
-      block stashes exactly <em>one</em> tensor.  We'll use this policy in the
-      case study below.</li>
+      <li>While your general mental model should be that going from recompute
+      to save will increase the memory usage of your model, it's not always
+      true!  In particular, whenever you have an arrow from save to recompute,
+      you have to save inputs into the recompute region. So, for example, you never
+      want to actually recompute the routed + shared addition becaue you don't
+      want to recompute the a2a combine, and this means marking it as recompute
+      <em>increases</em> the amount of memory you need (there's a little ⚠️
+      icon to tell you if you've forgotten!)  You can also get into situations
+      where toggling save/recompute doesn't change the end-to-end memory
+      usage, because you manage to avoid saving something at the cost of saving
+      something else (⇄ indicates this situation).</li>
     </ul>
-
 
     <h2>Low precision</h2>
 
-    <p>The second lever is to store the bytes you do keep in a smaller format.
-    On Hopper, DeepSeek's recipe runs the big GEMMs in FP8 (E4M3) with
-    fine-grained scaling: one fp32 scale per 1×128 tile of elements, which works
-    out to a ~3% overhead on top of 1 byte per element.  Our model adopts a
-    simplifying convention that is worth making explicit: a saved activation is
-    stored in the dtype of the GEMM that will read it during backward.  Flip
-    the dtype buttons below and watch the stash sizes follow.</p>
+    <p>The second lever we have for activation memory is low precision.
+    Reducing the precision of our GEMMs has multiple benefits:</p>
+
+    <ol>
+        <li>It reduces the amount of memory the GEMM needs to read (low precision
+        inputs are smaller).</li>
+        <li>It increases tokens per second, because GPUs have more TFLOPs for
+        lower precision tensor cores.</li>
+        <li>It reduces the amount of memory you need to save for backwards
+        (but there is a cost to this).</li>
+    </ol>
+
+    <p>Because we're doing an analysis for Hopper, we will be primarily
+    looking at Hopper-era quantization schemes.  Hopper's MMA instruction
+    supported FP8 without native support for scaling.  Instead, scaling
+    was done outside the MMA.  The original quantization recipes published by
+    NVIDIA advocated for tensor-wide descaling (where scaling can be done
+    entirely after the GEMM), but it turns out trying to apply a single scale
+    to an entire tensor is not great for numerics.  Eventually, scaling on
+    128-element 1D blocks (by incrementally scaling during the K reduction)
+    became an important Hopper scheme; DeepSeek-V3 was responsible for
+    popularizing this scheme!  NVIDIA eventually natively added support for
+    scaling on 32-element 1D blocks with Blackwell MXFP8.</p>
+
+    <p>I am somewhat reluctant to go super deep into the peculiarities of Hopper
+    quantization, as some of the problems it has to solve don't transfer to Blackwell, but there is one
+    universal feature of weight quantization that is worth talking through.  When
+    we are quantizing over 1D blocks, an awkwardness arises because a weight needs
+    to be usable both untransposed and transposed:</p>
+
+    <ul>
+      <li>Y = X·W</li>
+      <li>dX = dY·W&#7488;</li>
+      <li>dW = X&#7488;·dY</li>
+    </ul>
+
+    <p>Thus, one common strategy is to have weights that are quantized into square blocks (128x128
+    on Hopper, 32x32 on Blackwell); the scale for the block can be repeated to
+    form individual Nx1 or 1xN scales for the actual GEMM.  On Blackwell, you
+    can even all-gather the parameters in MXFP8, reducing the memory usage of
+    the (working) parameters, because Blackwell GEMM supports (logically)
+    transposed arguments with scales directly.</p>
+
+    <p>However, miserably, on Hopper we must have both GEMM arguments in
+    physically the correct layout, which means we always have to physically
+    transpose and maintain another copy of the parameter in FP8&#7488;.  So if
+    you decide to store your compute weights in FP8 rather than BF16, you
+    don't actually end up saving any memory in the end (two FP8 = one
+    BF16)--in fact, it's slightly worse because you also have to store the
+    scales for FP8.  A more common recipe is to maintain the compute weights
+    in BF16 and quantize the weights on the fly right before they're used.</p>
+
+    <p>The strict layout requirements also mean that input activations saved
+    for backwards also need to be transposed.  Unlike weights, these aren't
+    quantized into square blocks to ensure to keep the scales for different
+    tokens independent.  DeepSeek-V3 will often just requantize the
+    activations in backwards: in cases where it was desirable for the
+    activation saved for backwards to be in FP8, it will dequantize and then
+    requantize it in backwards so that it can be transposed.</p>
+
+    <p>The diagram below shows you the exact low precision recipe that DSv3
+    uses, and you can use it to explore the consequences of precision changes.
+    For precision (ahem), we prefer not to use the fp8 in the diagram, instead
+    writing e4m3 to indicate the exponent/mantissa size of the fp8
+    quantities.</p>
 
     <dsv3-anatomy style="min-height:1039px" layer="fp8-layer" ctx='{"world":2048,"pp":8,"ep":64,"zero":1}' controls="dtype" recipe="dsv3-fp8" recipes="bf16,dsv3-fp8" recompute="dsv3"
       xlayers="8" xinflight="8.5" xtag="an interior rank of PP8 · DualPipeV steady state"></dsv3-anatomy>
 
-    <p>Two recipes matter for us.  The <em>dsv3-fp8</em> recipe is the Hopper
-    one: linears in tile-scaled FP8, but the attention core, its output, and
-    the router kept wide — not everything survives quantization.  The
-    <em>nv-mxfp8</em> recipe is the Blackwell one (we'll meet it again in the
-    MLPerf post): MXFP8 with power-of-two block scales on <em>every</em> GEMM,
-    including FP8 attention.  One Hopper-specific tax deserves a callout: the
-    weight gradient GEMM reads its activations <em>transposed</em>, and 1×128
-    per-row scales don't survive a transpose — so on Hopper, FP8 stashes that
-    feed a wgrad are kept in <em>both</em> orientations.  Turn on the fp8ᵀ
-    toggle above and watch the ᵀ×2 tags appear.  MXFP8's power-of-two scales
-    requantize exactly across a transpose, so Blackwell keeps one copy.  (The
-    kernel-level story of how these GEMMs actually run can wait; it doesn't
-    matter for memory.)</p>
+    <p>Some things to notice from the diagram:<span class="mn-ref"></span><span class="mn">This diagram is
+    somewhat extrapolated from the DeepSeek-V3 paper, as the paper
+    doesn't spell out every detail.  Concretely, we assume the MLA latents were
+    saved as BF16 for recompute and various statistics were kept in FP32
+    (attention lse, RMSNorm rstd and router state).</span></p>
 
+    <ul>
+        <li>The precision buttons toggle purely the compute precision (which you can see
+        from how the FLOPs tall rectangles change when you change precision).
+        For FLOPs accounting, we've chosen to model FP8 FLOPs as "half" that of
+        BF16 FLOPs, but this is a Hopper-contingent fact, because FP8 MMAs
+        take twice as many elements as their BF16 counterparts.  And it's
+        also only an approximation, since you have to pay for quantization
+        (not modeled above).  You also have a number of degrees of freedom
+        on what precision you keep your intermediate activations in: as
+        a simplification, we simply assume the input activations will be
+        saved in whatever precision the upcoming GEMM is expecting to see,
+        but this isn't a law of nature.</li>
+
+        <li>Most of our memory savings arise from choosing to save expert
+        activations in FP8 rather than BF16 for backwards.  This is quite
+        beneficial, but it does mean we need to dequantize-requantize in
+        backwards.  If you solely want to run the FFN GEMMs in FP8 but don't
+        care about the memory savings, it's also an option to immediately save
+        both the regular and tranposed activations for backwards; you can
+        can see this via the e4m3ᵀ dual stash (expert inputs) checkbox.</li>
+
+        <li>DeepSeek-V3 has a peculiarity where they have a one off 12-bit FP format specifically
+        for the attention output, as they needed to save some more memory there.  This is
+        pretty unusual and most modern reproductions of DSv3 don't bother and save the attention output 
+        in BF16.  You can toggle this with the E5M6 attn-out stash checkbox.</li>
+    </ul>
 
     <h2>Fitting it</h2>
 
@@ -297,8 +382,7 @@
 
     <dsv3-beat-deck id="fitdeck" style="min-height:657px">
       <section data-config='{"world":2048,"pp":1,"ep":1,"zero":0}'>
-        [<b>Step 1 — the debt.</b> The whole model on one imaginary GPU:
-        8.65 TiB against an 80 GiB card — ×111 over budget, about seven
+        [<b>Step 1 — the starting point.</b> We are ×111 over memory budget, about seven
         halvings on this axis. And note what we already have: 2048 real GPUs
         running pure data parallelism, which copies all of this to every one
         of them — replication isn&rsquo;t reduction, no bar would move — but it
@@ -347,69 +431,8 @@
       </section>
     </dsv3-beat-deck>
 
-    <dsv3-anatomy style="min-height:1017px" lens="param-bytes" local cumulative recipe="bf16" recipes="bf16,dsv3-fp8,all-fp8" recompute="none" layer="local-diagram" detail controls="static" nocaption></dsv3-anatomy>
-
-    <p class="note">[demo of the snapshot story-beat widget — a non-interactive
-    figure: the authored <code>from</code> config is the saved baseline (ghost
-    bars), <code>to</code> is the live bars with change badges, and
-    <code>solo</code> picks the component under discussion (its breakdown
-    accordions open; the total goes stacked grey+color). Here: turning on
-    ZeRO-1 at PP16·EP64 shards non-expert optimizer states over DP&nbsp;128
-    but expert ones only over EDP&nbsp;2 — blended ▼×4.6, the EP-cancellation
-    story in one figure. The link jumps to the full widget with this exact
-    scenario loaded (baseline saved, change tweened in).]</p>
-
-    SLOP BELOW
-
-    <h2>SCRAP HEAP</h2>
-
-    <p>This post is organized as follows: <s>first, we'll recap at a high level
-    what memory is used for in LLM training.  Next, we will individually
-    discuss each knob you have for adjusting memory usage, using simplified
-    models to build intuition for how these knobs affect memory.</s>  Then we'll
-    put it all together to reproduce DeepSeek-V3's 2048 GPU Hopper training
-    configuration.  Credit where credit is due: this analysis is based off of
-    an unpublished analysis done by Daniel Haziza.</p>
-
-    TODO: we need to step through the tricky parts of the model, without having
-    overwhelmingly too much text
-
-    <pre>
-    TODO: Pedagogical goals:
-    - Feel like we fully understand the model, no magic parts, everything
-      works well.  Some especially magic parts:
-      - AC
-      - Low precision
-      - PP microbatches (gradients)
-    - Some factors are very round (e.g., EP directly acts on expert weights),
-      we want to step through them
-    - Maaaaybe want to talk through FLOPs implications for some policy
-      decisions, similarly..
-    - Need to do some forward references for warnings: ZeRO-3 can't be hidden
-      (not applicable here but maybe other places: global batch size run out DP)
-    - Stretch: help people understand how this model generalizes to a family
-      of models that are tweaking arch sizes like hidden
-    - Stretch: understand why things like TP/ETP are inapplicable (how come we
-      don't need to model CP here?)
-
-
-    The plan:
-
-    The meta-plan:
-    - How do I know the model is right?
-      - 01
-        - cross-check via official checkpoint parameter count
-        - cross-check via source code analysis of training codebases
-        - high level intuition what it should look like
-      - 02
-        - every piece of the model is examinable, no magic. complexity is
-          explained
-        - a clear visual audit rule for every diagram (pull all these numbers,
-          and then other numbers are related in this way)
-    </pre>
-
     <p>
-    Fortunately, it is comparatively simpler to debug OOMs in LLM pretraining,
+    One final note: it is comparatively simpler to debug OOMs in LLM pretraining,
     because the memory usage of your trainer doesn't depend on doing distributed
     communications at scale (assuming your memory allocations and deallocations are
     deterministic--a very good idea!)  In modern PyTorch, you can use <strong>fake
@@ -417,107 +440,9 @@
     the memory usage of any given rank in an arbitrarily large training config
     on a single GPU.</p>
 
-    SLOP
+    <h2>The full model</h2>
 
-
-    <p class="note">The same picture per GPU, under a fiat parallelism (we
-    can't justify it without talking about comms — later chapters): 2048 GPUs,
-    PP8 (DualPipeV&rsquo;s two chunks per rank = DSv3&rsquo;s 16 virtual stages) over a contiguous split of the 61 layers, EP32/EP64 selectable, and
-    ZeRO-1 (optimizer states shard over each parameter's replication group —
-    dense params over DP, expert params over expert-DP. The two effects cancel
-    for experts: fewer local experts × a smaller sharding group means the
-    per-rank optimizer bytes are a uniform 8&nbsp;B ÷ DP per global parameter,
-    independent of EP — the green looks big on experts only because the
-    weights DO divide by EP).
-    EP, the PP degree, the ZeRO level (1 shards optimizer states, 2 also
-    gradients, 3 also weights), and the cluster size are all knobs; the stage
-    selector names every PP rank's layer assignment and defaults to the
-    <em>peak</em> stage (the fully loaded rank — peek at the others to see
-    they carry less). Stage 0 holds the embedding (and the dense blocks while
-    they last); the last stage adds the final norm and lm head. Saved
-    activations follow the pipeline schedule: under 1F1B, stage <em>s</em>
-    holds PP−<em>s</em> forward microbatches at steady state — which is why
-    the peak rank is an <em>early</em> stage, not the parameter-heavy last
-    one. The schedule is itself a set of knobs: ×1 mb is the single-microbatch
-    fiction this section started with; VPP splits every rank into that many
-    chunks of a deeper virtual pipeline, placed either <em>wrap</em>-around
-    (Megatron-style interleaving) or <em>V</em>-reflected (the fold DeepSeek
-    actually trained with — VPP 2 + V is DualPipeV, where the embedding
-    <em>and</em> the lm head both live on rank 0 and every rank uniformly
-    holds 2·PP+1 resident chunk-halves = PP+½ microbatches' worth of
-    activations). The logarithmic bars
-    under the controls put every component (and the grey total) against the
-    shaded infeasible region past 80&nbsp;GiB — each gridline is exactly ×2,
-    so distance-to-fit reads as countable halvings (drag on the bars to
-    measure any span as a factor). Click a row name to solo a component; a
-    soloed parameter component opens its experts / non-expert / vocab
-    breakdown, and those rows filter the diagram too. The precision and
-    recompute knobs from the earlier sections also apply here (FLOPs are
-    deliberately not shown). <em>Save</em> locks in a config: ghost bars and
-    red&nbsp;▲ / bold&nbsp;▼ factor badges then show every change against it,
-    <em>reset</em> returns to the save, and <em>reset all</em> is the
-    whole-model-on-one-GPU starting point.</p>
-
-    <h2>Parallelism</h2>
-
-    <p>Neither lever above touches the other half of the memory bill: weights,
-    gradients, and optimizer state.  For a 671B-parameter model this is the
-    elephant — at bf16 weights, fp32 gradient accumulators, and an fp32 + 2×bf16
-    Adam, you are staring at multiple terabytes before the first token flows.
-    This is what parallelism divides:</p>
-
-    <ul>
-      <li><strong>FSDP / ZeRO</strong> shards states across the data-parallel
-      ranks.  ZeRO-1 shards just the optimizer; ZeRO-3 shards weights and
-      gradients too, at the cost of all-gathering layers on demand.</li>
-
-      <li><strong>Expert parallelism</strong> shards the experts — and in a
-      model where the routed experts are ~95% of the parameters, EP is doing
-      most of the work.  At EP64, each rank holds 256/64 = 4 experts per
-      layer.</li>
-
-      <li><strong>Pipeline parallelism</strong> divides the layers across
-      ranks.  But note the catch: at 1F1B steady state, stage s holds
-      min(pp−s, m) microbatches of activations in flight, so the first rank
-      keeps roughly pp microbatches alive.  Fewer layers per rank × more
-      microbatches in flight ≈ a wash for activations; PP divides weights, not
-      stashes.</li>
-    </ul>
-
-    <p>The interplay between all three (plus the two levers) is why the final
-    calculation is worth actually doing, so let's do it.</p>
-
-    <h2>Fitting DeepSeek-V3 on Hopper</h2>
-
-    <p><b>Configuration.</b>  We work a <b>288-routed-expert DSv3-family
-    variant</b> (62 MoE layers — modeled all-sparse, a simplification; the real
-    family stacks 3 dense blocks first, see the structure widget below — vocab
-    128000, no MTP) trained on <b>2048 H100-class GPUs</b>: FSDP-replicas 4 ×
-    PP 8 × EP 64 (our decomposition: <code>gpus=2048, pp=8, ep=64 → dp=256,
-    dp/ep=4</code>), seq 4096, mbs 1, 64 microbatches.  Precision: FP8 GEMMs
-    with 1×128 tile scales (weights kept ×2 for the transposed copy, +4/128
-    fp32 scale bytes), fp32 gradient accumulators, a 3-state AMSGrad optimizer
-    sharded over all 2048 GPUs.  Recompute: the <b>attn-replay</b> policy from
-    above — replay all of attention from the block input, save the post-norm
-    output plus the fp8 expert inputs and gate/up, recompute swiglu-out.
-    Pipeline in-flight: a DualPipe-style two-chunk layout holds 17 microbatches
-    × 4 layers per chunk ≡ 8.5 microbatches/rank.</p>
-
-    <h3>Our per-rank inventory</h3>
-    <div id="inventory"></div>
-    <p><b>Why this fits on 80 GiB.</b> Three modeling points carry the number. <b>(1) Gating placement:</b>
-      the router's gate weights are applied to the swiglu output <em>before</em> the linear down-proj —
-      mathematically identical to gating the expert outputs, and it makes the expert outputs a pure
-      intermediate rather than a ~30 GiB stash for the combine's backward. <b>(2) The attn-replay
-      policy:</b> because all of attention replays from the block input, the mid-layer residual (x1), the
-      MLA latents, the softmax lse, and the SDPA output are never stashed — the attention side of the block
-      saves exactly one tensor, the post-norm output that the MoE half consumes. The cost is ~+40% of
-      forward FLOPs replayed in backward: the Hopper-era activation-checkpointing pressure in one number.
-      <b>(3) The in-flight law:</b> DualPipe's two-chunk schedule halves the naive (2·PP+1) in-flight count
-      per layer, so the activation column is 8.5×, not 17×.</p>
-
-
-
+    <dsv3-anatomy style="min-height:1017px" lens="param-bytes" local cumulative recipe="bf16" recipes="bf16,dsv3-fp8,all-fp8" recompute="none" layer="local-diagram" detail controls="static" nocaption></dsv3-anatomy>
 
     <div class="fnotes">
       <p class="note">Disclosure: the widget-caption notes in this draft are

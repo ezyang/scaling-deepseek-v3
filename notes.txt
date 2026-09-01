@@ -143,3 +143,41 @@
       output = residual_add(x_after_attn, moe_output)
 
       return output
+
+
+    TODO: we need to step through the tricky parts of the model, without having
+    overwhelmingly too much text
+
+    <pre>
+    TODO: Pedagogical goals:
+    - Feel like we fully understand the model, no magic parts, everything
+      works well.  Some especially magic parts:
+      - AC
+      - Low precision
+      - PP microbatches (gradients)
+    - Some factors are very round (e.g., EP directly acts on expert weights),
+      we want to step through them
+    - Maaaaybe want to talk through FLOPs implications for some policy
+      decisions, similarly..
+    - Need to do some forward references for warnings: ZeRO-3 can't be hidden
+      (not applicable here but maybe other places: global batch size run out DP)
+    - Stretch: help people understand how this model generalizes to a family
+      of models that are tweaking arch sizes like hidden
+    - Stretch: understand why things like TP/ETP are inapplicable (how come we
+      don't need to model CP here?)
+
+
+    The plan:
+
+    The meta-plan:
+    - How do I know the model is right?
+      - 01
+        - cross-check via official checkpoint parameter count
+        - cross-check via source code analysis of training codebases
+        - high level intuition what it should look like
+      - 02
+        - every piece of the model is examinable, no magic. complexity is
+          explained
+        - a clear visual audit rule for every diagram (pull all these numbers,
+          and then other numbers are related in this way)
+    </pre>
