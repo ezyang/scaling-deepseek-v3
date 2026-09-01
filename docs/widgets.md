@@ -150,8 +150,11 @@ norm outs) and the aux artifacts (lse, rstd) SPLIT OUT as their own rows.
 The one known piecewise exception: P6 flips between '1' and 'P2 + 0.5'
 with the schedule/PP. A `simplify` checkbox on the sheet drops the
 negligible terms (the aux rows and the final norm in Q3) — allowed to
-change formulas by design; its totals drift slightly from the (always
-exact) chart, and a note says so. The sheet indents child
+change formulas by design; a sibling `no act scale factors` checkbox
+counts fp8 ACTIVATION stashes at their payload rate (the B• inputs shed
+the 1×128 tile-scale share: 1.03125 → 1, 2.0625 → 2; weights keep theirs).
+Either mode's totals drift slightly from the (always exact) chart, and a
+note says so. The sheet indents child
 rows (sub-cells depth 1, per-bucket R•/B• depth 2), keeps labels to one
 line (nowrap), and hovering any formula variable shows its cell card
 (click = jump to its row). Rows carry JUMP affordances (click the

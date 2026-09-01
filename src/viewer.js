@@ -4123,6 +4123,7 @@ class Dsv3Sheet extends HTMLElement {
     if (lid) bind();
     this._root.addEventListener('change', (ev) => {
       if (ev.target.closest?.('.simp')) { this._sim = ev.target.checked; this.sync(); }
+      else if (ev.target.closest?.('.nos')) { this._nos = ev.target.checked; this.sync(); }
     });
     // formula variables get the same hover card as the chart's numbers
     // (.lv-tip styling rides the layer's stylesheet); clicking one jumps to
@@ -4237,7 +4238,7 @@ class Dsv3Sheet extends HTMLElement {
     this._root.querySelector(`tr[data-cell="${id}"]`)?.scrollIntoView({ block: 'center' });
   }
   sync() {
-    const cells = this._layer?._cells?.({ simplify: !!this._sim });
+    const cells = this._layer?._cells?.({ simplify: !!this._sim, noScale: !!this._nos });
     if (!cells) return;
     // the exact value is the PRIMARY column (byte counts are exact — every
     // divisor is a power of two on integer counts); the rounded reading is
@@ -4253,8 +4254,14 @@ class Dsv3Sheet extends HTMLElement {
         /^[A-Z]\d+[a-z]?$/.test(tok) ? `<span class="cellref">${tok}</span>` : esc(tok)).join('');
     this._root.innerHTML = '<div class="hd">the fit chart’s formula sheet — every number the chart below shows is one of these cells, '
       + 'computed by evaluating exactly the formula printed here (hover a chart number for its formula; click to pin, then click names to drill)'
-      + `<label class="simp" style="float:right;display:inline-flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox"${this._sim ? ' checked' : ''}> simplify — drop negligible terms</label>`
-      + (this._sim ? '<div style="color:#8c5a19">simplified: the lse/rstd artifacts and the final norm are dropped, so these values drift slightly from the (exact) chart</div>' : '')
+      + `<span style="float:right;display:inline-flex;gap:14px;">`
+      + `<label class="simp" style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox"${this._sim ? ' checked' : ''}> simplify — drop negligible terms</label>`
+      + `<label class="nos" style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox"${this._nos ? ' checked' : ''}> no act scale factors</label>`
+      + '</span>'
+      + (this._sim || this._nos ? `<div style="color:#8c5a19">${[
+        this._sim ? 'the lse/rstd artifacts and the final norm are dropped' : '',
+        this._nos ? 'fp8 ACTIVATION stashes counted at their payload rate (the 1×128 tile-scale share dropped; weights keep theirs)' : '',
+      ].filter(Boolean).join('; ')} — these values drift slightly from the (exact) chart</div>` : '')
       + '</div>'
       + '<table><tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">≈</th><th>formula</th></tr>'
       + cells.cells.map((c) => `<tr data-cell="${c.id}"${c.id === this._hl ? ' class="hl"' : ''}`

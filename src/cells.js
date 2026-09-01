@@ -85,6 +85,10 @@ export function buildCells(env) {
     'norm2 out': 'norm2 out (shared expert input)',
   };
   const alias = (l2) => ALIAS[l2] ?? l2;
+  // noScale (a sheet display mode, like simplify): count fp8 ACTIVATION
+  // stashes at their payload rate — the 1×128 tile-scale share (1/32 B/elem
+  // per copy) drops out of the B• inputs; weights (F1's factor) keep theirs
+  const descale = !env.noScale ? (v) => v : (v) => v === 1 + 1 / 32 ? 1 : v === 2 + 2 / 32 ? 2 : v;
   const nBk = env.bM?.length ?? 0;   // act buckets (A2…)
   const bucketSum = Array.from({ length: nBk }, (_, i) => `A${i + 2}`).join(' + ');
   // per-bucket rows: the recompute CHOICE is an explicit 0/1 input (R•)
@@ -133,7 +137,7 @@ export function buildCells(env) {
         return [
           { id: sid, depth: 2, unit: 'B', label: alias(t.label), ui, expr: `${rid} × (${rate}) × 4096 × P6` },
           { id: rid, depth: 3, label: 'kept?', ui, edit: mkEdit, value: t.r },
-          ...(t.prec != null ? [{ id: t.bref, depth: 3, unit: 'B/e', label: 'precision (B/elem)', ui, edit: dtEdit(t.dtc), value: t.prec }] : []),
+          ...(t.prec != null ? [{ id: t.bref, depth: 3, unit: 'B/e', label: 'precision (B/elem)', ui, edit: dtEdit(t.dtc), value: descale(t.prec) }] : []),
         ];
       });
       const subIds = shown.map(({ sid }) => sid);
@@ -162,7 +166,7 @@ export function buildCells(env) {
       { id: `R${i + 2}`, depth: 2, label: 'kept?', ui,
         edit: env.bIds?.[i] ? { t: 'mark', k: env.bIds[i] } : undefined,
         value: rM === fM && rD === fD ? 1 : 0 },
-      ...(R ? [{ id: `B${i + 2}`, depth: 2, unit: 'B/e', label: 'precision (B/elem)', ui, edit: dtE, value: R.prec }] : []),
+      ...(R ? [{ id: `B${i + 2}`, depth: 2, unit: 'B/e', label: 'precision (B/elem)', ui, edit: dtE, value: descale(R.prec) }] : []),
     ];
   });
   const defs = [
