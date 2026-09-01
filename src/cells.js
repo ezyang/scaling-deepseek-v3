@@ -11,13 +11,21 @@
 // A cell without an expr is a LEAF: its value is injected by the caller
 // (slot-split layer counts, op-graph stash rates) and drill-down ends there.
 
-// ---- the mini formula language: numbers, cell ids, + - × / ( ) ------------
+// ---- the mini formula language: numbers, cell ids, + - × / ( ) and ≥ ------
+// (≥ evaluates to 0/1 — indicator arithmetic keeps piecewise rules, like the
+// ZeRO shard groups, expressible without the formula changing shape)
 const AST = new Map();   // expr string → parsed tree (exprs are static per state)
 function parse(src) {
   if (AST.has(src)) return AST.get(src);
   let i = 0;
   const ws = () => { while (src[i] === ' ') i++; };
   const expr = () => {
+    let v = add();
+    ws();
+    if (src[i] === '≥') { i++; v = { op: '≥', a: v, b: add() }; }
+    return v;
+  };
+  const add = () => {
     let v = term();
     for (ws(); src[i] === '+' || src[i] === '-'; ws()) { const op = src[i++]; v = { op, a: v, b: term() }; }
     return v;
@@ -45,9 +53,10 @@ function parse(src) {
 export function evalExpr(src, get) {
   const go = (n) => n.num != null ? n.num
     : n.ref ? get(n.ref)
-      : n.op === '+' ? go(n.a) + go(n.b)
-        : n.op === '-' ? go(n.a) - go(n.b)
-          : n.op === '×' ? go(n.a) * go(n.b) : go(n.a) / go(n.b);
+      : n.op === '≥' ? (go(n.a) >= go(n.b) ? 1 : 0)
+        : n.op === '+' ? go(n.a) + go(n.b)
+          : n.op === '-' ? go(n.a) - go(n.b)
+            : n.op === '×' ? go(n.a) * go(n.b) : go(n.a) / go(n.b);
   return go(parse(src));
 }
 export const refsOf = (src) => [...new Set(src.match(/[A-Z]\d+[a-z]?/g) ?? [])];
@@ -68,8 +77,6 @@ export function buildCells(env) {
   // 2 + F1 × 2 × 4/128. The component TOTALS are the sums of these rows:
   // the accordion IS the computation.
   const cls = (bpp, q, S, w8) => `${w8 ? '(2 + F1 × 2 × 4/128)' : String(bpp)} × ${q} / ${S}`;
-  const dp = env.world / env.pp, edp = dp / env.ep;
-  const shard = (zt, grp) => zero >= zt ? grp : 1;
   const nBk = env.bM?.length ?? 0;   // act buckets (A2…)
   const bucketSum = Array.from({ length: nBk }, (_, i) => `A${i + 2}`).join(' + ');
   // per-bucket rows: the recompute CHOICE is an explicit 0/1 input (R•)
@@ -157,14 +164,15 @@ export function buildCells(env) {
     // components wear a /P4·/P5 sharding term; the fp8-params flag rides the
     // weights formulas as a 0/1 factor
     { id: 'Z1', label: 'ZeRO level (1 optim · 2 +grads · 3 +weights)', value: zero, ui: { k: 'zero' }, edit: { t: 'seg', k: 'zero' } },
-    // the level resolves to per-component SHARD GROUPS (1 = unsharded), so
-    // the byte formulas below never change shape when Z1 moves
-    { id: 'S1', depth: 1, ui: { k: 'zero' }, label: 'shard group · weights, experts', value: shard(3, edp) },
-    { id: 'S2', depth: 1, ui: { k: 'zero' }, label: 'shard group · weights, others', value: shard(3, dp) },
-    { id: 'S3', depth: 1, ui: { k: 'zero' }, label: 'shard group · gradients, experts', value: shard(2, edp) },
-    { id: 'S4', depth: 1, ui: { k: 'zero' }, label: 'shard group · gradients, others', value: shard(2, dp) },
-    { id: 'S5', depth: 1, ui: { k: 'zero' }, label: 'shard group · optimizer, experts', value: shard(1, edp) },
-    { id: 'S6', depth: 1, ui: { k: 'zero' }, label: 'shard group · optimizer, others', value: shard(1, dp) },
+    // the level resolves to per-component SHARD GROUPS (1 = unsharded) via
+    // indicator arithmetic — the byte formulas below never change shape
+    // when Z1 moves, and neither do these
+    { id: 'S1', depth: 1, ui: { k: 'zero' }, label: 'shard group · weights, experts', expr: '(Z1 ≥ 3) × (P5 - 1) + 1' },
+    { id: 'S2', depth: 1, ui: { k: 'zero' }, label: 'shard group · weights, others', expr: '(Z1 ≥ 3) × (P4 - 1) + 1' },
+    { id: 'S3', depth: 1, ui: { k: 'zero' }, label: 'shard group · gradients, experts', expr: '(Z1 ≥ 2) × (P5 - 1) + 1' },
+    { id: 'S4', depth: 1, ui: { k: 'zero' }, label: 'shard group · gradients, others', expr: '(Z1 ≥ 2) × (P4 - 1) + 1' },
+    { id: 'S5', depth: 1, ui: { k: 'zero' }, label: 'shard group · optimizer, experts', expr: '(Z1 ≥ 1) × (P5 - 1) + 1' },
+    { id: 'S6', depth: 1, ui: { k: 'zero' }, label: 'shard group · optimizer, others', expr: '(Z1 ≥ 1) × (P4 - 1) + 1' },
     { id: 'F1', label: 'e4m3+ᵀ-resident params? (0/1)', value: fp8p ? 1 : 0, ui: { k: 'fp8params' }, edit: { t: 'cb', k: 'fp8params' } },
     { id: 'L1', label: 'MoE layers on this rank (slot split)', value: g.moe, ui: { k: 'rank' }, edit: { t: 'flip', k: 'rank' } },
     { id: 'L2', label: 'dense layers on this rank (slot split)', value: g.dense, ui: { k: 'rank' }, edit: { t: 'flip', k: 'rank' } },

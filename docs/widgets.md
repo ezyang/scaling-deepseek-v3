@@ -140,8 +140,8 @@ is the bucket's PRECISION INPUT row (B/elem: 2 bf16 · 1.03125 e4m3+scales ·
 as literals — built from the op graph and VALIDATED (the string must
 evaluate back to the exact rate, else the literal stands). FORMULA
 STABILITY is the design rule: toggling a model input changes input VALUES,
-never a formula's shape — ZeRO resolves to per-component shard-group inputs
-(S1–S6, value 1 when unsharded), emb/head presence to E1/H1 (0/1, L3 =
+never a formula's shape — ZeRO resolves to per-component shard-group cells
+(S1–S6 — real formulas via the language's 0/1 indicator ≥: (Z1 ≥ 3) × (P5 - 1) + 1, value 1 when unsharded), emb/head presence to E1/H1 (0/1, L3 =
 E1 + H1), fp8 params to F1, precision/ᵀ to B•. BREAKOUT buckets (residual, norm outs, mla latents, attention out, the
 remainder — every bucket a preset can split) get per-TENSOR sub-cells
 (`A3a`…) so each row stays a whole 0/1 `kept?` choice, with per-tensor
