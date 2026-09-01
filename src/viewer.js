@@ -2763,8 +2763,11 @@ export class Dsv3Layer extends HTMLElement {
         const kx = C1 + KVO + 122;
         bypTop = y + 14;
         P.push(`<path class="wire" d="M ${kx} ${y} L ${kx} ${bypTop} L ${bypX} ${bypTop}"/>`);
-        if (!PONLY) P.push(`<text class="tensor tidle" x="${kx + 6}" y="${bypTop - 4}">· k_rope · ${DSV3.qkRope}${
-          this.getAttribute('controls') === 'dtype' ? ` <tspan fill="${DT_STYLE.bf16}">bf16</tspan>` : ''}</text>`);   // the rail feeds the bf16 attention core — the dtype tier states every wire's precision
+        // quant tiers: idle-chip form (name only, +dtype in the dtype tier —
+        // never stashed, so no size claim); structure tiers keep the dims
+        if (!PONLY) P.push(`<text class="tensor tidle" x="${kx + 6}" y="${bypTop - 4}">· k_rope${
+          this._ctl.quant ? '' : ` · ${DSV3.qkRope}`}${
+          this.getAttribute('controls') === 'dtype' ? ` <tspan fill="${DT_STYLE.bf16}">bf16</tspan>` : ''}</text>`);   // the rail feeds the bf16 attention core
         else if (CONS) P.push(`<text class="tensor tidle" x="${kx + 6}" y="${bypTop - 4}">· k_rope</text>`);   // named, idle: never saved (RoPE bwd is a rotation)
         // pre-norm latent chips: real graph state (saved at no-AC — the latent
         // norms' backward input; the replay anchor under recompute presets)
@@ -3532,15 +3535,22 @@ export class Dsv3Layer extends HTMLElement {
     // the forward quantize kernel's epilogue — the extra write is real but
     // belongs to the same deliberately-unpriced class as every other stash
     // write; its cost story is the +GiB already on the bar.
-    // presence EASES with the toggle tween (the bar's physics): scale lerps
-    // between the endpoints' has-a-pill states, so the bubble grows in as
-    // the bar shrinks (and vice versa) instead of popping
-    const pOff = VQ ? !(VQ.prev.transposed ?? this.transposed) : !this.transposed;
-    const pillS = VQ ? (pOff ? 1 : 0) + ((!this.transposed ? 1 : 0) - (pOff ? 1 : 0)) * VQ.t : (!this.transposed ? 1 : 0);
+    // presence EASES on ANY cause of appearance/disappearance (the ᵀ toggle,
+    // a recipe flip emptying the would-dual set, a recompute change): the
+    // pill is computed for BOTH tween endpoints from their own snapshots,
+    // scale lerps between existence, and the surviving side supplies the
+    // content (numbers snap, per convention)
+    const pillFor = (mm2, mks, transp) => {
+      if (transp) return 0;
+      const cf = analyze(blockGraph(this.kind, DSV3, mm2, 4096), mks, true);
+      return [...cf.dual].reduce((t2, i2) => t2 + (cf.byId[i2]?.outBytes ?? 0), 0) * 4096;
+    };
+    const tbNow = pillFor(this.matmuls, marks, this.transposed);
+    const tbPrev = VQ?.prev?.mm ? pillFor(VQ.prev.mm, VQ.prev.marks ?? marks, VQ.prev.transposed ?? this.transposed) : tbNow;   // the LOCAL tween's snapshot has no mm — only the quant tween eases the pill
+    const pillS = VQ ? (tbPrev ? 1 : 0) + ((tbNow ? 1 : 0) - (tbPrev ? 1 : 0)) * VQ.t : (tbNow ? 1 : 0);
     let traffic = null;
     if (pillS > 0.01) {
-      const dualSet = analyze(blockGraph(this.kind, DSV3, this.matmuls, 4096), marks, true).dual;
-      const tB = [...dualSet].reduce((t2, i2) => t2 + (ana.byId[i2]?.outBytes ?? 0), 0) * 4096;
+      const tB = tbNow || tbPrev;   // a vanishing pill shrinks out wearing its OLD content
       const us = (b) => Math.round(b / (HARDWARE.h100.hbm / 1e6));
       const mib = (b) => Math.round(b / 2 ** 20);
       if (tB) traffic = { s: pillS, txt: `requantᵀ ≈ ${us(2 * tB)} µs`,
