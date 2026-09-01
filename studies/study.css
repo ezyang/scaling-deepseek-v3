@@ -68,3 +68,22 @@ dsv3-layer, dsv3-trace, figure, table.xcheck { clear: right; }
     display: block; padding: 6px 10px; border-left: 3px solid #e1e0d9;
     background: #f3f2ee; border-radius: 0 4px 4px 0; }
 }
+
+/* floating section rail (long posts; built by toc.js). The left gutter
+   belongs to the anatomy plan column, so the rail reserves NO width there:
+   collapsed it is a column of ticks at the viewport edge; hovering expands
+   an overlay panel ABOVE anything that extrudes left. Section clicks scroll
+   without touching location.hash (that is widget-state territory). */
+.toc { position: fixed; left: 0; top: 50%; transform: translateY(-50%); z-index: 40;
+  padding: 10px 10px 10px 6px; display: flex; flex-direction: column; gap: 7px;
+  border: 1px solid transparent; border-left: 0; border-radius: 0 8px 8px 0; }
+.toc a { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.toc .tick { width: 12px; height: 3px; border-radius: 1.5px; background: #c3c2b7;
+  flex: none; transition: background 0.15s, width 0.15s; }
+.toc a.on .tick { background: #b05f00; width: 18px; }
+.toc .lab { font-size: 12.5px; color: #52514e; white-space: nowrap;
+  max-width: 0; overflow: hidden; opacity: 0; transition: max-width 0.15s, opacity 0.15s; }
+.toc:hover { background: #fff; border-color: #e1e0d9; box-shadow: 2px 2px 8px rgba(0, 0, 0, 0.08); }
+.toc:hover .lab { max-width: 280px; opacity: 1; }
+.toc a:hover .lab, .toc a.on .lab { color: #0b0b0b; }
+@media (max-width: 1100px) { .toc { display: none; } }

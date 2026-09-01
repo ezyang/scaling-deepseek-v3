@@ -2,6 +2,7 @@
 // includes this module; it injects a series strip under the <h1> and
 // prev/next cards at the end of <main>. Ordering = manifest order; file slugs
 // match the visible ordinal (post N of M).
+import './toc.js';   // floating section rail — inert on short pages (gate inside)
 export const SERIES = [
   { href: '01-deepseek-diagram.html', title: 'An infra-oriented diagram of the DeepSeek-V3 architecture' },
   // published incrementally — uncomment as posts go live (keep in step with index.html's list)
