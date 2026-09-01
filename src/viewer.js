@@ -864,7 +864,7 @@ ${knobCss('.lv-head')}
 .lv-side .parlab { margin-bottom: 1px; }
 .lv-side .parrow { min-height: 0; }
 .lv-side .stp { flex-direction: column; align-items: stretch; gap: 5px; width: 100%; }
-.lv-side .stp button { text-align: center; padding: 3px 8px 4px; border: 1px solid #c3c2b7; border-radius: 5px; }
+.lv-side .stp button { text-align: left; padding: 3px 10px 4px; border: 1px solid #c3c2b7; border-radius: 5px; }
 .lv-side .stp button + button { border-left: 1px solid #c3c2b7; border-top: 1px solid #c3c2b7; }
 .lv-side .stp button:disabled { border-color: #e1e0d9; }
 @media (max-width: 1040px) {
