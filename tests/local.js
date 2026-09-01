@@ -143,4 +143,21 @@ T.check('stacked other gone when all visible', !layer().querySelector('.lv-bar r
 T.check('restored: 7.0 GiB', dims() === '7.0 GiB', dims());
 T.check('two head rows for local', layer().querySelectorAll('.lv-head').length === 2, layer().querySelectorAll('.lv-head').length);
 T.check('bar sits between the rows', !!layer().querySelector('.lv-head + .lv-bar + .lv-head'), '');
+// fp8-resident PARAMETERS (e4m3+ᵀ, 1×128 scales): weights ×2.0625/2 on the
+// non-vocab share — exact, and gated on an fp8 recipe
+{
+  const host = layer().parentElement;
+  const p8 = () => host.querySelector('input[data-knob="fp8params"]');
+  T.check('e4m3+ᵀ params checkbox disabled under bf16', p8().disabled, '');
+  const sel = [...host.querySelectorAll('select')].find(s2 => [...s2.options].some(o => o.value === 'dsv3-fp8'));
+  sel.value = 'dsv3-fp8'; sel.dispatchEvent(new Event('change')); await T.tick(600);
+  const w = () => +[...layer().querySelectorAll('.lv-bar text[data-role="val:0"]')][0].dataset.true;
+  const w0 = w();
+  p8().click(); await T.tick(600);
+  T.check('fp8-resident params: weights ×2.0625/2 exactly (no vocab on this rank)',
+    Math.abs(w() / w0 - 2.0625 / 2) < 1e-9, (w() / w0).toFixed(6));
+  p8().click(); await T.tick(600);
+  T.check('and back', w() === w0, w());
+  sel.value = 'bf16'; sel.dispatchEvent(new Event('change')); await T.tick(600);
+}
 T.done();

@@ -11,7 +11,12 @@
 <body>
   <main>
     <h1>Memory: a Hopper case study</h1>
-    <p class="sub">How to fit it on 80 GiB.</p>
+    <p class="sub">How to fit it on 80 GiB.<span class="mn-ref"></span><span class="mn">Pedantically
+    79.65 GiB — an H100's &ldquo;80 GB&rdquo; is decimal. The budget line
+    stays a round 80 on purpose: this model is a roofline that ignores
+    allocator slack, workspace, and other unmodeled intermediates, so a
+    third significant figure on the capacity would be false precision.
+    (AI-drafted note.)</span></p>
 
     <p>GPU memory is like oxygen: you don't really think about it
     until you run out, at which point you care about nothing else.  If your
@@ -310,10 +315,10 @@
       <li>dW = X&#7488;·dY</li>
     </ul>
 
-    <p>Thus, one common strategy is to have weights that are quantized into square blocks (128x128
+    <p>Thus, one strategy is to have weights that are quantized into square blocks (128x128
     on Hopper, 32x32 on Blackwell); the scale for the block can be repeated to
     form individual Nx1 or 1xN scales for the actual GEMM.  On Blackwell, you
-    can even all-gather the parameters in MXFP8, reducing the memory usage of
+    can even all-gather the (block quantized) parameters in MXFP8, reducing the memory usage of
     the (working) parameters, because Blackwell GEMM supports (logically)
     transposed arguments with scales directly.</p>
 
@@ -382,35 +387,27 @@
     <p>We can now step through an iterative process by which we can get
     DeepSeek-V3 to fit on 2048 H100s without OOMing.</p>
 
-    <dsv3-beat-deck id="fitdeck" style="min-height:657px">
+    <dsv3-beat-deck id="fitdeck" style="min-height:697px">
       <section data-config='{"world":2048,"pp":1,"ep":1,"zero":0}'>
-        [<b>Step 1 — the starting point.</b> We are ×111 over memory budget, about seven
-        halvings on this axis. And note what we already have: 2048 real GPUs
-        running pure data parallelism, which copies all of this to every one
-        of them — replication isn&rsquo;t reduction, no bar would move — but it
-        quietly builds the 2048-wide replica group everything below shards
-        over.]
+        <b>Step 1 — Global memory usage.</b>
       </section>
       <section data-config='{"world":2048,"pp":1,"ep":1,"zero":1}'>
-        [<b>Step 2 — ZeRO-1.</b> Biggest problem first: optimizer states are
-        4.88 TiB, the tallest bar. Each replica keeps 1/2048th: ▼×2048, down
-        to 2.4 GiB. Solved outright. Total: 8.65 → 3.77 TiB. The tempting
-        next move is the same trick on the new tallest bar — ZeRO-2 on the
-        gradients — and on this chart it would work just as well. DeepSeek
-        declined — likely because fp32 accumulators live across every
-        microbatch of the step, and sharding them puts a reduce-scatter on
-        every one. First warning:
-        this chart cannot see communication.]
+        <b>Step 2 — ZeRO-1.</b> Sharding optimizer states (including
+        master FP32 parameters) over DP reduces their local size by factor of 2048.
+        ZeRO-3 doesn't work because we are comms bound.
       </section>
       <section data-config='{"world":2048,"pp":1,"ep":64,"zero":1}'>
-        [<b>Step 3 — EP64.</b> Weights and gradients are both param-shaped,
-        and expert parallelism cuts the expert share of both at once: ▼×25
-        each. The optimizer bar does not move — smaller expert count, smaller
-        sharding group, the effects cancel. Total: 263.3 GiB. Still ×3.3
-        over.]
+        <b>Step 3 — Expert parallelism.</b> Sharding expert parameters over EP
+        reduces their local size by a factor of 64 (this nets out to a 25x
+        reduction overall, since not all parameters get sharded.
       </section>
       <section data-config='{"world":2048,"pp":8,"ep":64,"zero":1}'>
-        [<b>Step 4 — pipeline it, with DualPipeV.</b> Gradients alone are
+        <b>Step 4 — Pipeline parallelism, with DualPipeV.</b> Splitting weights
+        across pipeline stages reduces their local size by roughly a factor of eight
+        (modulo imbalance).  The DualPipeV schedule slightly increases the cost
+        of saved activations (1.1x)
+
+        Gradients alone are
         101.8 GiB — over the card by themselves, with every avoid-PP lever
         spent. Eight ranks each run two chunks of the V: DSv3&rsquo;s published
         16 pipeline stages. Pipelining divides the layers per GPU (▼×8.4

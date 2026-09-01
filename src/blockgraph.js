@@ -27,8 +27,11 @@
 // applies only to the tile-scaled flavor's per-row scales).
 // E5M6: DeepSeek's customized 12-bit format (§3.3.3) exclusively for the
 // attention output — read by BOTH attention backward and the attn-out
-// linear's wgrad, too precision-sensitive for fp8. 1.5 B/elem, no scales
-// documented. The GEMM that reads it still RUNS fp8 (e5m6 names the stash).
+// linear's wgrad, too precision-sensitive for fp8. 1.5 B/elem; the paper
+// implies these tiles ARE 1×128-scaled with power-of-two scales (that's
+// what makes the 1×128 → 128×1 backward flip lossless) — the scale bytes
+// (≤1/128) and physical 12-bit packing are our inference. The GEMM that
+// reads it still RUNS fp8 (e5m6 names the stash).
 export const DTYPE_BYTES = { bf16: 2, e4m3: 1 + 1 / 32, mxfp8: 1 + 1 / 32, e5m6: 1.5, fp32: 4 };
 
 // Marking is SAVE-driven (torch_remat's authoring direction): the checkpoint

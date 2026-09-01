@@ -942,6 +942,7 @@ export class Dsv3Layer extends HTMLElement {
     this.dispLayers = st?.dispLayers ?? +(this.getAttribute('xlayers') ?? 61);
     this.dispInflight = st?.dispInflight ?? +(this.getAttribute('xinflight') ?? 1);
     this.transposed = st?.transposed ?? this.hasAttribute('transposed');
+    this.fp8Params = st?.fp8Params ?? false;
     this.detail = st?.detail ?? this.hasAttribute('detail');
     this.flatDims = st?.flatDims ?? false;
     // optim/consolidated lenses: which byte components are visible (strips AND
@@ -1019,6 +1020,7 @@ export class Dsv3Layer extends HTMLElement {
       recipe: this.getAttribute('recipe'), matmuls: this.matmuls, marks: this.marks,
       view: this.view, dispLayers: this.dispLayers, dispInflight: this.dispInflight,
       transposed: this.transposed, detail: this.detail, flatDims: this.flatDims,
+      fp8Params: this.fp8Params,
       kind: this.kind, cumulative: this.cumulative,
       showWeights: this.showWeights, showOptim: this.showOptim,
       showGrads: this.showGrads, showActs: this.showActs,
@@ -1253,6 +1255,7 @@ export class Dsv3Layer extends HTMLElement {
     return { ep: this.ep, pp: this.pp, stage: this.stage,
       zero: this.zero ?? 1, world: this.world ?? LOCAL_PAR.world,
       sched: this.sched ?? '1f1b', vpp: this.vpp ?? 1, fold: this.fold ?? 'reflect', cum: !!this.cumulative,
+      fp8p: !!this.fp8Params && this.matmuls.ffn_gate_up !== 'bf16',
       // the pre-change analysis: stash-affecting knobs (precision, marks,
       // fp8ᵀ) lerp the diagram's chip squares between old and new bytes
       anaPrev: this._anaMemo?.ana };
@@ -1388,6 +1391,7 @@ export class Dsv3Layer extends HTMLElement {
       this.dispLayers = +(this.getAttribute('xlayers') ?? 61);
       this.dispInflight = +(this.getAttribute('xinflight') ?? 1);
       this.transposed = this.hasAttribute('transposed');
+      this.fp8Params = false;
       this.detail = this.hasAttribute('detail');
       this.flatDims = false;
       this.cumulative = this.hasAttribute('cumulative');
@@ -1853,7 +1857,25 @@ export class Dsv3Layer extends HTMLElement {
         // the preexisting AC + precision knobs (built above for the full
         // head; the static head never displays it, so they move here)
         const plab = (t2) => { const sp = el('span'); sp.style.cssText = 'color:#52514e;font-size:11px;margin-left:8px;'; sp.textContent = t2; return sp; };
-        if (KN('prec')) mini2.append(plab('precision:'), preset, plab('recompute:'), rsel, tl);
+        if (KN('prec')) {
+          // AMAIA-style fp8-resident PARAMETERS (distinct from tl, which duals
+          // the activation stashes): weights = the fp8 copies themselves,
+          // both orientations, at 1×128-scale cost
+          const tl3 = document.createElement('label');
+          tl3.style.cssText = 'display:inline-flex;align-items:center;gap:4px;margin-left:8px;color:#52514e;';
+          const p8 = document.createElement('input');
+          p8.type = 'checkbox'; p8.checked = !!this.fp8Params; p8.dataset.knob = 'fp8params';
+          p8.disabled = this.matmuls.ffn_gate_up === 'bf16';
+          tl3.title = p8.disabled
+            ? 'pick an fp8 recipe first — bf16 compute keeps bf16 working weights'
+            : 'fp8-resident parameters: the working weights ARE the fp8 copies, kept in BOTH orientations (Hopper layout law) ' +
+              'with 1×128-tile scales: 2 × (1 + 1/32) = 2.0625 B/param on the block params. Embedding/lm head stay bf16; ' +
+              'the fp32 master lives in the optimizer bar; norms/router (≈0.1% of block params) are booked fp8 too — noise. ' +
+              'OFF = bf16 working weights (2 B/param), quantized on the fly.';
+          p8.onchange = () => this.setLocal(() => { this.fp8Params = p8.checked; });
+          tl3.append(p8, 'e4m3+ᵀ params');
+          mini2.append(plab('precision:'), preset, plab('recompute:'), rsel, tl, tl3);
+        }
       }
       // snapshot knobs are READOUTS — unless the host opts into 'live'
       // (the beat deck: fiddling is a marked DETOUR, rewound on step)
@@ -2010,7 +2032,8 @@ export class Dsv3Layer extends HTMLElement {
     // each component's effective factor (bytes/param × EP share × stage ×N)
     // lerps with this._vtween.t; numbers snap to the new config
     const IFN = inflightOf(SCHED, STG, PPn, VPPn, FOLD);     // microbatches in flight on this stage
-    const Snow = { ep: EPn, pp: PPn, stage: STG, zero: ZL, world: WORLD, sched: SCHED, vpp: VPPn, fold: FOLD, cum: !!this.cumulative };
+    const Snow = { ep: EPn, pp: PPn, stage: STG, zero: ZL, world: WORLD, sched: SCHED, vpp: VPPn, fold: FOLD, cum: !!this.cumulative,
+      fp8p: !!this.fp8Params && this.matmuls.ffn_gate_up !== 'bf16' };
     const dLoc = (S) => {
       const g = ppStage(Math.min(S.stage, S.pp - 1), S.pp, S.vpp, S.fold);
       const kmul = this.kind === 'dense' ? g.dense : g.moe;
@@ -2019,9 +2042,10 @@ export class Dsv3Layer extends HTMLElement {
         acts: (S.cum ? kmul : 1) * inflightOf(S.sched ?? '1f1b', S.stage, S.pp, S.vpp, S.fold),
         bpp: (c, cls) => (S.zero ?? 1) >= c.zthresh ? c.bpp / (cls === 'e' ? dp / S.ep : dp) : c.bpp };
     };
+    const W8 = (S, c, cls) => c.prop === 'showWeights' && cls !== 'v' && S.fp8p ? 2.0625 / 2 : 1;
     const fEff = (c, cls, S) => {
       const d = dLoc(S);
-      return d.bpp(c, cls) * d.mult * (cls === 'e' ? d.eFrac : 1);
+      return d.bpp(c, cls) * d.mult * (cls === 'e' ? d.eFrac : 1) * W8(S, c, cls);
     };
     const fT = (c, cls) => {
       const fN = fEff(c, cls, Snow), V = this._vtween;
@@ -3291,12 +3315,15 @@ export class Dsv3Layer extends HTMLElement {
         const bM = actBucketsOf(ana), bD = actBucketsOf(anaD);
         const actP = bM.map((b, i) => (q.mLay * b + q.dLay * bD[i]) * 4096 * IFn);
         actP[actP.length - 1] += vocabActs(q);   // the catch-all keeps the partition exact
-        return COMPS.map((c) => [q.e * shardOf(S, c, 'e'), q.d * shardOf(S, c, 'd'), q.v * shardOf(S, c, 'd')])
+        const w8 = (c, cls) => c.prop === 'showWeights' && S.fp8p ? (cls === 'v' ? 1 : 2.0625 / 2) : 1;
+        return COMPS.map((c) => [q.e * shardOf(S, c, 'e') * w8(c, 'e'), q.d * shardOf(S, c, 'd') * w8(c, 'd'), q.v * shardOf(S, c, 'd')])
           .concat([actP]);
       };
       const segB = (S) => {
         const q = stageParts(S);
-        return COMPS.map((c) => (q.d + q.v) * shardOf(S, c, 'd') + q.e * shardOf(S, c, 'e'))
+        const w8 = (c, cls) => c.prop === 'showWeights' && S.fp8p ? (cls === 'v' ? 1 : 2.0625 / 2) : 1;
+        return COMPS.map((c) => q.d * shardOf(S, c, 'd') * w8(c, 'd') + q.v * shardOf(S, c, 'd')
+          + q.e * shardOf(S, c, 'e') * w8(c, 'e'))
           .concat([actQ(q) * inflightOf(S.sched ?? '1f1b', S.stage, S.pp, S.vpp, S.fold) + vocabActs(q)]);
       };
       this._segParts = partsFor(Snow);
