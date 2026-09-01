@@ -282,11 +282,13 @@ dsv3-anatomy .anat-grid > * { min-width: 0; }  /* items may shrink below content
 dsv3-anatomy dsv3-anatomy-plan { margin-top: 46px; }
 /* narrow viewports: the margin plan stacks above the diagram (the expansion
    cone makes no sense stacked, so it hides); the diagram itself stops scaling
-   and scrolls instead — see the .lv media rule */
+   and scrolls instead — see the .lv media rule. EXCEPT .mwide (mobile.js's
+   widened preview/focus rendering): that reproduces the desktop layout, so
+   the plan stays beside the diagram and the cone stays on. */
 @media (max-width: 860px) {
-  dsv3-anatomy .anat-grid { grid-template-columns: 1fr; gap: 18px 0; }
-  dsv3-anatomy dsv3-anatomy-plan { margin-top: 0; }
-  .anat-cone { display: none; }
+  dsv3-anatomy:not(.mwide) .anat-grid { grid-template-columns: 1fr; gap: 18px 0; }
+  dsv3-anatomy:not(.mwide) dsv3-anatomy-plan { margin-top: 0; }
+  dsv3-anatomy:not(.mwide) .anat-cone { display: none; }
 }
 `;
 const FWD = ['controls', 'recipe', 'recipes', 'recompute', 'detail', 'transposed', 'for',
