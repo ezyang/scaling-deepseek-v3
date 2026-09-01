@@ -386,7 +386,7 @@
     <p>We can now step through an iterative process by which we can get
     DeepSeek-V3 to fit on 2048 H100s without OOMing.</p>
 
-    <dsv3-beat-deck id="fitdeck" style="min-height:625px">
+    <dsv3-beat-deck id="fitdeck" style="min-height:580px">
       <section data-config='{"world":2048,"pp":1,"ep":1,"zero":0}'>
         <b>Step 1 — Global memory usage.</b>
       </section>
@@ -402,10 +402,8 @@
       </section>
       <section data-config='{"world":2048,"pp":8,"ep":64,"zero":1}'>
         <b>Step 4 — Pipeline parallelism, with DualPipeV.</b> Splitting weights
-        across pipeline stages reduces their local size by roughly a factor of eight
-        (modulo imbalance).  The consequent increase in local batch size is mostly cancelled
-        out by microbatching, but the DualPipeV schedule slightly increases the cost
-        of saved activations (1.1x) to reduce bubbles.
+        across pipeline stages reduces their local size by roughly a factor of eight, but slightly increases the cost
+        of saved activations (1.1x) due to the schedule.
       </section>
       <section data-config='{"world":2048,"pp":8,"ep":64,"zero":1,"recompute":"dsv3"}'>
         <b>Step 5 — Activation checkpointing.</b> Recomputing cheap operations lets
