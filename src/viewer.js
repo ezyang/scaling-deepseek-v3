@@ -2763,7 +2763,8 @@ export class Dsv3Layer extends HTMLElement {
         const kx = C1 + KVO + 122;
         bypTop = y + 14;
         P.push(`<path class="wire" d="M ${kx} ${y} L ${kx} ${bypTop} L ${bypX} ${bypTop}"/>`);
-        if (!PONLY) P.push(`<text class="tensor tidle" x="${kx + 6}" y="${bypTop - 4}">· k_rope · ${DSV3.qkRope}</text>`);
+        if (!PONLY) P.push(`<text class="tensor tidle" x="${kx + 6}" y="${bypTop - 4}">· k_rope · ${DSV3.qkRope}${
+          this.getAttribute('controls') === 'dtype' ? ` <tspan fill="${DT_STYLE.bf16}">bf16</tspan>` : ''}</text>`);   // the rail feeds the bf16 attention core — the dtype tier states every wire's precision
         else if (CONS) P.push(`<text class="tensor tidle" x="${kx + 6}" y="${bypTop - 4}">· k_rope</text>`);   // named, idle: never saved (RoPE bwd is a rotation)
         // pre-norm latent chips: real graph state (saved at no-AC — the latent
         // norms' backward input; the replay anchor under recompute presets)
