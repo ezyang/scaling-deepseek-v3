@@ -77,6 +77,14 @@ export function buildCells(env) {
   // 2 + F1 × 2 × 4/128. The component TOTALS are the sums of these rows:
   // the accordion IS the computation.
   const cls = (bpp, q, S, w8) => `${w8 ? '(2 + F1 × 2 × 4/128)' : String(bpp)} × ${q} / ${S}`;
+  // sheet-side alternate names (the diagram keeps the graph's tensor
+  // names): dispatched tokens ARE the routed experts' gate/up input; the
+  // shared expert reads the post-norm2 stream directly (pre-a2a)
+  const ALIAS = {
+    'dispatched tokens': 'dispatched tokens (routed experts’ input)',
+    'norm2 out': 'norm2 out (shared expert input)',
+  };
+  const alias = (l2) => ALIAS[l2] ?? l2;
   const nBk = env.bM?.length ?? 0;   // act buckets (A2…)
   const bucketSum = Array.from({ length: nBk }, (_, i) => `A${i + 2}`).join(' + ');
   // per-bucket rows: the recompute CHOICE is an explicit 0/1 input (R•)
@@ -87,7 +95,7 @@ export function buildCells(env) {
   const buckets = (env.bM ?? []).flatMap((rM, i) => {
     const rD = env.bD[i], fM = env.bMF?.[i] ?? rM, fD = env.bDF?.[i] ?? rD;
     const last = i === nBk - 1, tail = last ? ' + D3 × 4096' : '';
-    const lbl = `${env.bLabels[i]}${last ? ' (+ vocab D3)' : ''}`;   // indented under A1 — no 'stash ·' prefix
+    const lbl = `${alias(env.bLabels[i])}${last ? ' (+ vocab D3)' : ''}`;   // indented under A1 — no 'stash ·' prefix
     const R = env.bRate?.[i];
     // BREAKOUT buckets (residual, norm outs, the remainder): one sub-cell
     // per TENSOR, each a whole 0/1 kept? choice — no bucket ever reads
@@ -115,15 +123,15 @@ export function buildCells(env) {
           ];
         }
         lastRid = null;
-        if (!t.whole) return [{ id: sid, depth: 2, unit: 'B', label: `${t.label} (partial under policy)`, ui,
+        if (!t.whole) return [{ id: sid, depth: 2, unit: 'B', label: `${alias(t.label)} (partial under policy)`, ui,
           expr: `(L1 × ${t.cMv} + L2 × ${t.cDv}) × 4096 × P6` }];
         const p1 = t.fMv ? `L1 × ${t.tM ? `(${t.tM})` : t.fMv}` : null;
         const p2 = t.fDv ? `L2 × ${t.tD ? `(${t.tD})` : t.fDv}` : null;
         const rate = [p1, p2].filter(Boolean).join(' + ');
-        if (!rate) return [{ id: sid, depth: 2, unit: 'B', label: t.label, ui, value: 0 }];
+        if (!rate) return [{ id: sid, depth: 2, unit: 'B', label: alias(t.label), ui, value: 0 }];
         lastRid = rid;
         return [
-          { id: sid, depth: 2, unit: 'B', label: t.label, ui, expr: `${rid} × (${rate}) × 4096 × P6` },
+          { id: sid, depth: 2, unit: 'B', label: alias(t.label), ui, expr: `${rid} × (${rate}) × 4096 × P6` },
           { id: rid, depth: 3, label: 'kept?', ui, edit: mkEdit, value: t.r },
           ...(t.prec != null ? [{ id: t.bref, depth: 3, unit: 'B/e', label: 'precision (B/elem)', ui, edit: dtEdit(t.dtc), value: t.prec }] : []),
         ];

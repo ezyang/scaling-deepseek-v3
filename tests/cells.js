@@ -74,6 +74,8 @@ T.check('norms broken out individually (+ their rstds as own rows)', rowOf('A3')
   && rowOf('A3c')?.includes('norm2 out'), rowOf('A3'));
 T.check('an aux is gated by ITS TENSOR’s kept? (rstd reads R3c; no R3d row)',
   rowOf('A3d')?.includes('R3c ×') && !rows().some(r => r.querySelector('.nm')?.textContent === 'R3d'), rowOf('A3d'));
+T.check('alternate names: dispatched = routed experts’ input, norm2 out = shared expert input',
+  rowOf('A8')?.includes('(routed experts’ input)') && rowOf('A3c')?.includes('(shared expert input)'), '');
 T.check('residual broken out (x0 pinned / x1)', rowOf('A2')?.includes('A2a + A2b')
   && rowOf('A2a')?.includes('x0'), rowOf('A2'));
 {
