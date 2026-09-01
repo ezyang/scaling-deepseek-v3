@@ -75,6 +75,9 @@ export const PP_CHOICES = [1, 8];
 // with a BF16 attn-out stash (no E5M6), e4m3+ᵀ-RESIDENT params, and his
 // exact stash policy — FFN outputs + attn out + norm2 kept; the latents,
 // x1 and the router state replayed.
+// canonical state signatures (recipe recognition + the Haziza button)
+export const mmSig = (m) => MATMULS.map((x) => m[x.id]).concat(m.swiglu_in ?? 'bf16').join(',');
+export const markSig = (m) => Object.keys(m).filter((k) => m[k] === true).sort().join(',');
 export const HAZIZA_CFG = {
   matmuls: { qkv_down: 'e4m3', q_up: 'e4m3', kv_up: 'e4m3', attn: 'bf16', o_proj: 'bf16',
     router: 'fp32', ffn_gate_up: 'e4m3', ffn_down: 'e4m3', lm_head: 'bf16', swiglu_in: 'e4m3' },
@@ -1353,7 +1356,7 @@ export class Dsv3Layer extends HTMLElement {
     // moved us off the attribute's preset), else show "custom". The stash-side
     // CHECKBOXES count too: each recipe has a canonical e4m3ᵀ state (RECIPE_T)
     // and the E5M6 choice rides mm.o_proj — flip either and you are custom
-    const mmKey = (m) => MATMULS.map(x => m[x.id]).concat(m.swiglu_in ?? 'bf16').join(',');   // + the SwiGLU-input stash channel
+    const mmKey = mmSig;   // + the SwiGLU-input stash channel
     const curRecipe = recipeOpts.find(k => mmKey(resolveMatmuls({ recipe: k })) === mmKey(this.matmuls)
       && (RECIPE_T[k] ?? false) === !!this.transposed);
     preset.value = curRecipe ?? 'bf16';
@@ -1380,7 +1383,7 @@ export class Dsv3Layer extends HTMLElement {
     for (const name of Object.keys(RECOMPUTE_PRESETS)) {
       const o = document.createElement('option'); o.value = o.textContent = name; rsel.append(o);
     }
-    const marksKey = (m) => Object.keys(m).filter(k => m[k] === true).sort().join(',');
+    const marksKey = markSig;
     const curPreset = Object.keys(RECOMPUTE_PRESETS).find(k => marksKey(RECOMPUTE_PRESETS[k]) === marksKey(this.marks));
     rsel.value = curPreset ?? 'none';
     if (!curPreset) {
@@ -1893,24 +1896,7 @@ export class Dsv3Layer extends HTMLElement {
           this._tweenLocal(prev);
         });
         if (!this._pinCfg?.state) { rst.disabled = true; rst.title = 'save a config first'; rst.style.color = '#c3c2b7'; rst.style.cursor = 'default'; }
-        // the Haziza cross-check preset: lights up when the state matches
-        const hz = document.createElement('button');
-        hz.textContent = 'Haziza cfg'; hz.dataset.knob = 'haziza';
-        const hzOn = mmKey(this.matmuls) === mmKey(HAZIZA_CFG.matmuls)
-          && marksKey(this.marks) === marksKey(HAZIZA_CFG.marks)
-          && !this.transposed && !!this.fp8Params
-          && ['ep', 'pp', 'zero', 'world', 'stage', 'sched'].every((k5) => this[k5] === HAZIZA_CFG[k5]);
-        hz.style.cssText = 'font:11px ui-monospace,monospace;padding:2px 8px;border:1px solid '
-          + (hzOn ? '#eda100;background:#fff8ea;font-weight:600;' : '#c3c2b7;background:#fff;') + 'border-radius:4px;cursor:pointer;';
-        hz.title = 'the roofline analysis this essay credits (Daniel Haziza): dsv3-style fp8 GEMMs with a BF16 attn-out stash, '
-          + 'e4m3+ᵀ-resident params, and its exact stash policy — one click to line the sheet up against his numbers';
-        hz.onclick = () => this.setLocal(() => Object.assign(this, {
-          matmuls: { ...HAZIZA_CFG.matmuls }, marks: { ...HAZIZA_CFG.marks },
-          transposed: HAZIZA_CFG.transposed, fp8Params: HAZIZA_CFG.fp8Params,
-          ep: HAZIZA_CFG.ep, pp: HAZIZA_CFG.pp, zero: HAZIZA_CFG.zero, world: HAZIZA_CFG.world,
-          stage: HAZIZA_CFG.stage, sched: HAZIZA_CFG.sched, vpp: 2, fold: 'reflect',
-        }));
-        saveBox.append(hz, rst, reset);   // factory reset (built above; also clears the save)
+        saveBox.append(rst, reset);   // factory reset (built above; also clears the save)
         reset.textContent = 'reset all';
         reset.style.cssText = 'font:11px ui-monospace,monospace;padding:2px 8px;border:1px solid #c3c2b7;' +
           'border-radius:4px;background:#fff;cursor:pointer;';   // match the save cluster's face
@@ -4134,12 +4120,12 @@ dsv3-sheet { display: block; margin: 14px 0; position: relative; }
 .cellsheet td.vl.tg:hover { background: #dcebfa; }
 .cellsheet td.nm.jmp { cursor: pointer; }
 .cellsheet td.nm.jmp:hover { text-decoration: underline dotted; }
-/* the jump pulse: HTML knobs outline, svg chips glow — then fade */
-.jump-hl { animation: jumphl 1.8s ease-out forwards; border-radius: 6px; }
-@keyframes jumphl { 0%, 55% { outline: 2px solid #eda100; outline-offset: 3px; }
-  100% { outline: 2px solid rgba(237, 161, 0, 0); outline-offset: 3px; } }
-g.jump-hl { animation: jumphlg 1.8s ease-out forwards; }
-@keyframes jumphlg { 0%, 55% { filter: drop-shadow(0 0 2px #eda100) drop-shadow(0 0 5px #eda100); } 100% { filter: none; } }
+/* the jump spotlight: everything but the target grays out behind the
+   ring's giant veil; a click/scroll/key anywhere dismisses it */
+.cell-spot { position: fixed; z-index: 60; pointer-events: none; border-radius: 8px;
+  box-shadow: 0 0 0 2px #eda100, 0 0 0 200vmax rgba(252, 252, 251, 0.78);
+  animation: spotin 0.18s ease-out; }
+@keyframes spotin { from { box-shadow: 0 0 0 2px rgba(237, 161, 0, 0), 0 0 0 200vmax rgba(252, 252, 251, 0); } }
 `;
 class Dsv3Sheet extends HTMLElement {
   connectedCallback() {
@@ -4156,6 +4142,17 @@ class Dsv3Sheet extends HTMLElement {
     this._root.addEventListener('change', (ev) => {
       if (ev.target.closest?.('.simp')) { this._sim = ev.target.checked; this.sync(); }
       else if (ev.target.closest?.('.nos')) { this._nos = ev.target.checked; this.sync(); }
+    });
+    // the Haziza preset applies through the layer (tween + resync as usual)
+    this._root.addEventListener('click', (ev) => {
+      if (!ev.target.closest?.('.hzb') || !this._layer) return;
+      const l = this._layer;
+      l.setLocal(() => Object.assign(l, {
+        matmuls: { ...HAZIZA_CFG.matmuls }, marks: { ...HAZIZA_CFG.marks },
+        transposed: HAZIZA_CFG.transposed, fp8Params: HAZIZA_CFG.fp8Params,
+        ep: HAZIZA_CFG.ep, pp: HAZIZA_CFG.pp, zero: HAZIZA_CFG.zero, world: HAZIZA_CFG.world,
+        stage: HAZIZA_CFG.stage, sched: HAZIZA_CFG.sched, vpp: 2, fold: 'reflect',
+      }));
     });
     // formula variables get the same hover card as the chart's numbers
     // (.lv-tip styling rides the layer's stylesheet); clicking one jumps to
@@ -4263,11 +4260,24 @@ class Dsv3Sheet extends HTMLElement {
       : jc ? l.querySelector(`.lv-scroll g[data-chip="${jc}"]`) : null;
     if (!el2) return;
     el2.scrollIntoView({ block: 'center', inline: 'center' });
-    el2.classList.remove('jump-hl');
-    void (el2.getBoundingClientRect());   // restart the pulse animation
-    el2.classList.add('jump-hl');
-    clearTimeout(this._jt);
-    this._jt = setTimeout(() => el2.classList.remove('jump-hl'), 2000);
+    // SPOTLIGHT the target: a fixed ring whose giant shadow veils everything
+    // else; any click / scroll / key dismisses it
+    document.querySelector('.cell-spot')?.remove();
+    // the instant scroll above is synchronous — measure directly (no rAF:
+    // headless on-demand-frame modes may never fire one)
+    const r = el2.getBoundingClientRect();
+    const d = el('div', 'cell-spot');
+    d.style.cssText = `left:${(r.left - 7).toFixed(1)}px;top:${(r.top - 6).toFixed(1)}px;`
+      + `width:${(r.width + 14).toFixed(1)}px;height:${(r.height + 12).toFixed(1)}px;`;
+    document.body.append(d);
+    // dismissal listens for USER-initiated input only (wheel / pointer /
+    // key — every real scroll starts as one of these): the jump's own
+    // programmatic scroll fires a 'scroll' event on a racy async schedule
+    // that would self-dismiss the spotlight. setTimeout: the click that
+    // triggered this jump must not dismiss it via its own bubbling events.
+    const evs = ['pointerdown', 'wheel', 'keydown'];
+    const off = () => { d.remove(); evs.forEach((e2) => removeEventListener(e2, off, true)); };
+    setTimeout(() => evs.forEach((e2) => addEventListener(e2, off, true)), 0);
   }
   // tooltip jump target: scroll the row into view and highlight it (the
   // highlight survives re-syncs until the next jump)
@@ -4293,7 +4303,18 @@ class Dsv3Sheet extends HTMLElement {
         /^[A-Z]\d+[a-z]?$/.test(tok) ? `<span class="cellref">${tok}</span>` : esc(tok)).join('');
     this._root.innerHTML = '<div class="hd">the fit chart’s formula sheet — every number the chart below shows is one of these cells, '
       + 'computed by evaluating exactly the formula printed here (hover a chart number for its formula; click to pin, then click names to drill)'
-      + `<span style="float:right;display:inline-flex;gap:14px;">`
+      + `<span style="float:right;display:inline-flex;gap:14px;align-items:center;">`
+      + (() => {
+        const l = this._layer;
+        const on = l && mmSig(l.matmuls) === mmSig(HAZIZA_CFG.matmuls)
+          && markSig(l.marks) === markSig(HAZIZA_CFG.marks)
+          && !l.transposed && !!l.fp8Params
+          && ['ep', 'pp', 'zero', 'world', 'stage', 'sched'].every((k5) => l[k5] === HAZIZA_CFG[k5]);
+        return `<button class="hzb" style="font:11px ui-monospace,monospace;padding:1px 8px;border:1px solid `
+          + (on ? '#eda100;background:#fff8ea;font-weight:600;' : '#c3c2b7;background:#fff;')
+          + `border-radius:4px;cursor:pointer;" title="the roofline analysis this essay credits (Daniel Haziza): dsv3-style fp8 GEMMs `
+          + `with a BF16 attn-out stash, e4m3+ᵀ-resident params, and its exact stash policy — one click to line the sheet up against his numbers">Haziza cfg</button>`;
+      })()
       + `<label class="simp" style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox"${this._sim ? ' checked' : ''}> simplify — drop negligible terms</label>`
       + `<label class="nos" style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox"${this._nos ? ' checked' : ''}> no act scale factors</label>`
       + '</span>'

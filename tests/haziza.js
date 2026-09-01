@@ -21,7 +21,7 @@ const zseg = layer().parentElement.querySelector('.stp[data-knob="zero"]');
 T.check('columns hold their widths across knob changes', widths() === w0, `${w0} vs ${widths()}`);
 [...layer().parentElement.querySelector('.stp[data-knob="zero"]').querySelectorAll('button')].find(b => b.textContent === '1').click(); await T.tick(700);
 // the Haziza preset
-const hz = () => layer().parentElement.querySelector('button[data-knob="haziza"]');
+const hz = () => sheet.querySelector('button.hzb');
 T.check('Haziza button present, not lit at defaults', !!hz() && hz().style.background.includes('255, 255, 255'), hz()?.style.background);
 hz().click(); await T.tick(800);
 T.check('Haziza lights up after applying', hz().style.background.includes('255, 248, 234'), hz()?.style.background);
