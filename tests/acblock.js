@@ -102,6 +102,20 @@ T.check('fp8 widget: the fp8 recipe shrinks the tally (76 pickets — o_proj run
   T.check('dsv3 again: rows return', redoRows() === r0, redoRows());
   T.check('the tally row is named recompute', ribbons(ac).some(t => t === 'recompute'), '');
 }
+// tween: a sub-square chip (kv latent = ¼ square, minOne-rounded) must not
+// blink out mid-pour when its state and bytes are unchanged
+{
+  const kvTxt = [...ac.querySelectorAll('text')].find(t => /kv latent ·/.test(t.textContent));
+  const kx = +kvTxt.getAttribute('x'), ky = +kvTxt.getAttribute('y');
+  const kvSq = () => [...ac.querySelectorAll('rect[fill="#eda100"][width="5"][height="5"]')]
+    .some(r => Math.abs(+r.getAttribute('x') - kx) < 4 && Math.abs(+r.getAttribute('y') - (ky + 4)) < 6);
+  T.check('kv latent wears its minOne square', kvSq(), '');
+  ac.querySelector('button[data-mark="kv_up"]').click(); await T.tick(50);
+  T.check('mid-tween: the square never blinks (minOne holds through the pour)', kvSq(), '');
+  await T.tick(400);
+  ac.querySelector('button[data-mark="kv_up"]').click(); await T.tick(400);   // back to dsv3
+  T.check('restored to dsv3 after the round trip', btn(ac, 'recompute', 'dsv3').classList.contains('on'), '');
+}
 // vector ops keep the unpriced fig-leaf (hollow dashed); sub-picket GEMMs
 // (router, kv down-proj half) wear the hollow trace
 T.check('norms/swiglu wear the hollow dashed fig-leaf',
@@ -120,8 +134,8 @@ T.check('sub-picket GEMMs wear the hollow trace',
     Math.abs(+ghost.getAttribute('x') + +ghost.getAttribute('width') - (44 + 118.6 * 6)) < 2, '');
   T.check('badge prices the lever vs the anchor', ribbons(ac).some(t => t.includes('▼×1.8')), '');
   T.check('the 80 GiB card line is drawn', ribbons(ac).some(t => t === '80 GiB'), '');
-  T.check('both rulers present (GiB + GFLOP/token)',
-    ribbons(ac).some(t => t.includes('minor tick = 1 GiB')) && ribbons(ac).some(t => t.includes('GFLOP/token')), '');
+  T.check('both rulers present (GiB + MFLOP/token)',
+    ribbons(ac).some(t => t.includes('minor tick = 1 GiB')) && ribbons(ac).some(t => t.includes('MFLOP/token')), '');
   // the honesty line: what the ruler does NOT meter, per the CURRENT policy
   T.check('unmetered-vector line names this policy\'s replays (dsv3: RoPE ×2 + norms + SwiGLU)',
     ribbons(ac).some(t => t.startsWith('not priced') && t.includes('RoPE ×2')

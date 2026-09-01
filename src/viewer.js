@@ -1363,9 +1363,9 @@ export class Dsv3Layer extends HTMLElement {
     };
     const tl = document.createElement('label');
     tl.style.cssText = 'display:inline-flex;align-items:center;gap:4px;margin-left:8px;color:#52514e;';
-    tl.title = 'Hopper tile-scaled fp8 (1×128 per-row scales): stashes feeding wgrad GEMMs are kept in ' +
-      'BOTH quantization orientations — per-row scales don’t transpose. MXFP8’s power-of-2 block ' +
-      'scales requantize the transpose exactly; leave off for Blackwell.';
+    tl.title = 'The wgrad GEMM reads its saved activations TRANSPOSED, and 1×128 tile scales don’t survive that. ' +
+      'ON = pay in memory: quantize with transpose at forward, stash BOTH orientations (TE-style production Hopper). ' +
+      'OFF = pay in compute: one copy, re-quantized (dequant → transpose → requant) during backward — DeepSeek’s own convention.';
     const tcb = document.createElement('input');
     tcb.type = 'checkbox'; tcb.checked = this.transposed;
     tcb.onchange = () => localTween(() => { this.transposed = tcb.checked; });
@@ -1571,7 +1571,9 @@ export class Dsv3Layer extends HTMLElement {
       }
       reset.style.cssText = 'font:11px ui-monospace,monospace;padding:2px 8px;border:1px solid #c3c2b7;' +
         'border-radius:4px;background:#fff;cursor:pointer;margin-left:auto;';
-      hh.append(reset);   // no sizes toggle here: shapes are 01's story, not this section's
+      // the marks tier gets NO reset: the preset chips ARE the reset (clicking
+      // dsv3 is it). The dtype tier keeps one — it also clears fp8ᵀ.
+      if (this._ctl.dtype) hh.append(reset);   // no sizes toggle here: shapes are 01's story, not this section's
       if (hr) root.append(hr);
       root.append(hh);
     } else if (cmode !== 'static') root.append(head);
@@ -2500,9 +2502,13 @@ export class Dsv3Layer extends HTMLElement {
       else {
         P.push(chipTxt(ana, st));
         if (SAVED(st) || st === 'redo') {   // same state: bytes still pour (dtype flips)
-          const bT = lerpQ(anaP ? bytesA(anaP) : bytes, bytes);
+          const b0 = anaP ? bytesA(anaP) : bytes;
+          const bT = lerpQ(b0, bytes);
           const [gx, gy] = gpos(st);
-          P.push(blockGrid(bT, gx, gy, !VQ, st === 'redo').svg);
+          // minOne holds through the tween when BOTH endpoints are nonzero —
+          // a sub-square chip (kv latent: ¼ square) must not blink out
+          // mid-pour; only a genuine pour to/from zero may reach zero squares
+          P.push(blockGrid(bT, gx, gy, !VQ || (b0 > 0 && bytes > 0), st === 'redo').svg);
         }
       }
       if (SAVED(st) || st === 'redo') h = ov?.short ? 25 : 12 + 11 + 2;
@@ -3412,12 +3418,14 @@ export class Dsv3Layer extends HTMLElement {
       const rext = 2 * fwdEq * PPF + 12;           // bwd is always the longest ribbon
       const ry = ty + 2;
       T.push(`<line x1="${TB_X}" y1="${ry}" x2="${(TB_X + rext).toFixed(1)}" y2="${ry}" stroke="#c3c2b7" stroke-width="1"/>`);
+      // labels every 200 MFLOP (60px — the GiB ruler's cadence), majors keep
+      // the taller tick; MFLOP units so more ticks earn a number
       for (let u = 0; u * 100e6 * PPF <= rext; u++) {
         const x = TB_X + u * 100e6 * PPF, major = u % 10 === 0;
         T.push(`<line x1="${x.toFixed(1)}" y1="${ry}" x2="${x.toFixed(1)}" y2="${ry + (major ? 5 : 2.5)}" stroke="#c3c2b7" stroke-width="1"/>`);
-        if (major && u > 0) T.push(`<text x="${x.toFixed(1)}" y="${ry + 14}" text-anchor="middle" font-size="8.5" fill="#898781">${u / 10}</text>`);
+        if (u > 0 && u % 2 === 0) T.push(`<text x="${x.toFixed(1)}" y="${ry + 14}" text-anchor="middle" font-size="8.5" fill="#898781">${u * 100}</text>`);
       }
-      T.push(`<text class="dims" x="${(TB_X + rext + 10).toFixed(1)}" y="${ry + 14}">GFLOP/token (bf16-eq) · LINEAR</text>`);
+      T.push(`<text class="dims" x="${(TB_X + rext + 10).toFixed(1)}" y="${ry + 14}">MFLOP/token (bf16-eq) · LINEAR</text>`);
       ty = ry + 20;
     }
     T.push(`<text class="dims" x="${TB_X}" y="${ty + 8}">= ${(3 + replayEq / fwdEq).toFixed(2)}× fwd per training step</text>`);
