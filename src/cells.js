@@ -101,22 +101,27 @@ export function buildCells(env) {
         .filter(({ t }) => !(env.simplify && t.aux));
       const dtEdit = (dtc) => dtc == null ? undefined
         : dtc === 'o_proj' ? { t: 'cb', k: 'e5m6' } : { t: 'dt', k: dtc };
+      let lastRid = null;   // an aux artifact is gated by ITS TENSOR's kept? —
+      // one choice controls both (an aux row never gets its own R)
       const rows = shown.flatMap(({ t, sid }) => {
         const rid = `R${sid.slice(1)}`, ui = { c: t.id };
         const mkEdit = t.aux ? undefined : { t: 'mark', k: t.id };
-        if (t.aux) {   // an aux artifact row: literal fp32 bytes, its own kept?
+        if (t.aux) {
+          const gate = lastRid ?? rid;
           const rate = [t.fMv ? `L1 × ${t.fMv}` : null, t.fDv ? `L2 × ${t.fDv}` : null].filter(Boolean).join(' + ');
           return [
-            { id: sid, depth: 2, unit: 'B', label: t.label, ui, expr: `${rid} × (${rate}) × 4096 × P6` },
-            { id: rid, depth: 3, label: 'kept?', ui, value: t.r },
+            { id: sid, depth: 2, unit: 'B', label: t.label, ui, expr: `${gate} × (${rate}) × 4096 × P6` },
+            ...(lastRid ? [] : [{ id: rid, depth: 3, label: 'kept?', ui, value: t.r }]),
           ];
         }
+        lastRid = null;
         if (!t.whole) return [{ id: sid, depth: 2, unit: 'B', label: `${t.label} (partial under policy)`, ui,
           expr: `(L1 × ${t.cMv} + L2 × ${t.cDv}) × 4096 × P6` }];
         const p1 = t.fMv ? `L1 × ${t.tM ? `(${t.tM})` : t.fMv}` : null;
         const p2 = t.fDv ? `L2 × ${t.tD ? `(${t.tD})` : t.fDv}` : null;
         const rate = [p1, p2].filter(Boolean).join(' + ');
         if (!rate) return [{ id: sid, depth: 2, unit: 'B', label: t.label, ui, value: 0 }];
+        lastRid = rid;
         return [
           { id: sid, depth: 2, unit: 'B', label: t.label, ui, expr: `${rid} × (${rate}) × 4096 × P6` },
           { id: rid, depth: 3, label: 'kept?', ui, edit: mkEdit, value: t.r },

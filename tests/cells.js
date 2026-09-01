@@ -72,6 +72,8 @@ T.check('recompute choices read as 0/1 (dsv3: dispatched kept, norm1 replayed)',
 T.check('norms broken out individually (+ their rstds as own rows)', rowOf('A3')?.includes('A3a + A3b + A3c + A3d')
   && rowOf('A3a')?.includes('norm1 out') && rowOf('A3b')?.includes('rstd (fp32)')
   && rowOf('A3c')?.includes('norm2 out'), rowOf('A3'));
+T.check('an aux is gated by ITS TENSOR’s kept? (rstd reads R3c; no R3d row)',
+  rowOf('A3d')?.includes('R3c ×') && !rows().some(r => r.querySelector('.nm')?.textContent === 'R3d'), rowOf('A3d'));
 T.check('residual broken out (x0 pinned / x1)', rowOf('A2')?.includes('A2a + A2b')
   && rowOf('A2a')?.includes('x0'), rowOf('A2'));
 {
