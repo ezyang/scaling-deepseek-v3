@@ -46,7 +46,10 @@
 
     <p><strong>Parameters.</strong>  In <a
     href="./01-deepseek-diagram.html">the previous post</a>, we did a tally of
-    DSv3's parameters, sans MTP.  To do compute in BF16, we will want the parameters
+    DSv3's parameters, sans MTP.<span class="mn-ref"></span><span class="mn" style="margin-top:-9em">For simplicity,
+    I will continue not to model MTP for this post.  Once we add pipeline parallelism, the
+    MTP will be stored on PP rank 0, which has less transformer blocks and is not the
+    memory bottleneck even with MTP.</span>  To do compute in BF16, we will want the parameters
     to be available in BF16.  This gives us the following memory usage:</p>
 
     <dsv3-layer style="min-height:145px" snapshot nototal comps="weights"
@@ -143,7 +146,7 @@
     would reduce optimizer state, gradient and parameter sizes by a factor of
     DP) and expert parallelism (reducing expert weights by a factor of EP).
     However, we cannot do full ZeRO-3, as it turns out a communication
-    roofline shows we will be communication bound (we leave this analysis to a
+    roofline shows we will either OOM or be communication bound (we leave this analysis to a
     future post).  And with only ZeRO-1 (optimizer state only--including the
     FP32 master parameters) and EP, we
     still cannot fit, so we need to bring out the big guns.</p>
@@ -346,7 +349,7 @@
     requantize it in backwards so that it can be transposed.</p>
 
     <p>The diagram below shows you a DeepSeek-V3 style low precision recipe
-    based on their description of low precision compute in their paper<span class="mn-ref"></span><span class="mn" style="margin-top:-10em">This diagram is
+    based on their description of low precision compute in their paper<span class="mn-ref"></span><span class="mn" style="margin-top:-18em">This diagram is
     somewhat extrapolated from the DeepSeek-V3 paper, as the paper
     doesn't spell out every detail.  Concretely, we assume the MLA latents were
     saved as BF16 for recompute and various statistics were kept in FP32
@@ -385,8 +388,8 @@
 
         <li>DeepSeek-V3 has a peculiarity where they have a one off 12-bit FP format specifically
         for the attention output, as they needed to save some more memory there.  This is
-        pretty unusual, and many reproductions don't bother, saving the attention output
-        in BF16 (NVIDIA's Blackwell recipe does exactly that).  You can toggle this with the E5M6 attn-out stash checkbox.</li>
+        pretty unusual, and some reproductions don't bother, saving the attention output
+        in BF16.  You can toggle this with the E5M6 attn-out stash checkbox.</li>
     </ul>
 
     <h2>Fitting it</h2>
@@ -448,7 +451,7 @@
     since sometimes the reason you are OOMing because of something very dumb, and the
     roofline will tell you exactly what it is.</p>
 
-    <dsv3-anatomy style="min-height:1017px" lens="param-bytes" local cumulative recipe="bf16" recipes="bf16,dsv3-fp8,all-fp8" recompute="none" layer="local-diagram" detail controls="static" nocaption></dsv3-anatomy>
+    <dsv3-anatomy style="min-height:990px" lens="param-bytes" local cumulative recipe="dsv3-fp8" recipes="bf16,dsv3-fp8,all-fp8" recompute="dsv3" layer="local-diagram" detail controls="static" nocaption></dsv3-anatomy>
 
   </main>
   <script type="module">

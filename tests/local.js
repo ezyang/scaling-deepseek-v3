@@ -1,5 +1,5 @@
 // @page studies/02-hopper-memory.html
-// 02 local diagram: steppers, knob tweens, cumulative toggle, ZeRO, stage map
+// 02 local diagram: steppers, knob tweens, pinned cumulative, ZeRO, stage map
 const layer = () => document.getElementById('local-diagram');
 T.check('exists', !!layer(), '');
 const dia = () => layer().querySelector('.lv-scroll svg');
@@ -12,21 +12,24 @@ const sels = () => [...layer().parentElement.querySelectorAll('select:not(.v)')]
 T.check('stepper groups + selects (precision/recompute — the rank picker is a segment now)',
   stps().length === 5 && sels().length === 2
   && layer().parentElement.querySelector('.stp[data-knob="rank"]'), `${stps().length}/${sels().length}`);
-// AC knob: the dsv3 recompute preset shrinks activations and marks ↻ chips
+// defaults = the OPTIMIZED config (the deck's step 6): dsv3 recompute +
+// dsv3-fp8 recipe — the ↻ chips are already on screen at load
 const rsel = () => sels().find(s2 => [...s2.options].some(o => o.value === 'dsv3' && [...s2.options].some(o2 => o2.value === 'attn-replay')));
-const actsVal = () => layer().querySelector('.lv-bar')?.textContent ?? '';   // whole chart text: values live at bar ends
-const a0 = actsVal();
-rsel().value = 'dsv3'; rsel().dispatchEvent(new Event('change')); await T.tick(300);
-T.check('dsv3 preset shrinks activations', actsVal() !== a0, `${a0} -> ${actsVal()}`);
-T.check('recomputed chips appear', [...layer().querySelectorAll('.lv-scroll text.tredo')].length > 3, '');
-// precision knob: fp8 stashes shrink activations further
 const psel = () => sels().find(s2 => [...s2.options].some(o => o.value === 'dsv3-fp8'));
-const a1 = actsVal();
-psel().value = 'dsv3-fp8'; psel().dispatchEvent(new Event('change')); await T.tick(300);
-T.check('fp8 recipe shrinks stashes further', actsVal() !== a1, `${a1} -> ${actsVal()}`);
-psel().value = 'bf16'; psel().dispatchEvent(new Event('change')); await T.tick(200);
+const actsVal = () => layer().querySelector('.lv-bar')?.textContent ?? '';   // whole chart text: values live at bar ends
+T.check('defaults are optimized (dsv3 recompute + dsv3-fp8 recipe)',
+  rsel().value === 'dsv3' && psel().value === 'dsv3-fp8', `${rsel().value}/${psel().value}`);
+T.check('recomputed chips present at load', [...layer().querySelectorAll('.lv-scroll text.tredo')].length > 3, '');
+const a0 = actsVal();
 rsel().value = 'none'; rsel().dispatchEvent(new Event('change')); await T.tick(300);
-T.check('restored to save-everything', actsVal() === a0, `${actsVal()} vs ${a0}`);
+T.check('save-everything grows activations', actsVal() !== a0, `${a0} -> ${actsVal()}`);
+// precision knob: bf16 stashes grow further still
+const a1 = actsVal();
+psel().value = 'bf16'; psel().dispatchEvent(new Event('change')); await T.tick(300);
+T.check('bf16 recipe grows stashes further', actsVal() !== a1, `${a1} -> ${actsVal()}`);
+psel().value = 'dsv3-fp8'; psel().dispatchEvent(new Event('change')); await T.tick(200);
+rsel().value = 'dsv3'; rsel().dispatchEvent(new Event('change')); await T.tick(300);
+T.check('restored to the optimized default', actsVal() === a0, `${actsVal()} vs ${a0}`);
 // cluster-size stepper: 2048 -> 1024 halves DP; expert-DP hits 1 (unsharded expert optim)
 stepBtn(0, -1).click(); await T.tick(600);
 T.check('1024 GPUs: gate/up 8.8 GiB (expert-DP 2)', dims() === '8.8 GiB', dims());
@@ -59,18 +62,10 @@ T.check('capacity tick labeled', (layer().querySelector('.lv-bar')?.textContent 
 T.check('no saved-for-backward total line', ![...dia().querySelectorAll('text')].some(x => x.textContent.includes('saved for backward')), '');
 T.check('cum default: 7.0 GiB', dims() === '7.0 GiB', dims());
 
-// cumulative toggle (tweened)
+// cumulative is PINNED for local (no per-block toggle: the fit bar totals
+// the rank, so a per-block diagram would disagree with the chart)
 const cumBtn = () => [...layer().parentElement.querySelectorAll('button')].find(b => b.textContent === 'per block' || b.textContent.includes('blocks'));
-T.check('button ×8 blocks (the stage\'s MoE chunks)', cumBtn()?.textContent === '×8 blocks', cumBtn()?.textContent);
-cumBtn().click(); await T.tick(60);
-const mid = dia().querySelectorAll('rect[fill="#eda100"]').length;
-await T.tick(600);
-const end = dia().querySelectorAll('rect[fill="#eda100"]').length;
-T.log('green mid/end', `${mid}/${end}`);
-T.check('per block: 896.0 MiB', dims() === '896.0 MiB', dims());
-T.check('tween passed through a mid state (amber act chips)', mid > end && mid < 200, `${mid} vs ${end}`);
-cumBtn().click(); await T.tick(600);
-T.check('back to 7.0 GiB', dims() === '7.0 GiB', dims());
+T.check('no ×N blocks / per-block button on the local head', !cumBtn(), cumBtn()?.textContent);
 
 // EP stepper: 64 -> 32 (tweened)
 stepBtn(3, -1).click(); await T.tick(600);
@@ -120,7 +115,7 @@ T.check('no margin legend for local', !layer().closest('.anat-grid').querySelect
 const rowLabels = () => [...layer().querySelectorAll('.lv-bar g[data-prop]')];
 T.check('four clickable chart row labels', rowLabels().length === 4, rowLabels().length);
 T.check('row labels are names only (values at bar ends)', rowLabels().every(g => !/GiB|MiB/.test(g.textContent)), '');
-T.check('absolute values at bar ends, no capacity factors', chart().includes('139.6 GiB') && !chart().includes('×1/'), chart().slice(-160));
+T.check('absolute values at bar ends, no capacity factors', chart().includes('61.7 GiB') && !chart().includes('×1/'), chart().slice(-160));
 // row-label mousedown SOLOS the component (filter, not toggle)
 const md = (el2) => el2.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
 const totalEnd = () => {
@@ -133,7 +128,7 @@ T.check('solo weights: weights stays on', rowLabels()[0].getAttribute('opacity')
 // total row: unchanged extent, now stacked grey other + blue on top
 T.check('total bar does not resize under solo', Math.abs(totalEnd() - endBefore) < 1.5, `${totalEnd()} vs ${endBefore}`);
 T.check('grey other base appears', !!layer().querySelector('.lv-bar rect[fill="#c3c2b7"]'), '');
-T.check('total label stays full (139.6 GiB)', chart().includes('139.6 GiB'), '');
+T.check('total label stays full (61.7 GiB)', chart().includes('61.7 GiB'), '');
 T.check('hidden rows lose their factors', ![...layer().querySelectorAll('.lv-bar text')].some(x => x.textContent.includes('×1/13')), '');
 T.check('solo weights: others dim', rowLabels().slice(1).every(g => g.getAttribute('opacity') === '0.35'), '');
 T.check('solo weights: box shows weights only', dims() === '1.8 GiB', dims());
@@ -148,9 +143,7 @@ T.check('bar sits between the rows', !!layer().querySelector('.lv-head + .lv-bar
 {
   const host = layer().parentElement;
   const p8 = () => host.querySelector('input[data-knob="fp8params"]');
-  T.check('e4m3+ᵀ params checkbox disabled under bf16', p8().disabled, '');
-  const sel = [...host.querySelectorAll('select')].find(s2 => [...s2.options].some(o => o.value === 'dsv3-fp8'));
-  sel.value = 'dsv3-fp8'; sel.dispatchEvent(new Event('change')); await T.tick(600);
+  T.check('e4m3+ᵀ params checkbox ENABLED under the default fp8 recipe', p8() && !p8().disabled, '');
   const w = () => +[...layer().querySelectorAll('.lv-bar text[data-role="val:0"]')][0].dataset.true;
   const w0 = w();
   p8().click(); await T.tick(600);
@@ -158,6 +151,8 @@ T.check('bar sits between the rows', !!layer().querySelector('.lv-head + .lv-bar
     Math.abs(w() / w0 - 2.0625 / 2) < 1e-9, (w() / w0).toFixed(6));
   p8().click(); await T.tick(600);
   T.check('and back', w() === w0, w());
-  sel.value = 'bf16'; sel.dispatchEvent(new Event('change')); await T.tick(600);
+  psel().value = 'bf16'; psel().dispatchEvent(new Event('change')); await T.tick(600);
+  T.check('checkbox disabled under bf16', p8().disabled, '');
+  psel().value = 'dsv3-fp8'; psel().dispatchEvent(new Event('change')); await T.tick(300);
 }
 T.done();

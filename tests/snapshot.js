@@ -7,17 +7,21 @@ const beats = () => [...document.querySelectorAll('dsv3-layer[snapshot]:not([san
   .filter(b => !b.closest('dsv3-beat-deck'));   // the deck drives its own layer
 T.check('tally beats render bars (the parts beat is optional — author-curated)', beats().length >= 4
   && beats().every(b => b.querySelector('.lv-bar svg') && !b.querySelector('.lv-scroll')), beats().length);
-T.check('beat 1: whole-model weights 1.22 TiB + breakdown', beats()[0].textContent.includes('weights1.22 TiB')
-  && beats()[0].textContent.includes('· experts'), '');
+// row values bind by data-role (value texts render after the scrub overlay
+// for the raw-bytes hover, so text ADJACENCY no longer holds)
+const rv = (host, id) => host.querySelector(`.lv-bar text[data-role="val:${id}"]`)?.textContent ?? '';
+T.check('beat 1: whole-model weights 1.22 TiB + breakdown', rv(beats()[0], '0').includes('1.22 TiB')
+  && beats()[0].textContent.includes('· experts'), rv(beats()[0], '0'));
 // beats found by attribute, not position — the author reorders them freely
 const beat = (sel) => beats().find(b => (b.getAttribute('solo') ?? b.getAttribute('comps')) === sel)
   ?? beats().find(b => b.hasAttribute('parts'));
-T.check('optim beat: soloed at 8 B/param, accordion open', beat('optim').textContent.includes('optimizer states4.88 TiB')
+T.check('optim beat: soloed at 8 B/param, accordion open', rv(beat('optim'), '2').includes('4.88 TiB')
   && beat('optim').textContent.includes('· experts') && !/weights\d/.test(beat('optim').textContent), '');
-T.check('acts beat: soloed, per-op buckets open', beat('acts').textContent.includes('activations ×1mb108.1 GiB')
+T.check('acts beat: soloed, per-op buckets open', beat('acts').textContent.includes('activations ×1mb')
+  && rv(beat('acts'), '3').includes('108.1 GiB')
   && beat('acts').textContent.includes('· dispatched tokens') && beat('acts').textContent.includes('· swiglu out')
   && !beat('acts').textContent.includes('· experts'), '');
-T.check('grads beat: soloed at fp32, accordion open', beat('grads').textContent.includes('gradients (fp32)2.44 TiB')
+T.check('grads beat: soloed at fp32, accordion open', rv(beat('grads'), '1').includes('2.44 TiB')
   && beat('grads').textContent.includes('· experts'), '');
 const tally = beats().find(b => b.hasAttribute('parts'));
 if (tally) T.check('tally beat: all four components, ALL param accordions open', ['weights', 'gradients', 'optimizer', 'activations', 'total']
@@ -31,7 +35,7 @@ T.check('no-to beats have no ghosts',
   beats().filter(b => !b.hasAttribute('to')).every(b => !b.querySelector('.lv-bar')?.textContent.includes('saved:')), '');
 // intro beats drop the total (nototal); the tally beat lands the full mass
 T.check('intro beats have no total row', beats().filter(b => b.hasAttribute('nototal')).every(b => !b.textContent.includes('total')), '');
-if (tally) T.check('the tally beat totals 8.65 TiB', tally.textContent.includes('total8.65 TiB'), '');
+if (tally) T.check('the tally beat totals 8.65 TiB', rv(tally, 'total').startsWith('8.65 TiB'), rv(tally, 'total'));
 // snapshots are config-static but MEASURABLE: the drag ruler works…
 const dragRuler = async (host, fx0, fx1) => {
   const scrub = host.querySelector('.scrub');

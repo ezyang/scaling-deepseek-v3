@@ -6,11 +6,14 @@ const deck = () => document.getElementById('fitdeck');
 const L = () => deck().querySelector('dsv3-layer');
 const cap = () => deck().querySelector('.deck-cap').textContent;
 const bar = () => L().querySelector('.lv-bar').textContent;
+// row values bind by data-role (value texts render after the scrub overlay
+// for the raw-bytes hover, so text ADJACENCY no longer holds)
+const rv = (id) => L().querySelector(`.lv-bar text[data-role="val:${id}"]`)?.textContent ?? '';
 const next = () => { deck().querySelector('.deck-next').click(); };
 
 // caption prose is under active rewrite — pin structure, not phrasing
 T.check('step 1 renders (whole-model debt on the bar)', cap().includes('Step 1')
-  && bar().includes('total8.65 TiB'), '');
+  && rv('total').startsWith('8.65 TiB'), rv('total'));
 T.check('back/first disabled at step 1', deck().querySelector('.deck-prev').disabled
   && deck().querySelector('.deck-first').disabled, '');
 T.check('knob panel shows the config and is LIVE', L().querySelector('.stp[data-knob="pp"] select.v').value === '1'
@@ -19,7 +22,7 @@ T.check('knob panel shows the config and is LIVE', L().querySelector('.stp[data-
 const deckBarY = L().querySelector('.lv-bar').getBoundingClientRect().top;
 next(); await T.tick(1000);
 T.check('step 2: ZeRO-1 ▼×2048, all bars still shown', L().zero === 1 && bar().includes('▼×2048')
-  && bar().includes('weights1.22 TiB') && bar().includes('· dispatched tokens'), bar().slice(0, 120));
+  && rv('0').includes('1.22 TiB') && bar().includes('· dispatched tokens'), rv('0'));
 next(); await T.tick(1000);
 T.check('step 3: EP64', L().zero === 1 && L().ep === 64, `zero ${L().zero}`);
 next(); await T.tick(1000);   // PP16 + DualPipeV in one beat
@@ -66,8 +69,8 @@ T.check('sub-row count still 19 at the last step (zeroed rows persist)',
   L().querySelectorAll('.lv-bar text[data-role^="val:part:"]').length);
 // the sub-row SET is fixed across slides: stashes killed by AC/fp8 keep
 // their labeled zero rows (their bars animated down; rows never vanish)
-T.check('dead buckets remain as zero rows at the end', bar().includes('norm outs0')
-  && bar().includes('swiglu out0'), '');
+T.check('dead buckets remain as zero rows at the end', rv('part:3:1') === '0'
+  && rv('part:3:8') === '0', `norm outs=${rv('part:3:1')} swiglu=${rv('part:3:8')}`);
 T.check('sub-row count is slide-invariant', L().querySelectorAll('.lv-bar text[data-role^="val:part:"]').length === 19,
   L().querySelectorAll('.lv-bar text[data-role^="val:part:"]').length);
 // and « start back to the beginning

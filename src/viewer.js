@@ -213,6 +213,10 @@ function fitSvg(L) {
   const f1 = (v) => v.toFixed(1);
   const gx = (e) => x0 + (e - LO) / (HI - LO) * bw;
   const aY = L.axisY;
+  // unrounded cross-check: value labels are re-emitted ABOVE the scrub
+  // overlay (end of this function) so the pointer can reach them — their
+  // data-true feeds the raw-bytes hover card (attachTip)
+  const VALS = [];
   const B = [`<text class="grplabel" x="2" y="9">${L.hdr}</text>`];
   // the infeasible region is SHADED, not a line; its label sits ON TOP,
   // leaving the bottom axis to the power-of-two labels
@@ -238,8 +242,8 @@ function fitSvg(L) {
         `<rect data-bar="${s.bar}" data-true="${s.true}" x="${f1(s.x0)}" y="${f1(y)}" width="${f1(Math.max(0.5, s.x1 - s.x0))}" height="5" fill="${s.color}" opacity="${fo(s.op)}"/>` +
         (r.ghost ? `<rect x="${x0}" y="${f1(y)}" width="${f1(Math.max(0.5, r.ghost.px - x0))}" height="5" ` +
           `fill="none" stroke="${r.ghost.color}" stroke-width="1" stroke-dasharray="2 2" opacity="${fo(r.ghost.op)}"/>` : '') +
-        (r.val ? `<text class="dims" data-role="val:${r.id}" data-true="${r.val.true}" data-pin="${r.val.pin}" x="${f1(r.val.x)}" y="${f1(y + 5.5)}"${op(r.val.op)}>${r.val.text}</text>` : '') +
         `</g>`);
+      if (r.val) VALS.push(`<text class="dims" data-role="val:${r.id}" data-true="${r.val.true}" data-pin="${r.val.pin}" x="${f1(r.val.x)}" y="${f1(y + 5.5)}"${op(r.val.op * r.op)}>${r.val.text}</text>`);
       continue;
     }
     // gutter: the name alone (whole-row hitbox; click to solo)
@@ -258,7 +262,7 @@ function fitSvg(L) {
     if (r.ghost) B.push(`<rect data-ghost="${r.id}" data-true="${r.ghost.true}" x="${x0}" y="${f1(y)}" width="${f1(Math.max(0.5, r.ghost.px - x0))}" height="8" ` +
       `fill="none" stroke="${r.ghost.color}" stroke-width="1" stroke-dasharray="2 2" opacity="${fo(r.ghost.op)}"/>`);
     // bar end: the ABSOLUTE value (+ the vs-save badge when saved)
-    if (r.val) B.push(`<text class="dims" data-role="val:${r.id}" data-true="${r.val.true}" data-pin="${r.val.pin}" x="${f1(r.val.x)}" y="${f1(y + 7)}"${op(r.val.op)}>${r.val.text}</text>`);
+    if (r.val) VALS.push(`<text class="dims" data-role="val:${r.id}" data-true="${r.val.true}" data-pin="${r.val.pin}" x="${f1(r.val.x)}" y="${f1(y + 7)}"${op(r.val.op)}>${r.val.text}</text>`);
   }
   // map-style DISTANCES legend: on a log axis a span IS a factor, so anchor
   // the important ones — the mesh dims (DP 2048 · EP 64 · PP 16) and a
@@ -278,6 +282,9 @@ function fitSvg(L) {
   // the bars band — not the captions, not below the axis
   B.push(`<rect class="scrub" x="${x0}" y="${topY - 2}" width="${bw}" height="${f1(aY - topY + 1)}" ` +
     `fill="transparent" style="cursor:col-resize"/>`);
+  // value labels last: ABOVE the scrub, so their raw-byte hover titles work
+  // (a drag can still start anywhere else on the band)
+  B.push(...VALS);
   B.push(`<text class="dims" x="${f1(L.capPx)}" y="9" text-anchor="middle">80 GiB (H100)</text>`);
   return `<svg width="${w}" height="${f1(L.HB)}" viewBox="0 0 ${w} ${f1(L.HB)}">${B.join('')}</svg>`;
 }
@@ -968,8 +975,11 @@ export class Dsv3Layer extends HTMLElement {
     this.stage = Math.min(st?.stage ?? peakStage(this.pp, this.ep, this.zero, this.world, this.sched, this.vpp, this.fold), this.pp - 1);
     // cumulative: every parameter parenthetical multiplies by the selected
     // kind's block count (×3 dense / ×58 MoE); the tabs hide — the kind then
-    // comes from the plan selector alone
-    this.cumulative = st?.cumulative ?? this.hasAttribute('cumulative');
+    // comes from the plan selector alone. The local variant is ALWAYS
+    // cumulative (no per-block toggle: the fit bar totals the rank, so a
+    // per-block diagram would disagree with the chart it explains)
+    this.cumulative = this.hasAttribute('local') && this.getAttribute('lens') === 'param-bytes'
+      ? true : st?.cumulative ?? this.hasAttribute('cumulative');
     // which block variant to draw: the MLA column is identical; only the FFN
     // column differs (kind="dense" pins the dense-FFN variant, default MoE)
     this.kind = st?.kind ?? (this.getAttribute('kind') === 'dense' ? 'dense' : 'moe');
@@ -1656,8 +1666,9 @@ export class Dsv3Layer extends HTMLElement {
       // param-bytes always shows sizes multiplied out — no toggle to offer
       const sizeCtl = this.getAttribute('lens') === 'param-bytes' ? [] : ['sizes:', mkDimsBtn()];
       // the optim variant is pinned per block; consolidated allows ×N (long!);
-      // local toggles between one block and the stage total
-      const cumCtl = this.hasAttribute('optim') && !this.hasAttribute('consolidated') ? [] : [mkCumBtn()];
+      // local is pinned cumulative (the stage total — what the fit bar prices)
+      const cumCtl = (this.hasAttribute('optim') && !this.hasAttribute('consolidated')) || LOCALKNOBS
+        ? [] : [mkCumBtn()];
       // no kind select when MLA-only (kind-independent) or when the tabs carry the flip
       if (KN('blocks')) {
         if (SCOPE === 'mla' || this.hasAttribute('tabs')) mini2.append(...sizeCtl, ...cumCtl);
@@ -1978,6 +1989,7 @@ export class Dsv3Layer extends HTMLElement {
       root.append(foot);
     }
     if (this._ctl.quant) this.attachTip(root);   // no tooltips on the structure-only tier
+    else if (LOCALKNOBS) this.attachTip(root, true);   // …except the raw-bytes cross-check lens
     this.append(style, root);
     this.applyHl();
   }
@@ -2173,7 +2185,10 @@ export class Dsv3Layer extends HTMLElement {
     // + 8 B optimizer when shown), formatted as binary bytes — the number on a
     // box always totals exactly the squares drawn in it
     const fmtPB = (nParams, cls) => fmtBytes(nParams * BPPT(cls));
-    const fmtPV = (n, cls = 'd') => PBYTES ? fmtPB(n, cls) : fmtP(n);
+    // param-bytes labels ride a data-raw tspan: hovering the rounded number
+    // shows the unrounded byte count (attachTip) — the cross-check affordance
+    const fmtPV = (n, cls = 'd') => PBYTES
+      ? `<tspan data-raw="${(n * BPPT(cls)).toFixed(2)}">${fmtPB(n, cls)}</tspan>` : fmtP(n);
     const pk = (n, noK = false) => {
       if (PBYTES && !BPPT()) return '';   // nothing visible, nothing to number
       if (LOCAL && this.partSel != null && this.partSel !== 1) return '';   // norms/micro ops are non-expert
@@ -2536,10 +2551,11 @@ export class Dsv3Layer extends HTMLElement {
         // columns); the wire gaps grow with the rows (chipSpaceA prices them)
         const CROW = ov?.short ? 8 : CHIP_ROW;
         const [sqX, sqY] = ov?.short ? [x + 60, y + 17] : [x, y + 12];
+        const bLbl = `<tspan data-raw="${b4096.toFixed(2)}">${fmtBytes(b4096)}</tspan>`;
         let g = ov?.short
           ? `<text class="tensor tsave" x="${x}" y="${y + 8}">${needDir(ids, ov?.readers)} ${name}${lock}</text>` +
-            `<text class="tensor tsave" x="${x}" y="${y + 21}">${fmtBytes(b4096)}${facTxt('a')}</text>`
-          : `<text class="tensor tsave" x="${x}" y="${y + 8}">${needDir(ids, ov?.readers)} ${name} · ${fmtBytes(b4096)}${facTxt('a')}${lock}</text>`;
+            `<text class="tensor tsave" x="${x}" y="${y + 21}">${bLbl}${facTxt('a')}</text>`
+          : `<text class="tensor tsave" x="${x}" y="${y + 8}">${needDir(ids, ov?.readers)} ${name} · ${bLbl}${facTxt('a')}${lock}</text>`;
         if (hollow) g += `<rect x="${sqX + 0.4}" y="${sqY + 0.4}" width="4.2" height="3.2" fill="none" stroke="#eda100" stroke-width="0.8"/>`;
         else for (let i = 0; i < nsq; i++)
           g += `<rect x="${sqX + (i % CROW) * 6}" y="${sqY + Math.floor(i / CROW) * 6}" width="5" height="4" fill="#eda100"/>`;
@@ -3732,8 +3748,11 @@ export class Dsv3Layer extends HTMLElement {
     }
     return svgEl;
   }
-  // instant tooltips; click a tipped element (not a button) to pin
-  attachTip(root) {
+  // instant tooltips; click a tipped element (not a button) to pin.
+  // rawOnly (the local/static tier): ONLY the raw-bytes cross-check lens —
+  // hovering a rounded byte label (data-raw tspan, or a fit-chart value's
+  // data-true) shows the unrounded count; the prose tooltips stay off.
+  attachTip(root, rawOnly = false) {
     const tip = el('div', 'lv-tip');
     root.append(tip);
     let pinned = false;
@@ -3742,13 +3761,21 @@ export class Dsv3Layer extends HTMLElement {
       tip.style.left = Math.min(ev.clientX - r.left + 14, r.width - 280) + 'px';
       tip.style.top = (ev.clientY - r.top + 14) + 'px';
     };
+    const rawOf = (ev) => {
+      const t = ev.target.closest?.('[data-raw], text[data-true]');
+      const v = t && +(t.dataset.raw ?? t.dataset.true);
+      return Number.isFinite(v) ? `${v.toLocaleString('en-US', { maximumFractionDigits: 2 })} B` : null;
+    };
     root.addEventListener('mousemove', (ev) => {
       if (pinned) return;
-      const t = ev.target.closest?.('[data-tip]');
-      if (t) { tip.textContent = t.dataset.tip; tip.style.display = 'block'; place(ev); }
+      const raw = rawOf(ev);
+      const t = rawOnly ? null : ev.target.closest?.('[data-tip]');
+      if (raw) { tip.textContent = raw; tip.style.display = 'block'; place(ev); }
+      else if (t) { tip.textContent = t.dataset.tip; tip.style.display = 'block'; place(ev); }
       else tip.style.display = 'none';
     });
     root.addEventListener('click', (ev) => {
+      if (rawOnly) return;   // raw values pin nothing — they're a hover lens
       if (pinned) { pinned = false; tip.classList.remove('pinned'); tip.style.display = 'none'; return; }
       const t = ev.target.closest?.('[data-tip]');
       if (t && !ev.target.closest('button, select')) {
