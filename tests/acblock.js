@@ -96,9 +96,9 @@ T.check('fp8 widget: the fp8 recipe shrinks the tally (76 pickets — o_proj run
   const pill = (w) => w.querySelector('.lv-foot2 rect[stroke="#8c5a19"]')?.parentElement.textContent ?? null;
   T.check('fp8ᵀ off: the bwd ribbon carries the requant round-trip pill', /requantᵀ ≈ 145 µs/.test(pill(f8)), pill(f8));
   T.check('no traffic pill on the bf16 AC widget', pill(ac) === null, pill(ac));
-  f8.querySelector('input[type="checkbox"]').click(); await T.tick(400);
+  f8.querySelector('input[data-knob="transposed"]').click(); await T.tick(400);
   T.check('fp8ᵀ on: the pill flips to the fwd ᵀ-writes', /ᵀ-writes ≈ 72 µs/.test(pill(f8)), pill(f8));
-  f8.querySelector('input[type="checkbox"]').click(); await T.tick(400);
+  f8.querySelector('input[data-knob="transposed"]').click(); await T.tick(400);
 }
 // DOUBLED rows: recomputed ops carry a second picket row in the recompute
 // color; saved ops don't. Hollow amber grids price the counterfactual stash.
@@ -360,16 +360,27 @@ T.check('sub-picket GEMMs wear the hollow trace',
   const dbtn = (id) => f8.querySelector(`button[data-dt="${id}"]`);
   T.check('router dtype button is pinned (disabled, fp32 under dsv3-fp8)',
     dbtn('router').disabled && dbtn('router').textContent === 'fp32', dbtn('router').textContent);
-  // attn-out: the paper's own stash format, its own toggle pair
-  T.check('o_proj shows e5m6 under dsv3-fp8 (the paper stash format)',
-    dbtn('o_proj').textContent === 'e5m6', dbtn('o_proj').textContent);
+  // o_proj: box tag = pinned COMPUTE dtype (e4m3 — the one GEMM whose stash
+  // and compute formats differ); the stash lever is the E5M6 CHECKBOX
+  T.check('o_proj tag is pinned COMPUTE e4m3 (stash format is the checkbox)',
+    dbtn('o_proj').disabled && dbtn('o_proj').textContent === 'e4m3', dbtn('o_proj').textContent);
   const attnChip = () => [...f8.querySelectorAll('text')].map(n => n.textContent).find(t => /attn out ·/.test(t));
   T.check('attn out chip prices E5M6 (6.4 GiB)', /6\.4 GiB e5m6/.test(attnChip()), attnChip());
-  dbtn('o_proj').click(); await T.tick(400);
-  T.check('o_proj toggles e5m6 → bf16 (never mxfp8)', dbtn('o_proj').textContent === 'bf16', dbtn('o_proj').textContent);
-  dbtn('o_proj').click(); await T.tick(400);
-  T.check('and back to e5m6 (recipe chip re-lights)',
-    dbtn('o_proj').textContent === 'e5m6' && btn(f8, 'recipe', 'dsv3-fp8').classList.contains('on'), '');
+  const e5cb = f8.querySelector('input[data-knob="e5m6"]');
+  T.check('E5M6 checkbox present, ON under dsv3-fp8', e5cb && e5cb.checked && !e5cb.disabled, '');
+  e5cb.click(); await T.tick(400);
+  T.check('unchecking stashes attn out bf16 (+2.1 GiB) and drops to custom',
+    /8\.5 GiB bf16/.test(attnChip()) && /= 42\.9 GiB/.test(tHead(f8))
+    && btn(f8, 'recipe', 'custom').classList.contains('on'), attnChip());
+  f8.querySelector('input[data-knob="e5m6"]').click(); await T.tick(400);
+  T.check('re-checking restores the paper recipe (recognition sees the checkbox)',
+    /= 40\.8 GiB/.test(tHead(f8)) && btn(f8, 'recipe', 'dsv3-fp8').classList.contains('on'), tHead(f8));
+  // the ᵀ checkbox counts toward recognition too
+  f8.querySelector('input[data-knob="transposed"]').click(); await T.tick(400);
+  T.check('e4m3ᵀ ON deviates from dsv3-fp8 (canonical OFF: DeepSeek requantizes) → custom',
+    btn(f8, 'recipe', 'custom').classList.contains('on'), '');
+  f8.querySelector('input[data-knob="transposed"]').click(); await T.tick(400);
+  T.check('ᵀ back off: dsv3-fp8 relights', btn(f8, 'recipe', 'dsv3-fp8').classList.contains('on'), '');
   dbtn('qkv_down').click(); await T.tick(400);   // fp8 → bf16 (not fp32)
   T.check('dtype click toggles fp8 → bf16 (no fp32 in the cycle)',
     dbtn('qkv_down').textContent === 'bf16', dbtn('qkv_down').textContent);

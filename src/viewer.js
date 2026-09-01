@@ -4,7 +4,7 @@
 
 import { fmtUs, fmtNum, DSV3, HARDWARE } from './model.js';
 import { simulate, LEVELS } from './sim.js';
-import { resolveMatmuls, MATMULS, RECIPES } from './memory.js';
+import { resolveMatmuls, MATMULS, RECIPES, RECIPE_T } from './memory.js';
 import { blockGraph, analyze, RECOMPUTE_PRESETS, MARKABLE } from './blockgraph.js';
 import { PARAMS } from './params.js';
 
@@ -796,6 +796,10 @@ export function patchTargets(forAttr, patch) {
 // picket never impersonates a byte bar. fp8 (Hopper tile-scaled) and mxfp8
 // (Blackwell MX) share the pink — same bytes, different provenance.
 const DT_STYLE = { bf16: '#52514e', e4m3: '#d6408b', mxfp8: '#d6408b', e5m6: '#7b2fa8', fp32: '#8a3324' };
+// e5m6 is a STASH format: the GEMM that reads it runs plain e4m3. Box tags,
+// pickets and ribbon runs speak COMPUTE dtype (this mapping); chips speak
+// stash format (dtOf) — purple appears only where the E5M6 fact lives.
+const COMPUTE_DT = (d) => d === 'e5m6' ? 'e4m3' : d;
 // the diagram's visual-language tokens (docs/diagram-grammar.md) — one
 // definition, scoped into each widget's stylesheet (the anatomy plan too)
 export const tokensCss = (s) => `
@@ -1288,9 +1292,12 @@ export class Dsv3Layer extends HTMLElement {
       const o = document.createElement('option'); o.value = o.textContent = name; preset.append(o);
     }
     // recognize the current matmul dtypes as a recipe (dtype buttons may have
-    // moved us off the attribute's preset), else show "custom"
+    // moved us off the attribute's preset), else show "custom". The stash-side
+    // CHECKBOXES count too: each recipe has a canonical e4m3ᵀ state (RECIPE_T)
+    // and the E5M6 choice rides mm.o_proj — flip either and you are custom
     const mmKey = (m) => MATMULS.map(x => m[x.id]).join(',');
-    const curRecipe = recipeOpts.find(k => mmKey(resolveMatmuls({ recipe: k })) === mmKey(this.matmuls));
+    const curRecipe = recipeOpts.find(k => mmKey(resolveMatmuls({ recipe: k })) === mmKey(this.matmuls)
+      && (RECIPE_T[k] ?? false) === !!this.transposed);
     preset.value = curRecipe ?? 'bf16';
     if (!curRecipe) {
       const o = document.createElement('option'); o.value = o.textContent = 'custom'; o.selected = true; preset.append(o);
@@ -1306,6 +1313,7 @@ export class Dsv3Layer extends HTMLElement {
       localTween(() => {
         this.setAttribute('recipe', preset.value);
         this.matmuls = resolveMatmuls({ recipe: preset.value });
+        this.transposed = RECIPE_T[preset.value] ?? false;   // recipes are full stash-policy bundles
       });
     };
     if (this._ctl.dtype) head.append(preset);
@@ -1382,10 +1390,25 @@ export class Dsv3Layer extends HTMLElement {
       'MoE-FFN inputs (the post-norm token stream and its dispatched copies) — the attention side is either replayed or kept E5M6 ' +
       '(single copy, pow-2 scales requantize the flip losslessly). The model generalizes honestly: any fp8 stash a wgrad reads would dual.';
     const tcb = document.createElement('input');
-    tcb.type = 'checkbox'; tcb.checked = this.transposed;
+    tcb.type = 'checkbox'; tcb.checked = this.transposed; tcb.dataset.knob = 'transposed';
     tcb.onchange = () => localTween(() => { this.transposed = tcb.checked; });
     tl.append(tcb, 'e4m3ᵀ dual stash (expert inputs)');
-    if (this._ctl.dtype) head.append(tl);
+    // the E5M6 sibling: the OTHER stash-format checkbox. It writes mm.o_proj
+    // (e5m6 ⇄ bf16), so recipe recognition sees it automatically; the all-fp8
+    // recipe pins the attn-out stash to e4m3 and the checkbox greys out.
+    const tl2 = document.createElement('label');
+    tl2.style.cssText = 'display:inline-flex;align-items:center;gap:4px;margin-left:8px;color:#52514e;';
+    tl2.title = 'DeepSeek’s customized 12-bit stash format, exclusively for the attention output (it feeds both ' +
+      'attention backward and the attn-out wgrad — too sensitive for e4m3, and pow-2 scales make the 1×128 → 128×1 ' +
+      'orientation flip lossless from ONE copy). OFF = stash it bf16 instead (+2.1 GiB here). ' +
+      'The GEMM runs e4m3 either way — this checkbox chooses the SAVE format only.';
+    const t2cb = document.createElement('input');
+    t2cb.type = 'checkbox'; t2cb.checked = this.matmuls.o_proj === 'e5m6'; t2cb.dataset.knob = 'e5m6';
+    t2cb.disabled = this.matmuls.o_proj === 'e4m3' || this.matmuls.o_proj === 'mxfp8';
+    if (t2cb.disabled) tl2.title = 'this recipe stashes the attention output in ' + this.matmuls.o_proj + ' (both orientations under ᵀ) — the E5M6 trick is the dsv3 recipe’s move';
+    t2cb.onchange = () => localTween(() => { this.matmuls = { ...this.matmuls, o_proj: t2cb.checked ? 'e5m6' : 'bf16' }; });
+    tl2.append(t2cb, 'E5M6 attn-out stash');
+    if (this._ctl.dtype) head.append(tl, tl2);
     // local: the multiplier is the stage's block count, not the whole model's
     const KBLK = this.hasAttribute('local') && this.getAttribute('lens') === 'param-bytes'
       ? (this.kind === 'dense' ? ppStage(this.stage ?? 1, this.pp, this.vpp, this.fold).dense
@@ -1541,10 +1564,14 @@ export class Dsv3Layer extends HTMLElement {
         (k) => localTween(() => { this.setAttribute('recompute', k); this.marks = { ...RECOMPUTE_PRESETS[k] }; }),
         (st) => localTween(() => { this.marks = { ...st }; })));
       if (this._ctl.dtype) hh.append(segGrp('precision recipe', 'recipe', recipeOpts, curRecipe,
-        () => ({ ...this.matmuls }),
-        (k) => localTween(() => { this.setAttribute('recipe', k); this.matmuls = resolveMatmuls({ recipe: k }); }),
-        (st) => localTween(() => { this.matmuls = { ...st }; })));
-      if (this._ctl.dtype) hh.append(tl);
+        () => ({ mm: { ...this.matmuls }, t: !!this.transposed }),   // custom memory carries BOTH channels
+        (k) => localTween(() => {
+          this.setAttribute('recipe', k);
+          this.matmuls = resolveMatmuls({ recipe: k });
+          this.transposed = RECIPE_T[k] ?? false;   // recipes are full stash-policy bundles
+        }),
+        (st) => localTween(() => { this.matmuls = { ...(st.mm ?? st) }; if (st.mm) this.transposed = st.t; })));
+      if (this._ctl.dtype) hh.append(tl, tl2);
       // ctx: the section's FIXED parallelism as a READOUT row that mirrors
       // the full sim's knob layout exactly (cluster · pipeline · SPMD mesh ·
       // ZeRO, same groups, same places) — locked, so it reads as context,
@@ -2143,8 +2170,8 @@ export class Dsv3Layer extends HTMLElement {
         ? `<button xmlns="http://www.w3.org/1999/xhtml" class="st dtb" data-dt="${id}" disabled style="color:${DT_STYLE[dt(id)]};cursor:default;opacity:0.8" ` +
           `title="pinned: the router runs fp32 in production (tiny GEMM, numerically sensitive) — it follows the recipe, not a per-op lever">${dt(id)}</button>`
         : id === 'o_proj'
-          ? `<button xmlns="http://www.w3.org/1999/xhtml" class="st dtb" data-dt="${id}" style="color:${DT_STYLE[dt(id)]}" ` +
-            `title="toggle the attn-out STASH: bf16 ⇄ e5m6 (DeepSeek's customized 12-bit format — read by attention backward too, so it's kept wider than fp8; the GEMM itself runs fp8 either way)">${dt(id)}</button>`
+          ? `<button xmlns="http://www.w3.org/1999/xhtml" class="st dtb" data-dt="${id}" disabled style="color:${DT_STYLE[COMPUTE_DT(dt(id))]};cursor:default;opacity:0.8" ` +
+            `title="pinned: the GEMM's COMPUTE dtype — its input's SAVE format is the 'E5M6 attn-out stash' checkbox above (the one GEMM whose stash and compute formats differ)">${COMPUTE_DT(dt(id))}</button>`
           : `<button xmlns="http://www.w3.org/1999/xhtml" class="st dtb" data-dt="${id}" style="color:${DT_STYLE[dt(id)]}" ` +
             `title="toggle precision: bf16 ⇄ ${FP8K}">${dt(id)}</button>`) + '</foreignObject>';
     // the block-output add has NO free mark: its output IS the next block's
@@ -2211,7 +2238,7 @@ export class Dsv3Layer extends HTMLElement {
     const opDt = (id) => {
       const n = ana.byId[id];
       if (!n) return 'vector';
-      if (n.opKind === 'matmul' || n.opKind === 'attn') return dt(id === 'gate_up' ? 'ffn_gate_up' : id);
+      if (n.opKind === 'matmul' || n.opKind === 'attn') return COMPUTE_DT(dt(id === 'gate_up' ? 'ffn_gate_up' : id));
       return 'vector';
     };
     // per-op FLOP formulas (per token) for the hover tooltips
@@ -2365,6 +2392,7 @@ export class Dsv3Layer extends HTMLElement {
     const REDO_OP = ' fill-opacity="0.55"';
     const flopBar = (x, y, flopsTok, dt2, maxW = W - 16, dtp, id) => {
       if (!flopsTok || !this._ctl.quant) return;
+      dt2 = COMPUTE_DT(dt2); dtp = dtp && COMPUTE_DT(dtp);   // pickets speak COMPUTE dtype (e5m6 is a stash format; pricing is identical)
       // recompute share, tweened: membership pours in/out with the marks
       const rT = !id ? 0 : lerpQ(
         anaP ? (anaP.replayed.has(id) ? flopEq(flopsTok, dtp ?? dt2) : 0) : (ana.replayed.has(id) ? flopEq(flopsTok, dt2) : 0),
@@ -3580,13 +3608,11 @@ export class Dsv3Layer extends HTMLElement {
     for (const b of svgEl.querySelectorAll('button[data-dt]')) {
       b.onclick = () => {
         const mutate = () => {
-          // per-op two-state toggles: attn-out's realistic pair is bf16 ⇄ e5m6
-          // (the paper's stash format); every other GEMM is bf16 ⇄ the
-          // instance's fp8 flavor (fp8 tile-scaled on Hopper recipes, mxfp8 on
-          // the Blackwell one). Anything else (stale states) exits via bf16.
-          const cycle = b.dataset.dt === 'o_proj'
-            ? { bf16: 'e5m6', e5m6: 'bf16' }
-            : { bf16: FP8K, e4m3: 'bf16', fp8: 'bf16', mxfp8: 'bf16' };   // 'fp8' = stale URL states from the old key
+          // per-op two-state toggles: bf16 ⇄ the instance's fp8 flavor
+          // (e4m3 tile-scaled on the Hopper recipes, mxfp8 on the Blackwell
+          // one). o_proj has no per-op lever (its tag is pinned COMPUTE; the
+          // stash lever is the E5M6 checkbox). Stale states exit via bf16.
+          const cycle = { bf16: FP8K, e4m3: 'bf16', fp8: 'bf16', mxfp8: 'bf16' };
           this.matmuls[b.dataset.dt] = cycle[this.matmuls[b.dataset.dt]] ?? 'bf16';
         };
         if (this.hasAttribute('local') && this.getAttribute('lens') === 'param-bytes') {

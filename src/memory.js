@@ -65,6 +65,12 @@ export const RECIPES = {
   'nv-mxfp8': { qkv_down: 'mxfp8', q_up: 'mxfp8', kv_up: 'mxfp8', attn: 'mxfp8', o_proj: 'bf16', ffn_gate_up: 'mxfp8', ffn_down: 'mxfp8' },
 };
 
+// each recipe's CANONICAL stash-side checkbox state: the e4m3ᵀ dual stash is
+// part of the production H100 recipe (notes.txt quantizes with transpose at
+// forward); DeepSeek's own recipe re-quantizes in backward instead (off).
+// Recipe recognition compares these too — flip a checkbox and you are custom.
+export const RECIPE_T = { 'all-fp8': true };
+
 export function resolveMatmuls(cfg) {
   const recipe = cfg.recipe ?? (cfg.dtype === 'mxfp8' ? 'nv-mxfp8' : 'bf16');
   return {
