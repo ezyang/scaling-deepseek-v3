@@ -313,3 +313,25 @@ No state of its own; unbound instances read `pp`/`sched`/`stage` attributes.
 ## Other elements (unchanged conventions)
 - `<dsv3-trace level height title config>` — the canvas trace viewer over the
   simulator (not yet on a published page; the timing posts' widget).
+
+## Mobile framing (studies/mobile.js, ≤860px)
+
+Applied by JS at load, one-way, so wider layouts never see it. Every
+top-level widget (nested ones ride inside their host) is measured at its
+natural desktop width — width forced wide, `render()` re-run (renderers bake
+pixel positions at render time), extent = the union of descendant rects so
+inner scroll offsets and left overhangs (the tokens rail) are captured, and
+`.mwide` frees viewport-capped internals like the anatomy grid's 100vw
+breakout. The widget then becomes an inert scaled preview (children lose
+pointer events, so taps land on the host; an `.mopen` "tap to explore"
+button follows it). Tapping enters FOCUS MODE: everything else in main is
+display-none'd, the widget drops its transform, and the PAGE scrolls it at
+natural width — native two-axis pan, pinch zoom, full-size hit targets, a
+fixed `.mclose` pill (Escape also closes). Widgets are never moved in the
+DOM: `connectedCallback` does not tolerate a re-mount.
+
+Margin notes become real end-of-post footnotes (`.mnotes` before the series
+nav): refs turn into numbered links, notes get ↩ backlinks, and the inline
+negative `margin-top` shunts that position notes in the desktop gutter are
+cleared (study.css also neutralizes them for the 861–1040px note-boxes).
+tests/mobile.js (01) and tests/mobile02.js (02) pin all of this at 430px.

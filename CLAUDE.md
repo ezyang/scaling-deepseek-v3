@@ -62,7 +62,12 @@ generality.
   visible text reflow when the widget mounts) at BOTH the supported minimum
   viewport (1366px — every container is width-capped, so layout is identical
   at any width above it) and a wide one, and reports the value to paste.
-  Below 1366 knob rows may wrap; ≤860 is the stacked mobile layout.
+  Below 1366 knob rows may wrap. At ≤860 studies/mobile.js reframes posts:
+  widgets become inert scaled previews (tap → focus mode: prose hides and
+  the PAGE pans the natural-width widget) and margin notes become end-of-post
+  footnotes; tests/mobile*.js pin this at 430px. Widgets are never re-mounted
+  (connectedCallback doesn't tolerate it) and never laid out below natural
+  width — mobile re-frames the desktop render, it doesn't re-implement it.
 
 ## Modeling conventions
 

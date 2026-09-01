@@ -64,10 +64,38 @@ main { counter-reset: mn; }
 .mn::before { content: counter(mn) ". "; color: #b05f00; font-weight: 600; }
 dsv3-layer, dsv3-trace, dsv3-anatomy, dsv3-beat-deck, dsv3-pp-schedule, dsv3-pp-fold, figure, table.xcheck { clear: right; }
 @media (max-width: 1040px) {
-  .mn { float: none; clear: none; width: auto; margin: 8px 0;
+  /* !important: authors shunt gutter notes past tall figures with inline
+     negative margin-tops (style="margin-top:-9em") — those offsets are
+     meaningless once the note sits in the flow */
+  .mn { float: none; clear: none; width: auto; margin: 8px 0 !important;
     display: block; padding: 6px 10px; border-left: 3px solid #e1e0d9;
     background: #f3f2ee; border-radius: 0 4px 4px 0; }
 }
+
+/* mobile (≤860px) framing, built by studies/mobile.js: widgets become inert
+   scaled previews (tap → focus mode: prose hidden, the PAGE pans the widget
+   at natural width); margin notes become end-of-post footnotes. All classes
+   below only exist once mobile.js has run, so wider layouts never see them. */
+.mprev { cursor: pointer; }
+.mprev * { pointer-events: none !important; }
+/* .mwide (permanent once previewed): the widget is sized by mobile.js, so
+   viewport-based breakouts (the anatomy grid's 100vw cap) must follow the
+   host's width instead of the 430px viewport */
+.mwide .anat-grid { width: 100% !important; left: 0 !important; transform: none !important; }
+.mopen { display: block; margin: -12px 0 26px; font: 12px ui-monospace, Menlo, monospace;
+  padding: 6px 12px; border: 1px solid #c3c2b7; border-radius: 6px;
+  background: #fff; color: #52514e; cursor: pointer; }
+body.mfocus main > :not(.mfull-top) { display: none !important; }
+.mclose { position: fixed; top: 10px; right: 10px; z-index: 1000; font: 18px/1 system-ui;
+  padding: 10px 13px; border: 1px solid #c3c2b7; border-radius: 999px; background: #fff;
+  box-shadow: 0 1px 6px rgba(11, 11, 11, 0.15); cursor: pointer; }
+.mn-ref.live::after { content: none; }
+.mn-ref.live a { color: #b05f00; font-weight: 600; text-decoration: none; }
+.mnotes li { font-size: 13.5px; color: #52514e; margin: 6px 0; }
+.mnotes .mn { float: none; clear: none; width: auto; margin: 0 !important; display: inline;
+  padding: 0; border: 0; background: none; font-size: 13.5px; }
+.mnotes .mn::before { content: none; }
+.mnotes .mback { text-decoration: none; }
 
 /* floating section rail (long posts; built by toc.js). The left gutter
    belongs to the anatomy plan column, so the rail reserves NO width there:
