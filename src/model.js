@@ -4,7 +4,10 @@
 export const HARDWARE = {
   h800: {
     label: 'H800 (Hopper, export NVLink)',
-    flops: { bf16: 989e12, fp8: 1979e12 },
+    // fp32 = CUDA cores (67 TFLOP/s): a TRUE-fp32 GEMM (the pinned router —
+    // TF32 would truncate the mantissa the pin exists to keep) runs ~15×
+    // slower per FLOP than bf16 tensor cores
+    flops: { bf16: 989e12, fp8: 1979e12, fp32: 67e12 },
     // Fraction of peak a well-tuned GEMM achieves. Hopper has no native MX
     // block scaling, so the DeepSeek-style fine-grained FP8 recipe pays for
     // scale handling / higher-precision accumulation out of its 2x.
@@ -16,7 +19,7 @@ export const HARDWARE = {
   },
   h100: {
     label: 'H100 SXM',
-    flops: { bf16: 989e12, fp8: 1979e12 },
+    flops: { bf16: 989e12, fp8: 1979e12, fp32: 67e12 },   // fp32 = CUDA cores (see h800)
     gemmEff: { bf16: 0.80, mxfp8: 0.70 },
     attnEff: 0.60,
     hbm: 3.35e12, hbmEff: 0.78, memGB: 80,

@@ -89,16 +89,18 @@ T.check('back to dsv3', gib() === 66.6, gib());
   T.check('dsv3 quantum is smaller', kib < kibNone, `${kib} vs ${kibNone}`);
   btn(ac, 'recompute', 'dsv3').click(); await T.tick(300);
 }
-// ---- FLOP pickets: one FIXED unit (10 MFLOP/token ≈ 41 µs/mb) — an fp8
-// flip halves the COUNT, not the scale. Counting via the fwd ribbon (= the
-// boxes' pickets laid end to end): bf16 fwd ≈ 1.34 GFLOP/tok = 134 pickets.
+// ---- FLOP pickets: one FIXED unit (≈41 µs/mb at H100 peak = 10 MFLOP/token
+// at the bf16 rate) — an fp8 flip halves the COUNT, not the scale. Counting
+// via the fwd ribbon (= the boxes' pickets laid end to end): bf16 fwd ≈
+// 1.34 GFLOP/tok + the fp32 router repriced at CUDA-core rate (≈15× bf16
+// per FLOP) = 139 pickets.
 const fwdN = (l) => {
   const lab = [...tally(l).querySelectorAll('text')].find(t => t.textContent === 'fwd');
   const y0 = +lab.getAttribute('y') - 6;
   return [...tally(l).querySelectorAll('rect[height="5"]')]
     .filter(r => Math.abs(+r.getAttribute('y') - y0) < 3).length;
 };
-T.check('AC widget (bf16): fwd = 134 pickets at the fixed unit', fwdN(ac) === 134, fwdN(ac));
+T.check('AC widget (bf16): fwd = 139 pickets at the fixed unit', fwdN(ac) === 139, fwdN(ac));
 // the router label never flips between sections: the AC (marks) tier wears
 // the same pinned fp32 tag as the dtype tier — bf16 recipe pins router fp32
 T.check('AC widget: router wears the pinned fp32 🔒 tag (no bf16 flip between sections)', (() => {
@@ -107,10 +109,10 @@ T.check('AC widget: router wears the pinned fp32 🔒 tag (no bf16 flip between 
 })(), '');
 T.check('AC widget: no OTHER dtype buttons below the dtype tier',
   ac.querySelectorAll('button[data-dt]').length === 1, ac.querySelectorAll('button[data-dt]').length);
-T.check('fp8 widget: the fp8 recipe shrinks the tally (76 pickets — o_proj runs fp8 too, e5m6 names its stash)', fwdN(f8) === 76, fwdN(f8));
+T.check('fp8 widget: the fp8 recipe shrinks the tally (81 pickets — o_proj runs fp8 too, e5m6 names its stash)', fwdN(f8) === 81, fwdN(f8));
 { // recipe flip to bf16 restores the count — the unit never renormalizes
   btn(f8, 'recipe', 'bf16').click(); await T.tick(400);
-  T.check('recipe→bf16 restores the full count', fwdN(f8) === 134, fwdN(f8));
+  T.check('recipe→bf16 restores the full count', fwdN(f8) === 139, fwdN(f8));
   // the fp8 widget is PINNED to the dsv3 recompute policy, so its bf16
   // readout equals the AC widget's dsv3 number — the two sections agree
   T.check('fp8 readout follows the recipe (bf16 = the AC dsv3 66.6 GiB)', /= 66\.6 GiB/.test(tHead(f8)), tHead(f8));
@@ -188,11 +190,12 @@ T.check('fp8 widget: the fp8 recipe shrinks the tally (76 pickets — o_proj run
     btn(f8, 'recipe', 'dsv3-fp8').classList.contains('on'), '');
 }
 // vector ops keep the unpriced fig-leaf (hollow dashed); sub-picket GEMMs
-// (router, kv down-proj half) wear the hollow trace
+// (the kv down-proj half — the router graduated to ~5 fp32 pickets at the
+// CUDA-core rate) wear the hollow trace
 T.check('norms/swiglu wear the hollow dashed fig-leaf',
   ac.querySelectorAll('.lv-scroll rect[height="4"][stroke-dasharray]').length >= 3, '');
 T.check('sub-picket GEMMs wear the hollow trace',
-  ac.querySelectorAll('.lv-scroll rect[width="1.4"]').length >= 2, '');
+  ac.querySelectorAll('.lv-scroll rect[width="1.4"]').length >= 1, '');
 // ---- the consolidated stash: SOLID linear bar over the GiB ruler
 {
   const bar = tally(ac).querySelector('rect[data-true]');
@@ -205,8 +208,8 @@ T.check('sub-picket GEMMs wear the hollow trace',
     Math.abs(+ghost.getAttribute('x') + +ghost.getAttribute('width') - (62 + 118.6 * 6)) < 2, '');   // 62 = TB_X gutter
   T.check('badge prices the lever vs the anchor', ribbons(ac).some(t => t.includes('▼×1.8')), '');
   T.check('the 80 GiB card line is drawn', ribbons(ac).some(t => t === '80 GiB'), '');
-  T.check('both rulers present (GiB + MFLOP/token)',
-    ribbons(ac).some(t => t.includes('minor tick = 1 GiB')) && ribbons(ac).some(t => t.includes('MFLOP/token')), '');
+  T.check('both rulers present (GiB + ms per mb·layer)',
+    ribbons(ac).some(t => t.includes('minor tick = 1 GiB')) && ribbons(ac).some(t => t.includes('ms per mb·layer')), '');
   // the honesty line: what the ruler does NOT meter, per the CURRENT policy
   T.check('unmetered-vector line names this policy\'s replays (dsv3: RoPE ×2 + norms + SwiGLU)',
     ribbons(ac).some(t => t.startsWith('not priced') && t.includes('RoPE ×2')
@@ -388,7 +391,7 @@ T.check('sub-picket GEMMs wear the hollow trace',
   const mid = fwdN(f8);
   await T.tick(400);
   T.check('picket count lerps through the dtype flip', mid > 92 && mid < 130, mid);
-  T.check('and lands on the full count', fwdN(f8) === 134, fwdN(f8));
+  T.check('and lands on the full count', fwdN(f8) === 139, fwdN(f8));
   btn(f8, 'recipe', 'dsv3-fp8').click(); await T.tick(400);
 }
 // per-op dtype buttons: bf16 ⇄ fp8 only (the article anchors on bf16 — no

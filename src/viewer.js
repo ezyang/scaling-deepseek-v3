@@ -1970,9 +1970,11 @@ export class Dsv3Layer extends HTMLElement {
             : `The shared expert${SCOPE === 'model' ? ' and dense MLPs share' : ' shares'} the ffn boxes; `))
           + `RoPE carries its own mark${this._ctl.quant ? ' (every preset replays it; saving it stashes the same bytes post-rotation)' : ''}.`,
       !this._ctl.quant ? '' :
-      'The picket run inside each op is its FLOP cost as time at peak \u2014 one picket = 10 MFLOP/token \u2248 41 \u00b5s per 4096-token microbatch (' +
-      'e4m3/mxfp8 counted half \u2014 2\u00d7 peak; fp32 counted double \u2014 half peak; dtype colors here and on the saved-tensor tags: pink e4m3, purple e5m6, dark bf16, brick fp32); ' +
-      'the lm head uses the same unit \u2014 per-token vocab work, independent of depth. Norms/SwiGLU ' +
+      'The picket run inside each op is its compute TIME at H100 peak \u2014 one picket \u2248 41 \u00b5s per 4096-token microbatch. ' +
+      'A picket packs 10 MFLOP/token at bf16\u2019s 989 TFLOP/s; e4m3/mxfp8 run 2\u00d7 (1979), so theirs pack 20; ' +
+      'the fp32 router runs on CUDA cores at 67 TFLOP/s (TF32 would truncate the mantissa the pin exists to keep) \u2014 \u224815\u00d7 bf16 time per FLOP. ' +
+      'Dtype colors here and on the saved-tensor tags: pink e4m3, purple e5m6, dark bf16, brick fp32. ' +
+      'The lm head uses the same unit \u2014 per-token vocab work, independent of depth. Norms/SwiGLU ' +
       'get a hollow dashed fig-leaf (bandwidth-bound, compute precision unspecified).',
       this._ctl.dtype ? 'One click on a dtype button toggles bf16 \u21c4 e4m3 (attn-out and the router are pinned \ud83d\udd12; the E5M6 checkbox picks the attn-out save format).' : '',
       this._ctl.quant
@@ -2307,12 +2309,17 @@ export class Dsv3Layer extends HTMLElement {
       return b >= 2 ** 30 ? (b / 2 ** 30).toFixed(1) + ' GiB' : b >= 2 ** 20 ? (b / 2 ** 20).toFixed(0) + ' MiB' : (b / 1024).toFixed(0) + ' KiB';
     };
     // FLOP cost strip inside each op box, MFU-style: TIME at peak
-    // (bf16-equivalent; mxfp8 counted half since its peak is 2x). Scaled so the
+    // (fp8 flavors counted half — 2× peak; fp32 at the CUDA-core rate). Scaled so the
     // largest op in the transformer block fills exactly one row of 30 blocks;
     // the lm head takes however many rows it needs at the same scale.
     // Colored by the op's precision; vector ops get a muted fig-leaf block.
     // e5m6 names a STASH format (the attn-out linear) — its GEMM runs fp8
-    const flopEq = (flopsTok, d) => flopsTok * (d === 'e4m3' || d === 'mxfp8' || d === 'e5m6' ? 0.5 : d === 'fp32' ? 2 : 1);
+    // time relative to the bf16 rate, calibrated to the H100 roofline: the
+    // fp8 flavors run at 2× tensor peak (half width); fp32 runs on CUDA
+    // cores (989/67 ≈ 14.8× bf16 time per FLOP — TF32 would defeat the
+    // router pin's purpose, so it gets the true-fp32 rate)
+    const RF32 = HARDWARE.h100.flops.bf16 / HARDWARE.h100.flops.fp32;
+    const flopEq = (flopsTok, d) => flopsTok * (d === 'e4m3' || d === 'mxfp8' || d === 'e5m6' ? 0.5 : d === 'fp32' ? RF32 : 1);
     const opDt = (id) => {
       const n = ana.byId[id];
       if (!n) return 'vector';
@@ -2418,12 +2425,12 @@ export class Dsv3Layer extends HTMLElement {
       }
       P.push(g);
     };
-    // FLOP cost as a BAR: length = time at peak (squares count bytes; length
-    // measures time — the pipeline strip's language). ONE fixed unit:
-    // 10 MFLOP/token (bf16-equivalent) per picket ≈ 41 µs per 4096-token
-    // (bwd ≈ 268 pickets fills most of the tally runway)
-    // microbatch at bf16 peak, so dtype flips visibly stretch/shrink the
-    // runs instead of renormalizing the scale.
+    // FLOP cost as a BAR: length = TIME at H100 peak (squares count bytes;
+    // length measures time — the pipeline strip's language). ONE fixed
+    // unit: a picket ≈ 41 µs per 4096-token microbatch (= 10 MFLOP/token
+    // at the bf16 rate; e4m3 packs 20, CUDA-core fp32 only 0.68), so dtype
+    // flips visibly stretch/shrink the runs instead of renormalizing the
+    // scale. (bwd ≈ 280 pickets fills most of the tally runway)
     const TB_X = 62, TB_AVAIL = 852;   // tally ribbons: label gutter ('recompute' needs ~55px) + runway (sum keeps the svg at 1080)
     // NEUTRAL marks (⇄): a ↻ whose flip to keep would leave the stash total
     // EXACTLY unchanged — the recompute is free (an add, a rotation) and the
@@ -3617,7 +3624,7 @@ export class Dsv3Layer extends HTMLElement {
         `<text class="dims" x="${capX + 3}" y="${cy0 + 1}" fill="#d03b3b">80 GiB</text>`);
       ty = cy0 + 32;
     }
-    T.push(`<text class="grplabel" x="0" y="${ty + 9}">per-layer FLOPs as time at peak — one picket = 10 MFLOP/token (bf16-eq) ≈ 41 µs per 4096-token microbatch:</text>`);
+    T.push(`<text class="grplabel" x="0" y="${ty + 9}">per-layer compute as TIME at H100 peak — one picket ≈ 41 µs per 4096-token microbatch (10 MFLOP/token at the bf16 rate):</text>`);
     ty += 14;
     const DT_ORDER = { bf16: 0, e5m6: 1, e4m3: 2, mxfp8: 2, fp32: 3 };
     const ribbon = (label, list, wOf, num, comm, cOv, traffic) => {
@@ -3695,20 +3702,22 @@ export class Dsv3Layer extends HTMLElement {
     ribbon('bwd', fwdOps, (n) => 2 * wFwd(n), '2.00× (dgrad + wgrad)', null, null, traffic);
     ribbon('recompute', fwdOps, wRep, `+${(replayEq / fwdEq).toFixed(2)}×`, ana.replayComm, 'light');
     {
-      // the compute ruler: same device as the byte bars' — minor tick =
-      // 100 MFLOP/token (5 pickets), major = 1 GFLOP/token, bf16-equivalent
-      const PPF = 3 / FUNIT;                       // px per FLOP/token
+      // the compute ruler: TIME at H100 peak — ticks in ms per 4096-token
+      // microbatch·layer (1 ms = 989 GFLOP at the bf16 rate ≈ 241.5
+      // MFLOP/token ≈ 72px), so the µs pills riding the ribbons are
+      // directly commensurable with the GEMM runs. Minor = 0.5 ms, labels
+      // every 1 ms, majors keep the taller tick at 5 ms.
+      const PPF = 3 / FUNIT;                       // px per (bf16-rate) FLOP/token
+      const FPMS = HARDWARE.h100.flops.bf16 / 4096 / 1e3;   // FLOP/token per ms of peak bf16
       const rext = 2 * fwdEq * PPF + 12;           // bwd is always the longest ribbon
       const ry = ty + 2;
       T.push(`<line x1="${TB_X}" y1="${ry}" x2="${(TB_X + rext).toFixed(1)}" y2="${ry}" stroke="#c3c2b7" stroke-width="1"/>`);
-      // labels every 200 MFLOP (60px — the GiB ruler's cadence), majors keep
-      // the taller tick; MFLOP units so more ticks earn a number
-      for (let u = 0; u * 100e6 * PPF <= rext; u++) {
-        const x = TB_X + u * 100e6 * PPF, major = u % 10 === 0;
+      for (let u = 0; u * 0.5 * FPMS * PPF <= rext; u++) {
+        const x = TB_X + u * 0.5 * FPMS * PPF, major = u % 10 === 0;
         T.push(`<line x1="${x.toFixed(1)}" y1="${ry}" x2="${x.toFixed(1)}" y2="${ry + (major ? 5 : 2.5)}" stroke="#c3c2b7" stroke-width="1"/>`);
-        if (u > 0 && u % 2 === 0) T.push(`<text x="${x.toFixed(1)}" y="${ry + 14}" text-anchor="middle" font-size="8.5" fill="#898781">${u * 100}</text>`);
+        if (u > 0 && u % 2 === 0) T.push(`<text x="${x.toFixed(1)}" y="${ry + 14}" text-anchor="middle" font-size="8.5" fill="#898781">${u / 2}</text>`);
       }
-      T.push(`<text class="dims" x="${(TB_X + rext + 10).toFixed(1)}" y="${ry + 14}">MFLOP/token (bf16-eq) · LINEAR</text>`);
+      T.push(`<text class="dims" x="${(TB_X + rext + 10).toFixed(1)}" y="${ry + 14}">ms per mb·layer · LINEAR</text>`);
       ty = ry + 20;
     }
     T.push(`<text class="dims" x="${TB_X}" y="${ty + 8}">= ${(3 + replayEq / fwdEq).toFixed(2)}× fwd per training step</text>`);

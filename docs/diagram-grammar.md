@@ -49,9 +49,11 @@ the rest are conventions to uphold when editing the renderer.
 10. **Quantity encodings never share a shape.** SQUARES count bytes in
     pile contexts (weight strips, stash chips — one stated unit per figure,
     never double-counted; chip runs never wrap). PICKETS (2×5 thin rects)
-    count compute as time quanta — the 1D shape for the 1D quantity (one
-    picket = 10 MFLOP/token bf16-eq ≈ 41 µs/mb at peak; dtype flips change
-    the COUNT, never the scale; hollow trace = sub-unit). Linear memory
+    count compute as TIME quanta at H100 peak — the 1D shape for the 1D
+    quantity (one picket ≈ 41 µs/mb = 10 MFLOP/token at the bf16 rate;
+    e4m3 packs 20, CUDA-core fp32 0.68 — dtype flips change the COUNT,
+    never the scale; the compute ruler ticks in ms per mb·layer; hollow
+    trace = sub-unit). Linear memory
     COMPARISON bars are SOLID over a unit-graduated RULER (countability on
     the axis: minor = the unit, major = 8 minors, quanta nesting in powers
     of two — fold map 128 MiB/1 GiB, stash total 1 GiB/8 GiB); log charts
