@@ -88,6 +88,18 @@ T.check('fp8 widget: the fp8 recipe shrinks the tally (76 pickets — o_proj run
   btn(f8, 'recipe', 'dsv3-fp8').click(); await T.tick(400);
   T.check('back to dsv3-fp8 (attn out stashed E5M6: 40.8, was 42.9 at bf16 pricing)', /= 40\.8 GiB/.test(tHead(f8)), tHead(f8));
 }
+// the fp8ᵀ trade wears BOTH sides: the toggle state's unpriced cost rides
+// the ribbon as a bronze HBM-traffic pill (the a2a-pill pattern) — OFF =
+// backward requant round trips (bwd ribbon), ON = the second orientation's
+// forward writes (fwd ribbon). The bf16 AC widget has no fp8 stashes: no pill.
+{
+  const pill = (w) => w.querySelector('.lv-foot2 rect[stroke="#8c5a19"]')?.parentElement.textContent ?? null;
+  T.check('fp8ᵀ off: the bwd ribbon carries the requant round-trip pill', /requantᵀ ≈ 145 µs/.test(pill(f8)), pill(f8));
+  T.check('no traffic pill on the bf16 AC widget', pill(ac) === null, pill(ac));
+  f8.querySelector('input[type="checkbox"]').click(); await T.tick(400);
+  T.check('fp8ᵀ on: the pill flips to the fwd ᵀ-writes', /ᵀ-writes ≈ 72 µs/.test(pill(f8)), pill(f8));
+  f8.querySelector('input[type="checkbox"]').click(); await T.tick(400);
+}
 // DOUBLED rows: recomputed ops carry a second picket row in the recompute
 // color; saved ops don't. Hollow amber grids price the counterfactual stash.
 {

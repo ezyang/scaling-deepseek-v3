@@ -2,7 +2,7 @@
 // hover tooltips, click select, M marks, F focuses. Embeddable many times per
 // page via the <dsv3-trace> custom element or the TraceViewer class.
 
-import { fmtUs, fmtNum, DSV3 } from './model.js';
+import { fmtUs, fmtNum, DSV3, HARDWARE } from './model.js';
 import { simulate, LEVELS } from './sim.js';
 import { resolveMatmuls, MATMULS, RECIPES } from './memory.js';
 import { blockGraph, analyze, RECOMPUTE_PRESETS, MARKABLE } from './blockgraph.js';
@@ -3380,7 +3380,7 @@ export class Dsv3Layer extends HTMLElement {
     T.push(`<text class="grplabel" x="0" y="${ty + 9}">per-layer FLOPs as time at peak — one picket = 10 MFLOP/token (bf16-eq) ≈ 41 µs per 4096-token microbatch:</text>`);
     ty += 14;
     const DT_ORDER = { bf16: 0, e5m6: 1, fp8: 2, mxfp8: 2, fp32: 3 };
-    const ribbon = (label, list, wOf, num, comm, cOv) => {
+    const ribbon = (label, list, wOf, num, comm, cOv, traffic) => {
       T.push(`<text class="dims" x="0" y="${ty + 9}">${label}</text>`);
       let cx = TB_X, cy = ty + 3;
       const sorted = [...list].sort((p, q) => (DT_ORDER[opDt(p.id)] ?? 3) - (DT_ORDER[opDt(q.id)] ?? 3));
@@ -3396,20 +3396,52 @@ export class Dsv3Layer extends HTMLElement {
       }
       cx = TB_X + (drawn % per) * 3; cy += Math.floor(drawn / per) * 7;
       T.push(`<text class="dims" x="${(cx + 10).toFixed(1)}" y="${cy + 6}">${num}</text>`);
-      if (comm?.length) {   // replayed a2a wears the diagram's violet comm pill
-        const ct = `a2a ${comm.join(' + ')}`;
-        const tx = cx + 10 + num.length * 5.2 + 8, cw = (ct.length + 2) * 4.7 + 16;
-        T.push(`<rect x="${tx.toFixed(1)}" y="${cy - 4.5}" width="${cw.toFixed(1)}" height="15" rx="7.5" fill="#f3f1fb" stroke="#6b5bd2"/>` +
-          `<text class="dims" x="${(tx + 7).toFixed(1)}" y="${cy + 6}" style="fill:#4636a3">+ ${ct}</text>`);
-      }
+      // costs in FOREIGN currencies ride the ribbon as pills, named not
+      // priced — no pickets, since the ruler meters only the GEMM floor
+      let px = cx + 10 + num.length * 5.2 + 8;
+      const pill = (txt, tip, bg, stroke, ink) => {
+        const cw = (txt.length + 2) * 4.7 + 16;
+        if (px + cw > 1080) { px = TB_X + 10; cy += 17; }   // never clip: wrap under the ribbon
+        T.push(`<g data-tip="${escAttr(tip)}"><rect x="${px.toFixed(1)}" y="${cy - 4.5}" width="${cw.toFixed(1)}" height="15" rx="7.5" fill="${bg}" stroke="${stroke}"/>` +
+          `<text class="dims" x="${(px + 7).toFixed(1)}" y="${cy + 6}" style="fill:${ink}">+ ${txt}</text></g>`);
+        px += cw + 6;
+      };
+      if (comm?.length)     // replayed a2a wears the diagram's violet comm pill
+        pill(`a2a ${comm.join(' + ')}`,
+          'communication, not FLOPs — the replay re-runs the all-to-all; its exposed cost depends on overlap, so no number is claimed.',
+          '#f3f1fb', '#6b5bd2', '#4636a3');
+      if (traffic)          // HBM traffic (quantization round trips): bronze — bytes on the move
+        pill(traffic.txt, traffic.tip, '#f8f2e6', '#8c5a19', '#6f4712');
       ty = cy + 13;
     };
     const wFwd = (n) => lerpQ(eqP(n), eq(n));
     // replay membership lerps too: an op entering the replay set pours in
     // from zero, a leaving one drains out
     const wRep = (n) => lerpQ(anaP?.replayed.has(n.id) ? eqP(n) : 0, ana.replayed.has(n.id) ? eq(n) : 0);
-    ribbon('fwd', fwdOps, wFwd, '1.00×');
-    ribbon('bwd', fwdOps, (n) => 2 * wFwd(n), '2.00× (dgrad + wgrad)');
+    // the fp8ᵀ trade's OTHER side: whichever state the toggle is in, the
+    // unpriced cost is NAMED on the ribbon where it occurs (the a2a-pill
+    // pattern, in the bronze HBM-traffic class). OFF = DeepSeek's convention:
+    // backward re-quantizes every wgrad-read fp8 stash — a pure HBM round
+    // trip (the stash is cold; read + write have no producer to fuse into).
+    // ON = TE-style: the second orientation is an extra forward write, and
+    // the stash bar already carries the bytes. Quantization has a
+    // fusion-independent bandwidth FLOOR, so the pill claims a number —
+    // unlike the a2a pill, whose exposed cost depends on overlap.
+    let traffic = null;
+    {
+      const dualSet = this.transposed ? ana.dual
+        : analyze(blockGraph(this.kind, DSV3, this.matmuls, 4096), marks, true).dual;
+      const tB = [...dualSet].reduce((t2, i2) => t2 + (ana.byId[i2]?.outBytes ?? 0), 0) * 4096;
+      const us = (b) => Math.round(b / (HARDWARE.h100.hbm / 1e6));
+      const mib = (b) => Math.round(b / 2 ** 20);
+      if (tB) traffic = this.transposed
+        ? { on: 'fwd', txt: `ᵀ-writes ≈ ${us(tB)} µs`,
+          tip: `fp8ᵀ ON — both orientations are quantized at forward (cast-transpose), so backward re-quantization is avoided. The marginal cost is the second copy's HBM write: ≈ ${mib(tB)} MiB ≈ ${us(tB)} µs per microbatch·layer at 3.35 TB/s — plus the stash bytes already on the bar. Bandwidth, not GEMM FLOPs: named here, never metered by the ruler.` }
+        : { on: 'bwd', txt: `requantᵀ ≈ ${us(2 * tB)} µs`,
+          tip: `fp8ᵀ OFF — DeepSeek's convention: the stash keeps ONE orientation, and backward re-quantizes every fp8 stash a weight gradient reads (dequantize → transpose → quantize into 128×1 tiles). A pure HBM round trip — the stash is cold, nothing to fuse into: read + write ≈ ${mib(2 * tB)} MiB ≈ ${us(2 * tB)} µs per microbatch·layer at 3.35 TB/s. Bandwidth, not GEMM FLOPs: named here, never metered by the ruler.` };
+    }
+    ribbon('fwd', fwdOps, wFwd, '1.00×', null, null, traffic?.on === 'fwd' ? traffic : null);
+    ribbon('bwd', fwdOps, (n) => 2 * wFwd(n), '2.00× (dgrad + wgrad)', null, null, traffic?.on === 'bwd' ? traffic : null);
     ribbon('recompute', fwdOps, wRep, `+${(replayEq / fwdEq).toFixed(2)}×`, ana.replayComm, '#c74e1d');
     {
       // the compute ruler: same device as the byte bars' — minor tick =

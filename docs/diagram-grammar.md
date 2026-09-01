@@ -59,7 +59,14 @@ the rest are conventions to uphold when editing the renderer.
     explicit axis that names its scale (LINEAR or the log gridlines).
     Bandwidth-bound vector ops are deliberately unpriced (a hollow dashed
     fig-leaf): the model prices only the quadratic GEMM terms, since it
-    models no epilogue fusions.
+    models no epilogue fusions. Costs in FOREIGN currencies ride the tally
+    ribbons as PILLS, named not picketed — violet for comm (the replayed
+    a2a: no number, its exposed cost depends on overlap), bronze for HBM
+    traffic (quantization round trips: a fusion-independent bandwidth floor
+    exists, so the pill's tooltip claims the µs). The rule that keeps this
+    from becoming a full time model: the ruler meters only the GEMM floor,
+    and a pill exists only where a VISIBLE KNOB trades against the cost
+    (recompute ↔ a2a replay; fp8ᵀ ↔ requant round trips).
 
 ## Text and labels
 
@@ -82,6 +89,7 @@ the rest are conventions to uphold when editing the renderer.
 | `.box` | matmul/attention op (bold `.name` + grey `.dims`) |
 | `.op` | non-matmul op (grey pill, `.oplabel`) |
 | `.comm` | communication (violet) |
+| *traffic pill* (bronze `#8c5a19`) | HBM traffic — bytes on the move (quantization round trips); rides a tally ribbon, named + quantified (a bandwidth floor exists), never metered by the ruler |
 | `.res` | residual add (dashed) |
 | `.micro` | elided kernel (detail-only, italic) |
 | `.grp` | grouping enclosure (thin, `grplabel` inside top) |

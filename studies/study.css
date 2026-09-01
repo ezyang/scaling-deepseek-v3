@@ -75,7 +75,7 @@ dsv3-layer, dsv3-trace, figure, table.xcheck { clear: right; }
    an overlay panel ABOVE anything that extrudes left. Section clicks scroll
    without touching location.hash (that is widget-state territory). */
 .toc { position: fixed; left: 0; top: 50%; transform: translateY(-50%); z-index: 40;
-  padding: 10px 10px 10px 6px; display: flex; flex-direction: column; gap: 7px;
+  padding: 48px 10px 48px 6px; display: flex; flex-direction: column; gap: 7px;
   border: 1px solid transparent; border-left: 0; border-radius: 0 8px 8px 0; }
 .toc a { display: flex; align-items: center; gap: 8px; cursor: pointer; }
 .toc .tick { width: 12px; height: 3px; border-radius: 1.5px; background: #c3c2b7;
