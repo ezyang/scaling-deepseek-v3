@@ -4118,8 +4118,8 @@ dsv3-sheet { display: block; margin: 14px 0; position: relative; }
 .cellsheet td.vl.edv, .cellsheet td.vl.tg { background: #eef4fc; }
 .cellsheet td.vl.tg { cursor: pointer; }
 .cellsheet td.vl.tg:hover { background: #dcebfa; }
-.cellsheet td.nm.jmp { cursor: pointer; }
-.cellsheet td.nm.jmp:hover { text-decoration: underline dotted; }
+.cellsheet td.lb .lnk { color: #2a78d6; cursor: pointer; }
+.cellsheet td.lb .lnk:hover { text-decoration: underline; }
 /* the jump spotlight: everything but the target grays out behind the
    ring's giant veil; a click/scroll/key anywhere dismisses it */
 .cell-spot { position: fixed; z-index: 60; pointer-events: none; border-radius: 8px;
@@ -4143,10 +4143,26 @@ class Dsv3Sheet extends HTMLElement {
       if (ev.target.closest?.('.simp')) { this._sim = ev.target.checked; this.sync(); }
       else if (ev.target.closest?.('.nos')) { this._nos = ev.target.checked; this.sync(); }
     });
-    // the Haziza preset applies through the layer (tween + resync as usual)
+    // the Haziza preset applies through the layer (tween + resync as
+    // usual); clicking the LIT button toggles back to the config you came
+    // from (the segGrp chips' ping-pong convention)
     this._root.addEventListener('click', (ev) => {
       if (!ev.target.closest?.('.hzb') || !this._layer) return;
       const l = this._layer;
+      const snap = () => ({
+        matmuls: { ...l.matmuls }, marks: { ...l.marks },
+        transposed: l.transposed, fp8Params: l.fp8Params,
+        ep: l.ep, pp: l.pp, zero: l.zero, world: l.world,
+        stage: l.stage, sched: l.sched, vpp: l.vpp, fold: l.fold,
+      });
+      if (this._hzOn()) {
+        const back = this._hzPrev;
+        if (!back) return;
+        this._hzPrev = snap();
+        l.setLocal(() => Object.assign(l, { ...back, matmuls: { ...back.matmuls }, marks: { ...back.marks } }));
+        return;
+      }
+      this._hzPrev = snap();
       l.setLocal(() => Object.assign(l, {
         matmuls: { ...HAZIZA_CFG.matmuls }, marks: { ...HAZIZA_CFG.marks },
         transposed: HAZIZA_CFG.transposed, fp8Params: HAZIZA_CFG.fp8Params,
@@ -4190,8 +4206,8 @@ class Dsv3Sheet extends HTMLElement {
       if (ref) { this.reveal(ref.textContent); return; }
       const tr = ev.target.closest?.('tr');
       if (!tr?.dataset.cell) return;
-      const nm = ev.target.closest?.('td.nm.jmp');
-      if (nm) this._jump(tr.dataset.jk, tr.dataset.jc);
+      const lnk = ev.target.closest?.('td.lb .lnk');
+      if (lnk) this._jump(tr.dataset.jk, tr.dataset.jc);
       // clicking a row highlights it (click the highlighted row to clear);
       // the same persistent .hl the tooltip's jump uses, so it survives
       // syncs. SELECTION gestures are not row clicks: a click that ends a
@@ -4200,10 +4216,18 @@ class Dsv3Sheet extends HTMLElement {
       clearTimeout(this._hlT);
       if (ev.detail > 1 || !getSelection().isCollapsed) return;
       this._hlT = setTimeout(() => {
-        this._hl = this._hl === tr.dataset.cell && !nm ? null : tr.dataset.cell;
+        this._hl = this._hl === tr.dataset.cell && !lnk ? null : tr.dataset.cell;
         this.sync();
       }, 250);
     });
+  }
+  // is the layer sitting exactly on the Haziza config?
+  _hzOn() {
+    const l = this._layer;
+    return !!l && mmSig(l.matmuls) === mmSig(HAZIZA_CFG.matmuls)
+      && markSig(l.marks) === markSig(HAZIZA_CFG.marks)
+      && !l.transposed && !!l.fp8Params
+      && ['ep', 'pp', 'zero', 'world', 'stage', 'sched'].every((k5) => l[k5] === HAZIZA_CFG[k5]);
   }
   // can this edit go that way RIGHT NOW? Read the widget's own controls —
   // the same elements _edit clicks — so the sheet's disabled states can't
@@ -4305,15 +4329,13 @@ class Dsv3Sheet extends HTMLElement {
       + 'computed by evaluating exactly the formula printed here (hover a chart number for its formula; click to pin, then click names to drill)'
       + `<span style="float:right;display:inline-flex;gap:14px;align-items:center;">`
       + (() => {
-        const l = this._layer;
-        const on = l && mmSig(l.matmuls) === mmSig(HAZIZA_CFG.matmuls)
-          && markSig(l.marks) === markSig(HAZIZA_CFG.marks)
-          && !l.transposed && !!l.fp8Params
-          && ['ep', 'pp', 'zero', 'world', 'stage', 'sched'].every((k5) => l[k5] === HAZIZA_CFG[k5]);
+        const on = this._hzOn();
         return `<button class="hzb" style="font:11px ui-monospace,monospace;padding:1px 8px;border:1px solid `
           + (on ? '#eda100;background:#fff8ea;font-weight:600;' : '#c3c2b7;background:#fff;')
-          + `border-radius:4px;cursor:pointer;" title="the roofline analysis this essay credits (Daniel Haziza): dsv3-style fp8 GEMMs `
-          + `with a BF16 attn-out stash, e4m3+ᵀ-resident params, and its exact stash policy — one click to line the sheet up against his numbers">Haziza cfg</button>`;
+          + `border-radius:4px;cursor:pointer;" title="${on
+            ? 'click again — back to the config you came from'
+            : 'the roofline analysis this essay credits (Daniel Haziza): dsv3-style fp8 GEMMs with a BF16 attn-out stash, '
+              + 'e4m3+ᵀ-resident params, and its exact stash policy — one click to line the sheet up against his numbers'}">Haziza cfg</button>`;
       })()
       + `<label class="simp" style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox"${this._sim ? ' checked' : ''}> simplify — drop negligible terms</label>`
       + `<label class="nos" style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox"${this._nos ? ' checked' : ''}> no act scale factors</label>`
@@ -4328,8 +4350,9 @@ class Dsv3Sheet extends HTMLElement {
       + cells.cells.map((c) => `<tr data-cell="${c.id}"${c.id === this._hl ? ' class="hl"' : ''}`
         + `${c.ui?.k ? ` data-jk="${c.ui.k}"` : ''}${c.ui?.c ? ` data-jc="${c.ui.c}"` : ''}`
         + `${c.edit ? ` data-et="${c.edit.t}" data-ek="${c.edit.k}"` : ''}>`
-        + `<td class="nm${c.ui ? ' jmp" title="jump to it in the diagram' : ''}">${c.id}</td>`
-        + `<td class="lb"${c.depth ? ` style="padding-left:${2 + c.depth * 14}px"` : ''}>${esc(c.label)}</td>`
+        + `<td class="nm">${c.id}</td>`
+        + `<td class="lb"${c.depth ? ` style="padding-left:${2 + c.depth * 14}px"` : ''}>${c.ui
+          ? `<span class="lnk" title="jump to it in the diagram">${esc(c.label)}</span>` : esc(c.label)}</td>`
         + (!c.edit ? `<td class="vl">${raw(c)}</td>`
           : c.edit.t === 'step' || c.edit.t === 'seg'
             ? (() => {

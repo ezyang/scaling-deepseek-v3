@@ -11,23 +11,26 @@ const spotOn = (el2) => {
     && Math.abs((a.top + a.height / 2) - (b.top + b.height / 2)) < 3;
 };
 // model input → controlling knob
-trOf('P3').querySelector('td.nm').click(); await T.tick(150);
+trOf('P3').querySelector('td.lb .lnk').click(); await T.tick(150);
 T.check('P3 jumps to the EP stepper (spotlit)', spotOn(layer().parentElement.querySelector('.stp[data-knob="ep"]')), '');
 // a click anywhere dismisses
 document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })); await T.tick(50);
 T.check('a click anywhere dismisses the spotlight', !spot(), '');
 // activation → its chip
-trOf('A8').querySelector('td.nm').click(); await T.tick(150);
+trOf('A8').querySelector('td.lb .lnk').click(); await T.tick(150);
 T.check('A8 jumps to the dispatched-tokens chip', spotOn(layer().querySelector('g[data-chip="dispatch"]')), '');
 document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })); await T.tick(50);
 // the split-out lse → the aux label
-trOf('A6b').querySelector('td.nm').click(); await T.tick(150);
+trOf('A6b').querySelector('td.lb .lnk').click(); await T.tick(150);
 T.check('lse row jumps to the aux label', spotOn(layer().querySelector('g[data-chip="attn:aux"]')), '');
 document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })); await T.tick(50);
 // S inputs → the ZeRO segment
-trOf('S6').querySelector('td.nm').click(); await T.tick(150);
+trOf('S6').querySelector('td.lb .lnk').click(); await T.tick(150);
 T.check('S6 jumps to the ZeRO segment', spotOn(layer().parentElement.querySelector('.stp[data-knob="zero"]')), '');
 document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })); await T.tick(50);
+// link formatting = jumpable: derived rows carry no link
+T.check('jumpable labels are links; derived rows are not', !!trOf('P3').querySelector('td.lb .lnk')
+  && !trOf('Q1').querySelector('td.lb .lnk') && !trOf('T1').querySelector('td.lb .lnk'), '');
 // consistent sizes: redo chips report the would-be bytes
 const dia = layer().querySelector('.lv-scroll svg');
 const redo = [...dia.querySelectorAll('text.tredo')].find(t => t.textContent.includes('norm1 out'));

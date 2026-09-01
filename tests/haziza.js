@@ -30,4 +30,13 @@ T.check('o_proj stash goes bf16, fp8 params on, recipe reads custom',
   && layer().parentElement.querySelector('.stp[data-knob="recipe"] button.on')?.textContent === 'custom', '');
 const t1 = trOf('T1')?.querySelector('td.vl')?.textContent;
 T.log('Haziza T1', t1);
+T.check('Haziza T1 pinned', t1 === '65,102,913,728 B', t1);
+// clicking the LIT button toggles back to the config you came from
+hz().click(); await T.tick(800);
+T.check('click again returns to the og config', !hz().style.background.includes('255, 248, 234')
+  && layer().matmuls.o_proj === 'e5m6' && layer().fp8Params === false
+  && trOf('T1')?.querySelector('td.vl')?.textContent === '66,296,545,344 B', trOf('T1')?.querySelector('td.vl')?.textContent);
+// and forward again (ping-pong)
+hz().click(); await T.tick(800);
+T.check('ping-pong: forward again', hz().style.background.includes('255, 248, 234'), '');
 T.done();
