@@ -50,7 +50,10 @@ const scr = pps.querySelector('.scroll');
 T.check('focus frees scroll chaining on inner scrollers',
   document.body.classList.contains('mfocus') && getComputedStyle(scr).overscrollBehaviorX === 'auto',
   getComputedStyle(scr).overscrollBehaviorX);
+T.check('focus freezes inner scrollers (no gesture latching)',
+  getComputedStyle(scr).overflowX === 'hidden' && scr.scrollLeft === 0, getComputedStyle(scr).overflowX);
 T.click('.mclose');
 await T.tick();
-T.check('strip guard restored after close', getComputedStyle(scr).overscrollBehaviorX === 'none', '');
+T.check('strip guard + scroller restored after close',
+  getComputedStyle(scr).overscrollBehaviorX === 'none' && getComputedStyle(scr).overflowX === 'auto', '');
 T.done();

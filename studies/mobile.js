@@ -61,6 +61,18 @@ function focus(el, saved, pt) {
   el.style.transform = '';
   el.style.marginBottom = '';
   el.style.marginLeft = saved.over + 'px';
+  // inner scrollers LATCH touch gestures (iOS: a scroller that can move even
+  // 1px owns the whole drag), and residual ranges of a few px survive the
+  // natural-width measurement — pans randomly die on them. At natural width
+  // they have nothing legitimate to scroll: freeze them while focused.
+  const frozen = [];
+  for (const d of el.querySelectorAll('*')) {
+    const s = getComputedStyle(d);
+    if (!/(auto|scroll)/.test(s.overflow + s.overflowX + s.overflowY)) continue;
+    frozen.push([d, d.style.overflow]);
+    d.scrollLeft = 0; d.scrollTop = 0;
+    d.style.overflow = 'hidden';
+  }
   const x = document.createElement('button');
   x.type = 'button'; x.className = 'mclose'; x.textContent = '✕';
   document.body.append(x);
@@ -99,6 +111,7 @@ function focus(el, saved, pt) {
     x.remove();
     removeEventListener('keydown', esc);
     el.removeEventListener('dblclick', dbl);
+    for (const [d, o] of frozen) d.style.overflow = o;
     if (glue) { vv.removeEventListener('resize', glue); vv.removeEventListener('scroll', glue); }
     document.body.classList.remove('mfocus');
     document.documentElement.classList.remove('mta');
