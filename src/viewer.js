@@ -3483,7 +3483,7 @@ export class Dsv3Layer extends HTMLElement {
             const fMv = (AM.savedById?.[id] ?? 0) - auxOf(AM, nM), fDv = (AD.savedById?.[id] ?? 0) - auxOf(AD, nD);
             const cMv = (curM.savedById?.[id] ?? 0) - auxOf(curM, curM.byId[id]), cDv = (curD.savedById?.[id] ?? 0) - auxOf(curD, curD.byId[id]);
             const whole = (cMv === fMv && cDv === fDv) || (cMv === 0 && cDv === 0);
-            const out = [{ id, bref, prec: mixed ? null : prec,
+            const out = [{ id, bref, prec: mixed ? null : prec, dtc: n2.dtc ?? null,
               label: n2.tensor?.replace(' (checkpoint anchor)', '') ?? id,
               tM, tD, fMv, fDv, cMv, cDv, whole, r: cMv === fMv && cDv === fDv ? 1 : 0 }];
             li++;
@@ -3513,7 +3513,7 @@ export class Dsv3Layer extends HTMLElement {
         const eM = kindExpr(AM), eD = kindExpr(AD);
         if (mixed || prec == null) return null;
         if (val(eM, bref, prec) !== bFM[k] || val(eD, bref, prec) !== bFD[k]) return null;
-        return { eM, eD, prec };
+        return { eM, eD, prec, dtc: (AM.byId[ids[0]] ?? AD.byId[ids[0]])?.dtc ?? null };
       });
       // the CELL GRAPH (src/cells.js): every chart number is a cell — a
       // value computed by evaluating the same formula string the tooltips
@@ -4086,6 +4086,9 @@ dsv3-sheet { display: block; margin: 14px 0; position: relative; }
 .cellsheet td.ap { color: #898781; }
 .cellsheet tr.hl td { background: #fff8ea; }
 .cellsheet td.lb { white-space: nowrap; }   /* labels are one line by fiat */
+.cellsheet td.ed { white-space: nowrap; text-align: right; }
+.cellsheet .sbtn { font: 600 11px ui-monospace, monospace; color: #898781; cursor: pointer; padding: 0 3px; user-select: none; }
+.cellsheet .sbtn:hover { color: #0b0b0b; }
 .cellsheet td.nm.jmp { cursor: pointer; }
 .cellsheet td.nm.jmp:hover { text-decoration: underline dotted; }
 /* the jump pulse: HTML knobs outline, svg chips glow — then fade */
@@ -4132,12 +4135,33 @@ class Dsv3Sheet extends HTMLElement {
     });
     this._root.addEventListener('mouseleave', () => { this._tip.style.display = 'none'; });
     this._root.addEventListener('click', (ev) => {
+      const sb = ev.target.closest?.('.sbtn');
+      if (sb) { const tr2 = sb.closest('tr'); this._edit(tr2.dataset.et, tr2.dataset.ek, sb.dataset.ed); return; }
       const ref = ev.target.closest?.('.cellref');
       if (ref) { this.reveal(ref.textContent); return; }
       const nm = ev.target.closest?.('td.nm.jmp');
       const tr = nm?.closest('tr');
       if (tr) this._jump(tr.dataset.jk, tr.dataset.jc);
     });
+  }
+  // sheet edits drive the widget's OWN controls (never a second mutation
+  // path): steppers step, segments step/flip, checkboxes/dtype/mark buttons
+  // click — so bounds, tweens, URL state and the diagram all follow
+  _edit(t, k, dir) {
+    const l = this._layer;
+    if (!l) return;
+    const host = l.parentElement;
+    if (t === 'step') host.querySelector(`.stp[data-knob="${k}"]`)?.querySelectorAll('button')[dir === 'up' ? 1 : 0]?.click();
+    else if (t === 'seg') {
+      const btns = [...(host.querySelector(`.stp[data-knob="${k}"]`)?.querySelectorAll('button') ?? [])];
+      const i = btns.findIndex((b) => b.classList.contains('on'));
+      btns[i + (dir === 'up' ? 1 : -1)]?.click();
+    } else if (t === 'flip') {
+      const btns = [...(host.querySelector(`.stp[data-knob="${k}"]`)?.querySelectorAll('button') ?? [])];
+      btns.find((b) => !b.classList.contains('on'))?.click();
+    } else if (t === 'cb') host.querySelector(`input[data-knob="${k}"]`)?.click();
+    else if (t === 'dt') l.querySelector(`button[data-dt="${k}"]:not([disabled])`)?.click();
+    else if (t === 'mark') l.querySelector(`button[data-mark="${k}"]`)?.click();
   }
   // jump to the diagram: a model input lands on its controlling knob, an
   // activation row on its chip (or aux label); the target pulses
@@ -4183,13 +4207,18 @@ class Dsv3Sheet extends HTMLElement {
       + `<label class="simp" style="float:right;display:inline-flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox"${this._sim ? ' checked' : ''}> simplify — drop negligible terms</label>`
       + (this._sim ? '<div style="color:#8c5a19">simplified: the lse/rstd artifacts and the final norm are dropped, so these values drift slightly from the (exact) chart</div>' : '')
       + '</div>'
-      + '<table><tr><th>cell</th><th>quantity</th><th>formula</th><th class="vl">value (exact)</th><th class="vl">≈</th></tr>'
+      + '<table><tr><th>cell</th><th>quantity</th><th>formula</th><th class="vl">value (exact)</th><th class="vl">≈</th><th></th></tr>'
       + cells.cells.map((c) => `<tr data-cell="${c.id}"${c.id === this._hl ? ' class="hl"' : ''}`
-        + `${c.ui?.k ? ` data-jk="${c.ui.k}"` : ''}${c.ui?.c ? ` data-jc="${c.ui.c}"` : ''}>`
+        + `${c.ui?.k ? ` data-jk="${c.ui.k}"` : ''}${c.ui?.c ? ` data-jc="${c.ui.c}"` : ''}`
+        + `${c.edit ? ` data-et="${c.edit.t}" data-ek="${c.edit.k}"` : ''}>`
         + `<td class="nm${c.ui ? ' jmp" title="jump to it in the diagram' : ''}">${c.id}</td>`
         + `<td class="lb"${c.depth ? ` style="padding-left:${2 + c.depth * 14}px"` : ''}>${esc(c.label)}</td>`
         + `<td class="fx">${fx(c)}</td>`
-        + `<td class="vl">${raw(c)}</td><td class="vl ap">${approx(c)}</td></tr>`).join('')
+        + `<td class="vl">${raw(c)}</td><td class="vl ap">${approx(c)}</td>`
+        + `<td class="ed">${!c.edit ? ''
+          : c.edit.t === 'step' || c.edit.t === 'seg'
+            ? '<span class="sbtn" data-ed="dn" title="step down (the widget\'s own knob moves)">−</span><span class="sbtn" data-ed="up" title="step up">+</span>'
+            : '<span class="sbtn" data-ed="tg" title="toggle (the widget\'s own control flips)">⇄</span>'}</td></tr>`).join('')
       + '</table>';
   }
 }

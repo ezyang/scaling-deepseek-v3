@@ -158,7 +158,16 @@ line (nowrap), and hovering any formula variable shows its cell card
 coordinate cell): a model input lands on its controlling knob (P1→GPUs,
 Z1/S•→ZeRO, F1→the e4m3+ᵀ checkbox, L•/E1/H1→the rank picker, P6→sched)
 and an activation row on its chip in the diagram (`data-chip` on every
-local chip; aux labels are `<id>:aux`), pulsing amber on arrival. In the
+local chip; aux labels are `<id>:aux`), pulsing amber on arrival. Model
+inputs are also EDITABLE from the sheet (plain-text − + ⇄ glyph buttons in
+the last column): every edit drives the widget's OWN control — steppers
+step (P1/P2/P3), the ZeRO segment steps (Z1), two-chip segments flip
+(P6→sched, L•/E1/H1→rank), checkboxes click (F1, o_proj's B via E5M6),
+precision rows click their dtype button (B• via the node's `dtc` channel,
+recorded in blockGraph where the rate is priced), and kept? rows click the
+mark button — so bounds, tweens, URL state and the diagram stay linked
+with no second mutation path (a kept? edit leaves the presets: pick a
+recompute chip to return). In the
 local diagram, chips report sizes consistently — saved chips their bytes,
 recomputed chips (and replayed aux) their would-be size in parentheses —
 and the saved-for-backward tooltip is BRIEF and attached to the chip's

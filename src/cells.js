@@ -92,8 +92,11 @@ export function buildCells(env) {
       // drift a little from the (always exact) chart
       const shown = R.tensors.map((t, j) => ({ t, sid: `A${i + 2}${L[j]}` }))
         .filter(({ t }) => !(env.simplify && t.aux));
+      const dtEdit = (dtc) => dtc == null ? undefined
+        : dtc === 'o_proj' ? { t: 'cb', k: 'e5m6' } : { t: 'dt', k: dtc };
       const rows = shown.flatMap(({ t, sid }) => {
         const rid = `R${sid.slice(1)}`, ui = { c: t.id };
+        const mkEdit = t.aux ? undefined : { t: 'mark', k: t.id };
         if (t.aux) {   // an aux artifact row: literal fp32 bytes, its own kept?
           const rate = [t.fMv ? `L1 × ${t.fMv}` : null, t.fDv ? `L2 × ${t.fDv}` : null].filter(Boolean).join(' + ');
           return [
@@ -109,8 +112,8 @@ export function buildCells(env) {
         if (!rate) return [{ id: sid, depth: 2, unit: 'B', label: t.label, ui, value: 0 }];
         return [
           { id: sid, depth: 2, unit: 'B', label: t.label, ui, expr: `${rid} × (${rate}) × 4096 × P6` },
-          { id: rid, depth: 3, label: 'kept?', ui, value: t.r },
-          ...(t.prec != null ? [{ id: t.bref, depth: 3, unit: 'B/e', label: 'precision (B/elem)', ui, value: t.prec }] : []),
+          { id: rid, depth: 3, label: 'kept?', ui, edit: mkEdit, value: t.r },
+          ...(t.prec != null ? [{ id: t.bref, depth: 3, unit: 'B/e', label: 'precision (B/elem)', ui, edit: dtEdit(t.dtc), value: t.prec }] : []),
         ];
       });
       const subIds = shown.map(({ sid }) => sid);
@@ -131,26 +134,29 @@ export function buildCells(env) {
     const t2 = fD ? `L2 × ${R?.eD ? `(${R.eD})` : fD}` : null;
     const rate = [t1, t2].filter(Boolean).join(' + ') || 'L1 × 0 + L2 × 0';
     const ui = env.bIds?.[i] ? { c: env.bIds[i] } : undefined;
+    const dtE = R?.dtc == null ? undefined
+      : R.dtc === 'o_proj' ? { t: 'cb', k: 'e5m6' } : { t: 'dt', k: R.dtc };
     return [
       { id: `A${i + 2}`, unit: 'B', depth: 1, label: lbl, ui,
         expr: `R${i + 2} × (${rate}) × 4096 × P6${tail}` },
       { id: `R${i + 2}`, depth: 2, label: 'kept?', ui,
+        edit: env.bIds?.[i] ? { t: 'mark', k: env.bIds[i] } : undefined,
         value: rM === fM && rD === fD ? 1 : 0 },
-      ...(R ? [{ id: `B${i + 2}`, depth: 2, unit: 'B/e', label: 'precision (B/elem)', ui, value: R.prec }] : []),
+      ...(R ? [{ id: `B${i + 2}`, depth: 2, unit: 'B/e', label: 'precision (B/elem)', ui, edit: dtE, value: R.prec }] : []),
     ];
   });
   const defs = [
-    { id: 'P1', label: 'GPUs in the cluster', value: env.world, ui: { k: 'gpus' } },
-    { id: 'P2', label: 'pipeline stages (PP)', value: env.pp, ui: { k: 'pp' } },
-    { id: 'P3', label: 'expert parallelism (EP)', value: env.ep, ui: { k: 'ep' } },
+    { id: 'P1', label: 'GPUs in the cluster', value: env.world, ui: { k: 'gpus' }, edit: { t: 'step', k: 'gpus' } },
+    { id: 'P2', label: 'pipeline stages (PP)', value: env.pp, ui: { k: 'pp' }, edit: { t: 'step', k: 'pp' } },
+    { id: 'P3', label: 'expert parallelism (EP)', value: env.ep, ui: { k: 'ep' }, edit: { t: 'step', k: 'ep' } },
     { id: 'P4', label: 'data parallelism', expr: 'P1 / P2' },
     { id: 'P5', label: 'expert data parallelism', expr: 'P4 / P3' },
     { id: 'P6', label: 'microbatches in flight' + (env.sched !== 'one' && env.pp > 1 ? ' (DualPipeV: PP + ½)' : ''),
-      expr: env.sched === 'one' || env.pp === 1 ? '1' : 'P2 + 0.5', ui: { k: 'sched' } },
+      expr: env.sched === 'one' || env.pp === 1 ? '1' : 'P2 + 0.5', ui: { k: 'sched' }, edit: { t: 'flip', k: 'sched' } },
     // formula-switching INPUTS get explicit rows: the ZeRO level picks which
     // components wear a /P4·/P5 sharding term; the fp8-params flag rides the
     // weights formulas as a 0/1 factor
-    { id: 'Z1', label: 'ZeRO level (1 optim · 2 +grads · 3 +weights)', value: zero, ui: { k: 'zero' } },
+    { id: 'Z1', label: 'ZeRO level (1 optim · 2 +grads · 3 +weights)', value: zero, ui: { k: 'zero' }, edit: { t: 'seg', k: 'zero' } },
     // the level resolves to per-component SHARD GROUPS (1 = unsharded), so
     // the byte formulas below never change shape when Z1 moves
     { id: 'S1', depth: 1, ui: { k: 'zero' }, label: 'shard group · weights, experts', value: shard(3, edp) },
@@ -159,12 +165,12 @@ export function buildCells(env) {
     { id: 'S4', depth: 1, ui: { k: 'zero' }, label: 'shard group · gradients, others', value: shard(2, dp) },
     { id: 'S5', depth: 1, ui: { k: 'zero' }, label: 'shard group · optimizer, experts', value: shard(1, edp) },
     { id: 'S6', depth: 1, ui: { k: 'zero' }, label: 'shard group · optimizer, others', value: shard(1, dp) },
-    { id: 'F1', label: 'e4m3+ᵀ-resident params? (0/1)', value: fp8p ? 1 : 0, ui: { k: 'fp8params' } },
-    { id: 'L1', label: 'MoE layers on this rank (slot split)', value: g.moe, ui: { k: 'rank' } },
-    { id: 'L2', label: 'dense layers on this rank (slot split)', value: g.dense, ui: { k: 'rank' } },
+    { id: 'F1', label: 'e4m3+ᵀ-resident params? (0/1)', value: fp8p ? 1 : 0, ui: { k: 'fp8params' }, edit: { t: 'cb', k: 'fp8params' } },
+    { id: 'L1', label: 'MoE layers on this rank (slot split)', value: g.moe, ui: { k: 'rank' }, edit: { t: 'flip', k: 'rank' } },
+    { id: 'L2', label: 'dense layers on this rank (slot split)', value: g.dense, ui: { k: 'rank' }, edit: { t: 'flip', k: 'rank' } },
     { id: 'L3', label: 'vocab matrices on this rank', expr: 'E1 + H1' },
-    { id: 'E1', depth: 1, label: 'embedding on this rank? (0/1)', value: g.emb ? 1 : 0, ui: { k: 'rank' } },
-    { id: 'H1', depth: 1, label: 'lm head on this rank? (0/1)', value: g.head ? 1 : 0, ui: { k: 'rank' } },
+    { id: 'E1', depth: 1, label: 'embedding on this rank? (0/1)', value: g.emb ? 1 : 0, ui: { k: 'rank' }, edit: { t: 'flip', k: 'rank' } },
+    { id: 'H1', depth: 1, label: 'lm head on this rank? (0/1)', value: g.head ? 1 : 0, ui: { k: 'rank' }, edit: { t: 'flip', k: 'rank' } },
     { id: 'N1', label: 'params · routed experts, one MoE layer', unit: 'p', expr: '256 × 3 × 7168 × 2048' },
     { id: 'N2', label: 'params · rest of a MoE layer', unit: 'p', value: env.N.restLayer },
     { id: 'N3', label: 'params · one dense layer', unit: 'p', value: env.N.denseLayer },

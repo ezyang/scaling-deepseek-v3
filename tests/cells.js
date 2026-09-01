@@ -61,11 +61,12 @@ T.check('sheet T1 equals the chart total', t1row.textContent.includes('61.7 GiB'
   && +val('total').dataset.true === 66296545344, t1row?.textContent);
 // input rows for the formula switches: ZeRO level, fp8 params, per-bucket ↻
 const rowOf = (id) => rows().find(r => r.querySelector('.nm')?.textContent === id)?.textContent;
+const valOf = (id) => rows().find(r => r.querySelector('.nm')?.textContent === id)?.querySelector('td.vl')?.textContent.trim();
 T.check('input rows present: Z1 / S / F1 / R / B / E-H', rowOf('Z1')?.includes('ZeRO level') && rowOf('F1')?.includes('0/1')
   && rowOf('R8')?.includes('kept?') && rowOf('S5')?.includes('shard group · optimizer')
   && rowOf('B8')?.includes('precision (B/elem)') && rowOf('H1')?.includes('lm head'), '');
 T.check('recompute choices read as 0/1 (dsv3: dispatched kept, norm1 replayed)',
-  rowOf('R8')?.trim().endsWith('1') && rowOf('R3a')?.trim().endsWith('0'), `${rowOf('R3a')}`);
+  valOf('R8') === '1' && valOf('R3a') === '0', `${valOf('R3a')}`);
 // breakout buckets: per-TENSOR rows, each a whole 0/1 — the motivating case
 // is attn-replay keeping norm2 (the anchor) while norm1 replays
 T.check('norms broken out individually (+ their rstds as own rows)', rowOf('A3')?.includes('A3a + A3b + A3c + A3d')
@@ -81,10 +82,10 @@ T.check('residual broken out (x0 pinned / x1)', rowOf('A2')?.includes('A2a + A2b
   const f0 = fxA();
   await rp('attn-replay');
   T.check('attn-replay splits the norms (norm1 replayed, norm2 kept) with formulas UNCHANGED',
-    fxA() === f0 && rowOf('R3a')?.trim().endsWith('0') && rowOf('R3c')?.trim().endsWith('1'), '');
+    fxA() === f0 && valOf('R3a') === '0' && valOf('R3c') === '1', '');
   await rp('full');
   T.check('full: formulas unchanged too (x0 stays kept, x1 flips)',
-    fxA() === f0 && rowOf('R2a')?.trim().endsWith('1') && rowOf('R2b')?.trim().endsWith('0'), '');
+    fxA() === f0 && valOf('R2a') === '1' && valOf('R2b') === '0', '');
   await rp('dsv3');
 }
 T.check('low precision is legible: attn-out references B6a (e5m6 1.5), the lse split into its own row',
@@ -99,11 +100,11 @@ const fx0 = fxAll();
 const zseg = () => layer().parentElement.querySelector('.stp[data-knob="zero"]');
 const zpick = async (k) => { [...zseg().querySelectorAll('button')].find(b => b.textContent === k).click(); await T.tick(700); };
 await zpick('off');
-T.check('ZeRO off: formulas unchanged, S5 flips 4 → 1', fxAll() === fx0 && rowOf('S5')?.trim().endsWith('1'), rowOf('S5'));
+T.check('ZeRO off: formulas unchanged, S5 flips 4 → 1', fxAll() === fx0 && valOf('S5') === '1', valOf('S5'));
 await zpick('1');
 const p8 = layer().parentElement.querySelector('input[data-knob="fp8params"]');
 p8.click(); await T.tick(700);
-T.check('fp8 params on: formulas unchanged, F1 = 1', fxAll() === fx0 && rowOf('F1')?.trim().endsWith('1'), '');
+T.check('fp8 params on: formulas unchanged, F1 = 1', fxAll() === fx0 && valOf('F1') === '1', valOf('F1'));
 p8.click(); await T.tick(400);
 const tcb = layer().parentElement.querySelector('input[data-knob="transposed"]');
 tcb.click(); await T.tick(700);

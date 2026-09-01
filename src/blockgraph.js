@@ -78,15 +78,22 @@ export function resolveMarks(cfg) {
 
 // Build the graph for one layer. Sizes are per token (bytes include dtype).
 export function blockGraph(kind, a, mm, seqLen) {
-  const B = (id) => DTYPE_BYTES[mm[id]];
   const h = a.hidden, qk = a.qkNope + a.qkRope;
   const inter = kind === 'dense' ? a.denseInter : a.moeInter;
   const experts = kind === 'dense' ? 1 : a.topk + a.sharedExperts;
   const moe = kind === 'moe';
   // aux: per-token backward artifacts (rstd, lse) — saved unless the op replays
+  // bytesPer may be a NUMBER (a fixed rate: bf16 residual, fp32 router
+  // state) or a matmul-CHANNEL NAME — then the rate follows mm[channel] and
+  // the node records dtc, the channel a UI lever controls (the sheet's
+  // precision rows edit through it). One source: the same argument that
+  // prices the stash names its lever.
   const N = (id, label, opKind, inputs, tensor, elems, bytesPer, flopsTok, opts = {}) => ({
     id, label, opKind, inputs, tensor, elems,
-    outBytes: elems * bytesPer,
+    outBytes: elems * (typeof bytesPer === 'string'
+      ? DTYPE_BYTES[mm[bytesPer] ?? (bytesPer === 'swiglu_in' ? mm.ffn_down : undefined)]
+      : bytesPer),
+    dtc: typeof bytesPer === 'string' ? bytesPer : null,
     flopsTok, bucket: opts.bucket ?? 'moe',
     always: opts.always ?? false, nomark: opts.nomark ?? false, needsOwnOutput: opts.needsOwnOutput ?? false,
     aux: opts.aux ?? null, bwdNeeds: opts.bwdNeeds ?? null,
@@ -94,7 +101,7 @@ export function blockGraph(kind, a, mm, seqLen) {
   });
   const nodes = [
     N('x0', 'block input', 'boundary', [], 'x0 (checkpoint anchor)', h, 2, 0, { bucket: 'residual', always: true }),
-    N('norm1', 'RMSNorm', 'vector', ['x0'], 'norm1 out', h, B('qkv_down'), 8 * h, { bucket: 'mla', aux: { name: 'rstd', bytes: 4 } }),
+    N('norm1', 'RMSNorm', 'vector', ['x0'], 'norm1 out', h, 'qkv_down', 8 * h, { bucket: 'mla', aux: { name: 'rstd', bytes: 4 } }),
     // stash excludes the k_rope dims: RoPE's backward is a transposed rotation
     // (needs no input), and wkv_a's wgrad needs norm1-out, not its own output
     // Pre-norm latents kept in bf16 (the latent norms' backward input).
@@ -105,28 +112,28 @@ export function blockGraph(kind, a, mm, seqLen) {
     // latent (their backward input) and their normed output (the up-proj wgrad
     // activation, TE's cached fp8 copy) are stashed; every recompute preset
     // replays them (the DSv3 paper names RMSNorms explicitly)
-    N('q_norm', 'RMSNorm (q latent)', 'vector', ['qkv_down'], 'norm(q latent)', a.qRank, B('q_up'),
+    N('q_norm', 'RMSNorm (q latent)', 'vector', ['qkv_down'], 'norm(q latent)', a.qRank, 'q_up',
       8 * a.qRank, { bucket: 'mla', aux: { name: 'rstd', bytes: 4 } }),
-    N('kv_norm', 'RMSNorm (kv latent)', 'vector', ['qkv_down'], 'norm(kv latent)', a.kvRank, B('kv_up'),
+    N('kv_norm', 'RMSNorm (kv latent)', 'vector', ['qkv_down'], 'norm(kv latent)', a.kvRank, 'kv_up',
       8 * a.kvRank, { bucket: 'mla', aux: { name: 'rstd', bytes: 4 } }),
-    N('q_up', 'q up-proj', 'matmul', ['q_norm'], 'q (pre-RoPE)', a.heads * qk, B('attn'), 2 * a.qRank * a.heads * qk,
+    N('q_up', 'q up-proj', 'matmul', ['q_norm'], 'q (pre-RoPE)', a.heads * qk, 'attn', 2 * a.qRank * a.heads * qk,
       { bucket: 'mla', tdims: `${a.heads}\u00d7${qk}` }),
-    N('kv_up', 'kv up-proj', 'matmul', ['kv_norm'], 'k,v (pre-RoPE)', a.heads * (qk + a.vHead), B('attn'),
+    N('kv_up', 'kv up-proj', 'matmul', ['kv_norm'], 'k,v (pre-RoPE)', a.heads * (qk + a.vHead), 'attn',
       2 * a.kvRank * a.heads * (a.qkNope + a.vHead), { bucket: 'mla', tdims: `${a.heads}\u00d7(${qk}+${a.vHead})` }),
     // RoPE as REAL nodes: the mark is a genuine (zero-byte) choice — save the
     // rotated q/k (attention's actual inputs; same size as pre-RoPE) or
     // re-run the rotation in backward (cheap bandwidth-bound vector work).
     // Its own backward needs NOTHING (a fixed rotation: dL/dx = R\u1d40\u00b7dL/dy),
     // hence bwdNeeds: [] — only a REPLAY pulls the pre-RoPE input.
-    N('rope_q', 'RoPE (q)', 'vector', ['q_up'], 'q', a.heads * qk, B('attn'),
+    N('rope_q', 'RoPE (q)', 'vector', ['q_up'], 'q', a.heads * qk, 'attn',
       6 * a.heads * a.qkRope, { bucket: 'mla', bwdNeeds: [], tdims: `${a.heads}\u00d7${qk}` }),
-    N('rope_kv', 'RoPE (k, build K,V)', 'vector', ['kv_up'], 'k,v', a.heads * (qk + a.vHead), B('attn'),
+    N('rope_kv', 'RoPE (k, build K,V)', 'vector', ['kv_up'], 'k,v', a.heads * (qk + a.vHead), 'attn',
       6 * a.qkRope, { bucket: 'mla', bwdNeeds: [], tdims: `${a.heads}\u00d7(${qk}+${a.vHead})` }),
-    N('attn', 'attention', 'attn', ['rope_q', 'rope_kv'], 'attn out', a.heads * a.vHead, B('o_proj'),
+    N('attn', 'attention', 'attn', ['rope_q', 'rope_kv'], 'attn out', a.heads * a.vHead, 'o_proj',
       2 * a.heads * (qk + a.vHead) * seqLen / 2, { bucket: 'mla', aux: { name: 'lse', bytes: 4 * a.heads }, needsOwnOutput: true, tdims: `${a.heads}\u00d7${a.vHead}` }),
     N('o_proj', 'attn out-proj', 'matmul', ['attn'], 'attn proj out', h, 2, 2 * a.heads * a.vHead * h, { bucket: 'mla' }),
     N('x1', '+ residual', 'add', ['o_proj', 'x0'], 'x1 (residual)', h, 2, 0, { bucket: 'residual' }),
-    N('norm2', 'RMSNorm', 'vector', ['x1'], 'norm2 out', h, B('ffn_gate_up'), 8 * h, { bucket: 'moe', aux: { name: 'rstd', bytes: 4 } }),
+    N('norm2', 'RMSNorm', 'vector', ['x1'], 'norm2 out', h, 'ffn_gate_up', 8 * h, { bucket: 'moe', aux: { name: 'rstd', bytes: 4 } }),
     ...(moe ? [
       // production routers retain logits + scores (both fp32, even when their
       // loss weights are zero) + top-k weights/indices + int32 routing mappings
@@ -135,7 +142,7 @@ export function blockGraph(kind, a, mm, seqLen) {
       N('router', 'router', 'matmul', ['norm2'], 'router state (logits, scores, top-k)',
         2 * a.routedExperts + 4 * a.topk, 4, 2 * h * a.routedExperts,
         { tdims: `2\u00d7${a.routedExperts} + 4\u00d7${a.topk}` }),
-      N('dispatch', 'a2a dispatch', 'comm', ['norm2', 'router'], 'dispatched tokens', a.topk * h, B('ffn_gate_up'), 0,
+      N('dispatch', 'a2a dispatch', 'comm', ['norm2', 'router'], 'dispatched tokens', a.topk * h, 'ffn_gate_up', 0,
         { tdims: `${a.topk}\u00d7${h}` }),
     ] : []),
     // the gate/up stash (= the SwiGLU input) has a FREE-FLOATING save format
@@ -144,9 +151,9 @@ export function blockGraph(kind, a, mm, seqLen) {
     // (the paper CHOOSES fp8 for it, \u00a73.3.3). ?? ffn_down covers stale
     // hand-rolled matmul dicts from before the channel existed.
     N('gate_up', 'ffn gate/up', 'matmul', moe ? ['dispatch', 'norm2'] : ['norm2'], 'gate, up',
-      experts * 2 * inter, DTYPE_BYTES[mm.swiglu_in ?? mm.ffn_down], 2 * 2 * h * inter * experts,
+      experts * 2 * inter, 'swiglu_in', 2 * 2 * h * inter * experts,
       { tdims: moe ? `${experts}\u00d72\u00d7${inter}` : `2\u00d7${inter}` }),
-    N('swiglu', 'SwiGLU', 'vector', ['gate_up'], 'swiglu out', experts * inter, B('ffn_down'), 6 * experts * inter,
+    N('swiglu', 'SwiGLU', 'vector', ['gate_up'], 'swiglu out', experts * inter, 'ffn_down', 6 * experts * inter,
       { tdims: moe ? `${experts}\u00d7${inter}` : String(inter) }),
     N('ffn_down', 'ffn down', 'matmul', ['swiglu'], moe ? 'expert outputs' : 'ffn out',
       moe ? a.topk * h : h, 2, 2 * h * inter * experts,
