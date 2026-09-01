@@ -93,35 +93,36 @@ export function buildCells(env) {
       const shown = R.tensors.map((t, j) => ({ t, sid: `A${i + 2}${L[j]}` }))
         .filter(({ t }) => !(env.simplify && t.aux));
       const rows = shown.flatMap(({ t, sid }) => {
-        const rid = `R${sid.slice(1)}`;
+        const rid = `R${sid.slice(1)}`, ui = { c: t.id };
         if (t.aux) {   // an aux artifact row: literal fp32 bytes, its own kept?
           const rate = [t.fMv ? `L1 × ${t.fMv}` : null, t.fDv ? `L2 × ${t.fDv}` : null].filter(Boolean).join(' + ');
           return [
-            { id: sid, depth: 2, unit: 'B', label: t.label, expr: `${rid} × (${rate}) × 4096 × P6` },
-            { id: rid, depth: 3, label: 'kept?', value: t.r },
+            { id: sid, depth: 2, unit: 'B', label: t.label, ui, expr: `${rid} × (${rate}) × 4096 × P6` },
+            { id: rid, depth: 3, label: 'kept?', ui, value: t.r },
           ];
         }
-        if (!t.whole) return [{ id: sid, depth: 2, unit: 'B', label: `${t.label} (partial under policy)`,
+        if (!t.whole) return [{ id: sid, depth: 2, unit: 'B', label: `${t.label} (partial under policy)`, ui,
           expr: `(L1 × ${t.cMv} + L2 × ${t.cDv}) × 4096 × P6` }];
         const p1 = t.fMv ? `L1 × ${t.tM ? `(${t.tM})` : t.fMv}` : null;
         const p2 = t.fDv ? `L2 × ${t.tD ? `(${t.tD})` : t.fDv}` : null;
         const rate = [p1, p2].filter(Boolean).join(' + ');
-        if (!rate) return [{ id: sid, depth: 2, unit: 'B', label: t.label, value: 0 }];
+        if (!rate) return [{ id: sid, depth: 2, unit: 'B', label: t.label, ui, value: 0 }];
         return [
-          { id: sid, depth: 2, unit: 'B', label: t.label, expr: `${rid} × (${rate}) × 4096 × P6` },
-          { id: rid, depth: 3, label: 'kept?', value: t.r },
-          ...(t.prec != null ? [{ id: t.bref, depth: 3, unit: 'B/e', label: 'precision (B/elem)', value: t.prec }] : []),
+          { id: sid, depth: 2, unit: 'B', label: t.label, ui, expr: `${rid} × (${rate}) × 4096 × P6` },
+          { id: rid, depth: 3, label: 'kept?', ui, value: t.r },
+          ...(t.prec != null ? [{ id: t.bref, depth: 3, unit: 'B/e', label: 'precision (B/elem)', ui, value: t.prec }] : []),
         ];
       });
       const subIds = shown.map(({ sid }) => sid);
       return [
-        { id: `A${i + 2}`, unit: 'B', depth: 1, label: lbl,
+        { id: `A${i + 2}`, unit: 'B', depth: 1, label: lbl, ui: { c: R.tensors[0]?.id ?? env.bIds?.[i] },
           expr: (subIds.length ? subIds.join(' + ') : '0') + tail },
         ...rows,
       ];
     }
     const whole = (fM > 0 || fD > 0) && ((rM === fM && rD === fD) || (rM === 0 && rD === 0));
     if (!whole) return [{ id: `A${i + 2}`, unit: 'B', depth: 1, label: `${lbl} (partial under policy)`,
+      ui: env.bIds?.[i] ? { c: env.bIds[i] } : undefined,
       expr: `(L1 × ${rM} + L2 × ${rD}) × 4096 × P6${tail}` }];
     // the rate DECOMPOSITION (per saved tensor: dims × B•, + fp32 aux; the
     // ᵀ dual folds into B•'s value) when the caller validated one;
@@ -129,40 +130,41 @@ export function buildCells(env) {
     const t1 = fM ? `L1 × ${R?.eM ? `(${R.eM})` : fM}` : null;
     const t2 = fD ? `L2 × ${R?.eD ? `(${R.eD})` : fD}` : null;
     const rate = [t1, t2].filter(Boolean).join(' + ') || 'L1 × 0 + L2 × 0';
+    const ui = env.bIds?.[i] ? { c: env.bIds[i] } : undefined;
     return [
-      { id: `A${i + 2}`, unit: 'B', depth: 1, label: lbl,
+      { id: `A${i + 2}`, unit: 'B', depth: 1, label: lbl, ui,
         expr: `R${i + 2} × (${rate}) × 4096 × P6${tail}` },
-      { id: `R${i + 2}`, depth: 2, label: 'kept?',
+      { id: `R${i + 2}`, depth: 2, label: 'kept?', ui,
         value: rM === fM && rD === fD ? 1 : 0 },
-      ...(R ? [{ id: `B${i + 2}`, depth: 2, unit: 'B/e', label: 'precision (B/elem)', value: R.prec }] : []),
+      ...(R ? [{ id: `B${i + 2}`, depth: 2, unit: 'B/e', label: 'precision (B/elem)', ui, value: R.prec }] : []),
     ];
   });
   const defs = [
-    { id: 'P1', label: 'GPUs in the cluster', value: env.world },
-    { id: 'P2', label: 'pipeline stages (PP)', value: env.pp },
-    { id: 'P3', label: 'expert parallelism (EP)', value: env.ep },
+    { id: 'P1', label: 'GPUs in the cluster', value: env.world, ui: { k: 'gpus' } },
+    { id: 'P2', label: 'pipeline stages (PP)', value: env.pp, ui: { k: 'pp' } },
+    { id: 'P3', label: 'expert parallelism (EP)', value: env.ep, ui: { k: 'ep' } },
     { id: 'P4', label: 'data parallelism', expr: 'P1 / P2' },
     { id: 'P5', label: 'expert data parallelism', expr: 'P4 / P3' },
     { id: 'P6', label: 'microbatches in flight' + (env.sched !== 'one' && env.pp > 1 ? ' (DualPipeV: PP + ½)' : ''),
-      expr: env.sched === 'one' || env.pp === 1 ? '1' : 'P2 + 0.5' },
+      expr: env.sched === 'one' || env.pp === 1 ? '1' : 'P2 + 0.5', ui: { k: 'sched' } },
     // formula-switching INPUTS get explicit rows: the ZeRO level picks which
     // components wear a /P4·/P5 sharding term; the fp8-params flag rides the
     // weights formulas as a 0/1 factor
-    { id: 'Z1', label: 'ZeRO level (1 optim · 2 +grads · 3 +weights)', value: zero },
+    { id: 'Z1', label: 'ZeRO level (1 optim · 2 +grads · 3 +weights)', value: zero, ui: { k: 'zero' } },
     // the level resolves to per-component SHARD GROUPS (1 = unsharded), so
     // the byte formulas below never change shape when Z1 moves
-    { id: 'S1', depth: 1, label: 'shard group · weights, experts', value: shard(3, edp) },
-    { id: 'S2', depth: 1, label: 'shard group · weights, others', value: shard(3, dp) },
-    { id: 'S3', depth: 1, label: 'shard group · gradients, experts', value: shard(2, edp) },
-    { id: 'S4', depth: 1, label: 'shard group · gradients, others', value: shard(2, dp) },
-    { id: 'S5', depth: 1, label: 'shard group · optimizer, experts', value: shard(1, edp) },
-    { id: 'S6', depth: 1, label: 'shard group · optimizer, others', value: shard(1, dp) },
-    { id: 'F1', label: 'e4m3+ᵀ-resident params? (0/1)', value: fp8p ? 1 : 0 },
-    { id: 'L1', label: 'MoE layers on this rank (slot split)', value: g.moe },
-    { id: 'L2', label: 'dense layers on this rank (slot split)', value: g.dense },
+    { id: 'S1', depth: 1, ui: { k: 'zero' }, label: 'shard group · weights, experts', value: shard(3, edp) },
+    { id: 'S2', depth: 1, ui: { k: 'zero' }, label: 'shard group · weights, others', value: shard(3, dp) },
+    { id: 'S3', depth: 1, ui: { k: 'zero' }, label: 'shard group · gradients, experts', value: shard(2, edp) },
+    { id: 'S4', depth: 1, ui: { k: 'zero' }, label: 'shard group · gradients, others', value: shard(2, dp) },
+    { id: 'S5', depth: 1, ui: { k: 'zero' }, label: 'shard group · optimizer, experts', value: shard(1, edp) },
+    { id: 'S6', depth: 1, ui: { k: 'zero' }, label: 'shard group · optimizer, others', value: shard(1, dp) },
+    { id: 'F1', label: 'e4m3+ᵀ-resident params? (0/1)', value: fp8p ? 1 : 0, ui: { k: 'fp8params' } },
+    { id: 'L1', label: 'MoE layers on this rank (slot split)', value: g.moe, ui: { k: 'rank' } },
+    { id: 'L2', label: 'dense layers on this rank (slot split)', value: g.dense, ui: { k: 'rank' } },
     { id: 'L3', label: 'vocab matrices on this rank', expr: 'E1 + H1' },
-    { id: 'E1', depth: 1, label: 'embedding on this rank? (0/1)', value: g.emb ? 1 : 0 },
-    { id: 'H1', depth: 1, label: 'lm head on this rank? (0/1)', value: g.head ? 1 : 0 },
+    { id: 'E1', depth: 1, label: 'embedding on this rank? (0/1)', value: g.emb ? 1 : 0, ui: { k: 'rank' } },
+    { id: 'H1', depth: 1, label: 'lm head on this rank? (0/1)', value: g.head ? 1 : 0, ui: { k: 'rank' } },
     { id: 'N1', label: 'params · routed experts, one MoE layer', unit: 'p', expr: '256 × 3 × 7168 × 2048' },
     { id: 'N2', label: 'params · rest of a MoE layer', unit: 'p', value: env.N.restLayer },
     { id: 'N3', label: 'params · one dense layer', unit: 'p', value: env.N.denseLayer },

@@ -154,7 +154,15 @@ change formulas by design; its totals drift slightly from the (always
 exact) chart, and a note says so. The sheet indents child
 rows (sub-cells depth 1, per-bucket R•/B• depth 2), keeps labels to one
 line (nowrap), and hovering any formula variable shows its cell card
-(click = jump to its row). Cells without a formula are model INPUTS (slot-split layer counts, the
+(click = jump to its row). Rows carry JUMP affordances (click the
+coordinate cell): a model input lands on its controlling knob (P1→GPUs,
+Z1/S•→ZeRO, F1→the e4m3+ᵀ checkbox, L•/E1/H1→the rank picker, P6→sched)
+and an activation row on its chip in the diagram (`data-chip` on every
+local chip; aux labels are `<id>:aux`), pulsing amber on arrival. In the
+local diagram, chips report sizes consistently — saved chips their bytes,
+recomputed chips (and replayed aux) their would-be size in parentheses —
+and the saved-for-backward tooltip is BRIEF and attached to the chip's
+NAME tspan only, so the byte value's raw-B hover never conflicts. Cells without a formula are model INPUTS (slot-split layer counts, the
 op-graph stash rates D1/D2) — drill-down ends at their labels. Binds like
 the pp-schedule strip (poll for the layer id, resync on its `recipe`
 event), so rows update live as knobs move; `reveal(id)` scrolls to a row

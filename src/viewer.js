@@ -2522,7 +2522,7 @@ export class Dsv3Layer extends HTMLElement {
         + dir(new Set(by.filter(isR)), ['⇓', '⇑', '⇕'])) || '↓';
     };
     // the arrows explained, per chip: WHO keeps this tensor alive
-    const needTip = (ids, only) => {
+    const needTip = (ids, only, brief = false) => {
       const by = ids.flatMap(i => [...(ana.neededBy.get(i) ?? [])])
         .filter(c => !only || only.includes(c));
       const isR = (c) => c === 'replay anchor' || ana.replayed.has(c);
@@ -2530,10 +2530,10 @@ export class Dsv3Layer extends HTMLElement {
       const bwd = [...new Set(by.filter(c => !isR(c)).map(lab))];
       const rep = [...new Set(by.filter(isR).map(lab))];
       return escAttr('kept alive by '
-        + [bwd.length ? `the BACKWARD of: ${bwd.join(', ')} (single arrows \u2193\u2191\u21c5)` : '',
-          rep.length ? `the REPLAY of: ${rep.join(', ')} (double arrows \u21d3\u21d1\u21d5)` : '']
+        + [bwd.length ? `the BACKWARD of: ${bwd.join(', ')}${brief ? '' : ' (single arrows \u2193\u2191\u21c5)'}` : '',
+          rep.length ? `the REPLAY of: ${rep.join(', ')}${brief ? '' : ' (double arrows \u21d3\u21d1\u21d5)'}` : '']
           .filter(Boolean).join(', and ')
-        + '.\nDirection: \u2193\u21d3 read by an op below \u00b7 \u2191\u21d1 by this op\u2019s own backward \u00b7 \u21c5\u21d5 both.');
+        + (brief ? '.' : '.\nDirection: \u2193\u21d3 read by an op below \u00b7 \u2191\u21d1 by this op\u2019s own backward \u00b7 \u21c5\u21d5 both.'));
     };
     // ov (optional): display-split override for a chip that shows part of one
     // graph node — { name, tdims, frac } (bytes and grid scale by frac)
@@ -2560,18 +2560,27 @@ export class Dsv3Layer extends HTMLElement {
           const n2 = A.byId[id] ?? n;
           return ` <tspan fill="${DT_STYLE[dtOf(n2)]}">${dtOf(n2)}${ids.some(i2 => A.dual.has(i2)) ? ' ᵀ×2' : ''}</tspan>`;
         };
-        if (st === 'redo') {   // recomputed: named + dtype + the counterfactual grid
+        // tips ride the NAME tspan only (the byte value keeps its raw-B
+        // hover free of conflicts); data-chip makes the chip a jump target
+        const nameTip = (txt) => `<tspan data-tip="${escAttr(txt)}">`;
+        if (st === 'redo') {   // recomputed: named + the would-be size + the counterfactual grid
+          const cfB = bytes * 4096 * (LOCAL ? (CUM ? KMUL : 1) * IFN : CUM ? KMUL : 1);
           const cf = Math.round(Math.round(bytes * 4096 * chipF / (PB_UNIT * 2)) * m);
-          let g = `<text class="tensor tredo" data-tip="${escAttr('↻ recomputed in backward, not stashed — the hollow squares price what saving it WOULD cost.')}" ` +
-            `x="${x}" y="${y + 8}">↻ ${name}${dtag(ana)}</text>`;
+          const cfLbl = ` <tspan class="tdim">(<tspan data-raw="${cfB.toFixed(2)}">${fmtBytes(cfB)}</tspan>)</tspan>`;
+          const rTip = nameTip('↻ recomputed in backward, not stashed — the (size) and hollow squares price what saving it WOULD cost.');
+          // narrow fork columns: the would-be size takes the second line
+          let g = ov?.short
+            ? `<text class="tensor tredo" x="${x}" y="${y + 8}">${rTip}↻ ${name}</tspan></text>` +
+              `<text class="tensor tredo" x="${x}" y="${y + 21}">${cfLbl}${dtag(ana)}</text>`
+            : `<text class="tensor tredo" x="${x}" y="${y + 8}">${rTip}↻ ${name}</tspan>${cfLbl}${dtag(ana)}</text>`;
           for (let i = 0; i < cf; i++)
             g += `<rect x="${x + (i % CROW) * 6 + 0.4}" y="${y + 12 + Math.floor(i / CROW) * 6 + 0.4}" width="4.2" height="3.2" fill="none" stroke="#eda100" stroke-width="0.8"/>`;
-          P.push(`<g opacity="${m.toFixed(3)}">${g}</g>`);
+          P.push(`<g data-chip="${id}" opacity="${m.toFixed(3)}">${g}</g>`);
           return 12;
         }
         if (st !== 'save' && st !== 'pin') {   // idle: named + dtype (the wire's precision), never stashed
-          P.push(`<g opacity="${m.toFixed(3)}"><text class="tensor tidle" data-tip="${escAttr('· not needed: no backward op or replay reads this tensor — saved or not, it is never stashed.')}" ` +
-            `x="${x}" y="${y + 8}">· ${name}${dtag(ana)}</text></g>`);
+          P.push(`<g data-chip="${id}" opacity="${m.toFixed(3)}"><text class="tensor tidle" x="${x}" y="${y + 8}">` +
+            `${nameTip('· not needed: no backward op or replay reads this tensor — saved or not, it is never stashed.')}· ${name}</tspan>${dtag(ana)}</text></g>`);
           return 12;
         }
         // cumulative: every block's stash is resident — chips follow the ×N
@@ -2594,7 +2603,10 @@ export class Dsv3Layer extends HTMLElement {
         const bfB = ids.reduce((t2, i2) => t2 + (ana.byId[i2]?.elems ?? 0) * 2, 0) * (ov?.frac ?? 1);
         const nPh = Math.round(Math.round(bfB * 4096 * chipF / (PB_UNIT * 2)) * m);
         const lock = st === 'pin' ? ' 🔒' : '';
-        const tip = ` data-tip="${needTip(ids, ov?.readers)}${st === 'pin' ? escAttr('\n🔒 always saved: the checkpoint anchor.') : ''}"`;
+        // the saved-for-backward tip: BRIEF, and on the name only (the byte
+        // value keeps its raw-B hover)
+        const svTip = `<tspan data-tip="${needTip(ids, ov?.readers, true)
+          + (st === 'pin' ? escAttr('\n🔒 always saved: the checkpoint anchor.') : '')}">`;
         // narrow fork columns (ov.short) get two lines — one line would run
         // into the neighbouring column's spine at ×58 byte widths
         // squares wrap well before the strip width (chips sit between
@@ -2602,15 +2614,15 @@ export class Dsv3Layer extends HTMLElement {
         const [sqX, sqY] = ov?.short ? [x + 100, y + 17] : [x, y + 12];   // past the dtype-tagged bytes line
         const bLbl = `<tspan data-raw="${b4096.toFixed(2)}">${fmtBytes(b4096)}</tspan>`;
         let g = ov?.short
-          ? `<text class="tensor tsave"${tip} x="${x}" y="${y + 8}">${needDir(ids, ov?.readers)} ${name}${lock}</text>` +
+          ? `<text class="tensor tsave" x="${x}" y="${y + 8}">${svTip}${needDir(ids, ov?.readers)} ${name}${lock}</tspan></text>` +
             `<text class="tensor tsave" x="${x}" y="${y + 21}">${bLbl}${dtag(ana)}${facTxt('a')}</text>`
-          : `<text class="tensor tsave"${tip} x="${x}" y="${y + 8}">${needDir(ids, ov?.readers)} ${name} · ${bLbl}${dtag(ana)}${facTxt('a')}${lock}</text>`;
+          : `<text class="tensor tsave" x="${x}" y="${y + 8}">${svTip}${needDir(ids, ov?.readers)} ${name}</tspan> · ${bLbl}${dtag(ana)}${facTxt('a')}${lock}</text>`;
         if (hollow) g += `<rect x="${sqX + 0.4}" y="${sqY + 0.4}" width="4.2" height="3.2" fill="none" stroke="#eda100" stroke-width="0.8"/>`;
         else for (let i = 0; i < Math.max(nsq, nPh); i++)
           g += i < nsq
             ? `<rect x="${sqX + (i % CROW) * 6}" y="${sqY + Math.floor(i / CROW) * 6}" width="5" height="4" fill="#eda100"/>`
             : `<rect x="${sqX + (i % CROW) * 6 + 0.4}" y="${sqY + Math.floor(i / CROW) * 6 + 0.4}" width="4.2" height="3.2" fill="none" stroke="#d19023" stroke-width="0.8" stroke-dasharray="1.6 1.4"/>`;
-        P.push(`<g opacity="${m.toFixed(3)}">${g}</g>`);
+        P.push(`<g data-chip="${id}" opacity="${m.toFixed(3)}">${g}</g>`);
         return 12;
       }
 
@@ -2771,21 +2783,24 @@ export class Dsv3Layer extends HTMLElement {
       // attention sits inside the MLA group: its lse label starts past the
       // group border so the border never cuts through the text
       const xt = (id === 'attn' && MLAGW && !(this._ctl.quant && this.detail) && !LOCAL) ? Math.max(x + W + 14, C1 - 10 + MLAGW + 8) : x + W + 14;
+      const auxSc = n.aux ? n.aux.bytes * 4096 * (CUM ? KMUL : 1) * IFN : 0;
       const txt = (rep) => rep
-        ? `<text class="tensor tredo" x="${xt}" y="${yMid + 3}">↻ ${esc(n.aux.name)}</text>`
+        ? (LOCAL
+          ? `<text class="tensor tredo" x="${xt}" y="${yMid + 3}">↻ ${esc(n.aux.name)} <tspan class="tdim">(<tspan data-raw="${auxSc.toFixed(2)}">${fmtBytes(auxSc)}</tspan>)</tspan></text>`
+          : `<text class="tensor tredo" x="${xt}" y="${yMid + 3}">↻ ${esc(n.aux.name)}</text>`)
         : LOCAL
           ? `<text class="tensor tsave" x="${xt}" y="${yMid + 3}">← ${esc(n.aux.name)} · ` +
-            `<tspan data-raw="${(n.aux.bytes * 4096 * (CUM ? KMUL : 1) * IFN).toFixed(2)}">${fmtBytes(n.aux.bytes * 4096 * (CUM ? KMUL : 1) * IFN)}</tspan> ` +
+            `<tspan data-raw="${auxSc.toFixed(2)}">${fmtBytes(auxSc)}</tspan> ` +
             `<tspan fill="${DT_STYLE.fp32}">fp32</tspan></text>`
           : !this._ctl.quant
             ? `<text class="tensor tsave" x="${xt}" y="${yMid + 3}">← ${esc(n.aux.name)}</text>`
             : `<text class="tensor tsave" x="${xt}" y="${yMid + 3}">← ${esc(n.aux.name)} · ${fmtMem(n.aux.bytes)} ` +
               `<tspan fill="${DT_STYLE.fp32}">fp32</tspan></text>`;
       const repP = anaP?.replayed.has(id);   // mark-flip tween: the two forms dissolve
-      P.push(`<line class="wire" x1="${x + W}" y1="${yMid}" x2="${xt - 4}" y2="${yMid}" marker-end="url(#arr)"/>` +
+      P.push(`<g data-chip="${id}:aux"><line class="wire" x1="${x + W}" y1="${yMid}" x2="${xt - 4}" y2="${yMid}" marker-end="url(#arr)"/>` +
         (VQ && repP != null && repP !== replayed
           ? `<g opacity="${(1 - VQ.t).toFixed(3)}">${txt(repP)}</g><g opacity="${VQ.t.toFixed(3)}">${txt(replayed)}</g>`
-          : txt(replayed)));
+          : txt(replayed)) + '</g>');
     };
     // display-only elided kernel (detail view): cheap, no marks, not in the graph
     const DET = this.detail;
@@ -3473,7 +3488,7 @@ export class Dsv3Layer extends HTMLElement {
               tM, tD, fMv, fDv, cMv, cDv, whole, r: cMv === fMv && cDv === fDv ? 1 : 0 }];
             li++;
             if (n2.aux) {
-              out.push({ aux: true, label: `${n2.aux.name} (fp32) · ${out[0].label}`,
+              out.push({ aux: true, id: `${id}:aux`, label: `${n2.aux.name} (fp32) · ${out[0].label}`,
                 fMv: nM?.aux?.bytes ?? 0, fDv: nD?.aux?.bytes ?? 0,
                 whole: true, r: curM.replayed.has(id) || curD.replayed.has(id) ? 0 : 1 });
               li++;
@@ -3511,6 +3526,7 @@ export class Dsv3Layer extends HTMLElement {
         g: ppStage(Math.min(S.stage, S.pp - 1), S.pp, S.vpp, S.fold),
         aM: ana.savedBytes, aD: anaD.savedBytes,
         bM: actBucketsOf(ana), bD: actBucketsOf(anaD), bLabels: ACT_BUCKETS.map((b) => b.label),
+        bIds: ACT_BUCKETS.map((b) => b.ids[0] ?? null),
         bMF: actBucketsOf(this._anaMemo.anaMF ?? ana), bDF: actBucketsOf(this._anaMemo.anaDF ?? anaD),
         bRate: this._anaMemo.anaMF && this._anaMemo.anaDF
           ? rateExprs(this._anaMemo.anaMF, this._anaMemo.anaDF, ana, anaD,
@@ -4070,6 +4086,14 @@ dsv3-sheet { display: block; margin: 14px 0; position: relative; }
 .cellsheet td.ap { color: #898781; }
 .cellsheet tr.hl td { background: #fff8ea; }
 .cellsheet td.lb { white-space: nowrap; }   /* labels are one line by fiat */
+.cellsheet td.nm.jmp { cursor: pointer; }
+.cellsheet td.nm.jmp:hover { text-decoration: underline dotted; }
+/* the jump pulse: HTML knobs outline, svg chips glow — then fade */
+.jump-hl { animation: jumphl 1.8s ease-out forwards; border-radius: 6px; }
+@keyframes jumphl { 0%, 55% { outline: 2px solid #eda100; outline-offset: 3px; }
+  100% { outline: 2px solid rgba(237, 161, 0, 0); outline-offset: 3px; } }
+g.jump-hl { animation: jumphlg 1.8s ease-out forwards; }
+@keyframes jumphlg { 0%, 55% { filter: drop-shadow(0 0 2px #eda100) drop-shadow(0 0 5px #eda100); } 100% { filter: none; } }
 `;
 class Dsv3Sheet extends HTMLElement {
   connectedCallback() {
@@ -4109,8 +4133,28 @@ class Dsv3Sheet extends HTMLElement {
     this._root.addEventListener('mouseleave', () => { this._tip.style.display = 'none'; });
     this._root.addEventListener('click', (ev) => {
       const ref = ev.target.closest?.('.cellref');
-      if (ref) this.reveal(ref.textContent);
+      if (ref) { this.reveal(ref.textContent); return; }
+      const nm = ev.target.closest?.('td.nm.jmp');
+      const tr = nm?.closest('tr');
+      if (tr) this._jump(tr.dataset.jk, tr.dataset.jc);
     });
+  }
+  // jump to the diagram: a model input lands on its controlling knob, an
+  // activation row on its chip (or aux label); the target pulses
+  _jump(jk, jc) {
+    const l = this._layer;
+    if (!l) return;
+    const el2 = jk
+      ? (l.parentElement.querySelector(`.stp[data-knob="${jk}"]`)
+        ?? l.parentElement.querySelector(`input[data-knob="${jk}"]`)?.closest('label'))
+      : jc ? l.querySelector(`.lv-scroll g[data-chip="${jc}"]`) : null;
+    if (!el2) return;
+    el2.scrollIntoView({ block: 'center', inline: 'center' });
+    el2.classList.remove('jump-hl');
+    void (el2.getBoundingClientRect());   // restart the pulse animation
+    el2.classList.add('jump-hl');
+    clearTimeout(this._jt);
+    this._jt = setTimeout(() => el2.classList.remove('jump-hl'), 2000);
   }
   // tooltip jump target: scroll the row into view and highlight it (the
   // highlight survives re-syncs until the next jump)
@@ -4140,7 +4184,9 @@ class Dsv3Sheet extends HTMLElement {
       + (this._sim ? '<div style="color:#8c5a19">simplified: the lse/rstd artifacts and the final norm are dropped, so these values drift slightly from the (exact) chart</div>' : '')
       + '</div>'
       + '<table><tr><th>cell</th><th>quantity</th><th>formula</th><th class="vl">value (exact)</th><th class="vl">≈</th></tr>'
-      + cells.cells.map((c) => `<tr data-cell="${c.id}"${c.id === this._hl ? ' class="hl"' : ''}><td class="nm">${c.id}</td>`
+      + cells.cells.map((c) => `<tr data-cell="${c.id}"${c.id === this._hl ? ' class="hl"' : ''}`
+        + `${c.ui?.k ? ` data-jk="${c.ui.k}"` : ''}${c.ui?.c ? ` data-jc="${c.ui.c}"` : ''}>`
+        + `<td class="nm${c.ui ? ' jmp" title="jump to it in the diagram' : ''}">${c.id}</td>`
         + `<td class="lb"${c.depth ? ` style="padding-left:${2 + c.depth * 14}px"` : ''}>${esc(c.label)}</td>`
         + `<td class="fx">${fx(c)}</td>`
         + `<td class="vl">${raw(c)}</td><td class="vl ap">${approx(c)}</td></tr>`).join('')

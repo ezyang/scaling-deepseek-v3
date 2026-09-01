@@ -20,6 +20,8 @@ T.check('lse/rstd aux chips shown', texts().some(t => /← lse ·/.test(t)) && t
 // idle chips name the wire precision
 T.check('idle chips named with dtype', [...dia().querySelectorAll('text.tidle')].some(t => t.textContent.startsWith('·')), '');
 // chip tooltips (needTip) live
-const chip = [...dia().querySelectorAll('text.tsave[data-tip]')][0];
-T.check('chips carry state tooltips', !!chip && chip.dataset.tip.includes('kept alive by'), chip?.dataset.tip.slice(0, 40));
+const chip = [...dia().querySelectorAll('text.tsave tspan[data-tip]')][0];
+T.check('chips carry state tooltips (on the NAME tspan only — no raw-B conflict)',
+  !!chip && chip.dataset.tip.includes('kept alive by') && !chip.closest('text').hasAttribute('data-tip'),
+  chip?.dataset.tip.slice(0, 40));
 T.done();
