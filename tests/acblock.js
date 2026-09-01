@@ -117,8 +117,15 @@ T.check('fp8 widget: the fp8 recipe shrinks the tally (76 pickets — o_proj run
   const pill = (w) => w.querySelector('.lv-foot2 rect[stroke="#8c5a19"]')?.parentElement.textContent ?? null;
   T.check('fp8ᵀ off: the bwd ribbon carries the requant round-trip pill', /requantᵀ ≈ 145 µs/.test(pill(f8)), pill(f8));
   T.check('no traffic pill on the bf16 AC widget', pill(ac) === null, pill(ac));
-  f8.querySelector('input[data-knob="transposed"]').click(); await T.tick(400);
-  T.check('fp8ᵀ on: the pill flips to the fwd ᵀ-writes', /ᵀ-writes ≈ 72 µs/.test(pill(f8)), pill(f8));
+  f8.querySelector('input[data-knob="transposed"]').click(); await T.tick(60);
+  { // presence EASES: mid-tween the pill is scaled down, not popped
+    const g = f8.querySelector('.lv-foot2 rect[stroke="#8c5a19"]')?.parentElement;
+    const sc = +(g?.getAttribute('transform')?.match(/scale\(([\d.]+)\)/)?.[1] ?? -1);
+    T.check('pill shrinks through the ᵀ tween (bar physics)', sc > 0 && sc < 1, sc);
+  }
+  await T.tick(400);
+  T.check('ᵀ on: NO pill — the second orientation fuses into the forward quantize (its cost is the GiB on the bar)',
+    pill(f8) === null, pill(f8));
   f8.querySelector('input[data-knob="transposed"]').click(); await T.tick(400);
 }
 // DOUBLED rows: recomputed ops carry a second picket row in the recompute

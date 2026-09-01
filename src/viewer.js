@@ -1026,7 +1026,7 @@ export class Dsv3Layer extends HTMLElement {
   // stretch, tally ribbons pour, saved-tensor chips dissolve and their grids
   // pour. Numbers snap (house rule).
   _tweenQuant(mutate) {
-    const prev = { anaPrev: this._anaMemo?.ana, mm: { ...this.matmuls }, marks: { ...this.marks } };
+    const prev = { anaPrev: this._anaMemo?.ana, mm: { ...this.matmuls }, marks: { ...this.marks }, transposed: this.transposed };
     mutate();
     this.changed(true);
     this._frames((t) => { this._vtween = { t, prev }; }, () => { this._vtween = undefined; });
@@ -3501,10 +3501,12 @@ export class Dsv3Layer extends HTMLElement {
       // costs in FOREIGN currencies ride the ribbon as pills, named not
       // priced — no pickets, since the ruler meters only the GEMM floor
       let px = cx + 10 + num.length * 5.2 + 8;
-      const pill = (txt, tip, bg, stroke, ink) => {
+      const pill = (txt, tip, bg, stroke, ink, sc = 1) => {
         const cw = (txt.length + 2) * 4.7 + 16;
         if (px + cw > 1080) { px = TB_X + 10; cy += 17; }   // never clip: wrap under the ribbon
-        T.push(`<g data-tip="${escAttr(tip)}"><rect x="${px.toFixed(1)}" y="${cy - 4.5}" width="${cw.toFixed(1)}" height="15" rx="7.5" fill="${bg}" stroke="${stroke}"/>` +
+        // sc: eased presence — scales about the pill's left-middle anchor
+        const tf = sc === 1 ? '' : ` transform="translate(${px.toFixed(1)} ${cy + 3}) scale(${sc.toFixed(3)}) translate(${(-px).toFixed(1)} ${(-cy - 3).toFixed(1)})" opacity="${sc.toFixed(3)}"`;
+        T.push(`<g data-tip="${escAttr(tip)}"${tf}><rect x="${px.toFixed(1)}" y="${cy - 4.5}" width="${cw.toFixed(1)}" height="15" rx="7.5" fill="${bg}" stroke="${stroke}"/>` +
           `<text class="dims" x="${(px + 7).toFixed(1)}" y="${cy + 6}" style="fill:${ink}">+ ${txt}</text></g>`);
         px += cw + 6;
       };
@@ -3513,37 +3515,38 @@ export class Dsv3Layer extends HTMLElement {
           'communication, not FLOPs — the replay re-runs the all-to-all; its exposed cost depends on overlap, so no number is claimed.',
           '#f3f1fb', '#6b5bd2', '#4636a3');
       if (traffic)          // HBM traffic (quantization round trips): bronze — bytes on the move
-        pill(traffic.txt, traffic.tip, '#f8f2e6', '#8c5a19', '#6f4712');
+        pill(traffic.txt, traffic.tip, '#f8f2e6', '#8c5a19', '#6f4712', traffic.s ?? 1);
       ty = cy + 13;
     };
     const wFwd = (n) => lerpQ(eqP(n), eq(n));
     // replay membership lerps too: an op entering the replay set pours in
     // from zero, a leaving one drains out
     const wRep = (n) => lerpQ(anaP?.replayed.has(n.id) ? eqP(n) : 0, ana.replayed.has(n.id) ? eq(n) : 0);
-    // the fp8ᵀ trade's OTHER side: whichever state the toggle is in, the
-    // unpriced cost is NAMED on the ribbon where it occurs (the a2a-pill
-    // pattern, in the bronze HBM-traffic class). OFF = DeepSeek's convention:
+    // the e4m3ᵀ trade's OTHER side, priced by the fusion rule: a pill only
+    // where there is NO PRODUCER TO FUSE INTO. OFF = DeepSeek's convention:
     // backward re-quantizes every wgrad-read fp8 stash — a pure HBM round
-    // trip (the stash is cold; read + write have no producer to fuse into).
-    // ON = TE-style: the second orientation is an extra forward write, and
-    // the stash bar already carries the bytes. Quantization has a
-    // fusion-independent bandwidth FLOOR, so the pill claims a number —
-    // unlike the a2a pill, whose exposed cost depends on overlap.
+    // trip over a COLD stash (and fusing the transpose into the wgrad
+    // prologue loses to tile reuse), so a fusion-independent floor exists
+    // and the pill claims it. ON pays NO pill: the second orientation rides
+    // the forward quantize kernel's epilogue — the extra write is real but
+    // belongs to the same deliberately-unpriced class as every other stash
+    // write; its cost story is the +GiB already on the bar.
+    // presence EASES with the toggle tween (the bar's physics): scale lerps
+    // between the endpoints' has-a-pill states, so the bubble grows in as
+    // the bar shrinks (and vice versa) instead of popping
+    const pOff = VQ ? !(VQ.prev.transposed ?? this.transposed) : !this.transposed;
+    const pillS = VQ ? (pOff ? 1 : 0) + ((!this.transposed ? 1 : 0) - (pOff ? 1 : 0)) * VQ.t : (!this.transposed ? 1 : 0);
     let traffic = null;
-    {
-      const dualSet = this.transposed ? ana.dual
-        : analyze(blockGraph(this.kind, DSV3, this.matmuls, 4096), marks, true).dual;
+    if (pillS > 0.01) {
+      const dualSet = analyze(blockGraph(this.kind, DSV3, this.matmuls, 4096), marks, true).dual;
       const tB = [...dualSet].reduce((t2, i2) => t2 + (ana.byId[i2]?.outBytes ?? 0), 0) * 4096;
       const us = (b) => Math.round(b / (HARDWARE.h100.hbm / 1e6));
       const mib = (b) => Math.round(b / 2 ** 20);
-      if (tB) traffic = this.transposed
-        ? { on: 'fwd', txt: `ᵀ-writes ≈ ${us(tB)} µs`,
-          tip: `fp8ᵀ ON — both orientations are quantized at forward (cast-transpose), so backward re-quantization is avoided. The marginal cost is the second copy's HBM write: ≈ ${mib(tB)} MiB ≈ ${us(tB)} µs per microbatch·layer at 3.35 TB/s — plus the stash bytes already on the bar. Bandwidth, not GEMM FLOPs: named here, never metered by the ruler.` }
-        : { on: 'bwd', txt: `requantᵀ ≈ ${us(2 * tB)} µs`,
-          tip: `fp8ᵀ OFF — DeepSeek's convention: the stash keeps ONE orientation, and backward re-quantizes every fp8 stash a weight gradient reads (dequantize → transpose → quantize into 128×1 tiles). A pure HBM round trip — the stash is cold, nothing to fuse into: read + write ≈ ${mib(2 * tB)} MiB ≈ ${us(2 * tB)} µs per microbatch·layer at 3.35 TB/s. Bandwidth, not GEMM FLOPs: named here, never metered by the ruler.` };
+      if (tB) traffic = { s: pillS, txt: `requantᵀ ≈ ${us(2 * tB)} µs`,
+        tip: `e4m3ᵀ OFF — DeepSeek's convention: the stash keeps ONE orientation, and backward re-quantizes every fp8 stash a weight gradient reads (dequantize → transpose → quantize into 128×1 tiles). A pure HBM round trip — the stash is cold, nothing to fuse into: read + write ≈ ${mib(2 * tB)} MiB ≈ ${us(2 * tB)} µs per microbatch·layer at 3.35 TB/s. Bandwidth, not GEMM FLOPs: named here, never metered by the ruler. (ᵀ ON avoids this by widening the forward quantize kernel's write — fusable, so unpriced like every stash write; its cost is the extra GiB on the bar.)` };
     }
-    ribbon('fwd', fwdOps, wFwd, '1.00×', null, null, traffic?.on === 'fwd' ? traffic : null);
-    ribbon('bwd', fwdOps, (n) => 2 * wFwd(n), '2.00× (dgrad + wgrad)', null, null, traffic?.on === 'bwd' ? traffic : null);
+    ribbon('fwd', fwdOps, wFwd, '1.00×');
+    ribbon('bwd', fwdOps, (n) => 2 * wFwd(n), '2.00× (dgrad + wgrad)', null, null, traffic);
     ribbon('recompute', fwdOps, wRep, `+${(replayEq / fwdEq).toFixed(2)}×`, ana.replayComm, 'light');
     {
       // the compute ruler: same device as the byte bars' — minor tick =
