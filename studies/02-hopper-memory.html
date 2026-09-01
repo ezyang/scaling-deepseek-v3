@@ -252,9 +252,7 @@
       xlayers="8" xinflight="8.5" xtag="an interior rank of PP8 · DualPipeV steady state"></dsv3-anatomy>
 
     <p>Note that the FLOP counts here are per token, so the mixture of experts FLOPs are
-    8x'ed because each token gets processed by eight experts.</p>
-
-    <p>You have some degrees of freedom in how you setup your recompute/save strategy.  However,
+    8x'ed because each token gets processed by eight experts.  You have some degrees of freedom in how you setup your recompute/save strategy.  However,
     there are some primary themes:</p>
 
     <ul>
@@ -284,7 +282,7 @@
     <ol>
         <li>It reduces the amount of memory the GEMM needs to read (low precision
         inputs are smaller).</li>
-        <li>It increases tokens per second, because GPUs have more TFLOPs for
+        <li>It can increase tokens per second, because GPUs have more TFLOPs for
         lower precision tensor cores.</li>
         <li>It reduces the amount of memory you need to save for backwards
         (but there is a cost to this).</li>
@@ -292,15 +290,14 @@
 
     <p>Because we're doing an analysis for Hopper, we will be primarily
     looking at Hopper-era quantization schemes.  Hopper's MMA instruction
-    supported FP8 without native support for scaling.  Instead, scaling
+    supported FP8 without native support for arbitrary tensor/block scaling.  Instead, this scaling
     was done outside the MMA.  The original quantization recipes published by
     NVIDIA advocated for tensor-wide descaling (where scaling can be done
     entirely after the GEMM), but it turns out trying to apply a single scale
-    to an entire tensor is not great for numerics.  Eventually, scaling on
-    128-element 1D blocks (by incrementally scaling during the K reduction)
-    became an important Hopper scheme; DeepSeek-V3 was responsible for
-    popularizing this scheme!  NVIDIA eventually natively added support for
-    scaling on 32-element 1D blocks with Blackwell MXFP8.</p>
+    to an entire tensor is not great for numerics.  DeepSeek-V3 popularized
+    a 128-element 1D block scaling scheme (implemented by incrementally scaling during the K reduction).
+    Later, NVIDIA natively added support for
+    scaling 32-element 1D blocks with Blackwell MXFP8.</p>
 
     <p>I am somewhat reluctant to go super deep into the peculiarities of Hopper
     quantization, as some of the problems it has to solve don't transfer to Blackwell, but there is one
@@ -318,14 +315,14 @@
     on Hopper, 32x32 on Blackwell); the scale for the block can be repeated to
     form individual Nx1 or 1xN scales for the actual GEMM.  On Blackwell, you
     can even all-gather the (block quantized) parameters in MXFP8, reducing the memory usage of
-    the (working) parameters, because Blackwell GEMM supports (logically)
-    transposed arguments with scales directly.</p>
+    the (working) parameters, because Blackwell GEMM supports in all combinations of transpose (T) and
+    non-transpose (N) layouts.</p>
 
-    <p>However, miserably, on Hopper we must have both GEMM arguments in
+    <p>However, miserably, on Hopper we must have both WGMMA arguments in
     physically the correct layout, which means we always have to physically
     transpose and maintain another copy of the parameter in FP8&#7488;.  So if
     you decide to store your compute weights in FP8 rather than BF16, you
-    don't actually end up saving any memory in the end (two FP8 = one
+    don't actually end up saving any compute weight memory in the end (two FP8 = one
     BF16)--in fact, it's slightly worse because you also have to store the
     scales for FP8.  A more common recipe is to maintain the compute weights
     in BF16 and quantize the weights on the fly right before they're used.</p>
@@ -388,7 +385,8 @@
 
     <dsv3-beat-deck id="fitdeck" style="min-height:580px">
       <section data-config='{"world":2048,"pp":1,"ep":1,"zero":0}'>
-        <b>Step 1 — Global memory usage.</b>
+        <b>Step 1 — Global memory usage.</b> Start with no parallelization at all, with
+        everything replicated across every rank.  Everything needs to be cut down to fit.
       </section>
       <section data-config='{"world":2048,"pp":1,"ep":1,"zero":1}'>
         <b>Step 2 — ZeRO-1.</b> Sharding optimizer states (including
@@ -417,16 +415,26 @@
       </section>
     </dsv3-beat-deck>
 
-    <p>
-    One final note: it is comparatively simpler to debug OOMs in LLM pretraining,
+    <p>In the end, we are left with around 18 GiB of headroom for intermediates.
+    The rest of the battle is making your actual implementation fit inside
+    this remaining space!</p>
+
+    <h2>Conclusion</h2>
+
+    <p>This concludes our roofline memory model for DeepSeek-V3 on H100.  Below,
+    I have a version of the model that has all of the knobs we've introduced earlier
+    in this post, so you can play around with any other scenarios you might be interested in.
+    I have one  parting thought: it is comparatively simpler to debug OOMs in LLM pretraining,
     because the memory usage of your trainer doesn't depend on doing distributed
     communications at scale (assuming your memory allocations and deallocations are
     deterministic--a very good idea!)  In modern PyTorch, you can use <strong>fake
     ProcessGroup (fake PG)</strong> to do a very high fidelity simulation of
     the memory usage of any given rank in an arbitrarily large training config
-    on a single GPU.</p>
-
-    <h2>The full model</h2>
+    on a single GPU (NB: with pipeline parallelism, you do have to check
+    every pipeline stage individually).  It's a good candidate for agentic hill-climbing!
+    Even still, though, I sincerely believe that having the roofline is still very useful,
+    since sometimes the reason you are OOMing because of something very dumb, and the
+    roofline will tell you exactly what it is.</p>
 
     <dsv3-anatomy style="min-height:1017px" lens="param-bytes" local cumulative recipe="bf16" recipes="bf16,dsv3-fp8,all-fp8" recompute="none" layer="local-diagram" detail controls="static" nocaption></dsv3-anatomy>
 
