@@ -2504,9 +2504,17 @@ export class Dsv3Layer extends HTMLElement {
           return `<text class="tensor tsave"${tip} x="${x}" y="${y + 8}">${needDir(ids, ov?.readers)} ${esc(name0)} · ${fmtMem(bytesA(A))} ` +
             `<tspan fill="${DT_STYLE[dtOf(n2)]}">${dtOf(n2)}${dtag}</tspan>${s2 === 'pin' ? ' 🔒' : ''}</text>`;
         }
+        // dtype-bearing tiers state EVERY intermediate's precision, saved or
+        // not (the paper is explicit even about unsaved wires — the combine
+        // is bf16 both directions); the tag follows the same reader-dtype
+        // convention the saved chips use
+        const wdt = this.getAttribute('controls') === 'dtype' ? (() => {   // the dtype TIER only: the full tier's narrower kv column can't fit the longer labels
+          const n3 = A.byId[id] ?? n;
+          return ` <tspan fill="${DT_STYLE[dtOf(n3)]}">${dtOf(n3)}</tspan>`;
+        })() : '';
         // ov.short: narrow fork columns drop the suffix (the ↻ glyph carries it)
-        if (s2 === 'redo') return `<text class="tensor tredo"${tip} x="${x}" y="${y + 8}">↻ ${esc(name0)}${ov?.short ? '' : ' — recomputed'}</text>`;
-        return `<text class="tensor tidle"${tip} x="${x}" y="${y + 8}">· ${esc(name0)}</text>`;
+        if (s2 === 'redo') return `<text class="tensor tredo"${tip} x="${x}" y="${y + 8}">↻ ${esc(name0)}${ov?.short ? '' : ' — recomputed'}${wdt}</text>`;
+        return `<text class="tensor tidle"${tip} x="${x}" y="${y + 8}">· ${esc(name0)}${wdt}</text>`;
       };
       const SAVED = (s2) => s2 === 'save' || s2 === 'pin';
       // the grid: FILLED squares for a real stash, HOLLOW for a recomputed
@@ -3002,8 +3010,14 @@ export class Dsv3Layer extends HTMLElement {
       // the top-k weights are a DEDICATED second output of the top-k block
       // (right edge) — not a duplicated tensor like the residual/shared forks
       gateTop = z + 9;
-      z = micro('sigmoid · +bias · group top-k · scale', C2, z, W,
-        `the learned e_score_correction_bias affects expert selection but not the gating weights\nparameters: ${PARAMS.routerBias.toLocaleString('en-US')}`,
+      // 'biased top-k' scopes the bias to SELECTION; the gating weights are
+      // a separate path (renorm of the ORIGINAL scores) — the old
+      // '+bias · top-k · scale' read as one pipeline, wrongly implying
+      // biased scores become weights
+      z = micro('sigmoid · biased top-k · renorm+scale', C2, z, W,
+        'two paths from the sigmoid scores: SELECTION adds the learned e_score_correction_bias ' +
+        '(group-limited top-8); the GATING WEIGHTS ignore the bias — the original sigmoid scores of ' +
+        `the selected 8, renormalized to sum 1, × the routed scaling factor 2.5\nparameters: ${PARAMS.routerBias.toLocaleString('en-US')}`,
         pk(PARAMS.routerBias).trim(), 'router_bias');
       // quant tiers: the label rides the rail's VERTICAL run (right of it,
       // mid-descent — open space there; the static tiers' compressed rows
@@ -3195,7 +3209,7 @@ export class Dsv3Layer extends HTMLElement {
           d: g.dense * PARAMS.denseBlock + g.moe * (PARAMS.moeBlock - moeExp),
           v: ((g.emb ? 1 : 0) + (g.head ? 1 : 0)) * PARAMS.embed
             + (g.head ? DSV3.hidden : 0),
-          layers: g.layers, dLay: g.dense, mLay: g.moe,
+          layers: g.layers, dLay: g.dense, mLay: g.moe, emb: g.emb, head: g.head,
         };
       };
       // per-(rank, microbatch) activation bytes, priced BY KIND: the dense
@@ -3203,6 +3217,12 @@ export class Dsv3Layer extends HTMLElement {
       // tokens), the MoE layers at theirs — same marks/recipe for both
       const anaD = this._anaMemo.anaD ?? ana;
       const actQ = (q) => (q.dLay * anaD.savedBytes + q.mLay * ana.savedBytes) * 4096;
+      // vocab-side activations, charged ×1 microbatch (they don't scale with
+      // pipeline depth: the head's logits + fp32 softmax live only across
+      // that microbatch's loss fwd/bwd, and the embed residual is the first
+      // chunk's x0) — memory.js's head/embed convention, so the chart and
+      // the model agree (the acts row used to count block stashes only)
+      const vocabActs = (q) => ((q.emb ? 2 * DSV3.hidden : 0) + (q.head ? 6 * DSV3.vocab : 0)) * 4096;
       const shardOf = (S, c, cls) =>
         (S.zero ?? 1) >= c.zthresh ? c.bpp / (cls === 'e' ? (S.world ?? LOCAL_PAR.world) / S.pp / S.ep : (S.world ?? LOCAL_PAR.world) / S.pp) : c.bpp;
       // per component: [experts, non-expert blocks, emb+lm head] bytes — the solo
@@ -3212,13 +3232,14 @@ export class Dsv3Layer extends HTMLElement {
         const IFn = inflightOf(S.sched ?? '1f1b', S.stage, S.pp, S.vpp, S.fold);
         const bM = actBucketsOf(ana), bD = actBucketsOf(anaD);
         const actP = bM.map((b, i) => (q.mLay * b + q.dLay * bD[i]) * 4096 * IFn);
+        actP[actP.length - 1] += vocabActs(q);   // the catch-all keeps the partition exact
         return COMPS.map((c) => [q.e * shardOf(S, c, 'e'), q.d * shardOf(S, c, 'd'), q.v * shardOf(S, c, 'd')])
           .concat([actP]);
       };
       const segB = (S) => {
         const q = stageParts(S);
         return COMPS.map((c) => (q.d + q.v) * shardOf(S, c, 'd') + q.e * shardOf(S, c, 'e'))
-          .concat([actQ(q) * inflightOf(S.sched ?? '1f1b', S.stage, S.pp, S.vpp, S.fold)]);
+          .concat([actQ(q) * inflightOf(S.sched ?? '1f1b', S.stage, S.pp, S.vpp, S.fold) + vocabActs(q)]);
       };
       this._segParts = partsFor(Snow);
       const nowB = segB(Snow);

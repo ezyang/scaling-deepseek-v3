@@ -103,7 +103,7 @@
     We tally up all of the saved for backwards activations, which here are
     assumed to be saved in the compute precision BF16.</p>
 
-    <dsv3-layer style="min-height:217px" snapshot nototal solo="acts"
+    <dsv3-layer style="min-height:229px" snapshot nototal solo="acts"
       from='{"world":2048,"pp":1,"ep":1,"zero":0}'
       local cumulative lens="param-bytes" recipe="bf16" recompute="none" controls="static" detail
       nocaption></dsv3-layer>
@@ -112,7 +112,7 @@
     more memory than a single H100 has.  We cannot even fit all of the activations we
     want to save for backwards.</p>
 
-    <dsv3-layer style="min-height:373px" snapshot parts
+    <dsv3-layer style="min-height:385px" snapshot parts
       from='{"world":2048,"pp":1,"ep":1,"zero":0}'
       local cumulative lens="param-bytes" recipe="bf16" recompute="none" controls="static" detail
       nocaption></dsv3-layer>
@@ -295,7 +295,7 @@
     <p>We can now step through an iterative process by which we can get
     DeepSeek-V3 to fit on 2048 H100s without OOMing.</p>
 
-    <dsv3-beat-deck id="fitdeck" style="min-height:648px">
+    <dsv3-beat-deck id="fitdeck" style="min-height:657px">
       <section data-config='{"world":2048,"pp":1,"ep":1,"zero":0}'>
         [<b>Step 1 — the debt.</b> The whole model on one imaginary GPU:
         8.65 TiB against an 80 GiB card — ×111 over budget, about seven

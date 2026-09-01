@@ -62,7 +62,7 @@ main { counter-reset: mn; }
   margin-top: 4px; margin-bottom: 8px; font-size: 12.5px; line-height: 1.5;
   color: #52514e; }
 .mn::before { content: counter(mn) ". "; color: #b05f00; font-weight: 600; }
-dsv3-layer, dsv3-trace, figure, table.xcheck { clear: right; }
+dsv3-layer, dsv3-trace, dsv3-anatomy, dsv3-beat-deck, dsv3-pp-schedule, dsv3-pp-fold, figure, table.xcheck { clear: right; }
 @media (max-width: 1040px) {
   .mn { float: none; clear: none; width: auto; margin: 8px 0;
     display: block; padding: 6px 10px; border-left: 3px solid #e1e0d9;
