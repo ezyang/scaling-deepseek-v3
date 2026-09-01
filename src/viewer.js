@@ -2154,7 +2154,9 @@ export class Dsv3Layer extends HTMLElement {
     // shown in EVERY quant tier (the AC section too) so the label never flips
     // between sections.
     const dtBtn = (id, x, y) => (id === 'router' ? !(this._ctl.quant || this._ctl.dtype) : !this._ctl.dtype) ? '' :
-      `<foreignObject x="${x}" y="${y}" width="52" height="20">` +
+      // pinned tags are 4px wider for the 🔒 — the frame grows LEFT so the
+      // right edge stays put inside the box
+      `<foreignObject x="${id === 'router' || id === 'o_proj' ? x - 6 : x}" y="${y}" width="${id === 'router' || id === 'o_proj' ? 60 : 52}" height="20">` +
       (id === 'router'
         ? `<button xmlns="http://www.w3.org/1999/xhtml" class="st dtb" data-dt="${id}" disabled style="color:${DT_STYLE[dt(id)]};cursor:default;opacity:0.8;width:56px" ` +
           `title="🔒 pinned: the router runs fp32 in production (tiny GEMM, numerically sensitive) — it follows the recipe, not a per-op lever">${dt(id)} 🔒</button>`
