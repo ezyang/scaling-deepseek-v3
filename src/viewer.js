@@ -795,7 +795,7 @@ export function patchTargets(forAttr, patch) {
 // byte-component language (weights blue / grads orange / optim green) so a
 // picket never impersonates a byte bar. fp8 (Hopper tile-scaled) and mxfp8
 // (Blackwell MX) share the pink — same bytes, different provenance.
-const DT_STYLE = { bf16: '#52514e', fp8: '#d6408b', mxfp8: '#d6408b', e5m6: '#9c3a96', fp32: '#7a2c2c' };
+const DT_STYLE = { bf16: '#52514e', e4m3: '#d6408b', mxfp8: '#d6408b', e5m6: '#9c3a96', fp32: '#7a2c2c' };
 // the diagram's visual-language tokens (docs/diagram-grammar.md) — one
 // definition, scoped into each widget's stylesheet (the anatomy plan too)
 export const tokensCss = (s) => `
@@ -1384,7 +1384,7 @@ export class Dsv3Layer extends HTMLElement {
     const tcb = document.createElement('input');
     tcb.type = 'checkbox'; tcb.checked = this.transposed;
     tcb.onchange = () => localTween(() => { this.transposed = tcb.checked; });
-    tl.append(tcb, 'fp8ᵀ dual stash (expert inputs)');
+    tl.append(tcb, 'e4m3ᵀ dual stash (expert inputs)');
     if (this._ctl.dtype) head.append(tl);
     // local: the multiplier is the stage's block count, not the whole model's
     const KBLK = this.hasAttribute('local') && this.getAttribute('lens') === 'param-bytes'
@@ -1884,18 +1884,17 @@ export class Dsv3Layer extends HTMLElement {
           + `RoPE carries its own mark${this._ctl.quant ? ' (every preset replays it; saving it stashes the same bytes post-rotation)' : ''}.`,
       !this._ctl.quant ? '' :
       'The picket run inside each op is its FLOP cost as time at peak \u2014 one picket = 10 MFLOP/token \u2248 41 \u00b5s per 4096-token microbatch (' +
-      'fp8 counted half \u2014 2\u00d7 peak; fp32 counted double \u2014 half peak; dtype colors here and on the saved-tensor tags: pink fp8, plum e5m6, dark bf16, maroon fp32); ' +
+      'e4m3/mxfp8 counted half \u2014 2\u00d7 peak; fp32 counted double \u2014 half peak; dtype colors here and on the saved-tensor tags: pink e4m3, plum e5m6, dark bf16, maroon fp32); ' +
       'the lm head uses the same unit \u2014 per-token vocab work, independent of depth. Norms/SwiGLU ' +
       'get a hollow dashed fig-leaf (bandwidth-bound, compute precision unspecified).',
-      this._ctl.dtype ? 'One click on a dtype button toggles bf16 \u21c4 fp8 (attn out: bf16 \u21c4 e5m6; the router is pinned).' : '',
+      this._ctl.dtype ? 'One click on a dtype button toggles bf16 \u21c4 e4m3 (attn out: bf16 \u21c4 e5m6; the router is pinned).' : '',
       this._ctl.quant
         ? 'The tally at right totals fwd + bwd (2\u00d7 fwd \u2014 dgrad + wgrad; sdpa likewise) + replay'
           + (this._ctl.marks ? ' \u2014 marking ops \u21bb grows its replay row.' : '.')
         : '',
       this._ctl.dtype
-        ? 'The fp8\u1d40 toggle models Hopper tile-scaled fp8: any fp8 stash a wgrad GEMM reads is kept in both ' +
-          'quantization orientations (\u1d40\u00d72 tags) because per-row scales don\u2019t transpose; MXFP8\u2019s ' +
-          'power-of-two block scales requantize exactly, so Blackwell keeps one.'
+        ? 'The e4m3\u1d40 toggle: wgrads read saved activations TRANSPOSED and 1\u00d7128 tile scales don\u2019t survive that \u2014 ' +
+          'ON stashes both orientations (\u1d40\u00d72 tags); OFF re-quantizes during backward (DeepSeek\u2019s convention, priced on the bwd ribbon).'
         : '',
     ];
     note.textContent = parts.filter(Boolean).join(' ');
@@ -2208,7 +2207,7 @@ export class Dsv3Layer extends HTMLElement {
     // the lm head takes however many rows it needs at the same scale.
     // Colored by the op's precision; vector ops get a muted fig-leaf block.
     // e5m6 names a STASH format (the attn-out linear) — its GEMM runs fp8
-    const flopEq = (flopsTok, d) => flopsTok * (d === 'fp8' || d === 'mxfp8' || d === 'e5m6' ? 0.5 : d === 'fp32' ? 2 : 1);
+    const flopEq = (flopsTok, d) => flopsTok * (d === 'e4m3' || d === 'mxfp8' || d === 'e5m6' ? 0.5 : d === 'fp32' ? 2 : 1);
     const opDt = (id) => {
       const n = ana.byId[id];
       if (!n) return 'vector';
@@ -2244,7 +2243,7 @@ export class Dsv3Layer extends HTMLElement {
     // backward reads it — a real degree of freedom, so we surface it)
     // which fp8 FLAVOR this instance speaks (bytes are identical; the label
     // carries provenance): mxfp8 only if the current recipe actually uses it
-    const FP8K = Object.values(this.matmuls).includes('mxfp8') ? 'mxfp8' : 'fp8';
+    const FP8K = Object.values(this.matmuls).includes('mxfp8') ? 'mxfp8' : 'e4m3';   // e4m3 = the tile-scaled Hopper flavor's precise name
     const dtOf = (n) => {
       const b = n.outBytes / n.elems;
       return b >= 3.5 ? 'fp32' : b >= 1.7 ? 'bf16' : b >= 1.2 ? 'e5m6' : FP8K;
@@ -2359,7 +2358,11 @@ export class Dsv3Layer extends HTMLElement {
     // DOUBLED rows: the fwd pickets (dtype color) and, below them, the
     // RECOMPUTE pickets (their own color) — the op's replay cost, pouring to
     // zero when it is saved. Space is reserved either way (no reflow).
-    const REDO_C = '#c74e1d';   // the schedule's backward family: replay is bwd-side work
+    // recompute pickets keep the op's FORWARD dtype color, just LIGHTER
+    // (fill-opacity): with dtypes owning the hue axis, a foreign recompute
+    // hue would read as a fifth precision. Position (the second row / its
+    // own ribbon) + lightness carry the replay meaning.
+    const REDO_OP = ' fill-opacity="0.38"';
     const flopBar = (x, y, flopsTok, dt2, maxW = W - 16, dtp, id) => {
       if (!flopsTok || !this._ctl.quant) return;
       // recompute share, tweened: membership pours in/out with the marks
@@ -2368,21 +2371,21 @@ export class Dsv3Layer extends HTMLElement {
         ana.replayed.has(id) ? flopEq(flopsTok, dt2) : 0) / FUNIT;
       if (dt2 === 'vector') {   // unpriced fig leaf: bandwidth-bound, and we model no epilogue fusions
         P.push(`<rect x="${x}" y="${y}" width="5" height="4" fill="none" stroke="#c3c2b7" stroke-width="0.8" stroke-dasharray="1.5 1"/>`);
-        if (rT > 0.001) P.push(`<g opacity="${Math.min(1, rT * 40).toFixed(2)}"><rect x="${x + 8}" y="${y}" width="5" height="4" fill="none" stroke="${REDO_C}" stroke-width="0.8" stroke-dasharray="1.5 1"/></g>`);
+        if (rT > 0.001) P.push(`<g opacity="${Math.min(1, rT * 40).toFixed(2)}"><rect x="${x + 8}" y="${y}" width="5" height="4" fill="none" stroke="#c3c2b7" stroke-opacity="0.7" stroke-width="0.8" stroke-dasharray="1.5 1"/></g>`);
         return;
       }
       const color = barColor(dt2, dtp);
       const n = eqT(flopsTok, dt2, dtp) / FUNIT, per = Math.floor(maxW / 3);
       if (n < 1) {   // sub-picket: the hollow trace
         P.push(`<rect x="${x + 0.3}" y="${y + 0.3}" width="1.4" height="4.4" fill="none" stroke="${color}" stroke-width="0.7"/>`);
-        if (rT > 0.001) P.push(`<rect x="${x + 0.3}" y="${y + 7.3}" width="1.4" height="4.4" fill="none" stroke="${REDO_C}" stroke-width="0.7" opacity="${Math.min(1, rT * 40).toFixed(2)}"/>`);
+        if (rT > 0.001) P.push(`<rect x="${x + 0.3}" y="${y + 7.3}" width="1.4" height="4.4" fill="none" stroke="${color}" stroke-width="0.7" opacity="${(Math.min(1, rT * 40) * 0.5).toFixed(2)}"/>`);
         return;
       }
       const rows = Math.ceil(n / per);
       for (let u = 0; u < Math.ceil(n); u++)
         P.push(`<rect x="${x + (u % per) * 3}" y="${y + Math.floor(u / per) * 7}" width="${(2 * Math.min(1, n - u)).toFixed(2)}" height="5" fill="${color}"/>`);
       for (let u = 0; u < Math.ceil(rT); u++)
-        P.push(`<rect x="${x + (u % per) * 3}" y="${y + (rows + Math.floor(u / per)) * 7}" width="${(2 * Math.min(1, rT - u)).toFixed(2)}" height="5" fill="${REDO_C}"/>`);
+        P.push(`<rect x="${x + (u % per) * 3}" y="${y + (rows + Math.floor(u / per)) * 7}" width="${(2 * Math.min(1, rT - u)).toFixed(2)}" height="5" fill="${color}"${REDO_OP}/>`);
     };
     // who reads this saved tensor in backward: consumer below (↓), the
     // producer's own backward above (↑), or both (⇅). If EVERY reader is a
@@ -3002,8 +3005,12 @@ export class Dsv3Layer extends HTMLElement {
       z = micro('sigmoid · +bias · group top-k · scale', C2, z, W,
         `the learned e_score_correction_bias affects expert selection but not the gating weights\nparameters: ${PARAMS.routerBias.toLocaleString('en-US')}`,
         pk(PARAMS.routerBias).trim(), 'router_bias');
+      // quant tiers: the label rides the rail's VERTICAL run (right of it,
+      // mid-descent — open space there; the static tiers' compressed rows
+      // put other rails in that pocket, so they keep the below-pill spot)
       P.push(`<path class="wire" d="M ${C2 + W} ${gateTop} L ${gateX} ${gateTop}"/>` +
-        (PONLY ? '' : `<text class="tensor tidle" x="${C2 + 198}" y="${z + 11}">top-k weights · 8</text>`));
+        (PONLY || this._ctl.quant ? '' : `<text class="tensor tidle" x="${C2 + 198}" y="${z + 11}">top-k weights · 8</text>`));
+      this._gateLbl = (yDisp) => PONLY || !this._ctl.quant ? '' : `<text class="tensor tidle" x="${gateX - 4}" y="${yDisp}" text-anchor="end">top-k weights · 8</text>`;
     }
     z = wireOut(['router'], SX2, z, DET ? { name: 'router state' } : undefined);
     const dispTop = z;
@@ -3013,7 +3020,8 @@ export class Dsv3Layer extends HTMLElement {
     // expert_probs out of hybridep_dispatch)
     if (DET) P.push(
       `<path class="wire" d="M ${gateX} ${gateTop} L ${gateX} ${dispTop + 7} L ${C2 + W + 1} ${dispTop + 7}" marker-end="url(#arr)"/>` +
-      `<path class="wire" d="M ${C2 + W} ${dispTop + 16} L ${gateX} ${dispTop + 16}"/>`);
+      `<path class="wire" d="M ${C2 + W} ${dispTop + 16} L ${gateX} ${dispTop + 16}"/>` +
+      this._gateLbl(dispTop - 3));   // end-anchored at the rail's DOWN-elbow, just above its entry into the a2a
     z = wireOut(['dispatch'], SX2, z);
     const g2 = z + 3; z += 21;
     const rowG = z;
@@ -3034,7 +3042,7 @@ export class Dsv3Layer extends HTMLElement {
     // intermediate instead of a stash for the combine's backward
     if (DET) P.push(`<path class="wire" d="M ${gateX} ${dispTop + 16} L ${gateX} ${z + 13} L ${C2 + W + 1} ${z + 13}" marker-end="url(#arr)"/>`);
     const rowS = z;
-    z = opNode('swiglu', DET ? 'SwiGLU · × top-k weight (one fused kernel)' : 'SwiGLU', C2, z);
+    z = opNode('swiglu', DET ? 'SwiGLU · × top-k weight' : 'SwiGLU', C2, z);
     if (DET) {
       micro('SwiGLU (ungated)', SHX, rowS, 140, "follows the routed SwiGLU's mark — one graph node covers both", '', 'swiglu');
       tensorChip(['swiglu'], shMid + 14, z + 4, { name: 'swiglu out (sh)', tdims: '2048', frac: 1 / nExp, short: true });
@@ -3431,7 +3439,7 @@ export class Dsv3Layer extends HTMLElement {
     }
     T.push(`<text class="grplabel" x="0" y="${ty + 9}">per-layer FLOPs as time at peak — one picket = 10 MFLOP/token (bf16-eq) ≈ 41 µs per 4096-token microbatch:</text>`);
     ty += 14;
-    const DT_ORDER = { bf16: 0, e5m6: 1, fp8: 2, mxfp8: 2, fp32: 3 };
+    const DT_ORDER = { bf16: 0, e5m6: 1, e4m3: 2, mxfp8: 2, fp32: 3 };
     const ribbon = (label, list, wOf, num, comm, cOv, traffic) => {
       T.push(`<text class="dims" x="0" y="${ty + 9}">${label}</text>`);
       let cx = TB_X, cy = ty + 3;
@@ -3440,11 +3448,12 @@ export class Dsv3Layer extends HTMLElement {
       // laid end to end); per-op counts Bresenham'd over the exact cumulative
       const per = Math.floor(TB_AVAIL / 3);
       let cum = 0, drawn = 0;
+      const lite = cOv === 'light';
       for (const n of sorted) {
         cum += wOf(n) / FUNIT;
-        const color = cOv ?? barColor(opDt(n.id), opDtP(n.id));
+        const color = !cOv || lite ? barColor(opDt(n.id), opDtP(n.id)) : cOv;
         for (const upto = Math.round(cum); drawn < upto; drawn++)
-          T.push(`<rect x="${TB_X + (drawn % per) * 3}" y="${cy + Math.floor(drawn / per) * 7}" width="2" height="5" fill="${color}"/>`);
+          T.push(`<rect x="${TB_X + (drawn % per) * 3}" y="${cy + Math.floor(drawn / per) * 7}" width="2" height="5" fill="${color}"${lite ? ' fill-opacity="0.38"' : ''}/>`);
       }
       cx = TB_X + (drawn % per) * 3; cy += Math.floor(drawn / per) * 7;
       T.push(`<text class="dims" x="${(cx + 10).toFixed(1)}" y="${cy + 6}">${num}</text>`);
@@ -3494,7 +3503,7 @@ export class Dsv3Layer extends HTMLElement {
     }
     ribbon('fwd', fwdOps, wFwd, '1.00×', null, null, traffic?.on === 'fwd' ? traffic : null);
     ribbon('bwd', fwdOps, (n) => 2 * wFwd(n), '2.00× (dgrad + wgrad)', null, null, traffic?.on === 'bwd' ? traffic : null);
-    ribbon('recompute', fwdOps, wRep, `+${(replayEq / fwdEq).toFixed(2)}×`, ana.replayComm, '#c74e1d');
+    ribbon('recompute', fwdOps, wRep, `+${(replayEq / fwdEq).toFixed(2)}×`, ana.replayComm, 'light');
     {
       // the compute ruler: same device as the byte bars' — minor tick =
       // 100 MFLOP/token (5 pickets), major = 1 GFLOP/token, bf16-equivalent
@@ -3556,7 +3565,7 @@ export class Dsv3Layer extends HTMLElement {
           // the Blackwell one). Anything else (stale states) exits via bf16.
           const cycle = b.dataset.dt === 'o_proj'
             ? { bf16: 'e5m6', e5m6: 'bf16' }
-            : { bf16: FP8K, fp8: 'bf16', mxfp8: 'bf16' };
+            : { bf16: FP8K, e4m3: 'bf16', fp8: 'bf16', mxfp8: 'bf16' };   // 'fp8' = stale URL states from the old key
           this.matmuls[b.dataset.dt] = cycle[this.matmuls[b.dataset.dt]] ?? 'bf16';
         };
         if (this.hasAttribute('local') && this.getAttribute('lens') === 'param-bytes') {

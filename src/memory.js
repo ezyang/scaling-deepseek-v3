@@ -50,14 +50,14 @@ export const RECIPES = {
   // same bytes as MX, its own key so labels carry provenance); attention core and head high-precision; the router runs
   // fp32 in production; the attn-out linear's stash is the paper's customized
   // E5M6 (§3.3.3) — the GEMM itself runs fp8 (flopEq prices e5m6 at fp8 rate).
-  'dsv3-fp8': { qkv_down: 'fp8', q_up: 'fp8', kv_up: 'fp8', o_proj: 'e5m6', router: 'fp32', ffn_gate_up: 'fp8', ffn_down: 'fp8' },
+  'dsv3-fp8': { qkv_down: 'e4m3', q_up: 'e4m3', kv_up: 'e4m3', o_proj: 'e5m6', router: 'fp32', ffn_gate_up: 'e4m3', ffn_down: 'e4m3' },
   // dsv3-fp8 without the wide exception: EVERY linear runs (and stashes) fp8,
   // the attn-out included — a production H100 variant (notes.txt: MM5 is
   // fp8_linear). Attention core and head stay bf16, router fp32. Under
   // attention-replay recompute the attn-out stash never materializes, so this
   // recipe's BYTES equal dsv3-fp8's there (sanity pins that) — the difference
   // is the o_proj GEMM's compute pricing.
-  'all-fp8': { qkv_down: 'fp8', q_up: 'fp8', kv_up: 'fp8', o_proj: 'fp8', router: 'fp32', ffn_gate_up: 'fp8', ffn_down: 'fp8' },
+  'all-fp8': { qkv_down: 'e4m3', q_up: 'e4m3', kv_up: 'e4m3', o_proj: 'e4m3', router: 'fp32', ffn_gate_up: 'e4m3', ffn_down: 'e4m3' },
   // NVIDIA NeMo/Megatron-Bridge (MLPerf 6.0 submission) recipe: MXFP8 for every
   // GEMM (32-element MX blocks, UE8M0 scales, via TE) INCLUDING the attention
   // core (Blackwell FP8 attention: q/k/v saved MXFP8). The attention OUTPUT is
