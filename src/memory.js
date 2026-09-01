@@ -41,7 +41,11 @@ export const MATMULS = [
 // Presets. Unlisted matmuls stay bf16 (attention core, router, head — the
 // things every recipe keeps in high precision).
 export const RECIPES = {
-  'bf16': {},
+  // even the all-bf16 baseline pins the router fp32: gating is never a
+  // precision choice in the Hopper story (the paper keeps it high-precision,
+  // production runs it fp32), so the label must not flip between sections.
+  // (nv-mxfp8 keeps router bf16 — that IS NVIDIA's choice, a Blackwell-post fact.)
+  'bf16': { router: 'fp32' },
   // DeepSeek-V3 paper recipe: linears in tile-scaled fp8 (the Hopper flavor —
   // same bytes as MX, its own key so labels carry provenance); attention core and head high-precision; the router runs
   // fp32 in production; the attn-out linear's stash is the paper's customized

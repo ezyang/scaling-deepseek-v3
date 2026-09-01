@@ -70,6 +70,14 @@ const fwdN = (l) => {
     .filter(r => Math.abs(+r.getAttribute('y') - y0) < 3).length;
 };
 T.check('AC widget (bf16): fwd = 134 pickets at the fixed unit', fwdN(ac) === 134, fwdN(ac));
+// the router label never flips between sections: the AC (marks) tier wears
+// the same pinned fp32 tag as the dtype tier — bf16 recipe pins router fp32
+T.check('AC widget: router wears the pinned fp32 tag (no bf16 flip between sections)', (() => {
+  const b = ac.querySelector('button[data-dt="router"]');
+  return b && b.disabled && b.textContent === 'fp32';
+})(), '');
+T.check('AC widget: no OTHER dtype buttons below the dtype tier',
+  ac.querySelectorAll('button[data-dt]').length === 1, ac.querySelectorAll('button[data-dt]').length);
 T.check('fp8 widget: the fp8 recipe shrinks the tally (76 pickets — o_proj runs fp8 too, e5m6 names its stash)', fwdN(f8) === 76, fwdN(f8));
 { // recipe flip to bf16 restores the count — the unit never renormalizes
   btn(f8, 'recipe', 'bf16').click(); await T.tick(400);

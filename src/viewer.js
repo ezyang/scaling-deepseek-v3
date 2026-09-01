@@ -2118,8 +2118,10 @@ export class Dsv3Layer extends HTMLElement {
     // one-click precision toggle (bf16 ⇄ the fp8 flavor — the article is anchored on
     // bf16, so fp32 compute is not a lever here), hidden below the dtype tier.
     // The ROUTER is not a lever at all: production runs it fp32 (a tiny,
-    // numerically sensitive GEMM) — its tag is a pinned readout of the recipe.
-    const dtBtn = (id, x, y) => !this._ctl.dtype ? '' :
+    // numerically sensitive GEMM) — its tag is a pinned readout of the recipe,
+    // shown in EVERY quant tier (the AC section too) so the label never flips
+    // between sections.
+    const dtBtn = (id, x, y) => (id === 'router' ? !(this._ctl.quant || this._ctl.dtype) : !this._ctl.dtype) ? '' :
       `<foreignObject x="${x}" y="${y}" width="52" height="20">` +
       (id === 'router'
         ? `<button xmlns="http://www.w3.org/1999/xhtml" class="st dtb" data-dt="${id}" disabled style="color:${DT_STYLE[dt(id)]};cursor:default;opacity:0.8" ` +
