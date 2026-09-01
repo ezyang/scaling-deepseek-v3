@@ -60,11 +60,15 @@ deck().querySelector('.deck-last').click(); await T.tick(1200);
 T.check('end » jumps to the last step', cap().includes('Step 6')
   && deck().querySelector('.deck-next').disabled && deck().querySelector('.deck-last').disabled, '');
 T.check('audit clean at the end', auditFitCharts(deck()).findings.length === 0, '');
+// zeroed buckets HOLD their rows (0 B) — the chart never resizes as we step
+T.check('sub-row count still 19 at the last step (zeroed rows persist)',
+  L().querySelectorAll('.lv-bar text[data-role^="val:part:"]').length === 19,
+  L().querySelectorAll('.lv-bar text[data-role^="val:part:"]').length);
 // the sub-row SET is fixed across slides: stashes killed by AC/fp8 keep
 // their labeled zero rows (their bars animated down; rows never vanish)
 T.check('dead buckets remain as zero rows at the end', bar().includes('norm outs0')
   && bar().includes('swiglu out0'), '');
-T.check('sub-row count is slide-invariant', L().querySelectorAll('.lv-bar text[data-role^="val:part:"]').length === 18,
+T.check('sub-row count is slide-invariant', L().querySelectorAll('.lv-bar text[data-role^="val:part:"]').length === 19,
   L().querySelectorAll('.lv-bar text[data-role^="val:part:"]').length);
 // and « start back to the beginning
 deck().querySelector('.deck-first').click(); await T.tick(1200);

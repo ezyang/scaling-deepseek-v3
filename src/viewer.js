@@ -3357,9 +3357,11 @@ export class Dsv3Layer extends HTMLElement {
       const SNAP2 = this.hasAttribute('snapshot');
       const ALLPARTS = SNAP2 && this.hasAttribute('parts');
       const openRows = ALLPARTS ? [0, 1, 2, 3].filter((j) => on[j]) : sIdx >= 0 ? [sIdx] : [];
+      // ALLPARTS forces EVERY sub-row, the acts 'other' catch-all included —
+      // a bucket hitting zero mid-deck must hold its row (0 B) so the chart
+      // never resizes between steps
       const partIdxsOf = (j) => (this._segParts[j] ?? [])
-        .map((b, k) => b > 0 || (pin?.parts?.[j]?.[k] ?? 0) > 0
-          || (ALLPARTS && !(j === 3 && k === ACT_BUCKETS.length - 1)) ? k : -1)
+        .map((b, k) => b > 0 || (pin?.parts?.[j]?.[k] ?? 0) > 0 || ALLPARTS ? k : -1)
         .filter((k) => k >= 0);
       const subAbove = (i) => openRows.reduce((t2, j) => t2 + (j < i ? partIdxsOf(j).length * rowH : 0), 0);
       const subHTot = openRows.reduce((t2, j) => t2 + partIdxsOf(j).length * rowH, 0);
