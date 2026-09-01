@@ -8,7 +8,7 @@ const cap = () => deck().querySelector('.deck-cap').textContent;
 const bar = () => L().querySelector('.lv-bar').textContent;
 const next = () => { deck().querySelector('.deck-next').click(); };
 
-T.check('step 1 renders the debt (+DP folded in)', cap().includes('the debt') && cap().includes('replica group')
+T.check('step 1 renders the starting point (+DP folded in)', cap().includes('the starting point') && cap().includes('replica group')
   && bar().includes('total8.65 TiB'), '');
 T.check('back/first disabled at step 1', deck().querySelector('.deck-prev').disabled
   && deck().querySelector('.deck-first').disabled, '');
@@ -67,5 +67,5 @@ T.check('sub-row count is slide-invariant', L().querySelectorAll('.lv-bar text[d
   L().querySelectorAll('.lv-bar text[data-role^="val:part:"]').length);
 // and « start back to the beginning
 deck().querySelector('.deck-first').click(); await T.tick(1200);
-T.check('« start jumps home, no baseline', cap().includes('the debt') && !bar().includes('▼'), '');
+T.check('« start jumps home, no baseline', cap().includes('the starting point') && !bar().includes('▼'), '');
 T.done();
