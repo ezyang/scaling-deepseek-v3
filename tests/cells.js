@@ -22,6 +22,7 @@ T.check('drilling A8 pushes its entry below (rates × 4096 × P6)',
   tip().querySelectorAll('.lv-cellent').length === 2
   && tip().textContent.includes('stash · dispatched tokens')
   && /× 4096 × P6/.test(tip().textContent), tip().textContent.slice(-120));
+
 const p6ref = [...tip().querySelectorAll('.lv-cellent[data-k="1"] .cellref')].find(s => s.dataset.cell === 'P6');
 p6ref.dispatchEvent(new MouseEvent('click', { bubbles: true })); await T.tick(30);
 T.check('drilling P6 grows the stack to 3 (= P2 + 0.5 = 8.5)',
@@ -42,8 +43,9 @@ md([...layer().querySelectorAll('.lv-bar g[data-prop]')][3]); await T.tick(700);
 const pv = layer().querySelector('.lv-bar text[data-role="val:part:3:6"]');   // dispatched tokens → A8
 T.check('acts sub-row carries its cell', pv?.dataset.cell === 'A8', pv?.dataset.cell);
 mm(pv); await T.tick(30);
-T.check('bucket hover: 0/1 recompute choice × save-everything rates', tip().textContent.includes('stash · dispatched tokens')
-  && /= R8 × \(L1 × [\d.]+ \+ L2 × [\d.]+\) × 4096 × P6 = /.test(tip().textContent), tip().textContent.slice(0, 110));
+T.check('bucket hover: 0/1 recompute choice × the DECOMPOSED rate (dtype visible)',
+  tip().textContent.includes('stash · dispatched tokens')
+  && tip().textContent.includes('= R8 × (L1 × (8×7168 × (1 + 4/128))) × 4096 × P6 = '), tip().textContent.slice(0, 130));
 md([...layer().querySelectorAll('.lv-bar g[data-prop]')][3]); await T.tick(700);   // un-solo
 // the parents are accordion SUMS
 mm(val('0')); await T.tick(30);
@@ -63,6 +65,8 @@ T.check('Z1 / F1 / R rows present', rowOf('Z1')?.includes('ZeRO level') && rowOf
   && rowOf('R8')?.includes('kept for backward'), '');
 T.check('recompute choices read as 0/1 (dsv3: dispatched kept, norm outs replayed)',
   rowOf('R8')?.includes('1') && rowOf('R3')?.trim().endsWith('0'), `${rowOf('R3')}`);
+T.check('low precision is legible: E5M6 attn-out rate shows 1.5 B/elem + the fp32 lse',
+  rowOf('A6')?.includes('128×128 × 1.5 + 512'), rowOf('A6')?.slice(0, 120));
 // live: flip ZeRO off, the sub-cell formulas lose the sharding (O1 stays the accordion sum)
 const zseg = layer().parentElement.querySelector('.stp[data-knob="zero"]');
 [...zseg.querySelectorAll('button')].find(b => b.textContent === 'off').click(); await T.tick(700);

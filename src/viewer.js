@@ -7,7 +7,7 @@ import { simulate, LEVELS } from './sim.js';
 import { resolveMatmuls, MATMULS, RECIPES, RECIPE_T } from './memory.js';
 import { blockGraph, analyze, RECOMPUTE_PRESETS, MARKABLE } from './blockgraph.js';
 import { PARAMS } from './params.js';
-import { buildCells } from './cells.js';
+import { buildCells, evalExpr } from './cells.js';
 
 // spreadsheet-style highlighting, shared by the layer and the anatomy plan:
 // mark the [data-op] groups in `hl` and fade the rest (the tabs' visual
@@ -2543,20 +2543,40 @@ export class Dsv3Layer extends HTMLElement {
       const dualTag = ids.some(i => ana.dual.has(i)) ? ' ᵀ×2' : '';
       const name0 = ov?.name ?? n.tensor;
       if (PONLY) {
-        // consolidated: the saved activations live ON THE WIRES, like the AC
-        // diagram — amber chips (name + bytes for one 4096-token microbatch)
-        // with squares at the same global unit (mostly hollow: individually
-        // sub-square is the honest picture). Gaps (chipSpace) unchanged.
+        // consolidated/local: the saved activations live ON THE WIRES, like
+        // the AC diagram — amber chips at rank scale (name + bytes, squares
+        // at the global unit), carrying the quant tiers' FULL stash language
+        // (the union minus the flop pickets, which conflict for space):
+        // dtype tags with ᵀ×2 duals, state tooltips, bf16 phantom tails,
+        // and hollow ↻ counterfactual grids on recomputed tensors.
         const m = CONS ? cmult('showActs') : 0;
-        if (m && st === 'redo') {   // recomputed: named, no bytes — the AC feedback
-          P.push(`<g opacity="${m.toFixed(3)}"><text class="tensor tredo" x="${x}" y="${y + 8}">↻ ${esc(name0.replace(' (checkpoint anchor)', ''))}</text></g>`);
+        if (!m) return 12;
+        const name = esc(name0.replace(' (checkpoint anchor)', ''));
+        const chipF = LOCAL ? actsT : ABS ? stripMul : CUM ? KMUL : 1;
+        const CROW = ov?.short ? 8 : CHIP_ROW;
+        // dtype tags are the LOCAL sim's union (the consolidated figures are
+        // the earlier bf16 pedagogy — tags there just cross the enclosure)
+        const dtag = !LOCAL ? () => '' : (A) => {
+          const n2 = A.byId[id] ?? n;
+          return ` <tspan fill="${DT_STYLE[dtOf(n2)]}">${dtOf(n2)}${ids.some(i2 => A.dual.has(i2)) ? ' ᵀ×2' : ''}</tspan>`;
+        };
+        if (st === 'redo') {   // recomputed: named + dtype + the counterfactual grid
+          const cf = Math.round(Math.round(bytes * 4096 * chipF / (PB_UNIT * 2)) * m);
+          let g = `<text class="tensor tredo" data-tip="${escAttr('↻ recomputed in backward, not stashed — the hollow squares price what saving it WOULD cost.')}" ` +
+            `x="${x}" y="${y + 8}">↻ ${name}${dtag(ana)}</text>`;
+          for (let i = 0; i < cf; i++)
+            g += `<rect x="${x + (i % CROW) * 6 + 0.4}" y="${y + 12 + Math.floor(i / CROW) * 6 + 0.4}" width="4.2" height="3.2" fill="none" stroke="#eda100" stroke-width="0.8"/>`;
+          P.push(`<g opacity="${m.toFixed(3)}">${g}</g>`);
           return 12;
         }
-        if (!m || (st !== 'save' && st !== 'pin')) return 12;
+        if (st !== 'save' && st !== 'pin') {   // idle: named + dtype (the wire's precision), never stashed
+          P.push(`<g opacity="${m.toFixed(3)}"><text class="tensor tidle" data-tip="${escAttr('· not needed: no backward op or replay reads this tensor — saved or not, it is never stashed.')}" ` +
+            `x="${x}" y="${y + 8}">· ${name}${dtag(ana)}</text></g>`);
+          return 12;
+        }
         // cumulative: every block's stash is resident — chips follow the ×N
         // convention (labels snap, squares grow with the tween like the strips)
         const b4096 = bytes * 4096 * (LOCAL ? (CUM ? KMUL : 1) * IFN : CUM ? KMUL : 1);
-        const chipF = LOCAL ? actsT : ABS ? stripMul : CUM ? KMUL : 1;
         // stash-knob tween: the squares pour between the OLD and NEW bytes
         const VA = this._vtween?.prev?.anaPrev;
         const bytesT = VA
@@ -2568,22 +2588,28 @@ export class Dsv3Layer extends HTMLElement {
           : bytes;
         const full = Math.round(bytesT * 4096 * chipF / (PB_UNIT * 2));
         const nsq = Math.round(full * m), hollow = !nsq && m >= 0.5 && chipF > 0;
-        const name = esc(name0.replace(' (checkpoint anchor)', ''));
+        // the bf16 phantom tail: dashed squares out to the 2 B/elem edge —
+        // dtype-independent, so recipe flips pour the solid fill inside a
+        // fixed dashed silhouette (nothing to brag about when not beating it)
+        const bfB = ids.reduce((t2, i2) => t2 + (ana.byId[i2]?.elems ?? 0) * 2, 0) * (ov?.frac ?? 1);
+        const nPh = Math.round(Math.round(bfB * 4096 * chipF / (PB_UNIT * 2)) * m);
         const lock = st === 'pin' ? ' 🔒' : '';
+        const tip = ` data-tip="${needTip(ids, ov?.readers)}${st === 'pin' ? escAttr('\n🔒 always saved: the checkpoint anchor.') : ''}"`;
         // narrow fork columns (ov.short) get two lines — one line would run
         // into the neighbouring column's spine at ×58 byte widths
         // squares wrap well before the strip width (chips sit between
         // columns); the wire gaps grow with the rows (chipSpaceA prices them)
-        const CROW = ov?.short ? 8 : CHIP_ROW;
-        const [sqX, sqY] = ov?.short ? [x + 60, y + 17] : [x, y + 12];
+        const [sqX, sqY] = ov?.short ? [x + 100, y + 17] : [x, y + 12];   // past the dtype-tagged bytes line
         const bLbl = `<tspan data-raw="${b4096.toFixed(2)}">${fmtBytes(b4096)}</tspan>`;
         let g = ov?.short
-          ? `<text class="tensor tsave" x="${x}" y="${y + 8}">${needDir(ids, ov?.readers)} ${name}${lock}</text>` +
-            `<text class="tensor tsave" x="${x}" y="${y + 21}">${bLbl}${facTxt('a')}</text>`
-          : `<text class="tensor tsave" x="${x}" y="${y + 8}">${needDir(ids, ov?.readers)} ${name} · ${bLbl}${facTxt('a')}${lock}</text>`;
+          ? `<text class="tensor tsave"${tip} x="${x}" y="${y + 8}">${needDir(ids, ov?.readers)} ${name}${lock}</text>` +
+            `<text class="tensor tsave" x="${x}" y="${y + 21}">${bLbl}${dtag(ana)}${facTxt('a')}</text>`
+          : `<text class="tensor tsave"${tip} x="${x}" y="${y + 8}">${needDir(ids, ov?.readers)} ${name} · ${bLbl}${dtag(ana)}${facTxt('a')}${lock}</text>`;
         if (hollow) g += `<rect x="${sqX + 0.4}" y="${sqY + 0.4}" width="4.2" height="3.2" fill="none" stroke="#eda100" stroke-width="0.8"/>`;
-        else for (let i = 0; i < nsq; i++)
-          g += `<rect x="${sqX + (i % CROW) * 6}" y="${sqY + Math.floor(i / CROW) * 6}" width="5" height="4" fill="#eda100"/>`;
+        else for (let i = 0; i < Math.max(nsq, nPh); i++)
+          g += i < nsq
+            ? `<rect x="${sqX + (i % CROW) * 6}" y="${sqY + Math.floor(i / CROW) * 6}" width="5" height="4" fill="#eda100"/>`
+            : `<rect x="${sqX + (i % CROW) * 6 + 0.4}" y="${sqY + Math.floor(i / CROW) * 6 + 0.4}" width="4.2" height="3.2" fill="none" stroke="#d19023" stroke-width="0.8" stroke-dasharray="1.6 1.4"/>`;
         P.push(`<g opacity="${m.toFixed(3)}">${g}</g>`);
         return 12;
       }
@@ -2717,7 +2743,10 @@ export class Dsv3Layer extends HTMLElement {
         const chipF = LOCAL
           ? Math.max(dLoc(Snow).acts, this._vtween ? dLoc(this._vtween.prev).acts : 0)
           : CUM ? KMUL : 1;
-        const b = ids.reduce((t, i) => t + anaX.byId[i].outBytes, 0) * 4096 * chipF;
+        const b = ids.reduce((t, i) => {
+          const n2 = anaX.byId[i];   // worst case: the ᵀ dual OR the bf16 phantom edge
+          return t + Math.max(n2.outBytes * (anaX.dual.has(i) ? 2 : 1), n2.elems * 2);
+        }, 0) * 4096 * chipF;
         const rows = Math.max(1, Math.ceil(Math.round(b / (PB_UNIT * 2)) / CHIP_ROW));
         return Math.round(18 + (rows * 6 - 2) * mA);
       }
@@ -2735,19 +2764,23 @@ export class Dsv3Layer extends HTMLElement {
     };
     // aux backward artifact, exiting the box to the right
     const auxOut = (id, x, yMid) => {
-      if (PONLY) return;
+      if (PONLY && !LOCAL) return;
       const n = ana.byId[id];
       if (!n.aux) return;
       const replayed = ana.replayed.has(id); // a replay regenerates its aux
       // attention sits inside the MLA group: its lse label starts past the
       // group border so the border never cuts through the text
-      const xt = (id === 'attn' && MLAGW && !(this._ctl.quant && this.detail)) ? Math.max(x + W + 14, C1 - 10 + MLAGW + 8) : x + W + 14;
+      const xt = (id === 'attn' && MLAGW && !(this._ctl.quant && this.detail) && !LOCAL) ? Math.max(x + W + 14, C1 - 10 + MLAGW + 8) : x + W + 14;
       const txt = (rep) => rep
         ? `<text class="tensor tredo" x="${xt}" y="${yMid + 3}">↻ ${esc(n.aux.name)}</text>`
-        : !this._ctl.quant
-          ? `<text class="tensor tsave" x="${xt}" y="${yMid + 3}">← ${esc(n.aux.name)}</text>`
-          : `<text class="tensor tsave" x="${xt}" y="${yMid + 3}">← ${esc(n.aux.name)} · ${fmtMem(n.aux.bytes)} ` +
-            `<tspan fill="${DT_STYLE.fp32}">fp32</tspan></text>`;
+        : LOCAL
+          ? `<text class="tensor tsave" x="${xt}" y="${yMid + 3}">← ${esc(n.aux.name)} · ` +
+            `<tspan data-raw="${(n.aux.bytes * 4096 * (CUM ? KMUL : 1) * IFN).toFixed(2)}">${fmtBytes(n.aux.bytes * 4096 * (CUM ? KMUL : 1) * IFN)}</tspan> ` +
+            `<tspan fill="${DT_STYLE.fp32}">fp32</tspan></text>`
+          : !this._ctl.quant
+            ? `<text class="tensor tsave" x="${xt}" y="${yMid + 3}">← ${esc(n.aux.name)}</text>`
+            : `<text class="tensor tsave" x="${xt}" y="${yMid + 3}">← ${esc(n.aux.name)} · ${fmtMem(n.aux.bytes)} ` +
+              `<tspan fill="${DT_STYLE.fp32}">fp32</tspan></text>`;
       const repP = anaP?.replayed.has(id);   // mark-flip tween: the two forms dissolve
       P.push(`<line class="wire" x1="${x + W}" y1="${yMid}" x2="${xt - 4}" y2="${yMid}" marker-end="url(#arr)"/>` +
         (VQ && repP != null && repP !== replayed
@@ -2856,7 +2889,7 @@ export class Dsv3Layer extends HTMLElement {
     {
       // the AC tiers widen the fork (+50) so saved-chip lines never wrap;
       // static/params/local keep the published 150 (01 is live)
-      const KVO = this._ctl.quant && DET ? 200 : 150;
+      const KVO = (this._ctl.quant || (this.hasAttribute('local') && this.getAttribute('lens') === 'param-bytes')) && DET ? 200 : 150;
       const RX = C1 + KVO + 22;
       // the down-projection is two separate GEMMs in production stacks
       // (wq_a | wkv_a in every production stack), so it is split at every tier:
@@ -3366,6 +3399,34 @@ export class Dsv3Layer extends HTMLElement {
       // live only across that microbatch; the embed residual is chunk 0's
       // x0) — memory.js's head/embed convention.
       const anaD = this._anaMemo.anaD ?? ana;
+      // per-bucket rate DECOMPOSITIONS: instead of an opaque literal
+      // (59136), the formula shows where the bytes come from — per saved
+      // tensor, dims × B/elem (the dtype: 2 bf16 · (1 + 4/128) e4m3+scales ·
+      // 1.5 e5m6 · 4 fp32), ×2 for a ᵀ dual stash, + the fp32 aux artifacts
+      // (lse/rstd). Built from the SAVE-EVERYTHING analysis (the R•
+      // factorization multiplies full rates) and VALIDATED: if the string
+      // does not evaluate back to the exact rate, the literal stands.
+      const rateExprs = (A, bF) => ACT_BUCKETS.map((b, k) => {
+        if (!b.ids.length) return null;               // the catch-all: a remainder
+        const terms = [];
+        for (const id of b.ids) {
+          const n2 = A.byId[id];
+          if (!n2) continue;                          // the dense graph lacks router/dispatch
+          if (A.neededSaved.has(id)) {
+            const bpe = n2.outBytes / n2.elems;
+            const bstr = bpe === 2 ? '2' : bpe === 4 ? '4' : bpe === 1.5 ? '1.5'
+              : bpe === 1 + 1 / 32 ? '(1 + 4/128)' : null;
+            if (bstr == null) return null;
+            let dims = String(n2.elems);
+            try { if (n2.tdims && evalExpr(n2.tdims, () => NaN) === n2.elems) dims = n2.tdims; } catch { /* keep the literal */ }
+            terms.push(A.dual.has(id) ? `(${dims} × ${bstr}) × 2` : `${dims} × ${bstr}`);
+          }
+          if (n2.aux && !A.replayed.has(id)) terms.push(String(n2.aux.bytes));
+        }
+        if (!terms.length) return null;
+        const e2 = terms.join(' + ');
+        try { return evalExpr(e2, () => NaN) === bF[k] ? e2 : null; } catch { return null; }
+      });
       // the CELL GRAPH (src/cells.js): every chart number is a cell — a
       // value computed by evaluating the same formula string the tooltips
       // and the spreadsheet display, so the numbers and their shown
@@ -3378,6 +3439,8 @@ export class Dsv3Layer extends HTMLElement {
         aM: ana.savedBytes, aD: anaD.savedBytes,
         bM: actBucketsOf(ana), bD: actBucketsOf(anaD), bLabels: ACT_BUCKETS.map((b) => b.label),
         bMF: actBucketsOf(this._anaMemo.anaMF ?? ana), bDF: actBucketsOf(this._anaMemo.anaDF ?? anaD),
+        bExprM: this._anaMemo.anaMF ? rateExprs(this._anaMemo.anaMF, actBucketsOf(this._anaMemo.anaMF)) : null,
+        bExprD: this._anaMemo.anaDF ? rateExprs(this._anaMemo.anaDF, actBucketsOf(this._anaMemo.anaDF)) : null,
         N: { restLayer: PARAMS.moeBlock - moeExp, denseLayer: PARAMS.denseBlock },
       });
       const segB = (S) => {
@@ -3924,7 +3987,7 @@ dsv3-sheet { display: block; margin: 14px 0; }
 .cellsheet th.vl, .cellsheet td.vl { text-align: right; }
 .cellsheet td { padding: 1.5px 10px 1.5px 2px; border-top: 1px solid #f0efe9; font-size: 11.5px; vertical-align: baseline; }
 .cellsheet td.nm { font: 600 11px ui-monospace, monospace; color: #2a78d6; }
-.cellsheet td.fx { font: 11px ui-monospace, monospace; color: #52514e; white-space: nowrap; }
+.cellsheet td.fx { font: 11px ui-monospace, monospace; color: #52514e; }   /* long rate decompositions wrap */
 .cellsheet td.fx .cellref { color: #2a78d6; font-weight: 600; }
 .cellsheet td.vl { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .cellsheet td.ap { color: #898781; }

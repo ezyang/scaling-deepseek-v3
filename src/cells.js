@@ -86,9 +86,14 @@ export function buildCells(env) {
     const whole = (fM > 0 || fD > 0) && ((rM === fM && rD === fD) || (rM === 0 && rD === 0));
     if (!whole) return [{ id: `A${i + 2}`, unit: 'B', label: `${lbl} — partially kept under this policy`,
       expr: `(L1 × ${rM} + L2 × ${rD}) × 4096 × P6${tail}` }];
+    // the rate DECOMPOSITION (per saved tensor: dims × B/elem, ×2 dual,
+    // + fp32 aux) when the caller validated one; zero-rate kinds drop out
+    const t1 = fM ? `L1 × ${env.bExprM?.[i] ? `(${env.bExprM[i]})` : fM}` : null;
+    const t2 = fD ? `L2 × ${env.bExprD?.[i] ? `(${env.bExprD[i]})` : fD}` : null;
+    const rate = [t1, t2].filter(Boolean).join(' + ') || 'L1 × 0 + L2 × 0';
     return [
       { id: `A${i + 2}`, unit: 'B', label: lbl,
-        expr: `R${i + 2} × (L1 × ${fM} + L2 × ${fD}) × 4096 × P6${tail}` },
+        expr: `R${i + 2} × (${rate}) × 4096 × P6${tail}` },
       { id: `R${i + 2}`, label: `kept for backward? (the recompute policy’s choice; 0 = replayed) — ${env.bLabels[i]}`,
         value: rM === fM && rD === fD ? 1 : 0 },
     ];
