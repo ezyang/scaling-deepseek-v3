@@ -4086,9 +4086,17 @@ dsv3-sheet { display: block; margin: 14px 0; position: relative; }
 .cellsheet td.ap { color: #898781; }
 .cellsheet tr.hl td { background: #fff8ea; }
 .cellsheet td.lb { white-space: nowrap; }   /* labels are one line by fiat */
-.cellsheet td.ed { white-space: nowrap; text-align: right; }
-.cellsheet .sbtn { font: 600 11px ui-monospace, monospace; color: #898781; cursor: pointer; padding: 0 3px; user-select: none; }
-.cellsheet .sbtn:hover { color: #0b0b0b; }
+/* edit affordances live IN the exact-value cell: the ± glyphs are ::before/
+   ::after content (never copied), with generous padding for the hitbox;
+   toggle values wear button language (dashed underline, hover face) and
+   the WHOLE cell is the target */
+.cellsheet .sb { cursor: pointer; color: #898781; padding: 2px 8px; user-select: none; }
+.cellsheet .sb:hover { color: #0b0b0b; }
+.cellsheet .sb.dn::before { content: '−'; font: 600 11px ui-monospace, monospace; }
+.cellsheet .sb.up::after { content: '+'; font: 600 11px ui-monospace, monospace; }
+.cellsheet td.vl.tg { cursor: pointer; }
+.cellsheet td.vl.tg .tgv { border-bottom: 1px dashed #2a78d6; }
+.cellsheet td.vl.tg:hover .tgv { background: #eef4fc; }
 .cellsheet td.nm.jmp { cursor: pointer; }
 .cellsheet td.nm.jmp:hover { text-decoration: underline dotted; }
 /* the jump pulse: HTML knobs outline, svg chips glow — then fade */
@@ -4134,9 +4142,16 @@ class Dsv3Sheet extends HTMLElement {
       this._tip.style.display = 'block';
     });
     this._root.addEventListener('mouseleave', () => { this._tip.style.display = 'none'; });
+    this._root.addEventListener('mousedown', (ev) => {
+      if (ev.button !== 0) return;
+      const sb = ev.target.closest?.('.sb');
+      const tg = ev.target.closest?.('td.vl.tg');
+      const tr2 = (sb ?? tg)?.closest('tr');
+      if (!tr2?.dataset.et) return;
+      ev.preventDefault();
+      this._edit(tr2.dataset.et, tr2.dataset.ek, sb?.classList.contains('up') ? 'up' : 'dn');
+    });
     this._root.addEventListener('click', (ev) => {
-      const sb = ev.target.closest?.('.sbtn');
-      if (sb) { const tr2 = sb.closest('tr'); this._edit(tr2.dataset.et, tr2.dataset.ek, sb.dataset.ed); return; }
       const ref = ev.target.closest?.('.cellref');
       if (ref) { this.reveal(ref.textContent); return; }
       const nm = ev.target.closest?.('td.nm.jmp');
@@ -4207,18 +4222,18 @@ class Dsv3Sheet extends HTMLElement {
       + `<label class="simp" style="float:right;display:inline-flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox"${this._sim ? ' checked' : ''}> simplify — drop negligible terms</label>`
       + (this._sim ? '<div style="color:#8c5a19">simplified: the lse/rstd artifacts and the final norm are dropped, so these values drift slightly from the (exact) chart</div>' : '')
       + '</div>'
-      + '<table><tr><th>cell</th><th>quantity</th><th>formula</th><th class="vl">value (exact)</th><th class="vl">≈</th><th></th></tr>'
+      + '<table><tr><th>cell</th><th>quantity</th><th>formula</th><th class="vl">value (exact)</th><th class="vl">≈</th></tr>'
       + cells.cells.map((c) => `<tr data-cell="${c.id}"${c.id === this._hl ? ' class="hl"' : ''}`
         + `${c.ui?.k ? ` data-jk="${c.ui.k}"` : ''}${c.ui?.c ? ` data-jc="${c.ui.c}"` : ''}`
         + `${c.edit ? ` data-et="${c.edit.t}" data-ek="${c.edit.k}"` : ''}>`
         + `<td class="nm${c.ui ? ' jmp" title="jump to it in the diagram' : ''}">${c.id}</td>`
         + `<td class="lb"${c.depth ? ` style="padding-left:${2 + c.depth * 14}px"` : ''}>${esc(c.label)}</td>`
         + `<td class="fx">${fx(c)}</td>`
-        + `<td class="vl">${raw(c)}</td><td class="vl ap">${approx(c)}</td>`
-        + `<td class="ed">${!c.edit ? ''
+        + (!c.edit ? `<td class="vl">${raw(c)}</td>`
           : c.edit.t === 'step' || c.edit.t === 'seg'
-            ? '<span class="sbtn" data-ed="dn" title="step down (the widget\'s own knob moves)">−</span><span class="sbtn" data-ed="up" title="step up">+</span>'
-            : '<span class="sbtn" data-ed="tg" title="toggle (the widget\'s own control flips)">⇄</span>'}</td></tr>`).join('')
+            ? `<td class="vl edv"><span class="sb dn" title="step down (the widget’s own knob moves)"></span>${raw(c)}<span class="sb up" title="step up"></span></td>`
+            : `<td class="vl tg" title="click to toggle (the widget’s own control flips)"><span class="tgv">${raw(c)}</span></td>`)
+        + `<td class="vl ap">${approx(c)}</td></tr>`).join('')
       + '</table>';
   }
 }

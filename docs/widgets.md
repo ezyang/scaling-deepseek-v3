@@ -159,8 +159,12 @@ coordinate cell): a model input lands on its controlling knob (P1→GPUs,
 Z1/S•→ZeRO, F1→the e4m3+ᵀ checkbox, L•/E1/H1→the rank picker, P6→sched)
 and an activation row on its chip in the diagram (`data-chip` on every
 local chip; aux labels are `<id>:aux`), pulsing amber on arrival. Model
-inputs are also EDITABLE from the sheet (plain-text − + ⇄ glyph buttons in
-the last column): every edit drives the widget's OWN control — steppers
+inputs are also EDITABLE from the sheet, IN the exact-value cell: steppable
+rows flank the number with − + (CSS pseudo-content, so copy/paste never
+picks the glyphs up; generous padded hitboxes), toggle rows make the NUMBER
+itself the button (dashed-underline button language, the whole cell is the
+target). Edits fire on MOUSEDOWN so rapid presses never straddle a resync
+and drop. Every edit drives the widget's OWN control — steppers
 step (P1/P2/P3), the ZeRO segment steps (Z1), two-chip segments flip
 (P6→sched, L•/E1/H1→rank), checkboxes click (F1, o_proj's B via E5M6),
 precision rows click their dtype button (B• via the node's `dtc` channel,
