@@ -114,35 +114,53 @@ function focus(el, saved, pt) {
   addEventListener('keydown', esc);
 }
 
+// content extent via the union of leaf-ish descendant RECTS: rects ignore
+// ancestor clipping (inner scroll boxes, the tokens rail overhang), work
+// identically across engines (Safari's scrollWidth omits visible overflow —
+// on-device the responsive bar charts measured as "fits" and never got
+// previews), and skipping deep wrappers ignores stretch-to-fill containers.
+function extent(el) {
+  const r0 = el.getBoundingClientRect();
+  let L = r0.left, R = r0.left + 1;
+  for (const d of el.querySelectorAll('*')) {
+    if (d.firstElementChild?.firstElementChild) continue;   // wrappers stretch; leaves hug the content
+    const q = d.getBoundingClientRect();
+    if (!q.width || q.left < r0.left - 600) continue;
+    L = Math.min(L, q.left); R = Math.max(R, q.right);
+  }
+  return { over: Math.max(0, Math.ceil(r0.left - L)), w: Math.ceil(R - r0.left) };
+}
+
 function previews(main) {
   const avail = main.clientWidth - 40;   // main's 20px side paddings
+  const PROBE = 940;   // desktop main content width: measure the DESKTOP layout, not the squished one
   for (const el of main.querySelectorAll(W)) {
     if (el.parentElement.closest(W)) continue;   // nested widgets ride inside their host's preview
-    let cw = el.scrollWidth;
-    for (const d of el.querySelectorAll('*')) cw = Math.max(cw, d.scrollWidth || 0);
-    if (cw <= avail + 8) continue;               // fits: stays live in the flow
-    // true extent = the union of descendant RECTS (they ignore ancestor
-    // clipping, so inner scroll boxes at an x-offset and left overhangs like
-    // the tokens rail are both captured). Two passes: knob rows unwrap and
-    // content re-seats once the widget is wide. Renderers bake pixel widths
+    // Probe: render wide, measure, adopt the measured width, re-measure
+    // (knob rows unwrap and content re-seats). Renderers bake pixel widths
     // at render time, so each width change needs an explicit re-render.
     el.classList.add('mwide');   // free viewport-capped internals (see study.css)
-    let over = 0;
+    const w0 = el.style.width;
+    let cw = PROBE, u;
     for (let pass = 0; pass < 2; pass++) {
       el.style.width = cw + 'px';
       for (const w of [el, ...el.querySelectorAll(W)]) w.render?.();
-      const r0 = el.getBoundingClientRect();
-      let L = r0.left, R = r0.right;
-      for (const d of el.querySelectorAll('*')) {
-        const q = d.getBoundingClientRect();
-        if (!q.width || q.left < r0.left - 600) continue;
-        L = Math.min(L, q.left); R = Math.max(R, q.right);
-      }
-      over = Math.ceil(r0.left - L);
-      cw = Math.max(cw, Math.ceil(R - r0.left));
+      u = extent(el);
+      if (pass === 0 && u.w <= avail + 8) break;
+      cw = u.w;
     }
+    if (u.w <= avail + 8) {                      // genuinely fits: restore the live in-flow layout
+      el.classList.remove('mwide');
+      el.style.width = w0;
+      for (const w of [el, ...el.querySelectorAll(W)]) w.render?.();
+      continue;
+    }
+    const over = u.over;
+    cw = u.w;
     el.style.width = cw + 'px';
-    const k = avail / (cw + over);
+    // the visual span can exceed the set width: card padding/borders (the
+    // beat-deck) widen the border box beyond the content width
+    const k = avail / (Math.max(el.offsetWidth, cw) + over);
     el.classList.add('mprev');
     el.style.minHeight = '0';                    // desktop placeholder heights don't apply at this width
     el.style.transformOrigin = '0 0';

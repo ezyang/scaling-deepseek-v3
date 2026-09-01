@@ -93,6 +93,11 @@ body.mfocus main > :not(.mfull-top) { display: none !important; }
 /* focus mode: block native pinch zoom (it can't be programmatically undone
    on close, and it strands the ✕ off-screen); double-tap zooms instead */
 html.mta, html.mta body { touch-action: pan-x pan-y; }
+/* focus mode: at natural width the widget's inner scrollers have nothing
+   left to scroll, but overscroll-behavior:none (the schedule strip's
+   anti-back-swipe guard) would still TRAP touch pans instead of chaining
+   them to the page — free the chain while focused */
+body.mfocus .mfull-top * { overscroll-behavior: auto !important; }
 .mn-ref.live::after { content: none; }
 .mn-ref.live a { color: #b05f00; font-weight: 600; text-decoration: none; }
 .mnotes li { font-size: 13.5px; color: #52514e; margin: 6px 0; }

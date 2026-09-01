@@ -40,4 +40,17 @@ T.check('closed clean, viewport lock lifted',
   !document.body.classList.contains('mfocus') && sheet.classList.contains('mprev')
   && !meta.getAttribute('content').includes('maximum-scale')
   && getComputedStyle(document.body).touchAction !== 'pan-x pan-y', meta.getAttribute('content'));
+
+// focused schedule strip: its overscroll-behavior-x:none guard must not
+// trap touch pans — the chain to the page scroller is freed while focused
+const pps = document.querySelector('dsv3-pp-schedule[layer="local-diagram"]');
+pps.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+await T.tick();
+const scr = pps.querySelector('.scroll');
+T.check('focus frees scroll chaining on inner scrollers',
+  document.body.classList.contains('mfocus') && getComputedStyle(scr).overscrollBehaviorX === 'auto',
+  getComputedStyle(scr).overscrollBehaviorX);
+T.click('.mclose');
+await T.tick();
+T.check('strip guard restored after close', getComputedStyle(scr).overscrollBehaviorX === 'none', '');
 T.done();
