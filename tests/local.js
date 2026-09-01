@@ -9,26 +9,35 @@ const stps = () => ['gpus', 'pp', 'sched', 'ep', 'zero']
 const stepBtn = (i, dir) => stps()[i].querySelectorAll('button')[dir < 0 ? 0 : 1];
 const stpVal = (i) => stps()[i].querySelector('select.v').value;
 const sels = () => [...layer().parentElement.querySelectorAll('select:not(.v)')];
-T.check('stepper groups + selects (precision/recompute — the rank picker is a segment now)',
-  stps().length === 5 && sels().length === 2
+// recipe/recompute wear the HOUSE segments (same chips as the AC and
+// low-prec sections) — the only remaining select is the block-kind picker
+const seg = (name) => layer().parentElement.querySelector(`.stp[data-knob="${name}"]`);
+const segOn = (name) => seg(name)?.querySelector('button.on')?.textContent;
+const segPick = async (name, k) => {
+  [...seg(name).querySelectorAll('button')].find(b => b.textContent === k).click();
+  await T.tick(300);
+};
+T.check('stepper groups + house recipe/recompute segments (no selects left)',
+  stps().length === 5 && sels().length === 0 && seg('recipe') && seg('recompute')
   && layer().parentElement.querySelector('.stp[data-knob="rank"]'), `${stps().length}/${sels().length}`);
+T.check('recompute segment is presets-only (no custom chip on the local head)',
+  ![...seg('recompute').querySelectorAll('button')].some(b => b.textContent === 'custom')
+  && [...seg('recipe').querySelectorAll('button')].some(b => b.textContent === 'custom'), '');
 // defaults = the OPTIMIZED config (the deck's step 6): dsv3 recompute +
 // dsv3-fp8 recipe — the ↻ chips are already on screen at load
-const rsel = () => sels().find(s2 => [...s2.options].some(o => o.value === 'dsv3' && [...s2.options].some(o2 => o2.value === 'attn-replay')));
-const psel = () => sels().find(s2 => [...s2.options].some(o => o.value === 'dsv3-fp8'));
 const actsVal = () => layer().querySelector('.lv-bar')?.textContent ?? '';   // whole chart text: values live at bar ends
 T.check('defaults are optimized (dsv3 recompute + dsv3-fp8 recipe)',
-  rsel().value === 'dsv3' && psel().value === 'dsv3-fp8', `${rsel().value}/${psel().value}`);
+  segOn('recompute') === 'dsv3' && segOn('recipe') === 'dsv3-fp8', `${segOn('recompute')}/${segOn('recipe')}`);
 T.check('recomputed chips present at load', [...layer().querySelectorAll('.lv-scroll text.tredo')].length > 3, '');
 const a0 = actsVal();
-rsel().value = 'none'; rsel().dispatchEvent(new Event('change')); await T.tick(300);
+await segPick('recompute', 'none');
 T.check('save-everything grows activations', actsVal() !== a0, `${a0} -> ${actsVal()}`);
 // precision knob: bf16 stashes grow further still
 const a1 = actsVal();
-psel().value = 'bf16'; psel().dispatchEvent(new Event('change')); await T.tick(300);
+await segPick('recipe', 'bf16');
 T.check('bf16 recipe grows stashes further', actsVal() !== a1, `${a1} -> ${actsVal()}`);
-psel().value = 'dsv3-fp8'; psel().dispatchEvent(new Event('change')); await T.tick(200);
-rsel().value = 'dsv3'; rsel().dispatchEvent(new Event('change')); await T.tick(300);
+await segPick('recipe', 'dsv3-fp8');
+await segPick('recompute', 'dsv3');
 T.check('restored to the optimized default', actsVal() === a0, `${actsVal()} vs ${a0}`);
 // cluster-size stepper: 2048 -> 1024 halves DP; expert-DP hits 1 (unsharded expert optim)
 stepBtn(0, -1).click(); await T.tick(600);
@@ -151,8 +160,11 @@ T.check('bar sits between the rows', !!layer().querySelector('.lv-head + .lv-bar
     Math.abs(w() / w0 - 2.0625 / 2) < 1e-9, (w() / w0).toFixed(6));
   p8().click(); await T.tick(600);
   T.check('and back', w() === w0, w());
-  psel().value = 'bf16'; psel().dispatchEvent(new Event('change')); await T.tick(600);
+  await segPick('recipe', 'bf16'); await T.tick(300);
   T.check('checkbox disabled under bf16', p8().disabled, '');
-  psel().value = 'dsv3-fp8'; psel().dispatchEvent(new Event('change')); await T.tick(300);
+  await segPick('recipe', 'dsv3-fp8');
 }
+// the stash-format checkboxes from the low-prec section ride along too
+T.check('e4m3ᵀ + E5M6 + e4m3+ᵀ-params checkboxes on the local head',
+  ['transposed', 'e5m6', 'fp8params'].every(k => layer().parentElement.querySelector(`input[data-knob="${k}"]`)), '');
 T.done();

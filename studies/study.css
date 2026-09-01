@@ -86,7 +86,7 @@ dsv3-layer, dsv3-trace, dsv3-anatomy, dsv3-beat-deck, dsv3-pp-schedule, dsv3-pp-
   flex: none; transition: background 0.15s, width 0.15s; }
 .toc a.on .tick { background: #b05f00; width: 18px; }
 .toc .lab { font-size: 12.5px; color: #52514e; white-space: nowrap;
-  max-width: 0; overflow: hidden; opacity: 0; transition: max-width 0.15s, opacity 0.15s; }
+  max-width: 0; overflow: hidden; opacity: 0; transition: opacity 0.06s; }   /* no width tween: the panel snaps open (slide reads as lag) */
 .toc:hover { background: #fff; border-color: #e1e0d9; box-shadow: 2px 2px 8px rgba(0, 0, 0, 0.08); }
 .toc:hover .lab { max-width: 280px; opacity: 1; }
 .toc a:hover .lab, .toc a.on .lab { color: #0b0b0b; }

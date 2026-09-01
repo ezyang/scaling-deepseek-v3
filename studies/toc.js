@@ -23,7 +23,19 @@ if (hs.length >= 4) {
     const a = document.createElement('a');
     a.innerHTML = '<span class="tick"></span><span class="lab"></span>';
     a.querySelector('.lab').textContent = h.textContent;
-    a.onclick = (e) => { e.preventDefault(); h.scrollIntoView({ behavior: 'smooth', block: 'start' }); };
+    // house-speed scroll: 12 frames ≈ 200 ms, frame-stepped (native smooth
+    // scroll takes seconds over a long post)
+    a.onclick = (e) => {
+      e.preventDefault();
+      const y0 = window.scrollY, y1 = y0 + h.getBoundingClientRect().top;
+      let f = 0;
+      const step = () => {
+        f++;
+        window.scrollTo(0, y0 + (y1 - y0) * (1 - (1 - f / 12) ** 3));
+        if (f < 12) requestAnimationFrame(step);
+      };
+      requestAnimationFrame(step);
+    };
     nav.append(a);
   }
   document.body.append(nav);

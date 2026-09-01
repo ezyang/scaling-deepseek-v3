@@ -376,7 +376,9 @@
         on what precision you keep your intermediate activations in: as
         a simplification, we simply assume the input activations will be
         saved in whatever precision the upcoming GEMM is expecting to see,
-        but this isn't a law of nature.</li>
+        but this isn't a law of nature.  In particular, the saved input to
+        SwiGLU isn't directly going to a GEMM, so we could save it in
+        whatever format we want.</li>
 
         <li>Most of our memory savings arise from choosing to save expert
         activations in FP8 rather than BF16 for backwards.  This is quite
@@ -451,7 +453,7 @@
     since sometimes the reason you are OOMing because of something very dumb, and the
     roofline will tell you exactly what it is.</p>
 
-    <dsv3-anatomy style="min-height:990px" lens="param-bytes" local cumulative recipe="dsv3-fp8" recipes="bf16,dsv3-fp8,all-fp8" recompute="dsv3" layer="local-diagram" detail controls="static" nocaption></dsv3-anatomy>
+    <dsv3-anatomy style="min-height:1011px" lens="param-bytes" local cumulative recipe="dsv3-fp8" recipes="bf16,dsv3-fp8,all-fp8" recompute="dsv3" layer="local-diagram" detail controls="static" nocaption></dsv3-anatomy>
 
   </main>
   <script type="module">

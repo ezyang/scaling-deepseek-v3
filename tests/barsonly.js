@@ -13,8 +13,8 @@ T.check('bars-pp: pipeline only', !!stp('bars-pp', 'pp') && !!stp('bars-pp', 'sc
   && !stp('bars-pp', 'ep') && !stp('bars-pp', 'zero') && !stp('bars-pp', 'gpus'), '');
 T.check('bars-shard: mesh+zero only', !!stp('bars-shard', 'ep') && !!stp('bars-shard', 'zero')
   && !stp('bars-shard', 'pp'), '');
-T.check('bars-prec: no steppers, has precision select', !stp('bars-prec', 'pp')
-  && [...L('bars-prec').querySelectorAll('select')].some(s => [...s.options].some(o => o.value === 'dsv3-fp8')), '');
+T.check('bars-prec: no steppers, has the house recipe segment', !stp('bars-prec', 'pp')
+  && [...L('bars-prec').querySelectorAll('.stp[data-knob="recipe"] button')].some(b => b.textContent === 'dsv3-fp8'), '');
 // knobs still drive the chart, and instances are independent
 const barTxt = (id) => L(id).querySelector('.lv-bar')?.textContent ?? '';
 const before = barTxt('bars-pp'), beforeAll = barTxt('bars-all');

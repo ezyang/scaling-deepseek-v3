@@ -1518,10 +1518,74 @@ export class Dsv3Layer extends HTMLElement {
     }
     const ana = this._anaMemo.ana;
     let barSlot = null;   // the local fit bar renders under the parallelism row
-    // marks/dtype tiers wear the house knob row (grouped stp segments, like the
-    // local diagram's) instead of the legacy select head: one policy/recipe
-    // segment plus an always-reserved 'custom' chip, so a hand-edited state
-    // lights up without reflowing the row
+    // the HOUSE knob row (grouped stp segments): one policy/recipe segment
+    // plus an always-reserved 'custom' chip, so a hand-edited state lights
+    // up without reflowing the row. Shared by the marks/dtype tiers AND the
+    // local head (the full sim mirrors the sections' controls exactly).
+    // preset segments REMEMBER: 'custom' keeps your last hand-edited
+    // state (click it to come back), and clicking the ACTIVE chip toggles
+    // back to whatever was selected before it
+    this._segMem ??= {};
+    const segGrp = (label, name, opts, cur, getState, setPreset, setState, noCustom = false) => {
+      const mem = this._segMem[name] ??= {};
+      if (cur != null && !opts.includes(cur)) cur = null;   // an uncurated preset reads as custom
+      if (cur == null) mem.custom = getState();   // the latest hand-edited composition
+      const g = el('span', 'pargrp');
+      const l3 = el('div', 'parlab'); l3.textContent = label; g.append(l3);
+      const row = el('div', 'parrow');
+      const w3 = el('span', 'stp'); w3.dataset.knob = name;
+      const pick = (sel, st) => {                 // remember where we came FROM
+        mem.prev = { sel: cur ?? 'custom', st: getState() };
+        st ? setState(st) : setPreset(sel);
+      };
+      const back = () => {                        // active chip clicked: swap with the previous pick
+        const now = { sel: cur ?? 'custom', st: getState() };
+        const pv = mem.prev; mem.prev = now;
+        setState(pv.st);
+      };
+      const arm = (b) => {                        // an active chip with history is a toggle
+        if (!mem.prev) return;
+        b.onclick = back; b.style.cursor = 'pointer';
+        b.title = `click again — back to ${mem.prev.sel}`;
+      };
+      for (const k of opts) {
+        const b = document.createElement('button');
+        b.textContent = k; b.type = 'button';
+        if (cur === k) { b.classList.add('on'); arm(b); }
+        else b.onclick = () => pick(k);
+        w3.append(b);
+      }
+      if (!noCustom) {
+        const cb = document.createElement('button');
+        cb.textContent = 'custom'; cb.type = 'button';
+        if (cur == null) { cb.classList.add('on'); arm(cb); }
+        else if (mem.custom) {
+          cb.title = 'your last hand-edited state';
+          cb.onclick = () => pick('custom', mem.custom);
+        } else cb.disabled = true;
+        w3.append(cb);
+      }
+      row.append(w3); g.append(row);
+      return g;
+    };
+    // 'selective' stays a MODEL preset (the trace sim's default; sanity's
+    // GB300 anchor pins it) but earns no chip: the story is
+    // full / attn-replay / dsv3 / none. noCustom = presets-only (a tier or
+    // the local head renders no per-op mark buttons, so a custom policy
+    // can't arise there — the AC section is where policies are hand-built).
+    const mkPolSeg = (noCustom) => segGrp('recompute policy', 'recompute', ['full', 'attn-replay', 'dsv3', 'none'], curPreset,
+      () => ({ ...this.marks }),
+      (k) => localTween(() => { this.setAttribute('recompute', k); this.marks = { ...RECOMPUTE_PRESETS[k] }; }),
+      (st) => localTween(() => { this.marks = { ...st }; }),
+      noCustom);
+    const mkRecSeg = () => segGrp('precision recipe', 'recipe', recipeOpts, curRecipe,
+      () => ({ mm: { ...this.matmuls }, t: !!this.transposed }),   // custom memory carries BOTH channels
+      (k) => localTween(() => {
+        this.setAttribute('recipe', k);
+        this.matmuls = resolveMatmuls({ recipe: k });
+        this.transposed = RECIPE_T[k] ?? false;   // recipes are full stash-policy bundles
+      }),
+      (st) => localTween(() => { this.matmuls = { ...(st.mm ?? st) }; if (st.mm) this.transposed = st.t; }));
     if (cmode === 'marks' || cmode === 'dtype') {
       // these tiers are ALWAYS the detail view (one canonical diagram: every
       // markable op visible — the MLA latent norms carry marks too), so the
@@ -1532,79 +1596,17 @@ export class Dsv3Layer extends HTMLElement {
       this.kind = 'moe';
       this._noKind = true;
       const hh = el('div', 'lv-head');
-      // preset segments REMEMBER: 'custom' keeps your last hand-edited
-      // state (click it to come back), and clicking the ACTIVE chip toggles
-      // back to whatever was selected before it
-      this._segMem ??= {};
-      const segGrp = (label, name, opts, cur, getState, setPreset, setState, noCustom = false) => {
-        const mem = this._segMem[name] ??= {};
-        if (cur != null && !opts.includes(cur)) cur = null;   // an uncurated preset reads as custom
-        if (cur == null) mem.custom = getState();   // the latest hand-edited composition
-        const g = el('span', 'pargrp');
-        const l3 = el('div', 'parlab'); l3.textContent = label; g.append(l3);
-        const row = el('div', 'parrow');
-        const w3 = el('span', 'stp'); w3.dataset.knob = name;
-        const pick = (sel, st) => {                 // remember where we came FROM
-          mem.prev = { sel: cur ?? 'custom', st: getState() };
-          st ? setState(st) : setPreset(sel);
-        };
-        const back = () => {                        // active chip clicked: swap with the previous pick
-          const now = { sel: cur ?? 'custom', st: getState() };
-          const pv = mem.prev; mem.prev = now;
-          setState(pv.st);
-        };
-        const arm = (b) => {                        // an active chip with history is a toggle
-          if (!mem.prev) return;
-          b.onclick = back; b.style.cursor = 'pointer';
-          b.title = `click again — back to ${mem.prev.sel}`;
-        };
-        for (const k of opts) {
-          const b = document.createElement('button');
-          b.textContent = k; b.type = 'button';
-          if (cur === k) { b.classList.add('on'); arm(b); }
-          else b.onclick = () => pick(k);
-          w3.append(b);
-        }
-        if (!noCustom) {
-          const cb = document.createElement('button');
-          cb.textContent = 'custom'; cb.type = 'button';
-          if (cur == null) { cb.classList.add('on'); arm(cb); }
-          else if (mem.custom) {
-            cb.title = 'your last hand-edited state';
-            cb.onclick = () => pick('custom', mem.custom);
-          } else cb.disabled = true;
-          w3.append(cb);
-        }
-        row.append(w3); g.append(row);
-        return g;
-      };
-      // 'selective' stays a MODEL preset (the trace sim's default; sanity's
-      // GB300 anchor pins it) but earns no chip: the section's story is
-      // full / attn-replay / dsv3 / none
       // BOTH quant tiers get the recompute segment, in the same slot. The
-      // dtype tier's is PRESETS-ONLY (no custom chip): it renders no per-op
-      // mark buttons, so a custom policy can't arise there — the AC section
-      // is where policies are hand-built, this one just replays the presets.
+      // dtype tier's is PRESETS-ONLY (no per-op mark buttons there).
       // Anatomy-wrapped instances park it in the PLAN column instead of a
       // head row (the AC widget's whole second row disappears — laptops).
-      const polSeg = segGrp('recompute policy', 'recompute', ['full', 'attn-replay', 'dsv3', 'none'], curPreset,
-        () => ({ ...this.marks }),
-        (k) => localTween(() => { this.setAttribute('recompute', k); this.marks = { ...RECOMPUTE_PRESETS[k] }; }),
-        (st) => localTween(() => { this.marks = { ...st }; }),
-        !this._ctl.marks);
+      const polSeg = mkPolSeg(!this._ctl.marks);
       let sideWrap = null;
       if (this.closest('dsv3-anatomy')) {
         sideWrap = el('div', 'lv-head lv-side');
         sideWrap.append(polSeg);
       } else hh.append(polSeg);
-      if (this._ctl.dtype) hh.append(segGrp('precision recipe', 'recipe', recipeOpts, curRecipe,
-        () => ({ mm: { ...this.matmuls }, t: !!this.transposed }),   // custom memory carries BOTH channels
-        (k) => localTween(() => {
-          this.setAttribute('recipe', k);
-          this.matmuls = resolveMatmuls({ recipe: k });
-          this.transposed = RECIPE_T[k] ?? false;   // recipes are full stash-policy bundles
-        }),
-        (st) => localTween(() => { this.matmuls = { ...(st.mm ?? st) }; if (st.mm) this.transposed = st.t; })));
+      if (this._ctl.dtype) hh.append(mkRecSeg());
       if (this._ctl.dtype) hh.append(tl, tl2);
       // ctx: the section's FIXED parallelism as a READOUT row that mirrors
       // the full sim's knob layout exactly (cluster · pipeline · SPMD mesh ·
@@ -1865,9 +1867,9 @@ export class Dsv3Layer extends HTMLElement {
         reset.style.cssText = 'font:11px ui-monospace,monospace;padding:2px 8px;border:1px solid #c3c2b7;' +
           'border-radius:4px;background:#fff;cursor:pointer;';   // match the save cluster's face
         if (KN('save')) mini.append(saveBox);
-        // the preexisting AC + precision knobs (built above for the full
-        // head; the static head never displays it, so they move here)
-        const plab = (t2) => { const sp = el('span'); sp.style.cssText = 'color:#52514e;font-size:11px;margin-left:8px;'; sp.textContent = t2; return sp; };
+        // the AC + precision knobs, wearing the SAME house segments as the
+        // AC and low-precision sections (recipe chips with recognition +
+        // both stash-format checkboxes) — the full sim mirrors the sections
         if (KN('prec')) {
           // AMAIA-style fp8-resident PARAMETERS (distinct from tl, which duals
           // the activation stashes): weights = the fp8 copies themselves,
@@ -1885,7 +1887,10 @@ export class Dsv3Layer extends HTMLElement {
               'OFF = bf16 working weights (2 B/param), quantized on the fly.';
           p8.onchange = () => this.setLocal(() => { this.fp8Params = p8.checked; });
           tl3.append(p8, 'e4m3+ᵀ params');
-          mini2.append(plab('precision:'), preset, plab('recompute:'), rsel, tl, tl3);
+          // recompute is presets-only here (no per-op mark buttons on the
+          // local diagram); the recipe segment keeps its custom chip — the
+          // stash checkboxes can compose states no recipe names
+          mini2.append(mkRecSeg(), mkPolSeg(true), tl, tl2, tl3);
         }
       }
       // snapshot knobs are READOUTS — unless the host opts into 'live'
@@ -2261,7 +2266,7 @@ export class Dsv3Layer extends HTMLElement {
         `<button xmlns="http://www.w3.org/1999/xhtml" class="st mode st-${redo ? 'redo' : 'save'}" ` +
         `data-mark="${ids.join(',')}" title="save output for backward vs recompute this op during backward">${redo ? '↻' : '💾'}</button></foreignObject>`;
     };
-    const blockGrid = (bytes, x, y, minOne = true, hollow = false, phantomBytes = 0) => {
+    const blockGrid = (bytes, x, y, minOne = true, hollow = false, phantomBytes = 0, solidFrac = hollow ? 0 : 1) => {
       // byte squares, single-line ALWAYS (one stash = one run; wrapping is
       // banned — a wrapped grid crossed the wire routes). hollow = the
       // COUNTERFACTUAL stash: what saving this recomputed tensor would cost.
@@ -2269,13 +2274,17 @@ export class Dsv3Layer extends HTMLElement {
       // the run to what the stash WOULD cost wide — the outer edge is
       // dtype-independent (elems × 2 B), so dtype flips pour the solid fill
       // inside a fixed dashed silhouette (the ghost language: dashed = the
-      // baseline you are beating)
+      // baseline you are beating).
+      // solidFrac (save⇄recompute tween): the leading share of a hollow grid
+      // drawn FILLED — squares convert one by one instead of two overlapping
+      // grids crossfading (no ghost-flash)
       const n = Math.max(minOne ? 1 : 0, Math.round(bytes / 1024 / 4));
       const nPh = Math.max(n, Math.round(phantomBytes / 1024 / 4));
       if (!n && !nPh) return { svg: '', rows: 0, pitch: 11 };
+      const nSolid = hollow ? Math.round(solidFrac * n) : n;
       let s = '';
       for (let i = 0; i < n; i++)
-        s += hollow
+        s += i >= nSolid
           ? `<rect x="${x + i * 6 + 0.4}" y="${y + 0.4}" width="4.2" height="4.2" fill="none" stroke="#eda100" stroke-width="0.8"/>`
           : `<rect x="${x + i * 6}" y="${y}" width="5" height="5" fill="#eda100"/>`;
       for (let i = n; i < nPh; i++)
@@ -2633,10 +2642,34 @@ export class Dsv3Layer extends HTMLElement {
         return SAVED(s2) ? blockGrid(bytesA(A), gx, gy, true, false, phFor()).svg
           : s2 === 'redo' && redoGrid ? blockGrid(bytesA(A), gx, gy, true, true).svg : '';
       };
-      if (stP2 != null && stP2 !== st)
-        P.push(`<g opacity="${(1 - VQ.t).toFixed(3)}">${chipTxt(anaP, stP2)}${gridFor(anaP, stP2)}</g>` +
-          `<g opacity="${VQ.t.toFixed(3)}">${chipTxt(ana, st)}${gridFor(ana, st)}</g>`);
-      else {
+      if (stP2 != null && stP2 !== st) {
+        // labels crossfade; the GRID never does — squares convert in place
+        // (hollow⇄solid one by one) or pour to/from zero, so no ghost grid
+        // flashes out while a filled one fades in
+        P.push(`<g opacity="${(1 - VQ.t).toFixed(3)}">${chipTxt(anaP, stP2)}</g>` +
+          `<g opacity="${VQ.t.toFixed(3)}">${chipTxt(ana, st)}</g>`);
+        const has = (s2) => SAVED(s2) || (s2 === 'redo' && redoGrid);
+        const g0 = has(stP2), g1 = has(st);
+        if (g0 && g1 && ov?.short && gpos(stP2)[0] !== gpos(st)[0])
+          // short chips park the grid in different pockets per state — a
+          // moving grid can only crossfade
+          P.push(`<g opacity="${(1 - VQ.t).toFixed(3)}">${gridFor(anaP, stP2)}</g>` +
+            `<g opacity="${VQ.t.toFixed(3)}">${gridFor(ana, st)}</g>`);
+        else if (g0 && g1) {
+          const bT = lerpQ(bytesA(anaP), bytesA(ana));
+          const [gx, gy] = gpos(st);
+          const conv = SAVED(stP2) !== SAVED(st);   // save⇄pin never re-converts
+          P.push(blockGrid(bT, gx, gy, true, conv, SAVED(st) ? phFor() : 0,
+            conv ? (SAVED(st) ? VQ.t : 1 - VQ.t) : 1).svg);
+        } else if (g0 !== g1) {
+          // one side has no grid (the pure dtype tier drops the ↻ hollow):
+          // the squares pour to/from zero instead of fading as a block
+          const A2 = g1 ? ana : anaP, s3 = g1 ? st : stP2;
+          const bT = lerpQ(g1 ? 0 : bytesA(anaP), g1 ? bytesA(A2) : 0);
+          const [gx, gy] = gpos(s3);
+          P.push(blockGrid(bT, gx, gy, false, s3 === 'redo', SAVED(s3) ? phFor() : 0).svg);
+        }
+      } else {
         P.push(chipTxt(ana, st));
         if (SAVED(st) || (st === 'redo' && redoGrid)) {   // same state: bytes still pour (dtype flips)
           const b0 = anaP ? bytesA(anaP) : bytes;
