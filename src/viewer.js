@@ -70,6 +70,18 @@ export const actBucketsOf = (ana2) => {
 // (dense layers, emb/head), so "the PP4 schedule" isn't even well-defined
 // without choices this essay doesn't want to defend.
 export const PP_CHOICES = [1, 8];
+// Daniel Haziza's roofline config (the analysis the essay credits) as a
+// one-click cross-check preset for the full model: dsv3-style fp8 GEMMs
+// with a BF16 attn-out stash (no E5M6), e4m3+ᵀ-RESIDENT params, and his
+// exact stash policy — FFN outputs + attn out + norm2 kept; the latents,
+// x1 and the router state replayed.
+export const HAZIZA_CFG = {
+  matmuls: { qkv_down: 'e4m3', q_up: 'e4m3', kv_up: 'e4m3', attn: 'bf16', o_proj: 'bf16',
+    router: 'fp32', ffn_gate_up: 'e4m3', ffn_down: 'e4m3', lm_head: 'bf16', swiglu_in: 'e4m3' },
+  marks: { gate_up: true, ffn_down: true, combine: true, moe_add: true, attn: true, norm2: true, dispatch: true },
+  transposed: false, fp8Params: true,
+  ep: 64, pp: 8, zero: 1, world: 2048, stage: 1, sched: '1f1b',
+};
 export const LOCAL_PAR = { world: 2048, pp: 8 };   // .pp = the default degree
 // an AUTHORED config (snapshot from/to, deck steps) is complete by fiat:
 // unlisted knobs mean these neutral nothing-applied defaults, never
@@ -1881,7 +1893,24 @@ export class Dsv3Layer extends HTMLElement {
           this._tweenLocal(prev);
         });
         if (!this._pinCfg?.state) { rst.disabled = true; rst.title = 'save a config first'; rst.style.color = '#c3c2b7'; rst.style.cursor = 'default'; }
-        saveBox.append(rst, reset);   // factory reset (built above; also clears the save)
+        // the Haziza cross-check preset: lights up when the state matches
+        const hz = document.createElement('button');
+        hz.textContent = 'Haziza cfg'; hz.dataset.knob = 'haziza';
+        const hzOn = mmKey(this.matmuls) === mmKey(HAZIZA_CFG.matmuls)
+          && marksKey(this.marks) === marksKey(HAZIZA_CFG.marks)
+          && !this.transposed && !!this.fp8Params
+          && ['ep', 'pp', 'zero', 'world', 'stage', 'sched'].every((k5) => this[k5] === HAZIZA_CFG[k5]);
+        hz.style.cssText = 'font:11px ui-monospace,monospace;padding:2px 8px;border:1px solid '
+          + (hzOn ? '#eda100;background:#fff8ea;font-weight:600;' : '#c3c2b7;background:#fff;') + 'border-radius:4px;cursor:pointer;';
+        hz.title = 'the roofline analysis this essay credits (Daniel Haziza): dsv3-style fp8 GEMMs with a BF16 attn-out stash, '
+          + 'e4m3+ᵀ-resident params, and its exact stash policy — one click to line the sheet up against his numbers';
+        hz.onclick = () => this.setLocal(() => Object.assign(this, {
+          matmuls: { ...HAZIZA_CFG.matmuls }, marks: { ...HAZIZA_CFG.marks },
+          transposed: HAZIZA_CFG.transposed, fp8Params: HAZIZA_CFG.fp8Params,
+          ep: HAZIZA_CFG.ep, pp: HAZIZA_CFG.pp, zero: HAZIZA_CFG.zero, world: HAZIZA_CFG.world,
+          stage: HAZIZA_CFG.stage, sched: HAZIZA_CFG.sched, vpp: 2, fold: 'reflect',
+        }));
+        saveBox.append(hz, rst, reset);   // factory reset (built above; also clears the save)
         reset.textContent = 'reset all';
         reset.style.cssText = 'font:11px ui-monospace,monospace;padding:2px 8px;border:1px solid #c3c2b7;' +
           'border-radius:4px;background:#fff;cursor:pointer;';   // match the save cluster's face
@@ -2575,11 +2604,11 @@ export class Dsv3Layer extends HTMLElement {
             : `<text class="tensor tredo" x="${x}" y="${y + 8}">${rTip}↻ ${name}</tspan>${cfLbl}${dtag(ana)}</text>`;
           for (let i = 0; i < cf; i++)
             g += `<rect x="${x + (i % CROW) * 6 + 0.4}" y="${y + 12 + Math.floor(i / CROW) * 6 + 0.4}" width="4.2" height="3.2" fill="none" stroke="#eda100" stroke-width="0.8"/>`;
-          P.push(`<g data-chip="${id}" opacity="${m.toFixed(3)}">${g}</g>`);
+          P.push(`<g data-chip="${ov?.chip ?? id}" opacity="${m.toFixed(3)}">${g}</g>`);
           return 12;
         }
         if (st !== 'save' && st !== 'pin') {   // idle: named + dtype (the wire's precision), never stashed
-          P.push(`<g data-chip="${id}" opacity="${m.toFixed(3)}"><text class="tensor tidle" x="${x}" y="${y + 8}">` +
+          P.push(`<g data-chip="${ov?.chip ?? id}" opacity="${m.toFixed(3)}"><text class="tensor tidle" x="${x}" y="${y + 8}">` +
             `${nameTip('· not needed: no backward op or replay reads this tensor — saved or not, it is never stashed.')}· ${name}</tspan>${dtag(ana)}</text></g>`);
           return 12;
         }
@@ -2622,7 +2651,7 @@ export class Dsv3Layer extends HTMLElement {
           g += i < nsq
             ? `<rect x="${sqX + (i % CROW) * 6}" y="${sqY + Math.floor(i / CROW) * 6}" width="5" height="4" fill="#eda100"/>`
             : `<rect x="${sqX + (i % CROW) * 6 + 0.4}" y="${sqY + Math.floor(i / CROW) * 6 + 0.4}" width="4.2" height="3.2" fill="none" stroke="#d19023" stroke-width="0.8" stroke-dasharray="1.6 1.4"/>`;
-        P.push(`<g data-chip="${id}" opacity="${m.toFixed(3)}">${g}</g>`);
+        P.push(`<g data-chip="${ov?.chip ?? id}" opacity="${m.toFixed(3)}">${g}</g>`);
         return 12;
       }
 
@@ -3251,7 +3280,7 @@ export class Dsv3Layer extends HTMLElement {
       shBox('shared gate/up', '7168 → 2×2048',
         'one plain GEMM per token — follows the ffn gate/up mark and dtype (its FLOPs are counted in the grouped strip)', rowG,
         pk(DSV3.hidden * 2 * DSV3.moeInter), 'gate_up', 'ffn_gate_up');
-      tensorChip(['gate_up'], shMid + 14, z + 4, { name: 'gate, up (sh)', tdims: '2×2048', frac: 1 / nExp });
+      tensorChip(['gate_up'], shMid + 14, z + 4, { name: 'gate, up (sh)', tdims: '2×2048', frac: 1 / nExp, chip: 'gate_up:sh' });
     }
     z = wireOut(['gate_up'], SX2, z, DET ? { name: 'gate, up (routed)', tdims: `${DSV3.topk}×2×2048`, frac: DSV3.topk / nExp } : undefined);
     if (DET) wire(shMid, rowG + 34, z);
@@ -3527,6 +3556,8 @@ export class Dsv3Layer extends HTMLElement {
         aM: ana.savedBytes, aD: anaD.savedBytes,
         bM: actBucketsOf(ana), bD: actBucketsOf(anaD), bLabels: ACT_BUCKETS.map((b) => b.label),
         bIds: ACT_BUCKETS.map((b) => b.ids[0] ?? null),
+        gateSplit: { i: ACT_BUCKETS.findIndex((b) => b.ids[0] === 'gate_up'),
+          routed: `${DSV3.topk}×2×${DSV3.moeInter}`, shared: `2×${DSV3.moeInter}`, dense: `2×${DSV3.denseInter}` },
         bMF: actBucketsOf(this._anaMemo.anaMF ?? ana), bDF: actBucketsOf(this._anaMemo.anaDF ?? anaD),
         bRate: this._anaMemo.anaMF && this._anaMemo.anaDF
           ? rateExprs(this._anaMemo.anaMF, this._anaMemo.anaDF, ana, anaD,
@@ -4075,7 +4106,8 @@ dsv3-sheet { display: block; margin: 14px 0; position: relative; }
   border: 1px solid #e1e0d9; border-radius: 6px; background: #fcfcfb; padding: 8px 12px; position: relative; }
 .cellsheet td.fx .cellref { cursor: pointer; }
 .cellsheet .hd { color: #52514e; font-size: 11.5px; margin-bottom: 5px; }
-.cellsheet table { border-collapse: collapse; width: 100%; }
+.cellsheet table { border-collapse: collapse; width: 100%; table-layout: fixed; }   /* fixed columns: values changing never resizes them */
+.cellsheet td.lb { overflow: hidden; text-overflow: ellipsis; }
 .cellsheet th { text-align: left; font-size: 10.5px; color: #898781; font-weight: 600; padding: 1px 10px 3px 2px; }
 .cellsheet th.vl, .cellsheet td.vl { text-align: right; }
 .cellsheet td { padding: 1.5px 10px 1.5px 2px; border-top: 1px solid #f0efe9; font-size: 11.5px; vertical-align: baseline; }
@@ -4270,7 +4302,8 @@ class Dsv3Sheet extends HTMLElement {
         this._nos ? 'fp8 ACTIVATION stashes counted at their payload rate (the 1×128 tile-scale share dropped; weights keep theirs)' : '',
       ].filter(Boolean).join('; ')} — these values drift slightly from the (exact) chart</div>` : '')
       + '</div>'
-      + '<table><tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">≈</th><th>formula</th></tr>'
+      + '<table><colgroup><col style="width:38px"><col style="width:322px"><col style="width:150px"><col style="width:64px"><col></colgroup>'
+      + '<tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">≈</th><th>formula</th></tr>'
       + cells.cells.map((c) => `<tr data-cell="${c.id}"${c.id === this._hl ? ' class="hl"' : ''}`
         + `${c.ui?.k ? ` data-jk="${c.ui.k}"` : ''}${c.ui?.c ? ` data-jc="${c.ui.c}"` : ''}`
         + `${c.edit ? ` data-et="${c.edit.t}" data-ek="${c.edit.k}"` : ''}>`

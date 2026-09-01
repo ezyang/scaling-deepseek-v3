@@ -157,7 +157,15 @@ Either mode's totals drift slightly from the (always exact) chart, and a
 note says so. The sheet indents child
 rows (sub-cells depth 1, per-bucket R•/B• depth 2), keeps labels to one
 line (nowrap), and hovering any formula variable shows its cell card
-(click = jump to its row). Rows carry JUMP affordances (click the
+(click = jump to its row). The gate/up bucket splits for display into routed / shared / dense-MLP
+sub-rows (one node — a single kept?/precision gates all three; validated:
+the sub-dims must sum exactly to the node's rates), with the shared row
+jumping to its own chip (gate_up:sh). Columns are FIXED width
+(table-layout: fixed + a colgroup), so values changing never resizes them.
+A 'Haziza cfg' button in the save cluster applies HAZIZA_CFG — the
+credited roofline's exact config (fp8 GEMMs, BF16 attn-out stash,
+e4m3+ᵀ-resident params, his stash policy) — and lights up when the state
+matches. Rows carry JUMP affordances (click the
 coordinate cell): a model input lands on its controlling knob (P1→GPUs,
 Z1/S•→ZeRO, F1→the e4m3+ᵀ checkbox, L•/E1/H1→the rank picker, P6→sched)
 and an activation row on its chip in the diagram (`data-chip` on every

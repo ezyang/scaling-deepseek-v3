@@ -151,6 +151,32 @@ export function buildCells(env) {
     if (!whole) return [{ id: `A${i + 2}`, unit: 'B', depth: 1, label: `${lbl} (partial under policy)`,
       ui: env.bIds?.[i] ? { c: env.bIds[i] } : undefined,
       expr: `(L1 × ${rM} + L2 × ${rD}) × 4096 × P6${tail}` }];
+    // the gate/up bucket is ONE graph node whose elems span routed + shared
+    // (+ the dense MLP in dense layers): split it for display — validated:
+    // the sub-dims must sum exactly to the node's rates
+    const GS = env.gateSplit;
+    if (GS && i === GS.i && R?.prec != null) {
+      const B9 = `B${i + 2}`, R9 = `R${i + 2}`;
+      const rB = evalExpr(GS.routed, () => NaN) * R.prec, sB = evalExpr(GS.shared, () => NaN) * R.prec;
+      const dB = evalExpr(GS.dense, () => NaN) * R.prec;
+      if (rB + sB === fM && dB === fD) {
+        const kept = rM === fM && rD === fD ? 1 : 0;
+        const ui9 = { c: env.bIds[i] };
+        return [
+          { id: `A${i + 2}`, unit: 'B', depth: 1, label: lbl, ui: ui9,
+            expr: `A${i + 2}a + A${i + 2}b + A${i + 2}c${tail}` },
+          { id: `A${i + 2}a`, depth: 2, unit: 'B', label: 'gate, up · routed (routed experts’ hidden, pre-SwiGLU)', ui: ui9,
+            expr: `${R9} × L1 × (${GS.routed} × ${B9}) × 4096 × P6` },
+          { id: `A${i + 2}b`, depth: 2, unit: 'B', label: 'gate, up · shared (shared expert hidden, pre-SwiGLU)', ui: { c: `${env.bIds[i]}:sh` },
+            expr: `${R9} × L1 × (${GS.shared} × ${B9}) × 4096 × P6` },
+          { id: `A${i + 2}c`, depth: 2, unit: 'B', label: 'gate, up · dense MLP (dense layers’ hidden)', ui: ui9,
+            expr: `${R9} × L2 × (${GS.dense} × ${B9}) × 4096 × P6` },
+          { id: R9, depth: 2, label: 'kept?', ui: ui9, edit: { t: 'mark', k: env.bIds[i] }, value: kept },
+          { id: B9, depth: 2, unit: 'B/e', label: 'precision (B/elem)', ui: ui9,
+            edit: R.dtc === 'o_proj' ? { t: 'cb', k: 'e5m6' } : { t: 'dt', k: R.dtc }, value: descale(R.prec) },
+        ];
+      }
+    }
     // the rate DECOMPOSITION (per saved tensor: dims × B•, + fp32 aux; the
     // ᵀ dual folds into B•'s value) when the caller validated one;
     // zero-rate kinds drop out
