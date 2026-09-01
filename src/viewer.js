@@ -790,7 +790,12 @@ export function patchTargets(forAttr, patch) {
 // Top-down SVG schematic of one DSv3 transformer block (plus the head).
 // Every matmul carries a dtype <select>; the chosen per-matmul precisions are
 // pushed to the widgets named in `for="id1 id2"` (memory now, rooflines later).
-const DT_STYLE = { bf16: '#52514e', fp8: '#2a78d6', mxfp8: '#2a78d6', e5m6: '#128a72', fp32: '#9c3a96' };   // fp8 (Hopper tile-scaled) and mxfp8 (Blackwell MX) share the blue — same bytes, different provenance
+// dtype colors are the PRECISION family — warm magentas graded by element
+// width (fp8 pink → e5m6 plum → fp32 maroon), deliberately clear of the
+// byte-component language (weights blue / grads orange / optim green) so a
+// picket never impersonates a byte bar. fp8 (Hopper tile-scaled) and mxfp8
+// (Blackwell MX) share the pink — same bytes, different provenance.
+const DT_STYLE = { bf16: '#52514e', fp8: '#d6408b', mxfp8: '#d6408b', e5m6: '#9c3a96', fp32: '#7a2c2c' };
 // the diagram's visual-language tokens (docs/diagram-grammar.md) — one
 // definition, scoped into each widget's stylesheet (the anatomy plan too)
 export const tokensCss = (s) => `
@@ -1371,12 +1376,15 @@ export class Dsv3Layer extends HTMLElement {
     const tl = document.createElement('label');
     tl.style.cssText = 'display:inline-flex;align-items:center;gap:4px;margin-left:8px;color:#52514e;';
     tl.title = 'The wgrad GEMM reads its saved activations TRANSPOSED, and 1×128 tile scales don’t survive that. ' +
-      'ON = pay in memory: quantize with transpose at forward, stash BOTH orientations (TE-style production Hopper). ' +
-      'OFF = pay in compute: one copy, re-quantized (dequant → transpose → requant) during backward — DeepSeek’s own convention.';
+      'ON = pay in memory: quantize with transpose at forward, stash BOTH orientations. ' +
+      'OFF = pay in compute: one copy, re-quantized (dequant → transpose → requant) during backward — DeepSeek’s own convention. ' +
+      'In practice this is an EXPERT-PATH choice: under realistic recompute policies the only fp8 stashes a wgrad still reads are the ' +
+      'MoE-FFN inputs (the post-norm token stream and its dispatched copies) — the attention side is either replayed or kept E5M6 ' +
+      '(single copy, pow-2 scales requantize the flip losslessly). The model generalizes honestly: any fp8 stash a wgrad reads would dual.';
     const tcb = document.createElement('input');
     tcb.type = 'checkbox'; tcb.checked = this.transposed;
     tcb.onchange = () => localTween(() => { this.transposed = tcb.checked; });
-    tl.append(tcb, 'fp8ᵀ dual stash');
+    tl.append(tcb, 'fp8ᵀ dual stash (expert inputs)');
     if (this._ctl.dtype) head.append(tl);
     // local: the multiplier is the stage's block count, not the whole model's
     const KBLK = this.hasAttribute('local') && this.getAttribute('lens') === 'param-bytes'
@@ -1876,7 +1884,7 @@ export class Dsv3Layer extends HTMLElement {
           + `RoPE carries its own mark${this._ctl.quant ? ' (every preset replays it; saving it stashes the same bytes post-rotation)' : ''}.`,
       !this._ctl.quant ? '' :
       'The picket run inside each op is its FLOP cost as time at peak \u2014 one picket = 10 MFLOP/token \u2248 41 \u00b5s per 4096-token microbatch (' +
-      'fp8 counted half \u2014 2\u00d7 peak; fp32 counted double \u2014 half peak; dtype colors here and on the saved-tensor tags: blue fp8, teal e5m6, dark bf16, plum fp32); ' +
+      'fp8 counted half \u2014 2\u00d7 peak; fp32 counted double \u2014 half peak; dtype colors here and on the saved-tensor tags: pink fp8, plum e5m6, dark bf16, maroon fp32); ' +
       'the lm head uses the same unit \u2014 per-token vocab work, independent of depth. Norms/SwiGLU ' +
       'get a hollow dashed fig-leaf (bandwidth-bound, compute precision unspecified).',
       this._ctl.dtype ? 'One click on a dtype button toggles bf16 \u21c4 fp8 (attn out: bf16 \u21c4 e5m6; the router is pinned).' : '',
@@ -2165,17 +2173,25 @@ export class Dsv3Layer extends HTMLElement {
         `<button xmlns="http://www.w3.org/1999/xhtml" class="st mode st-${redo ? 'redo' : 'save'}" ` +
         `data-mark="${ids.join(',')}" title="save output for backward vs recompute this op during backward">${redo ? '↻' : '💾'}</button></foreignObject>`;
     };
-    const blockGrid = (bytes, x, y, minOne = true, hollow = false) => {
+    const blockGrid = (bytes, x, y, minOne = true, hollow = false, phantomBytes = 0) => {
       // byte squares, single-line ALWAYS (one stash = one run; wrapping is
       // banned — a wrapped grid crossed the wire routes). hollow = the
-      // COUNTERFACTUAL stash: what saving this recomputed tensor would cost
+      // COUNTERFACTUAL stash: what saving this recomputed tensor would cost.
+      // phantomBytes = the bf16-equivalent footprint: dashed squares extend
+      // the run to what the stash WOULD cost wide — the outer edge is
+      // dtype-independent (elems × 2 B), so dtype flips pour the solid fill
+      // inside a fixed dashed silhouette (the ghost language: dashed = the
+      // baseline you are beating)
       const n = Math.max(minOne ? 1 : 0, Math.round(bytes / 1024 / 4));
-      if (!n) return { svg: '', rows: 0, pitch: 11 };
+      const nPh = Math.max(n, Math.round(phantomBytes / 1024 / 4));
+      if (!n && !nPh) return { svg: '', rows: 0, pitch: 11 };
       let s = '';
       for (let i = 0; i < n; i++)
         s += hollow
           ? `<rect x="${x + i * 6 + 0.4}" y="${y + 0.4}" width="4.2" height="4.2" fill="none" stroke="#eda100" stroke-width="0.8"/>`
           : `<rect x="${x + i * 6}" y="${y}" width="5" height="5" fill="#eda100"/>`;
+      for (let i = n; i < nPh; i++)
+        s += `<rect x="${x + i * 6 + 0.4}" y="${y + 0.4}" width="4.2" height="4.2" fill="none" stroke="#d19023" stroke-width="0.8" stroke-dasharray="1.6 1.4"/>`;
       return { svg: s, rows: 1, pitch: 11 };
     };
     const fmtB = (bytes) => bytes >= 1024 ? (bytes / 1024).toFixed(1) + ' KiB' : bytes + ' B';
@@ -2498,24 +2514,36 @@ export class Dsv3Layer extends HTMLElement {
       // put it flush-left under the text — a hollow row at the +88 offset
       // floated into the neighbouring column
       const gpos = (s2) => ov?.short && SAVED(s2) ? [x + 88, y + 13] : ov?.short ? [x, y + 13] : [x, y + 12];
+      // the bf16-equivalent footprint (phantom): what this stash would cost
+      // at 2 B/elem — drawn only where the actual stash beats it (a dual fp8ᵀ
+      // stash at 2.06 B/elem has nothing to brag about). dtype tiers only:
+      // the marks tier's story is which tensors exist, not their width
+      const bf16B = ids.reduce((t2, i2) => t2 + (ana.byId[i2]?.elems ?? 0) * 2, 0) * (ov?.frac ?? 1);
+      const phFor = (A) => this._ctl.dtype && bf16B > bytesA(A) ? bf16B : 0;
+      // the hollow ↻ counterfactual grid belongs to the AC story — the pure
+      // dtype tier (recompute pinned upstairs) drops it
+      const redoGrid = this._ctl.marks || !this._ctl.dtype;
       const gridFor = (A, s2) => {
         const [gx, gy] = gpos(s2);
-        return SAVED(s2) ? blockGrid(bytesA(A), gx, gy, true).svg
-          : s2 === 'redo' ? blockGrid(bytesA(A), gx, gy, true, true).svg : '';
+        return SAVED(s2) ? blockGrid(bytesA(A), gx, gy, true, false, phFor(A)).svg
+          : s2 === 'redo' && redoGrid ? blockGrid(bytesA(A), gx, gy, true, true).svg : '';
       };
       if (stP2 != null && stP2 !== st)
         P.push(`<g opacity="${(1 - VQ.t).toFixed(3)}">${chipTxt(anaP, stP2)}${gridFor(anaP, stP2)}</g>` +
           `<g opacity="${VQ.t.toFixed(3)}">${chipTxt(ana, st)}${gridFor(ana, st)}</g>`);
       else {
         P.push(chipTxt(ana, st));
-        if (SAVED(st) || st === 'redo') {   // same state: bytes still pour (dtype flips)
+        if (SAVED(st) || (st === 'redo' && redoGrid)) {   // same state: bytes still pour (dtype flips)
           const b0 = anaP ? bytesA(anaP) : bytes;
           const bT = lerpQ(b0, bytes);
           const [gx, gy] = gpos(st);
           // minOne holds through the tween when BOTH endpoints are nonzero —
           // a sub-square chip (kv latent: ¼ square) must not blink out
-          // mid-pour; only a genuine pour to/from zero may reach zero squares
-          P.push(blockGrid(bT, gx, gy, !VQ || (b0 > 0 && bytes > 0), st === 'redo').svg);
+          // mid-pour; only a genuine pour to/from zero may reach zero squares.
+          // The phantom edge is dtype-independent, so it never tweens: the
+          // solid fill pours inside the fixed dashed silhouette
+          P.push(blockGrid(bT, gx, gy, !VQ || (b0 > 0 && bytes > 0), st === 'redo',
+            st === 'redo' ? 0 : (this._ctl.dtype && bf16B > Math.max(b0, bytes) ? bf16B : 0)).svg);
         }
       }
       if (SAVED(st) || st === 'redo') h = ov?.short ? 25 : 12 + 11 + 2;
@@ -2807,8 +2835,12 @@ export class Dsv3Layer extends HTMLElement {
     y = mmBox(['attn'], C1, y);
     y = wireOut(['attn'], SX1, y);
     y = mmBox(['o_proj'], C1, y);
+    // fixed-parallelism (ctx) instances already SUM the layers in their
+    // readout (× 8 layers × 8.5 in flight) — a ×61 multiplier on the
+    // enclosure would double-claim, so the label goes per-block there
     grp(C1, g1, y + 5, CUM ? `MLA · ${fmtPV(PARAMS.mla * KMUL)}${facTxt('d')}`
-      : `MLA ×${DSV3.layers} · ${fmtPV(PARAMS.mla)}${facTxt('d')}`, MLAGW);
+      : this.getAttribute('ctx') ? `MLA · ${fmtPV(PARAMS.mla)}${facTxt('d')}`
+        : `MLA ×${DSV3.layers} · ${fmtPV(PARAMS.mla)}${facTxt('d')}`, MLAGW);
     P.push(regionToggle(MLA_RIDS, 'mlaMixed', C1 - 10 + MLAGW - 196, g1 + 1, 190));
     y = wireOut(['o_proj'], SX1, y + 5);
     if (ONLY === 'mla') {
@@ -2917,15 +2949,28 @@ export class Dsv3Layer extends HTMLElement {
     } else {
     let shBot = 0, shTop = 0;
     const SHX = C2 + 320, shMid = SHX + 22;        // shared-expert mini column; spine down its LEFT, like every column
-    const shBox = (name, dims, tip, yy, pc = '', markId = null) => {
+    const shBox = (name, dims, tip, yy, pc = '', markId = null, dtId = null) => {
       const n = name.includes('gate/up') ? 2 * DSV3.hidden * DSV3.moeInter : DSV3.hidden * DSV3.moeInter;
       P.push(`<g data-op="shared" data-tip="${escAttr(`${tip}\nparameters: ${n.toLocaleString('en-US')}`)}">` +
       `<rect class="box" x="${SHX}" y="${yy}" width="140" height="34" rx="4"/>` +
       `<text class="name" x="${SHX + 6}" y="${yy + 14}">${name}</text>` +
-      `<text class="dims" x="${SHX + 6}" y="${yy + 27}">${PONLY ? pc.trim() : flatten(dims) + pc}</text></g>`);
+      `<text class="dims" x="${SHX + 6}" y="${yy + 27}">${PONLY ? pc.trim()
+        : flatten(dims) + (dtId && this._ctl.dtype && !this._ctl.marks ? '' : pc)}</text></g>`);   // the dtype mirror takes the params' spot (the count stays in the tooltip + grouped box)
       // MIRRORED mark: the shared expert lives inside the grouped node, so
-      // its button toggles the same mark (both buttons re-render in sync)
-      if (markId) P.push(modeBtn([markId], SHX + 140 - 28, yy + 1));
+      // its button toggles the same mark (both buttons re-render in sync).
+      // The dtype MIRROR takes the same top-right slot in the dtype tier
+      // (where no mark button renders — the 140px box has room for one
+      // button, and only the full tier would want both; there the grouped
+      // boxes carry the dtype lever alone)
+      if (markId && this._ctl.marks) P.push(modeBtn([markId], SHX + 140 - 28, yy + 1));
+      else if (dtId && this._ctl.dtype)
+        // compact, bottom-right: the top row belongs to the name ('shared
+        // gate/up' runs to ~x+97); the dims line is shorter, so a 40px
+        // mirror clears it (foreignObject buttons are invisible to the
+        // linter's text rules — the geometry here is hand-checked)
+        P.push(`<foreignObject x="${SHX + 96}" y="${yy + 12}" width="42" height="20">` +
+          `<button xmlns="http://www.w3.org/1999/xhtml" class="st dtb" data-dt="${dtId}" style="color:${DT_STYLE[dt(dtId)]};width:40px" ` +
+          `title="toggle precision: bf16 ⇄ ${FP8K} — mirrors the grouped box (one matmul, two buttons)">${dt(dtId)}</button></foreignObject>`);
     };
     if (!DET) {
       const g0 = Math.max(22, chipSpace(['norm2']) + 10) + (TABS ? (FLAPS ? 36 : 16) : 0);
@@ -2978,7 +3023,7 @@ export class Dsv3Layer extends HTMLElement {
         `<text class="grplabel" x="${SHX}" y="${rowG - 6}">shared expert (every token)</text>`);
       shBox('shared gate/up', '7168 → 2×2048',
         'one plain GEMM per token — follows the ffn gate/up mark and dtype (its FLOPs are counted in the grouped strip)', rowG,
-        pk(DSV3.hidden * 2 * DSV3.moeInter), 'gate_up');
+        pk(DSV3.hidden * 2 * DSV3.moeInter), 'gate_up', 'ffn_gate_up');
       tensorChip(['gate_up'], shMid + 14, z + 4, { name: 'gate, up (sh)', tdims: '2×2048', frac: 1 / nExp });
     }
     z = wireOut(['gate_up'], SX2, z, DET ? { name: 'gate, up (routed)', tdims: `${DSV3.topk}×2×2048`, frac: DSV3.topk / nExp } : undefined);
@@ -3001,7 +3046,7 @@ export class Dsv3Layer extends HTMLElement {
     if (DET) {
       shBox('shared down', '2048 → 7168',
         'one plain GEMM per token — follows the ffn down mark and dtype; its output joins the routed sum', rowD,
-        pk(DSV3.moeInter * DSV3.hidden), 'ffn_down');
+        pk(DSV3.moeInter * DSV3.hidden), 'ffn_down', 'ffn_down');
       tensorChip(['ffn_down'], shMid + 14, z + 4, { name: 'shared out', tdims: '7168', frac: 1 / nExp });
       shBot = rowD + 34;
     }
@@ -3096,7 +3141,7 @@ export class Dsv3Layer extends HTMLElement {
           const regionCtl = regionToggle(FFN_RIDS, 'ffnMixed', rx0, y0 + 2, x1 - rx0 - 4);
           P[P.indexOf('__ENC__')] =
             `<rect x="${x0}" y="${y0}" width="${x1 - x0}" height="${y1 - y0}" rx="${r}" fill="#fcfcfb" stroke="#c3c2b7"/>` +
-            `<text class="grplabel" x="${x0 + 56}" y="${y0 + 11}">MoE FFN \u00d7${DSV3.layers - (DSV3.denseLayers ?? 3)} \u00b7 ${fmtPV(PARAMS.moeFfnBlk)}</text>` +
+            `<text class="grplabel" x="${x0 + 56}" y="${y0 + 11}">MoE FFN ${this.getAttribute('ctx') ? '' : `\u00d7${DSV3.layers - (DSV3.denseLayers ?? 3)} `}\u00b7 ${fmtPV(PARAMS.moeFfnBlk)}</text>` +
             regionCtl;
         } else {
           // active tab footprint: the outline leaves a gap there instead of an

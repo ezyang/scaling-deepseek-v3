@@ -74,5 +74,5 @@ generality.
 - Widget state persists in the URL hash (shareable, refresh-stable); presets
   recognize themselves when controls return to a preset's exact state.
 - Micro-typography: parameter counts are grey, never italic, consistently
-  styled; dtype colors follow the black/blue (+fp32) convention; no
+  styled; dtype colors are the warm-magenta precision family (bf16 ink · fp8 pink · e5m6 plum · fp32 maroon), kept clear of the byte-component blue/orange/green; no
   space-wasting negative labels ("not needed").

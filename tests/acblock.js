@@ -128,6 +128,29 @@ T.check('fp8 widget: the fp8 recipe shrinks the tally (76 pickets — o_proj run
   ac.querySelector('button[data-mark="kv_up"]').click(); await T.tick(400);   // back to dsv3
   T.check('restored to dsv3 after the round trip', btn(ac, 'recompute', 'dsv3').classList.contains('on'), '');
 }
+// LOW-PREC phantoms: saved sub-bf16 stashes wear a dashed tail out to the
+// bf16-equivalent edge (dtype-independent, so dtype flips pour the solid
+// fill inside a fixed silhouette); the ↻ hollow counterfactual grids are
+// the AC story's device and the pure dtype tier drops them
+{
+  const ph = (w) => w.querySelectorAll('.lv-scroll rect[stroke="#d19023"][stroke-dasharray]').length;
+  const hollows2 = (w) => w.querySelectorAll('.lv-scroll rect[height="4.2"][stroke="#eda100"]').length;
+  T.check('fp8 widget: bf16 phantoms drawn on the fp8/e5m6 stashes', ph(f8) > 10, ph(f8));
+  T.check('fp8 widget: NO redo hollow grids (AC story stays upstairs)', hollows2(f8) === 0, hollows2(f8));
+  T.check('AC widget: no phantoms (its story is which tensors exist, not width)', ph(ac) === 0, ph(ac));
+  // dtype colors are the warm-magenta precision family, not the byte blue
+  T.check('fp8 pickets are pink (never the weights blue)',
+    f8.querySelectorAll('.lv-scroll rect[fill="#d6408b"]').length > 20
+    && f8.querySelectorAll('.lv-scroll rect[fill="#2a78d6"]').length === 0, '');
+  // shared-expert dtype MIRRORS (dtype tier: the mark slot is free)
+  const gu = [...f8.querySelectorAll('button[data-dt="ffn_gate_up"]')];
+  T.check('shared gate/up wears a dtype mirror (one matmul, two buttons)', gu.length === 2, gu.length);
+  gu[1].click(); await T.tick(400);
+  T.check('mirror click flips BOTH buttons', [...f8.querySelectorAll('button[data-dt="ffn_gate_up"]')].every(b => b.textContent === 'bf16'), '');
+  gu[0].ownerDocument.querySelectorAll('button[data-dt="ffn_gate_up"]')[0].click(); await T.tick(400);
+  T.check('grouped-box click restores (recipe chip re-lights)',
+    btn(f8, 'recipe', 'dsv3-fp8').classList.contains('on'), '');
+}
 // vector ops keep the unpriced fig-leaf (hollow dashed); sub-picket GEMMs
 // (router, kv down-proj half) wear the hollow trace
 T.check('norms/swiglu wear the hollow dashed fig-leaf',
@@ -223,7 +246,9 @@ T.check('sub-picket GEMMs wear the hollow trace',
   const replayN = () => ribbons(ac).find(t => /^\+[\d.]+×/.test(t));
   T.check('no dense/MoE tab flaps (kind pinned)', !ac.querySelector('[data-kind]'), '');
   T.check('enclosure wears the static MoE FFN label',
-    [...ac.querySelectorAll('.lv-scroll text')].some(t => t.textContent.includes('MoE FFN ×58')), '');
+    [...ac.querySelectorAll('.lv-scroll text')].some(t => /MoE FFN · 11\.3B/.test(t.textContent))
+    // ctx'd instances already sum layers in the readout — no ×58 double-claim
+    && ![...ac.querySelectorAll('.lv-scroll text')].some(t => /×58|×61/.test(t.textContent)), '');
   T.check('region toggle: dsv3 reads as mixed (swiglu ↻, rest 💾)',
     rbtn('mixed')?.dataset.on === '1', '');
   rbtn('redo').click(); await T.tick(500);

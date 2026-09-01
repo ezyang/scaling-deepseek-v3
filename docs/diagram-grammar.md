@@ -94,6 +94,8 @@ the rest are conventions to uphold when editing the renderer.
 | `.micro` | elided kernel (detail-only, italic) |
 | `.grp` | grouping enclosure (thin, `grplabel` inside top) |
 | `.tsave/.tredo/.tidle` | tensor chip states (saved amber / replayed italic / idle grey) |
+| *dtype colors* | the warm-magenta PRECISION family (bf16 ink `#52514e` · fp8/mxfp8 pink `#d6408b` · e5m6 plum `#9c3a96` · fp32 maroon `#7a2c2c`), deliberately clear of the byte-component blue/orange/green |
+| *dashed phantom squares* (`#d19023`, dashed) | the bf16-equivalent edge of a sub-bf16 stash — dashed = the baseline being beaten, same ghost language as the overhang |
 | `.wire` | all dataflow, `#898781`, 1.2px, right angles |
 
 ## Toward a DSL
