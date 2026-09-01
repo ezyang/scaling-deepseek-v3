@@ -241,7 +241,8 @@ T.check('sub-picket GEMMs wear the hollow trace',
     ![...ac.querySelectorAll('.lv-head label')].some(l => l.textContent.includes('elided')), '');
   btn(ac, 'recompute', 'none').click(); await T.tick(400);
   const qb = ac.querySelector('button[data-mark="q_norm"]');
-  T.check('the q-latent RMSNorm micro carries a mark button', qb?.textContent === '💾', qb?.textContent);
+  T.check('the q-latent RMSNorm micro carries a boolean ↻ button (struck = keep)',
+    qb?.textContent === '↻' && qb.classList.contains('st-keep'), `${qb?.textContent} ${qb?.className}`);
   qb.click(); await T.tick(400);
   T.check('hand-flipping q_norm lands on custom and reprices',
     btn(ac, 'recompute', 'custom').classList.contains('on') && /= 117\.8 GiB/.test(tHead(ac)), tHead(ac));
@@ -285,13 +286,13 @@ T.check('sub-picket GEMMs wear the hollow trace',
     [...ac.querySelectorAll('.lv-scroll text')].some(t => /MoE FFN · 11\.3B/.test(t.textContent))
     // ctx'd instances already sum layers in the readout — no ×58 double-claim
     && ![...ac.querySelectorAll('.lv-scroll text')].some(t => /×58|×61/.test(t.textContent)), '');
-  T.check('region toggle: dsv3 reads as mixed (swiglu ↻, rest 💾)',
+  T.check('region toggle: dsv3 reads as mixed (swiglu ↻, rest kept)',
     rbtn('mixed')?.dataset.on === '1', '');
   rbtn('redo').click(); await T.tick(500);
   T.check('↻ all: the whole FFN replays (stash drops, a2a comm pill shown)',
     gib() < 66.6 && ribbons(ac).some(t => t.includes('a2a dispatch + combine')), `${gib()} ${replayN()}`);
   rbtn('save').click(); await T.tick(500);
-  T.check('💾 all: every FFN output stashed', gib() > 66.6, gib());
+  T.check('↻ none: every FFN output stashed', gib() > 66.6, gib());
   rbtn('mixed').click(); await T.tick(500);
   T.check('mixed restores the exact dsv3 marks (preset chip relights)',
     gib() === 66.6 && btn(ac, 'recompute', 'dsv3').classList.contains('on'), gib());
@@ -302,20 +303,20 @@ T.check('sub-picket GEMMs wear the hollow trace',
   btn(ac, 'recompute', 'attn-replay').click(); await T.tick(500);
   T.check('MLA region toggle: attn-replay reads as ↻ all', mbtn('redo')?.dataset.on === '1', '');
   mbtn('save').click(); await T.tick(500);
-  T.check('💾 all MLA: stash grows past dsv3', gib() > 66.6, gib());
+  T.check('↻ none MLA: stash grows past dsv3', gib() > 66.6, gib());
   mbtn('mixed').click(); await T.tick(500);
   T.check('MLA mixed restores the dsv3-side composition', mbtn('mixed').dataset.on === '1', '');
-  mbtn('mixed').click(); await T.tick(500);   // active chip → back to the previous pick (💾 all)
+  mbtn('mixed').click(); await T.tick(500);   // active chip → back to the previous pick (↻ none)
   T.check('region toggle-back: active chip returns to the previous pick', mbtn('save')?.dataset.on === '1', '');
   T.check('shared expert mirrors the grouped marks (two buttons per mark)',
     ac.querySelectorAll('button[data-mark="gate_up"]').length === 2
     && ac.querySelectorAll('button[data-mark="ffn_down"]').length === 2
     && ac.querySelectorAll('button[data-mark="swiglu"]').length === 2, '');
   const sh = [...ac.querySelectorAll('button[data-mark="gate_up"]')];
-  const before = sh[0].textContent;
+  const before = sh[0].className;   // both states read ↻ — the CLASS is the boolean
   sh[1].click(); await T.tick(400);
   T.check('clicking the shared button flips BOTH (one graph node)',
-    [...ac.querySelectorAll('button[data-mark="gate_up"]')].every(b => b.textContent !== before), '');
+    [...ac.querySelectorAll('button[data-mark="gate_up"]')].every(b => b.className !== before), '');
   // RoPE is a REAL (zero-byte) mark: clickable; flipping it moves the stash
   // between the rotated and pre-RoPE tensors \u2014 the total holds exactly
   btn(ac, 'recompute', 'none').click(); await T.tick(400);

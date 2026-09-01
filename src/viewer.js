@@ -918,6 +918,7 @@ ${tokensCss('.lv')}
   cursor: pointer; text-align: left; padding: 0 5px; overflow: hidden; white-space: nowrap; }
 .lv .st-save { background: #fff8ea; border: 1px solid #eda100; color: #0b0b0b; }
 .lv .st-redo { background: #f3f2ee; border: 1px dashed #898781; color: #52514e; }
+.lv .st-keep { background: #fff; border: 1px solid #c3c2b7; color: #898781; text-decoration: line-through; }
 .lv button.st.mode { width: 24px; padding: 0; text-align: center; height: 20px; }
 .lv button.st.dtb { width: 52px; padding: 0; text-align: center; height: 20px; font-weight: 600;
   background: #fff; border: 1px solid #c3c2b7; }
@@ -1331,7 +1332,7 @@ export class Dsv3Layer extends HTMLElement {
     // moved us off the attribute's preset), else show "custom". The stash-side
     // CHECKBOXES count too: each recipe has a canonical e4m3ᵀ state (RECIPE_T)
     // and the E5M6 choice rides mm.o_proj — flip either and you are custom
-    const mmKey = (m) => MATMULS.map(x => m[x.id]).join(',');
+    const mmKey = (m) => MATMULS.map(x => m[x.id]).concat(m.swiglu_in ?? 'bf16').join(',');   // + the SwiGLU-input stash channel
     const curRecipe = recipeOpts.find(k => mmKey(resolveMatmuls({ recipe: k })) === mmKey(this.matmuls)
       && (RECIPE_T[k] ?? false) === !!this.transposed);
     preset.value = curRecipe ?? 'bf16';
@@ -1993,8 +1994,9 @@ export class Dsv3Layer extends HTMLElement {
       if (cmode !== 'static') foot.append(this._tallySvg);
       root.append(foot);
     }
-    if (this._ctl.quant) this.attachTip(root);   // no tooltips on the structure-only tier
-    else if (LOCALKNOBS) this.attachTip(root, true);   // …except the raw-bytes cross-check lens
+    // tooltips everywhere except the structure-only tier — the local sim
+    // gets the full set (⚠/⇄ badges, box FLOP/param facts, raw-bytes lens)
+    if (this._ctl.quant || LOCALKNOBS) this.attachTip(root);
     this.append(style, root);
     this.applyHl();
   }
@@ -2262,9 +2264,14 @@ export class Dsv3Layer extends HTMLElement {
           ? `<g data-tip="${escAttr('\u21c4 byte-NEUTRAL recompute: the replay is free (~0 FLOPs) and the stash just moves to an equal-sized tensor on the other side — net memory unchanged. On its own this mark buys nothing; it pays off as part of a longer replay chain (mark its inputs \u21bb too and the stash walks up toward x0).')}">` +
             `<text x="${x - 14}" y="${y + 15}" font-size="11" fill="#52514e" font-weight="600">\u21c4</text></g>`
           : '';
+      // the mark is a BOOLEAN — recompute in backward, yes/no. The old 💾
+      // face overclaimed: an unmarked op's output is stashed only where
+      // backward actually reads it (the chip beside the op shows the
+      // outcome), so the off state is a struck ↻, not a save icon.
       return warn + `<foreignObject x="${x}" y="${y}" width="26" height="20">` +
-        `<button xmlns="http://www.w3.org/1999/xhtml" class="st mode st-${redo ? 'redo' : 'save'}" ` +
-        `data-mark="${ids.join(',')}" title="save output for backward vs recompute this op during backward">${redo ? '↻' : '💾'}</button></foreignObject>`;
+        `<button xmlns="http://www.w3.org/1999/xhtml" class="st mode st-${redo ? 'redo' : 'keep'}" ` +
+        `data-mark="${ids.join(',')}" title="recompute in backward? ↻ = yes: replay this op from its inputs (its output is never stashed). ` +
+        `Struck ↻ = no: forward runs once — the output is stashed ONLY if some backward op actually reads it (the chip shows the outcome).">↻</button></foreignObject>`;
     };
     const blockGrid = (bytes, x, y, minOne = true, hollow = false, phantomBytes = 0, solidFrac = hollow ? 0 : 1) => {
       // byte squares, single-line ALWAYS (one stash = one run; wrapping is
@@ -2418,7 +2425,7 @@ export class Dsv3Layer extends HTMLElement {
     // microbatch at bf16 peak, so dtype flips visibly stretch/shrink the
     // runs instead of renormalizing the scale.
     const TB_X = 62, TB_AVAIL = 852;   // tally ribbons: label gutter ('recompute' needs ~55px) + runway (sum keeps the svg at 1080)
-    // NEUTRAL marks (⇄): a ↻ whose flip to 💾 would leave the stash total
+    // NEUTRAL marks (⇄): a ↻ whose flip to keep would leave the stash total
     // EXACTLY unchanged — the recompute is free (an add, a rotation) and the
     // stash just moves to an equal-sized tensor on the other side. Detected
     // by counterfactual: re-analyze with that one mark flipped. Disjoint
@@ -2762,7 +2769,7 @@ export class Dsv3Layer extends HTMLElement {
       `<rect class="grp" x="${x - 10}" y="${y0}" width="${w}" height="${y1 - y0}" rx="6"/>` +
       `<text class="grplabel" x="${x - 2}" y="${y0 + 11}">${label}</text>`);
     // REGION toggle (AC tiers): set every mark in a column at once — the
-    // tristate 💾 all / ↻ all / mixed segment, where 'mixed' both displays an
+    // tristate ↻ none / ↻ all / mixed segment, where 'mixed' both displays an
     // in-between state and REMEMBERS the last one (the custom-chip pattern)
     const MLA_RIDS = ['qkv_down', 'q_norm', 'kv_norm', 'q_up', 'kv_up', 'rope_q', 'rope_kv', 'attn', 'o_proj'];
     const regionToggle = (rids, memKey, fx, fy, fw) => {
@@ -2781,8 +2788,8 @@ export class Dsv3Layer extends HTMLElement {
         `${dis ? 'opacity:0.45;cursor:default;' : ''}" title="${on && pv ? `click again \u2014 back to ${pv.sel}` : title}">${label}</button>`;
       return `<foreignObject x="${fx}" y="${fy}" width="${fw}" height="22">` +
         `<div xmlns="http://www.w3.org/1999/xhtml" style="display:flex;gap:4px;justify-content:flex-end;">` +
-        rb('save', '\ud83d\udcbe all', 'background:#fff8ea;border:1px solid #eda100;color:#0b0b0b;', st3 === 'save', false,
-          'save every output in this region for backward') +
+        rb('save', '\u21bb none', 'background:#fff;border:1px solid #898781;color:#0b0b0b;', st3 === 'save', false,
+          'recompute nothing in this region \u2014 outputs stay available (stashed only where backward reads them)') +
         rb('redo', '\u21bb all', 'background:#f3f2ee;border:1px dashed #898781;color:#52514e;', st3 === 'redo', false,
           'recompute this ENTIRE region in backward') +
         rb('mixed', 'mixed', 'background:#f3f2ee;border:1px solid #898781;color:#0b0b0b;', st3 === 'mixed', !hasMix && st3 !== 'mixed',
@@ -2807,10 +2814,20 @@ export class Dsv3Layer extends HTMLElement {
     };
     const opNode = (id, label, x, y, cls = 'op', pc = '') => {
       const h2 = cls === 'comm' || !BQ ? 22 : this._ctl.quant ? 34 : 27;   // the extra rows hold the fig-leaf + recompute stubs
+      // the SwiGLU pill carries the one-off 'in:' stash-format button: its
+      // INPUT's save precision is free-floating (the elementwise backward is
+      // the only reader — no GEMM forces it), so it gets its own lever
+      // outside the GEMM boxes
+      const swIn = id === 'swiglu' && this._ctl.dtype
+        ? `<foreignObject x="${x + W - 92}" y="${y + 1}" width="58" height="20">` +
+          `<button xmlns="http://www.w3.org/1999/xhtml" class="st dtb" data-dt="swiglu_in" style="color:${DT_STYLE[this.matmuls.swiglu_in ?? 'bf16']};width:56px" ` +
+          `title="the SwiGLU INPUT's save format (the gate/up stash) — free-floating: no GEMM reads it in forward or backward (SwiGLU backward is elementwise), ` +
+          `so no GEMM forces its precision. The paper CHOOSES fp8 for it (§3.3.3: 'cache the inputs of the SwiGLU operator in FP8'). Toggle bf16 ⇄ ${FP8K}.">in: ${this.matmuls.swiglu_in ?? 'bf16'}</button></foreignObject>`
+        : '';
       P.push(`<g data-op="${id}"${boxTip(id)}>` +
         `<rect class="${cls}" x="${x}" y="${y}" width="${W}" height="${h2}" rx="6"/>` +
         `<text class="oplabel" x="${x + 10}" y="${y + 15}">${label}${pc ? `<tspan class="dims"> ${pc}</tspan>` : ''}</text></g>` +
-        modeBtn([id], x + W - 30, y + 1));
+        swIn + modeBtn([id], x + W - 30, y + 1));
       auxOut(id, x, y + Math.round(h2 / 2));
       if (cls !== 'comm') { flopBar(x + 10, y + 19, ana.byId[id]?.flopsTok, 'vector', W - 16, undefined, id); paramBlocks(x + 10, y + 19, sqParam(id)); }
       return y + h2;
@@ -3287,7 +3304,7 @@ export class Dsv3Layer extends HTMLElement {
         if (!FLAPS) {
           // kind-pinned: a plain enclosure with a static label, and the
           // REGION TOGGLE — set every MoE-FFN mark at once. Idiomatically
-          // tristate: 💾 all / ↻ all / mixed, where 'mixed' both DISPLAYS an
+          // tristate: ↻ none / ↻ all / mixed, where 'mixed' both DISPLAYS an
           // in-between state and REMEMBERS the last one (the custom-chip
           // pattern), so 'all' never destroys a hand-tuned composition.
           const rx0 = Math.max(x1 - 210, C2 + 348);   // right of the shared-expert spine (shMid = C2+342)
@@ -3782,10 +3799,10 @@ export class Dsv3Layer extends HTMLElement {
     return svgEl;
   }
   // instant tooltips; click a tipped element (not a button) to pin.
-  // rawOnly (the local/static tier): ONLY the raw-bytes cross-check lens —
+  // Besides [data-tip] prose, a raw-bytes cross-check lens rides along:
   // hovering a rounded byte label (data-raw tspan, or a fit-chart value's
-  // data-true) shows the unrounded count; the prose tooltips stay off.
-  attachTip(root, rawOnly = false) {
+  // data-true) shows the unrounded count.
+  attachTip(root) {
     const tip = el('div', 'lv-tip');
     root.append(tip);
     let pinned = false;
@@ -3802,13 +3819,12 @@ export class Dsv3Layer extends HTMLElement {
     root.addEventListener('mousemove', (ev) => {
       if (pinned) return;
       const raw = rawOf(ev);
-      const t = rawOnly ? null : ev.target.closest?.('[data-tip]');
+      const t = ev.target.closest?.('[data-tip]');
       if (raw) { tip.textContent = raw; tip.style.display = 'block'; place(ev); }
       else if (t) { tip.textContent = t.dataset.tip; tip.style.display = 'block'; place(ev); }
       else tip.style.display = 'none';
     });
     root.addEventListener('click', (ev) => {
-      if (rawOnly) return;   // raw values pin nothing — they're a hover lens
       if (pinned) { pinned = false; tip.classList.remove('pinned'); tip.style.display = 'none'; return; }
       const t = ev.target.closest?.('[data-tip]');
       if (t && !ev.target.closest('button, select')) {

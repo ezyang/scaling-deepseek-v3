@@ -138,8 +138,13 @@ export function blockGraph(kind, a, mm, seqLen) {
       N('dispatch', 'a2a dispatch', 'comm', ['norm2', 'router'], 'dispatched tokens', a.topk * h, B('ffn_gate_up'), 0,
         { tdims: `${a.topk}\u00d7${h}` }),
     ] : []),
+    // the gate/up stash (= the SwiGLU input) has a FREE-FLOATING save format
+    // (mm.swiglu_in): its only backward reader is the elementwise SwiGLU
+    // backward \u2014 no GEMM ever consumes it, so no GEMM forces its precision
+    // (the paper CHOOSES fp8 for it, \u00a73.3.3). ?? ffn_down covers stale
+    // hand-rolled matmul dicts from before the channel existed.
     N('gate_up', 'ffn gate/up', 'matmul', moe ? ['dispatch', 'norm2'] : ['norm2'], 'gate, up',
-      experts * 2 * inter, B('ffn_down'), 2 * 2 * h * inter * experts,
+      experts * 2 * inter, DTYPE_BYTES[mm.swiglu_in ?? mm.ffn_down], 2 * 2 * h * inter * experts,
       { tdims: moe ? `${experts}\u00d72\u00d7${inter}` : `2\u00d7${inter}` }),
     N('swiglu', 'SwiGLU', 'vector', ['gate_up'], 'swiglu out', experts * inter, B('ffn_down'), 6 * experts * inter,
       { tdims: moe ? `${experts}\u00d7${inter}` : String(inter) }),

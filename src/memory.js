@@ -49,20 +49,21 @@ export const RECIPES = {
   // DeepSeek-V3 paper recipe: linears in tile-scaled fp8 (the Hopper flavor —
   // same bytes as MX, its own key so labels carry provenance); attention core and head high-precision; the router runs
   // fp32 in production; the attn-out linear's stash is the paper's customized
-  // E5M6 (§3.3.3) — the GEMM itself runs fp8 (flopEq prices e5m6 at fp8 rate).
-  'dsv3-fp8': { qkv_down: 'e4m3', q_up: 'e4m3', kv_up: 'e4m3', o_proj: 'e5m6', router: 'fp32', ffn_gate_up: 'e4m3', ffn_down: 'e4m3' },
+  // E5M6 (§3.3.3) — the GEMM itself runs fp8 (flopEq prices e5m6 at fp8 rate);
+  // swiglu_in = the SwiGLU input's SAVE format (free-floating — §3.3.3 caches it fp8).
+  'dsv3-fp8': { qkv_down: 'e4m3', q_up: 'e4m3', kv_up: 'e4m3', o_proj: 'e5m6', router: 'fp32', ffn_gate_up: 'e4m3', ffn_down: 'e4m3', swiglu_in: 'e4m3' },
   // dsv3-fp8 without the wide exception: EVERY linear runs (and stashes) fp8,
   // the attn-out included — a production H100 variant (notes.txt: MM5 is
   // fp8_linear). Attention core and head stay bf16, router fp32. Under
   // attention-replay recompute the attn-out stash never materializes, so this
   // recipe's BYTES equal dsv3-fp8's there (sanity pins that) — the difference
   // is the o_proj GEMM's compute pricing.
-  'all-fp8': { qkv_down: 'e4m3', q_up: 'e4m3', kv_up: 'e4m3', o_proj: 'e4m3', router: 'fp32', ffn_gate_up: 'e4m3', ffn_down: 'e4m3' },
+  'all-fp8': { qkv_down: 'e4m3', q_up: 'e4m3', kv_up: 'e4m3', o_proj: 'e4m3', router: 'fp32', ffn_gate_up: 'e4m3', ffn_down: 'e4m3', swiglu_in: 'e4m3' },
   // NVIDIA NeMo/Megatron-Bridge (MLPerf 6.0 submission) recipe: MXFP8 for every
   // GEMM (32-element MX blocks, UE8M0 scales, via TE) INCLUDING the attention
   // core (Blackwell FP8 attention: q/k/v saved MXFP8). The attention OUTPUT is
   // saved bf16 (o_proj stash wide); router/head bf16.
-  'nv-mxfp8': { qkv_down: 'mxfp8', q_up: 'mxfp8', kv_up: 'mxfp8', attn: 'mxfp8', o_proj: 'bf16', ffn_gate_up: 'mxfp8', ffn_down: 'mxfp8' },
+  'nv-mxfp8': { qkv_down: 'mxfp8', q_up: 'mxfp8', kv_up: 'mxfp8', attn: 'mxfp8', o_proj: 'bf16', ffn_gate_up: 'mxfp8', ffn_down: 'mxfp8', swiglu_in: 'mxfp8' },
 };
 
 // each recipe's CANONICAL stash-side checkbox state: the e4m3ᵀ dual stash is
@@ -75,6 +76,10 @@ export function resolveMatmuls(cfg) {
   const recipe = cfg.recipe ?? (cfg.dtype === 'mxfp8' ? 'nv-mxfp8' : 'bf16');
   return {
     ...Object.fromEntries(MATMULS.map(m => [m.id, 'bf16'])),
+    // swiglu_in is a STASH-format channel, not a GEMM: the SwiGLU input's
+    // save precision is free-floating (its only backward reader is the
+    // elementwise SwiGLU backward — no GEMM forces the format)
+    swiglu_in: 'bf16',
     ...RECIPES[recipe],
     ...(cfg.matmuls ?? {}),
   };
