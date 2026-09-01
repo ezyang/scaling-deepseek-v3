@@ -105,8 +105,10 @@
       nocaption></dsv3-layer>
 
     <p>Note: treating the FP32 master weights as "optimizer state" is a
-    DeepSpeed convention.  With PyTorch FSDP (the implementation, not to be
-    confused with ZeRO-3), the master weights are just thought of as the
+    DeepSpeed convention.  With PyTorch FSDP<span class="mn-ref"></span><span class="mn">We're discussing
+    the implementation here, not ZeRO-3 (which is how FSDP is sometimes interpreted).  By default
+    PyTorch FSDP is ZeRO-3 (e.g., <code>FULLY_SHARD</code>), but it also supports other
+    sharding strategies.</span>, the master weights are just thought of as the
     parameters, and FSDP is responsible for casting the master weights
     to the compute precision and all-gathering them.  When <code>reshard_after_forward=False</code>, the
     compute weights just get kept around, so both the master and compute
@@ -119,8 +121,9 @@
     for backwards typically contribute to the high watermark memory usage
     (which usually occurs at the end of forwards / beginning of backwards).
     We tally up all of the saved for backwards activations, which here are
-    assumed to be saved in the compute precision BF16 (plus a few small
-    always-FP32 artifacts: router state, attention lse, RMSNorm rstd).</p>
+    assumed to mostly be saved in the compute precision BF16 (modulo a few small
+    always-FP32 artifacts: router state, attention lse, RMSNorm rstd).
+    This tally assumes a 4096 sequence length per microbatch.</p>
 
     <dsv3-layer style="min-height:229px" snapshot nototal solo="acts"
       from='{"world":2048,"pp":1,"ep":1,"zero":0}'
@@ -231,7 +234,11 @@
     we trade MFU for memory, by simply dropping some quantities in the initial
     forward and recomputing them in backwards.  This strategy is especially
     attractive as we can change how much recompute we do without changing bitwise
-    numerics (this is not true for the low precision tricks in the next
+    numerics<span class="mn-ref"></span><span class="mn">You may have to sweat
+    a bit to actually achieve this: your forward pass must be bitwise
+    deterministic, and you need to accurately track and restore RNG state
+    during recompute.  Dropout is so 2022, but stochastic rounding is my
+    new best friend.</span> (this is not true for the low precision tricks in the next
     section.)</p>
 
     <p>While there are a number of different ways to reason about activation
@@ -244,7 +251,7 @@
     backwards by another operation, (2) the producer is being recomputed, or (3) we
     manually saved it (potentially increasing your memory usage!)</p>
 
-    <p>You can play around with this below--every GEMM is also annotated with
+    <p>You can play around with this below<span class="mn-ref"></span><span class="mn">AI disclosure: the tooltips on the diagram are AI authored and I haven't hand edited them (yet).</span>--every GEMM is also annotated with
     tall black/gray rectangles indicating how many FLOPs we are spending on
     forward/recompute (respectively). The chart is preset to the DeepSeek-V3
     published recompute strategy, but you should also try setting full
@@ -254,7 +261,7 @@
     <dsv3-anatomy style="min-height:991px" layer="ac-layer" ctx='{"world":2048,"pp":8,"ep":64,"zero":1}' controls="marks" recipe="bf16" recompute="dsv3"
       xlayers="8" xinflight="8.5" xtag="an interior rank of PP8 · DualPipeV steady state"></dsv3-anatomy>
 
-    <p>Note that the FLOP counts here are per token, so the mixture of experts FLOPs are
+    <p>Note that the FLOP counts here are per token, so the routed experts FLOPs are
     8x'ed because each token gets processed by eight experts.  You have some degrees of freedom in how you setup your recompute/save strategy.  However,
     there are some primary themes:</p>
 
@@ -338,8 +345,13 @@
     activation saved for backwards to be in FP8, it will dequantize and then
     requantize it in backwards so that it can be transposed.</p>
 
-    <p>The diagram below shows you the exact low precision recipe that DSv3
-    uses, and you can use it to explore the consequences of precision changes.
+    <p>The diagram below shows you a DeepSeek-V3 style low precision recipe
+    based on their description of low precision compute in their paper<span class="mn-ref"></span><span class="mn" style="margin-top:-10em">This diagram is
+    somewhat extrapolated from the DeepSeek-V3 paper, as the paper
+    doesn't spell out every detail.  Concretely, we assume the MLA latents were
+    saved as BF16 for recompute and various statistics were kept in FP32
+    (attention lse, RMSNorm rstd and router state).  We also assume that DSv3
+    did in fact pack their 12-bit E5M6 format at exactly 1.5 bytes per element.</span>, and you can use it to explore the consequences of precision changes.
     For precision (ahem), we prefer not to use the fp8 in the diagram, instead
     writing e4m3 to indicate the exponent/mantissa size of the fp8
     quantities.</p>
@@ -347,11 +359,7 @@
     <dsv3-anatomy style="min-height:1039px" layer="fp8-layer" ctx='{"world":2048,"pp":8,"ep":64,"zero":1}' controls="dtype" recipe="dsv3-fp8" recipes="bf16,dsv3-fp8" recompute="dsv3"
       xlayers="8" xinflight="8.5" xtag="an interior rank of PP8 · DualPipeV steady state"></dsv3-anatomy>
 
-    <p>Some things to notice from the diagram:<span class="mn-ref"></span><span class="mn">This diagram is
-    somewhat extrapolated from the DeepSeek-V3 paper, as the paper
-    doesn't spell out every detail.  Concretely, we assume the MLA latents were
-    saved as BF16 for recompute and various statistics were kept in FP32
-    (attention lse, RMSNorm rstd and router state).</span></p>
+    <p>Some things to notice from the diagram:</p>
 
     <ul>
         <li>The precision buttons toggle purely the compute precision (which you can see
@@ -418,7 +426,8 @@
       </section>
     </dsv3-beat-deck>
 
-    <p>In the end, we are left with around 18 GiB of headroom for intermediates.
+    <p>In the end, we are left with around 18 GiB of slack for intermediates
+    like communicator workspaces and allocator fragmentation.
     The rest of the battle is making your actual implementation fit inside
     this remaining space!</p>
 
@@ -441,10 +450,6 @@
 
     <dsv3-anatomy style="min-height:1017px" lens="param-bytes" local cumulative recipe="bf16" recipes="bf16,dsv3-fp8,all-fp8" recompute="none" layer="local-diagram" detail controls="static" nocaption></dsv3-anatomy>
 
-    <div class="fnotes">
-      <p class="note">Disclosure: the widget-caption notes in this draft are
-      AI-drafted and pending a human edit pass.</p>
-    </div>
   </main>
   <script type="module">
     import '../src/viewer.js';
