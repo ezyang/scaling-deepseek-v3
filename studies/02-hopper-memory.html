@@ -225,7 +225,7 @@
     manually saved it (potentially increasing your memory usage!)  You can play around with
     this below:</p>
 
-    <dsv3-anatomy style="min-height:1087px" layer="ac-layer" ctx='{"world":2048,"pp":8,"ep":64,"zero":1}' controls="marks" recipe="bf16" recompute="dsv3"
+    <dsv3-anatomy style="min-height:1047px" layer="ac-layer" ctx='{"world":2048,"pp":8,"ep":64,"zero":1}' controls="marks" recipe="bf16" recompute="dsv3"
       xlayers="8" xinflight="8.5" xtag="an interior rank of PP8 · DualPipeV steady state"></dsv3-anatomy>
 
     <p>Note that the FLOP counts here are per token, so the mixture of experts FLOPs are
@@ -272,7 +272,7 @@
     stored in the dtype of the GEMM that will read it during backward.  Flip
     the dtype buttons below and watch the stash sizes follow.</p>
 
-    <dsv3-anatomy style="min-height:1087px" layer="fp8-layer" ctx='{"world":2048,"pp":8,"ep":64,"zero":1}' controls="dtype" recipe="dsv3-fp8" recipes="bf16,dsv3-fp8" recompute="dsv3"
+    <dsv3-anatomy style="min-height:1047px" layer="fp8-layer" ctx='{"world":2048,"pp":8,"ep":64,"zero":1}' controls="dtype" recipe="dsv3-fp8" recipes="bf16,dsv3-fp8" recompute="dsv3"
       xlayers="8" xinflight="8.5" xtag="an interior rank of PP8 · DualPipeV steady state"></dsv3-anatomy>
 
     <p>Two recipes matter for us.  The <em>dsv3-fp8</em> recipe is the Hopper

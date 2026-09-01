@@ -77,7 +77,11 @@ dsv3-layer, dsv3-trace, figure, table.xcheck { clear: right; }
 .toc { position: fixed; left: 0; top: 50%; transform: translateY(-50%); z-index: 40;
   padding: 48px 10px 48px 6px; display: flex; flex-direction: column; gap: 7px;
   border: 1px solid transparent; border-left: 0; border-radius: 0 8px 8px 0; }
-.toc a { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+/* the hover HITBOX outgrows the visual box: rightward to ~80px (the anatomy
+   plan, the leftmost extruder, starts at x=85 at the 1366 minimum viewport)
+   and well past the ticks vertically — the panel itself stays compact */
+.toc::before { content: ''; position: absolute; top: -70px; bottom: -70px; left: 0; right: -50px; }
+.toc a { display: flex; align-items: center; gap: 8px; cursor: pointer; position: relative; }
 .toc .tick { width: 12px; height: 3px; border-radius: 1.5px; background: #c3c2b7;
   flex: none; transition: background 0.15s, width 0.15s; }
 .toc a.on .tick { background: #b05f00; width: 18px; }

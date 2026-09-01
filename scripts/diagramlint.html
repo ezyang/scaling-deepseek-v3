@@ -119,6 +119,19 @@ function lintWidget(name, host) {
           push({ check: 'text-crossing-rect', widget: name, text: t.s, rect: b.cls || 'enclosure' });
         }
       }
+    // G. text buried under picket-scale marks (tiny filled rects escape the
+    // size filter above — a label overrunning its ribbon gutter lands here;
+    // ≥2 distinct marks with real overlap, so a grazing square can't trip it)
+    for (const t of texts) {
+      const under = [...svg.querySelectorAll('rect')].filter(r => {
+        if ((r.getAttribute('fill') ?? 'none') === 'none') return false;
+        const rr = r.getBoundingClientRect();
+        if (rr.width > 8) return false;
+        return inter(t.r, rr) > 3;
+      });
+      if (under.length >= 1)
+        push({ check: 'text-under-marks', widget: name, text: t.s, marks: under.length });
+    }
     // F. op boxes partially overlapping (containers may contain, not cross)
     const ops = rects.filter(r => OPBOX.some(c => r.cls.split(' ').includes(c)));
     for (let i = 0; i < ops.length; i++)
@@ -155,7 +168,13 @@ async function lintPlaceholders() {
       el.style.minHeight = '';
       const hh = el.getBoundingClientRect().height;
       el.style.minHeight = decl ? decl + 'px' : '';
-      if (hh < 40) continue;
+      if (hh < 40) {
+        // a DECLARED placeholder with no content = a widget that crashed
+        // while rendering (a silent skip here once hid a render-time
+        // ReferenceError behind a green lint run)
+        if (decl > 100) push({ check: 'widget-rendered-empty', page: p, vw, el: el.tagName.toLowerCase() + (el.id ? '#' + el.id : ''), declared: decl, actual: Math.round(hh) });
+        continue;
+      }
       const name = el.tagName.toLowerCase() + (el.id ? '#' + el.id : '');
       // pre-upgrade reservation: BEFORE the modules run, the tag must already
       // be block-level with the SAME margins the widget CSS will later apply —

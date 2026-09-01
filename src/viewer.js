@@ -841,6 +841,9 @@ dsv3-layer { display: block; margin: 14px 0 26px; }
 .lv-head .savebox { margin-left: auto; display: inline-flex; gap: 6px; align-items: flex-start;
   padding-left: 12px; border-left: 1px solid #e1e0d9; align-self: flex-start; }
 ${knobCss('.lv-head')}
+.lv.lv-compact { padding: 6px 12px; }
+.lv-compact .lv-head { padding-bottom: 4px; }
+.lv-compact .lv-foot2 svg { padding-top: 2px; }
 .lv svg { display: block; margin: 0 auto; }
 /* no scaling, ever: a diagram wider than its container scrolls horizontally */
 .lv-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
@@ -1239,6 +1242,10 @@ export class Dsv3Layer extends HTMLElement {
     // progressive disclosure: controls="static|marks|dtype|full" gates which
     // controls are rendered (the diagram and its derived annotations always draw)
     const cmode = this.getAttribute('controls') ?? 'full';
+    // the marks/dtype tiers fight for laptop vspace (the whole widget should
+    // fit one screen): tighter card + head + tally paddings, scoped so the
+    // LIVE static/full tiers keep their published geometry
+    if (cmode === 'marks' || cmode === 'dtype') root.classList.add('lv-compact');
     // scope: how much of the model this instance draws
     // (model = block + head row · block = the block alone · mla/ffn = one column)
     const SCOPE = this.getAttribute('scope') ?? 'model';
@@ -1541,7 +1548,6 @@ export class Dsv3Layer extends HTMLElement {
         const grp3 = (label) => { const g = el('span', 'pargrp'); const l5 = el('div', 'parlab'); l5.textContent = label; g.append(l5); return g; };
         const row3 = (...kids) => { const d = el('div', 'parrow'); d.append(...kids); return d; };
         const txt3 = (t3) => { const sp = el('span'); sp.style.cssText = 'color:#52514e;font-size:11px;'; sp.textContent = t3; return sp; };
-        const txtR3 = (t3) => { const sp = txt3(t3); sp.style.cssText += 'display:inline-block;width:64px;text-align:right;'; return sp; };
         const seg3 = (name, opts, onIdx) => {
           const w5 = el('span', 'stp'); w5.dataset.knob = name;
           opts.forEach((t3, i) => {
@@ -1557,14 +1563,15 @@ export class Dsv3Layer extends HTMLElement {
         const gC = grp3('cluster');
         gC.append(row3(txt3('GPUs'), chip3('gpus', C.world)));
         const gP = grp3('pipeline');
+        // ONE row (PP · rank · sched inline): the readout is context, not
+        // levers — laptop vspace beats mirroring the sim's two-row group
         gP.append(
           row3(txt3('PP'), chip3('pp', C.pp), txt3('rank'),
-            seg3('rank', ['r0 · emb+head', `r1–${C.pp - 1} · peak`], 1)),
-          row3(txt3('sched'), seg3('sched', ['DualPipeV', '×1 mb'], 0)));
+            seg3('rank', ['r0 · emb+head', `r1–${C.pp - 1} · peak`], 1),
+            txt3('sched'), seg3('sched', ['DualPipeV', '×1 mb'], 0)));
         const gM = grp3('SPMD mesh');
         gM.append(
-          row3(txtR3('non-expert:'), txt3(`DP ${DPn2}`)),
-          row3(txtR3('expert:'), txt3('EP'), chip3('ep', C.ep), txt3(`× EDP ${DPn2 / C.ep}`)));
+          row3(txt3(`non-expert: DP ${DPn2}`), txt3('· expert: EP'), chip3('ep', C.ep), txt3(`× EDP ${DPn2 / C.ep}`)));
         const gZ = grp3('ZeRO'); gZ.classList.add('center');
         gZ.append(row3(seg3('zero', ['off', '1', '2', '3'], C.zero)));
         hr.append(gC, gP, gM, gZ);
@@ -2297,7 +2304,7 @@ export class Dsv3Layer extends HTMLElement {
     // (bwd ≈ 268 pickets fills most of the tally runway)
     // microbatch at bf16 peak, so dtype flips visibly stretch/shrink the
     // runs instead of renormalizing the scale.
-    const TB_X = 44, TB_AVAIL = 870;   // tally ribbons: label gutter + runway
+    const TB_X = 62, TB_AVAIL = 852;   // tally ribbons: label gutter ('recompute' needs ~55px) + runway (sum keeps the svg at 1080)
     // NEUTRAL marks (⇄): a ↻ whose flip to 💾 would leave the stash total
     // EXACTLY unchanged — the recompute is free (an add, a rotation) and the
     // stash just moves to an equal-sized tensor on the other side. Detected

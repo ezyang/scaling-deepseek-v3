@@ -139,11 +139,11 @@ T.check('sub-picket GEMMs wear the hollow trace',
   const bar = tally(ac).querySelector('rect[data-true]');
   const ghost = tally(ac).querySelector('rect[stroke-dasharray="2 2"]');
   T.check('total bar carries its exact bytes', Math.abs(+bar.dataset.true / 2 ** 30 - 66.6) < 0.1, bar.dataset.true);
-  // linear mapping: 6px per GiB from x=44
+  // linear mapping: 6px per GiB from x=62 (TB_X)
   T.check('bar length = 6px/GiB (linear)',
     Math.abs(+bar.getAttribute('width') - +bar.dataset.true / 2 ** 30 * 6) < 1, bar.getAttribute('width'));
   T.check('ghost = the dashed OVERHANG up to the untreated 118.6 GiB anchor',
-    Math.abs(+ghost.getAttribute('x') + +ghost.getAttribute('width') - (44 + 118.6 * 6)) < 2, '');
+    Math.abs(+ghost.getAttribute('x') + +ghost.getAttribute('width') - (62 + 118.6 * 6)) < 2, '');   // 62 = TB_X gutter
   T.check('badge prices the lever vs the anchor', ribbons(ac).some(t => t.includes('▼×1.8')), '');
   T.check('the 80 GiB card line is drawn', ribbons(ac).some(t => t === '80 GiB'), '');
   T.check('both rulers present (GiB + MFLOP/token)',
