@@ -64,10 +64,32 @@ const rowOf = (id) => rows().find(r => r.querySelector('.nm')?.textContent === i
 T.check('input rows present: Z1 / S / F1 / R / B / E-H', rowOf('Z1')?.includes('ZeRO level') && rowOf('F1')?.includes('0/1')
   && rowOf('R8')?.includes('kept?') && rowOf('S5')?.includes('shard group · optimizer')
   && rowOf('B8')?.includes('precision (B/elem)') && rowOf('H1')?.includes('lm head'), '');
-T.check('recompute choices read as 0/1 (dsv3: dispatched kept, norm outs replayed)',
-  rowOf('R8')?.includes('1') && rowOf('R3')?.trim().endsWith('0'), `${rowOf('R3')}`);
-T.check('low precision is legible: the attn-out rate references its B6 precision input + the fp32 lse',
-  rowOf('A6')?.includes('128×128 × B6 + 512') && rowOf('B6')?.includes('1.5 B/elem'), rowOf('B6')?.slice(0, 120));
+T.check('recompute choices read as 0/1 (dsv3: dispatched kept, norm1 replayed)',
+  rowOf('R8')?.trim().endsWith('1') && rowOf('R3a')?.trim().endsWith('0'), `${rowOf('R3a')}`);
+// breakout buckets: per-TENSOR rows, each a whole 0/1 — the motivating case
+// is attn-replay keeping norm2 (the anchor) while norm1 replays
+T.check('norms broken out individually (+ their rstds as own rows)', rowOf('A3')?.includes('A3a + A3b + A3c + A3d')
+  && rowOf('A3a')?.includes('norm1 out') && rowOf('A3b')?.includes('rstd (fp32)')
+  && rowOf('A3c')?.includes('norm2 out'), rowOf('A3'));
+T.check('residual broken out (x0 pinned / x1)', rowOf('A2')?.includes('A2a + A2b')
+  && rowOf('A2a')?.includes('x0'), rowOf('A2'));
+{
+  const rseg = () => layer().parentElement.querySelector('.stp[data-knob="recompute"]');
+  const rp = async (k) => { [...rseg().querySelectorAll('button')].find(b => b.textContent === k).click(); await T.tick(700); };
+  const fxA = () => [...sheet.querySelectorAll('tr')].slice(1)
+    .map(r => `${r.querySelector('.nm')?.textContent}:${r.querySelector('.fx')?.textContent}`).join('|');
+  const f0 = fxA();
+  await rp('attn-replay');
+  T.check('attn-replay splits the norms (norm1 replayed, norm2 kept) with formulas UNCHANGED',
+    fxA() === f0 && rowOf('R3a')?.trim().endsWith('0') && rowOf('R3c')?.trim().endsWith('1'), '');
+  await rp('full');
+  T.check('full: formulas unchanged too (x0 stays kept, x1 flips)',
+    fxA() === f0 && rowOf('R2a')?.trim().endsWith('1') && rowOf('R2b')?.trim().endsWith('0'), '');
+  await rp('dsv3');
+}
+T.check('low precision is legible: attn-out references B6a (e5m6 1.5), the lse split into its own row',
+  rowOf('A6a')?.includes('128×128 × B6a') && rowOf('B6a')?.includes('1.5 B/elem')
+  && rowOf('A6b')?.includes('lse (fp32)'), rowOf('A6a')?.slice(0, 120));
 // the STABILITY AUDIT: toggling model inputs must never change a formula —
 // only input VALUES move (Z1→S•, F1, recipe/ᵀ/E5M6→B•). Capture every
 // formula, toggle the byte-side knobs, and diff.

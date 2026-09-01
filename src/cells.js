@@ -32,7 +32,7 @@ function parse(src) {
     if (src[i] === '(') { i++; const v = expr(); ws(); if (src[i++] !== ')') throw new Error(`cells: missing ) in "${src}"`); return v; }
     const m = /^(\d+(?:\.\d+)?)/.exec(src.slice(i));
     if (m) { i += m[0].length; return { num: +m[0] }; }
-    const c = /^([A-Z]\d+)/.exec(src.slice(i));
+    const c = /^([A-Z]\d+[a-z]?)/.exec(src.slice(i));
     if (c) { i += c[0].length; return { ref: c[0] }; }
     throw new Error(`cells: bad token at "${src.slice(i)}"`);
   };
@@ -50,7 +50,7 @@ export function evalExpr(src, get) {
           : n.op === '×' ? go(n.a) * go(n.b) : go(n.a) / go(n.b);
   return go(parse(src));
 }
-export const refsOf = (src) => [...new Set(src.match(/[A-Z]\d+/g) ?? [])];
+export const refsOf = (src) => [...new Set(src.match(/[A-Z]\d+[a-z]?/g) ?? [])];
 
 // ---- the cell definitions, built for one widget state ----------------------
 // env: { world, pp, ep, zero, sched, fp8p, g: {moe, dense, emb, head},
@@ -81,21 +81,58 @@ export function buildCells(env) {
     const rD = env.bD[i], fM = env.bMF?.[i] ?? rM, fD = env.bDF?.[i] ?? rD;
     const last = i === nBk - 1, tail = last ? ' + D3 × 4096' : '';
     const lbl = `${env.bLabels[i]}${last ? ' (+ vocab D3)' : ''}`;   // indented under A1 — no 'stash ·' prefix
+    const R = env.bRate?.[i];
+    // BREAKOUT buckets (residual, norm outs, the remainder): one sub-cell
+    // per TENSOR, each a whole 0/1 kept? choice — no bucket ever reads
+    // 'partial' just because a policy split it (x0 vs x1; norm1 vs norm2)
+    if (R?.tensors) {
+      const L = 'abcdefgh';
+      // simplify drops the aux rows (lse, rstd) — negligible terms; the
+      // parent sum shrinks with them, so the simplified sheet's totals may
+      // drift a little from the (always exact) chart
+      const shown = R.tensors.map((t, j) => ({ t, sid: `A${i + 2}${L[j]}` }))
+        .filter(({ t }) => !(env.simplify && t.aux));
+      const rows = shown.flatMap(({ t, sid }) => {
+        const rid = `R${sid.slice(1)}`;
+        if (t.aux) {   // an aux artifact row: literal fp32 bytes, its own kept?
+          const rate = [t.fMv ? `L1 × ${t.fMv}` : null, t.fDv ? `L2 × ${t.fDv}` : null].filter(Boolean).join(' + ');
+          return [
+            { id: sid, depth: 2, unit: 'B', label: t.label, expr: `${rid} × (${rate}) × 4096 × P6` },
+            { id: rid, depth: 3, label: 'kept?', value: t.r },
+          ];
+        }
+        if (!t.whole) return [{ id: sid, depth: 2, unit: 'B', label: `${t.label} (partial under policy)`,
+          expr: `(L1 × ${t.cMv} + L2 × ${t.cDv}) × 4096 × P6` }];
+        const p1 = t.fMv ? `L1 × ${t.tM ? `(${t.tM})` : t.fMv}` : null;
+        const p2 = t.fDv ? `L2 × ${t.tD ? `(${t.tD})` : t.fDv}` : null;
+        const rate = [p1, p2].filter(Boolean).join(' + ');
+        if (!rate) return [{ id: sid, depth: 2, unit: 'B', label: t.label, value: 0 }];
+        return [
+          { id: sid, depth: 2, unit: 'B', label: t.label, expr: `${rid} × (${rate}) × 4096 × P6` },
+          { id: rid, depth: 3, label: 'kept?', value: t.r },
+          ...(t.prec != null ? [{ id: t.bref, depth: 3, unit: 'B/e', label: 'precision (B/elem)', value: t.prec }] : []),
+        ];
+      });
+      const subIds = shown.map(({ sid }) => sid);
+      return [
+        { id: `A${i + 2}`, unit: 'B', depth: 1, label: lbl,
+          expr: (subIds.length ? subIds.join(' + ') : '0') + tail },
+        ...rows,
+      ];
+    }
     const whole = (fM > 0 || fD > 0) && ((rM === fM && rD === fD) || (rM === 0 && rD === 0));
     if (!whole) return [{ id: `A${i + 2}`, unit: 'B', depth: 1, label: `${lbl} (partial under policy)`,
       expr: `(L1 × ${rM} + L2 × ${rD}) × 4096 × P6${tail}` }];
-    // the rate DECOMPOSITION (per saved tensor: dims × B•, ×2 dual, + fp32
-    // aux) when the caller validated one; zero-rate kinds drop out. B• is
-    // the bucket's PRECISION INPUT (B/elem) — flipping the recipe flips its
-    // value, not the formula.
-    const R = env.bRate?.[i];
+    // the rate DECOMPOSITION (per saved tensor: dims × B•, + fp32 aux; the
+    // ᵀ dual folds into B•'s value) when the caller validated one;
+    // zero-rate kinds drop out
     const t1 = fM ? `L1 × ${R?.eM ? `(${R.eM})` : fM}` : null;
     const t2 = fD ? `L2 × ${R?.eD ? `(${R.eD})` : fD}` : null;
     const rate = [t1, t2].filter(Boolean).join(' + ') || 'L1 × 0 + L2 × 0';
     return [
       { id: `A${i + 2}`, unit: 'B', depth: 1, label: lbl,
         expr: `R${i + 2} × (${rate}) × 4096 × P6${tail}` },
-      { id: `R${i + 2}`, depth: 2, label: 'kept? (0 = recomputed)',
+      { id: `R${i + 2}`, depth: 2, label: 'kept?',
         value: rM === fM && rD === fD ? 1 : 0 },
       ...(R ? [{ id: `B${i + 2}`, depth: 2, unit: 'B/e', label: 'precision (B/elem)', value: R.prec }] : []),
     ];
@@ -133,7 +170,7 @@ export function buildCells(env) {
     { id: 'Q1', label: 'expert params on this GPU', unit: 'p', expr: 'L1 × N1 / P3' },
     { id: 'Q2', label: 'non-expert block params on this GPU', unit: 'p', expr: 'L2 × N3 + L1 × N2' },
     { id: 'Q3', label: 'vocab params on this GPU (+ final norm)', unit: 'p',
-      expr: 'L3 × N4 + H1 × 7168' },
+      expr: env.simplify ? 'L3 × N4' : 'L3 × N4 + H1 × 7168' },   // the 7 K final norm is a simplify casualty
     { id: 'W1', label: 'weights (2 B bf16; F1 flips block params e4m3+ᵀ)', unit: 'B', expr: 'W2 + W3 + W4' },
     { id: 'W2', depth: 1, label: 'experts', unit: 'B', expr: cls(2, 'Q1', 'S1', true) },
     { id: 'W3', depth: 1, label: 'non-expert blocks', unit: 'B', expr: cls(2, 'Q2', 'S2', true) },

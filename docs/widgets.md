@@ -142,10 +142,16 @@ evaluate back to the exact rate, else the literal stands). FORMULA
 STABILITY is the design rule: toggling a model input changes input VALUES,
 never a formula's shape — ZeRO resolves to per-component shard-group inputs
 (S1–S6, value 1 when unsharded), emb/head presence to E1/H1 (0/1, L3 =
-E1 + H1), fp8 params to F1, precision/ᵀ to B•. Known exceptions (piecewise
-by nature): P6 flips between '1' and 'P2 + 0.5' with the schedule/PP, and a
-bucket the policy keeps only PARTIALLY (x0,x1 under `full`; the 'other'
-remainder always) falls back to as-is literals. The sheet indents child
+E1 + H1), fp8 params to F1, precision/ᵀ to B•. BREAKOUT buckets (residual, norm outs, mla latents, attention out, the
+remainder — every bucket a preset can split) get per-TENSOR sub-cells
+(`A3a`…) so each row stays a whole 0/1 `kept?` choice, with per-tensor
+precision inputs (`B4a`… — a bucket may mix bf16 latents with e4m3-rate
+norm outs) and the aux artifacts (lse, rstd) SPLIT OUT as their own rows.
+The one known piecewise exception: P6 flips between '1' and 'P2 + 0.5'
+with the schedule/PP. A `simplify` checkbox on the sheet drops the
+negligible terms (the aux rows and the final norm in Q3) — allowed to
+change formulas by design; its totals drift slightly from the (always
+exact) chart, and a note says so. The sheet indents child
 rows (sub-cells depth 1, per-bucket R•/B• depth 2), keeps labels to one
 line (nowrap), and hovering any formula variable shows its cell card
 (click = jump to its row). Cells without a formula are model INPUTS (slot-split layer counts, the
