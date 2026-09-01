@@ -4158,9 +4158,14 @@ class Dsv3Sheet extends HTMLElement {
     this._root.addEventListener('click', (ev) => {
       const ref = ev.target.closest?.('.cellref');
       if (ref) { this.reveal(ref.textContent); return; }
+      const tr = ev.target.closest?.('tr');
+      if (!tr?.dataset.cell) return;
       const nm = ev.target.closest?.('td.nm.jmp');
-      const tr = nm?.closest('tr');
-      if (tr) this._jump(tr.dataset.jk, tr.dataset.jc);
+      if (nm) this._jump(tr.dataset.jk, tr.dataset.jc);
+      // clicking a row highlights it (click the highlighted row to clear);
+      // the same persistent .hl the tooltip's jump uses, so it survives syncs
+      this._hl = this._hl === tr.dataset.cell && !nm ? null : tr.dataset.cell;
+      this.sync();
     });
   }
   // can this edit go that way RIGHT NOW? Read the widget's own controls —

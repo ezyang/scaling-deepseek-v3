@@ -128,5 +128,12 @@ mm(val('total'), 'click'); await T.tick(30);
 tip().querySelector('b[data-jump="T1"]').dispatchEvent(new MouseEvent('click', { bubbles: true }));
 await T.tick(50);
 T.check('jump highlights the sheet row', sheet.querySelector('tr[data-cell="T1"]')?.classList.contains('hl'), '');
+// clicking any row highlights it (again to clear) — same persistent .hl
+[...sheet.querySelectorAll('tr')].find(r => r.querySelector('.nm')?.textContent === 'Q1').querySelector('td.lb').click();
+await T.tick(50);
+T.check('row click highlights', sheet.querySelector('tr[data-cell="Q1"]')?.classList.contains('hl'), '');
+[...sheet.querySelectorAll('tr')].find(r => r.querySelector('.nm')?.textContent === 'Q1').querySelector('td.lb').click();
+await T.tick(50);
+T.check('row re-click clears', !sheet.querySelector('tr[data-cell="Q1"]')?.classList.contains('hl'), '');
 layer().querySelector('.lv-scroll svg').dispatchEvent(new MouseEvent('click', { bubbles: true }));
 T.done();
