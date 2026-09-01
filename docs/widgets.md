@@ -184,7 +184,14 @@ and drop. EDITABLE value cells wear a tinted face (the button language —
 the dashed underline was too subtle); a ± at its bound dims and inerts, and
 a pinned toggle (x0's kept?, a recipe-pinned precision) renders as a plain
 untinted cell — enabled-ness is READ from the widget's own controls, so the
-sheet can't disagree with the diagram. The formula is the rightmost column. Every edit drives the widget's OWN control — steppers
+sheet can't disagree with the diagram. The formula is the rightmost column. A '⤓ .xlsx'
+button downloads the sheet as a real workbook (zero-dep store-only zip):
+the value column carries LIVE formulas — cell ids become C-column
+references (they collide with A1 notation as defined names), × → *, the
+≥ indicator relies on boolean coercion — inputs export as editable
+numbers, so the workbook RECOMPUTES in Excel/Sheets; the ≈ column is a
+live GiB/KiB conversion, headers bold, current simplify/no-scales modes
+export as displayed. Every edit drives the widget's OWN control — steppers
 step (P1/P2/P3), the ZeRO segment steps (S1), two-chip segments flip
 (P6→sched, L•→rank), checkboxes click (F1, o_proj's B via E5M6),
 precision rows click their dtype button (B• via the node's `dtc` channel,
