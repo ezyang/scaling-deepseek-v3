@@ -4164,9 +4164,16 @@ class Dsv3Sheet extends HTMLElement {
       const nm = ev.target.closest?.('td.nm.jmp');
       if (nm) this._jump(tr.dataset.jk, tr.dataset.jc);
       // clicking a row highlights it (click the highlighted row to clear);
-      // the same persistent .hl the tooltip's jump uses, so it survives syncs
-      this._hl = this._hl === tr.dataset.cell && !nm ? null : tr.dataset.cell;
-      this.sync();
+      // the same persistent .hl the tooltip's jump uses, so it survives
+      // syncs. SELECTION gestures are not row clicks: a click that ends a
+      // drag-select (live selection) or extends into a double-click is
+      // skipped — the action runs on a short fuse the second click defuses
+      clearTimeout(this._hlT);
+      if (ev.detail > 1 || !getSelection().isCollapsed) return;
+      this._hlT = setTimeout(() => {
+        this._hl = this._hl === tr.dataset.cell && !nm ? null : tr.dataset.cell;
+        this.sync();
+      }, 250);
     });
   }
   // can this edit go that way RIGHT NOW? Read the widget's own controls —

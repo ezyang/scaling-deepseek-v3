@@ -130,10 +130,23 @@ await T.tick(50);
 T.check('jump highlights the sheet row', sheet.querySelector('tr[data-cell="T1"]')?.classList.contains('hl'), '');
 // clicking any row highlights it (again to clear) — same persistent .hl
 [...sheet.querySelectorAll('tr')].find(r => r.querySelector('.nm')?.textContent === 'Q1').querySelector('td.lb').click();
-await T.tick(50);
+await T.tick(400);
 T.check('row click highlights', sheet.querySelector('tr[data-cell="Q1"]')?.classList.contains('hl'), '');
 [...sheet.querySelectorAll('tr')].find(r => r.querySelector('.nm')?.textContent === 'Q1').querySelector('td.lb').click();
-await T.tick(50);
+await T.tick(400);
 T.check('row re-click clears', !sheet.querySelector('tr[data-cell="Q1"]')?.classList.contains('hl'), '');
+// selection gestures are not row clicks: a double-click never toggles, and
+// a click ending a drag-select leaves the highlight alone
+{
+  const lb = (id2) => [...sheet.querySelectorAll('tr')].find(r => r.querySelector('.nm')?.textContent === id2).querySelector('td.lb');
+  const clk = (el2, detail = 1) => el2.dispatchEvent(new MouseEvent('click', { bubbles: true, detail }));
+  clk(lb('Q2'), 1); clk(lb('Q2'), 2); await T.tick(400);
+  T.check('double-click never toggles (word-select safe)', !sheet.querySelector('tr[data-cell="Q2"]')?.classList.contains('hl'), '');
+  const rg = document.createRange(); rg.selectNodeContents(lb('Q2'));
+  getSelection().removeAllRanges(); getSelection().addRange(rg);
+  clk(lb('Q2')); await T.tick(400);
+  T.check('click ending a selection is skipped', !sheet.querySelector('tr[data-cell="Q2"]')?.classList.contains('hl'), '');
+  getSelection().removeAllRanges();
+}
 layer().querySelector('.lv-scroll svg').dispatchEvent(new MouseEvent('click', { bubbles: true }));
 T.done();
