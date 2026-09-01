@@ -2156,11 +2156,11 @@ export class Dsv3Layer extends HTMLElement {
     const dtBtn = (id, x, y) => (id === 'router' ? !(this._ctl.quant || this._ctl.dtype) : !this._ctl.dtype) ? '' :
       `<foreignObject x="${x}" y="${y}" width="52" height="20">` +
       (id === 'router'
-        ? `<button xmlns="http://www.w3.org/1999/xhtml" class="st dtb" data-dt="${id}" disabled style="color:${DT_STYLE[dt(id)]};cursor:default;opacity:0.8" ` +
-          `title="pinned: the router runs fp32 in production (tiny GEMM, numerically sensitive) — it follows the recipe, not a per-op lever">${dt(id)}</button>`
+        ? `<button xmlns="http://www.w3.org/1999/xhtml" class="st dtb" data-dt="${id}" disabled style="color:${DT_STYLE[dt(id)]};cursor:default;opacity:0.8;width:56px" ` +
+          `title="🔒 pinned: the router runs fp32 in production (tiny GEMM, numerically sensitive) — it follows the recipe, not a per-op lever">${dt(id)} 🔒</button>`
         : id === 'o_proj'
-          ? `<button xmlns="http://www.w3.org/1999/xhtml" class="st dtb" data-dt="${id}" disabled style="color:${DT_STYLE[COMPUTE_DT(dt(id))]};cursor:default;opacity:0.8" ` +
-            `title="pinned: the GEMM's COMPUTE dtype — its input's SAVE format is the 'E5M6 attn-out stash' checkbox above (the one GEMM whose stash and compute formats differ)">${COMPUTE_DT(dt(id))}</button>`
+          ? `<button xmlns="http://www.w3.org/1999/xhtml" class="st dtb" data-dt="${id}" disabled style="color:${DT_STYLE[COMPUTE_DT(dt(id))]};cursor:default;opacity:0.8;width:56px" ` +
+            `title="🔒 pinned: the GEMM's COMPUTE dtype, which follows the recipe — its input's SAVE format is the 'E5M6 attn-out stash' checkbox above (the one GEMM whose stash and compute formats differ)">${COMPUTE_DT(dt(id))} 🔒</button>`
           : `<button xmlns="http://www.w3.org/1999/xhtml" class="st dtb" data-dt="${id}" style="color:${DT_STYLE[dt(id)]}" ` +
             `title="toggle precision: bf16 ⇄ ${FP8K}">${dt(id)}</button>`) + '</foreignObject>';
     // the block-output add has NO free mark: its output IS the next block's
