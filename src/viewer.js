@@ -852,6 +852,25 @@ dsv3-layer { display: block; margin: 14px 0 26px; }
 ${knobCss('.lv-head')}
 .lv.lv-compact { padding: 6px 12px; }
 .lv-compact .lv-head { padding-bottom: 4px; }
+/* anatomy-wrapped quant tiers park the recompute policy in the PLAN column
+   (left of the card, below the plan — saves a whole head row on laptops).
+   Coordinates assume the anatomy grid: 186px column + 28px gap, plan ends
+   ~400px into the card. Narrow viewports return it to the flow. */
+.lv .lv-side { position: absolute; left: -215px; top: 412px; width: 188px; display: block; padding: 0; }
+.lv-side .pargrp { display: flex; width: 100%; box-sizing: border-box; }
+.lv-side .stp { flex-direction: column; align-items: stretch; }
+.lv-side .stp button { text-align: left; border-left: 1px solid #c3c2b7; border-radius: 0; }
+.lv-side .stp button + button { border-top: none; }
+.lv-side .stp button:first-child { border-radius: 4px 4px 0 0; }
+.lv-side .stp button:last-child { border-radius: 0 0 4px 4px; }
+@media (max-width: 1040px) {
+  .lv .lv-side { position: static; width: auto; display: flex; padding-bottom: 4px; }
+  .lv-side .pargrp { display: inline-flex; width: auto; }
+  .lv-side .stp { flex-direction: row; }
+  .lv-side .stp button { border-left: none; border-top: 1px solid #c3c2b7; border-radius: 0; }
+  .lv-side .stp button:first-child { border-left: 1px solid #c3c2b7; border-radius: 4px 0 0 4px; }
+  .lv-side .stp button:last-child { border-radius: 0 4px 4px 0; }
+}
 .lv-compact .lv-foot2 svg { padding-top: 2px; }
 .lv svg { display: block; margin: 0 auto; }
 /* no scaling, ever: a diagram wider than its container scrolls horizontally */
@@ -1546,12 +1565,19 @@ export class Dsv3Layer extends HTMLElement {
       // BOTH quant tiers get the recompute segment, in the same slot. The
       // dtype tier's is PRESETS-ONLY (no custom chip): it renders no per-op
       // mark buttons, so a custom policy can't arise there — the AC section
-      // is where policies are hand-built, this one just replays the presets
-      hh.append(segGrp('recompute policy', 'recompute', ['full', 'attn-replay', 'dsv3', 'none'], curPreset,
+      // is where policies are hand-built, this one just replays the presets.
+      // Anatomy-wrapped instances park it in the PLAN column instead of a
+      // head row (the AC widget's whole second row disappears — laptops).
+      const polSeg = segGrp('recompute policy', 'recompute', ['full', 'attn-replay', 'dsv3', 'none'], curPreset,
         () => ({ ...this.marks }),
         (k) => localTween(() => { this.setAttribute('recompute', k); this.marks = { ...RECOMPUTE_PRESETS[k] }; }),
         (st) => localTween(() => { this.marks = { ...st }; }),
-        !this._ctl.marks));
+        !this._ctl.marks);
+      let sideWrap = null;
+      if (this.closest('dsv3-anatomy')) {
+        sideWrap = el('div', 'lv-head lv-side');
+        sideWrap.append(polSeg);
+      } else hh.append(polSeg);
       if (this._ctl.dtype) hh.append(segGrp('precision recipe', 'recipe', recipeOpts, curRecipe,
         () => ({ mm: { ...this.matmuls }, t: !!this.transposed }),   // custom memory carries BOTH channels
         (k) => localTween(() => {
@@ -1606,7 +1632,8 @@ export class Dsv3Layer extends HTMLElement {
       // dsv3 is it). The dtype tier keeps one — it also clears fp8ᵀ.
       if (this._ctl.dtype) hh.append(reset);   // no sizes toggle here: shapes are 01's story, not this section's
       if (hr) root.append(hr);
-      root.append(hh);
+      if (hh.childElementCount) root.append(hh);   // marks tier with a sided policy: no second row at all
+      if (sideWrap) root.append(sideWrap);
     } else if (cmode !== 'static') root.append(head);
     if (cmode === 'static') {
       const mini = el('div', 'lv-head');
@@ -3605,7 +3632,7 @@ export class Dsv3Layer extends HTMLElement {
     tallyEl.innerHTML = T.join('');
     this._tallySvg = tallyEl;
 
-    const H = h + lmH + 14;
+    const H = h + lmH + (this._ctl.quant && this._noKind ? 6 : 14);   // ctx'd quant tiers: tighter tail (laptop vspace; the lint clips-guard patrols)
 
     // barsonly/snapshot never mount this svg — the string work above already
     // produced the fit chart (_barHtml) and totals; parsing thousands of
