@@ -3401,31 +3401,45 @@ export class Dsv3Layer extends HTMLElement {
       const anaD = this._anaMemo.anaD ?? ana;
       // per-bucket rate DECOMPOSITIONS: instead of an opaque literal
       // (59136), the formula shows where the bytes come from — per saved
-      // tensor, dims × B/elem (the dtype: 2 bf16 · (1 + 4/128) e4m3+scales ·
-      // 1.5 e5m6 · 4 fp32), ×2 for a ᵀ dual stash, + the fp32 aux artifacts
-      // (lse/rstd). Built from the SAVE-EVERYTHING analysis (the R•
-      // factorization multiplies full rates) and VALIDATED: if the string
-      // does not evaluate back to the exact rate, the literal stands.
-      const rateExprs = (A, bF) => ACT_BUCKETS.map((b, k) => {
+      // tensor, dims × B• where B• is the bucket's PRECISION INPUT cell
+      // (B/elem: 2 bf16 · 1.03125 e4m3+scales · 1.5 e5m6 · 4 fp32; a ᵀ
+      // dual stash FOLDS into the value — both orientations counted — so
+      // toggling ᵀ or the recipe changes the input, never the formula),
+      // + the fp32 aux artifacts (lse/rstd) as literals. Built from the
+      // SAVE-EVERYTHING analyses (the R• factorization multiplies full
+      // rates) and VALIDATED per kind: if a string does not evaluate back
+      // to the exact rate, the literal stands. A bucket whose saved
+      // tensors MIX effective precisions gets no B cell (none do today).
+      const rateExprs = (AM, AD, bFM, bFD) => ACT_BUCKETS.map((b, k) => {
         if (!b.ids.length) return null;               // the catch-all: a remainder
-        const terms = [];
-        for (const id of b.ids) {
-          const n2 = A.byId[id];
-          if (!n2) continue;                          // the dense graph lacks router/dispatch
-          if (A.neededSaved.has(id)) {
-            const bpe = n2.outBytes / n2.elems;
-            const bstr = bpe === 2 ? '2' : bpe === 4 ? '4' : bpe === 1.5 ? '1.5'
-              : bpe === 1 + 1 / 32 ? '(1 + 4/128)' : null;
-            if (bstr == null) return null;
-            let dims = String(n2.elems);
-            try { if (n2.tdims && evalExpr(n2.tdims, () => NaN) === n2.elems) dims = n2.tdims; } catch { /* keep the literal */ }
-            terms.push(A.dual.has(id) ? `(${dims} × ${bstr}) × 2` : `${dims} × ${bstr}`);
+        const bref = `B${k + 2}`;
+        let prec = null, mixed = false;
+        const kindExpr = (A) => {
+          const terms = [];
+          for (const id of b.ids) {
+            const n2 = A.byId[id];
+            if (!n2) continue;                        // the dense graph lacks router/dispatch
+            if (A.neededSaved.has(id)) {
+              const bpe = n2.outBytes / n2.elems * (A.dual.has(id) ? 2 : 1);   // ᵀ dual folds into the input
+              if (prec == null) prec = bpe;
+              else if (prec !== bpe) mixed = true;
+              let dims = String(n2.elems);
+              try { if (n2.tdims && evalExpr(n2.tdims, () => NaN) === n2.elems) dims = n2.tdims; } catch { /* keep the literal */ }
+              terms.push(`${dims} × ${bref}`);
+            }
+            if (n2.aux && !A.replayed.has(id)) terms.push(String(n2.aux.bytes));
           }
-          if (n2.aux && !A.replayed.has(id)) terms.push(String(n2.aux.bytes));
-        }
-        if (!terms.length) return null;
-        const e2 = terms.join(' + ');
-        try { return evalExpr(e2, () => NaN) === bF[k] ? e2 : null; } catch { return null; }
+          return terms.length ? terms.join(' + ') : null;
+        };
+        const eM = kindExpr(AM), eD = kindExpr(AD);
+        if (mixed || prec == null) return null;
+        const get = (id2) => { if (id2 !== bref) throw new Error(id2); return prec; };
+        try {
+          if ((eM != null) !== (bFM[k] > 0) || (eD != null) !== (bFD[k] > 0)) return null;
+          if (eM != null && evalExpr(eM, get) !== bFM[k]) return null;
+          if (eD != null && evalExpr(eD, get) !== bFD[k]) return null;
+        } catch { return null; }
+        return { eM, eD, prec };
       });
       // the CELL GRAPH (src/cells.js): every chart number is a cell — a
       // value computed by evaluating the same formula string the tooltips
@@ -3439,8 +3453,10 @@ export class Dsv3Layer extends HTMLElement {
         aM: ana.savedBytes, aD: anaD.savedBytes,
         bM: actBucketsOf(ana), bD: actBucketsOf(anaD), bLabels: ACT_BUCKETS.map((b) => b.label),
         bMF: actBucketsOf(this._anaMemo.anaMF ?? ana), bDF: actBucketsOf(this._anaMemo.anaDF ?? anaD),
-        bExprM: this._anaMemo.anaMF ? rateExprs(this._anaMemo.anaMF, actBucketsOf(this._anaMemo.anaMF)) : null,
-        bExprD: this._anaMemo.anaDF ? rateExprs(this._anaMemo.anaDF, actBucketsOf(this._anaMemo.anaDF)) : null,
+        bRate: this._anaMemo.anaMF && this._anaMemo.anaDF
+          ? rateExprs(this._anaMemo.anaMF, this._anaMemo.anaDF,
+            actBucketsOf(this._anaMemo.anaMF), actBucketsOf(this._anaMemo.anaDF))
+          : null,
         N: { restLayer: PARAMS.moeBlock - moeExp, denseLayer: PARAMS.denseBlock },
       });
       const segB = (S) => {
@@ -3892,7 +3908,8 @@ export class Dsv3Layer extends HTMLElement {
       ? `${fmtBytes(c.value)} (${c.value.toLocaleString('en-US', { maximumFractionDigits: 2 })} B)`
       : c.unit === 'p' ? `${fmtP(c.value)} params (${c.value.toLocaleString('en-US', { maximumFractionDigits: 2 })})`
         : c.unit === 'B/tok' ? `${c.value.toLocaleString('en-US', { maximumFractionDigits: 2 })} B/token`
-          : c.value.toLocaleString('en-US', { maximumFractionDigits: 2 });
+          : c.unit === 'B/e' ? `${c.value} B/elem`   // dyadic: String() is exact
+            : c.value.toLocaleString('en-US', { maximumFractionDigits: 2 });
     const entry = (c, k) => {
       const d = el('div', 'lv-cellent');
       d.dataset.k = k;
@@ -3978,9 +3995,10 @@ if (typeof customElements !== 'undefined' && !customElements.get('dsv3-layer')) 
 // are the coordinates the fit chart's tooltips speak; rows update live as
 // the widget's knobs move — same cells, one source of truth by construction.
 const SHEET_CSS = `
-dsv3-sheet { display: block; margin: 14px 0; }
+dsv3-sheet { display: block; margin: 14px 0; position: relative; }
 .cellsheet { font: 12px system-ui, -apple-system, "Segoe UI", sans-serif; color: #0b0b0b;
-  border: 1px solid #e1e0d9; border-radius: 6px; background: #fcfcfb; padding: 8px 12px; }
+  border: 1px solid #e1e0d9; border-radius: 6px; background: #fcfcfb; padding: 8px 12px; position: relative; }
+.cellsheet td.fx .cellref { cursor: pointer; }
 .cellsheet .hd { color: #52514e; font-size: 11.5px; margin-bottom: 5px; }
 .cellsheet table { border-collapse: collapse; width: 100%; }
 .cellsheet th { text-align: left; font-size: 10.5px; color: #898781; font-weight: 600; padding: 1px 10px 3px 2px; }
@@ -3992,6 +4010,7 @@ dsv3-sheet { display: block; margin: 14px 0; }
 .cellsheet td.vl { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .cellsheet td.ap { color: #898781; }
 .cellsheet tr.hl td { background: #fff8ea; }
+.cellsheet td.lb { white-space: nowrap; }   /* labels are one line by fiat */
 `;
 class Dsv3Sheet extends HTMLElement {
   connectedCallback() {
@@ -4005,6 +4024,31 @@ class Dsv3Sheet extends HTMLElement {
       else setTimeout(bind, 30);
     };
     if (lid) bind();
+    // formula variables get the same hover card as the chart's numbers
+    // (.lv-tip styling rides the layer's stylesheet); clicking one jumps to
+    // its row
+    this._tip = el('div', 'lv-tip');
+    this.append(this._tip);   // outside _root: sync() rewrites _root.innerHTML
+    const fmtC = (c) => {
+      const rawv = c.unit === 'B/e' ? `${c.value} B/elem`
+        : c.value.toLocaleString('en-US', { maximumFractionDigits: 2 }) + (c.unit === 'B' ? ' B' : c.unit === 'B/tok' ? ' B/tok' : '');
+      return c.unit === 'B' ? `${fmtBytes(c.value)} (${rawv})` : rawv;
+    };
+    this._root.addEventListener('mousemove', (ev) => {
+      const ref = ev.target.closest?.('.cellref');
+      const c = ref && this._layer?._cells?.().byId.get(ref.textContent);
+      if (!c) { this._tip.style.display = 'none'; return; }
+      this._tip.textContent = `${c.id} · ${c.label}\n${c.expr ? `= ${c.expr} ` : ''}= ${fmtC(c)}`;
+      const r = this.getBoundingClientRect();
+      this._tip.style.left = Math.min(ev.clientX - r.left + 14, r.width - 300) + 'px';
+      this._tip.style.top = (ev.clientY - r.top + 14) + 'px';
+      this._tip.style.display = 'block';
+    });
+    this._root.addEventListener('mouseleave', () => { this._tip.style.display = 'none'; });
+    this._root.addEventListener('click', (ev) => {
+      const ref = ev.target.closest?.('.cellref');
+      if (ref) this.reveal(ref.textContent);
+    });
   }
   // tooltip jump target: scroll the row into view and highlight it (the
   // highlight survives re-syncs until the next jump)
@@ -4019,7 +4063,8 @@ class Dsv3Sheet extends HTMLElement {
     // the exact value is the PRIMARY column (byte counts are exact — every
     // divisor is a power of two on integer counts); the rounded reading is
     // its own convenience column
-    const raw = (c) => c.value.toLocaleString('en-US', { maximumFractionDigits: 2 })
+    const raw = (c) => c.unit === 'B/e' ? `${c.value} B/elem`   // dyadic: String() is exact
+      : c.value.toLocaleString('en-US', { maximumFractionDigits: 2 })
       + (c.unit === 'B' ? ' B' : c.unit === 'B/tok' ? ' B/tok' : '');
     const approx = (c) => c.unit === 'B' ? fmtBytes(c.value)
       : c.unit === 'p' ? fmtP(c.value)
@@ -4030,7 +4075,8 @@ class Dsv3Sheet extends HTMLElement {
     this._root.innerHTML = '<div class="hd">the fit chart’s formula sheet — every number the chart below shows is one of these cells, '
       + 'computed by evaluating exactly the formula printed here (hover a chart number for its formula; click to pin, then click names to drill)</div>'
       + '<table><tr><th>cell</th><th>quantity</th><th>formula</th><th class="vl">value (exact)</th><th class="vl">≈</th></tr>'
-      + cells.cells.map((c) => `<tr data-cell="${c.id}"${c.id === this._hl ? ' class="hl"' : ''}><td class="nm">${c.id}</td><td>${esc(c.label)}</td>`
+      + cells.cells.map((c) => `<tr data-cell="${c.id}"${c.id === this._hl ? ' class="hl"' : ''}><td class="nm">${c.id}</td>`
+        + `<td class="lb"${c.depth ? ` style="padding-left:${2 + c.depth * 14}px"` : ''}>${esc(c.label)}</td>`
         + `<td class="fx">${fx(c)}</td>`
         + `<td class="vl">${raw(c)}</td><td class="vl ap">${approx(c)}</td></tr>`).join('')
       + '</table>';

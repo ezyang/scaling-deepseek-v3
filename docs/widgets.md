@@ -134,11 +134,21 @@ Formula-switching INPUTS get explicit rows: `Z1` (ZeRO level), `F1`
 multiplying the bucket's SAVE-EVERYTHING rates at the current recipe, so
 flipping the policy flips the 0/1, not the formula (a partially-kept bucket
 — the catch-all's aux, x1 under `full` — falls back to as-is rates, labeled
-so). The rates themselves are DECOMPOSED per saved tensor — dims × B/elem
-with the dtype visible (2 bf16 · (1 + 4/128) e4m3+scales · 1.5 e5m6 · 4
-fp32), ×2 for a ᵀ dual, + the fp32 aux artifacts — built from the op graph
-and VALIDATED (the string must evaluate back to the exact rate, else the
-literal stands). Cells without a formula are model INPUTS (slot-split layer counts, the
+so). The rates themselves are DECOMPOSED per saved tensor — dims × B• where B•
+is the bucket's PRECISION INPUT row (B/elem: 2 bf16 · 1.03125 e4m3+scales ·
+1.5 e5m6 · 4 fp32; a ᵀ dual FOLDS into the value) + the fp32 aux artifacts
+as literals — built from the op graph and VALIDATED (the string must
+evaluate back to the exact rate, else the literal stands). FORMULA
+STABILITY is the design rule: toggling a model input changes input VALUES,
+never a formula's shape — ZeRO resolves to per-component shard-group inputs
+(S1–S6, value 1 when unsharded), emb/head presence to E1/H1 (0/1, L3 =
+E1 + H1), fp8 params to F1, precision/ᵀ to B•. Known exceptions (piecewise
+by nature): P6 flips between '1' and 'P2 + 0.5' with the schedule/PP, and a
+bucket the policy keeps only PARTIALLY (x0,x1 under `full`; the 'other'
+remainder always) falls back to as-is literals. The sheet indents child
+rows (sub-cells depth 1, per-bucket R•/B• depth 2), keeps labels to one
+line (nowrap), and hovering any formula variable shows its cell card
+(click = jump to its row). Cells without a formula are model INPUTS (slot-split layer counts, the
 op-graph stash rates D1/D2) — drill-down ends at their labels. Binds like
 the pp-schedule strip (poll for the layer id, resync on its `recipe`
 event), so rows update live as knobs move; `reveal(id)` scrolls to a row

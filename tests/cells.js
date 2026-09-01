@@ -20,7 +20,7 @@ tip().querySelector('.cellref[data-cell="A8"]').dispatchEvent(new MouseEvent('cl
 await T.tick(30);
 T.check('drilling A8 pushes its entry below (rates × 4096 × P6)',
   tip().querySelectorAll('.lv-cellent').length === 2
-  && tip().textContent.includes('stash · dispatched tokens')
+  && tip().textContent.includes('dispatched tokens')
   && /× 4096 × P6/.test(tip().textContent), tip().textContent.slice(-120));
 
 const p6ref = [...tip().querySelectorAll('.lv-cellent[data-k="1"] .cellref')].find(s => s.dataset.cell === 'P6');
@@ -43,9 +43,9 @@ md([...layer().querySelectorAll('.lv-bar g[data-prop]')][3]); await T.tick(700);
 const pv = layer().querySelector('.lv-bar text[data-role="val:part:3:6"]');   // dispatched tokens → A8
 T.check('acts sub-row carries its cell', pv?.dataset.cell === 'A8', pv?.dataset.cell);
 mm(pv); await T.tick(30);
-T.check('bucket hover: 0/1 recompute choice × the DECOMPOSED rate (dtype visible)',
-  tip().textContent.includes('stash · dispatched tokens')
-  && tip().textContent.includes('= R8 × (L1 × (8×7168 × (1 + 4/128))) × 4096 × P6 = '), tip().textContent.slice(0, 130));
+T.check('bucket hover: 0/1 recompute choice × dims × the B• precision input',
+  tip().textContent.includes('dispatched tokens')
+  && tip().textContent.includes('= R8 × (L1 × (8×7168 × B8)) × 4096 × P6 = '), tip().textContent.slice(0, 130));
 md([...layer().querySelectorAll('.lv-bar g[data-prop]')][3]); await T.tick(700);   // un-solo
 // the parents are accordion SUMS
 mm(val('0')); await T.tick(30);
@@ -61,20 +61,41 @@ T.check('sheet T1 equals the chart total', t1row.textContent.includes('61.7 GiB'
   && +val('total').dataset.true === 66296545344, t1row?.textContent);
 // input rows for the formula switches: ZeRO level, fp8 params, per-bucket ↻
 const rowOf = (id) => rows().find(r => r.querySelector('.nm')?.textContent === id)?.textContent;
-T.check('Z1 / F1 / R rows present', rowOf('Z1')?.includes('ZeRO level') && rowOf('F1')?.includes('0/1')
-  && rowOf('R8')?.includes('kept for backward'), '');
+T.check('input rows present: Z1 / S / F1 / R / B / E-H', rowOf('Z1')?.includes('ZeRO level') && rowOf('F1')?.includes('0/1')
+  && rowOf('R8')?.includes('kept?') && rowOf('S5')?.includes('shard group · optimizer')
+  && rowOf('B8')?.includes('precision (B/elem)') && rowOf('H1')?.includes('lm head'), '');
 T.check('recompute choices read as 0/1 (dsv3: dispatched kept, norm outs replayed)',
   rowOf('R8')?.includes('1') && rowOf('R3')?.trim().endsWith('0'), `${rowOf('R3')}`);
-T.check('low precision is legible: E5M6 attn-out rate shows 1.5 B/elem + the fp32 lse',
-  rowOf('A6')?.includes('128×128 × 1.5 + 512'), rowOf('A6')?.slice(0, 120));
-// live: flip ZeRO off, the sub-cell formulas lose the sharding (O1 stays the accordion sum)
-const zseg = layer().parentElement.querySelector('.stp[data-knob="zero"]');
-[...zseg.querySelectorAll('button')].find(b => b.textContent === 'off').click(); await T.tick(700);
-const o2 = () => rowOf('O2');
-T.check('sheet is live: ZeRO off unshards the O2 formula', o2().includes('8 × Q1') && !o2().includes('/ P5'), o2());
-[...layer().parentElement.querySelector('.stp[data-knob="zero"]').querySelectorAll('button')]
-  .find(b => b.textContent === '1').click(); await T.tick(700);
-T.check('and back', o2().includes('8 × Q1 / P5'), o2());
+T.check('low precision is legible: the attn-out rate references its B6 precision input + the fp32 lse',
+  rowOf('A6')?.includes('128×128 × B6 + 512') && rowOf('B6')?.includes('1.5 B/elem'), rowOf('B6')?.slice(0, 120));
+// the STABILITY AUDIT: toggling model inputs must never change a formula —
+// only input VALUES move (Z1→S•, F1, recipe/ᵀ/E5M6→B•). Capture every
+// formula, toggle the byte-side knobs, and diff.
+const fxAll = () => [...sheet.querySelectorAll('tr')].slice(1)
+  .map(r => `${r.querySelector('.nm')?.textContent}:${r.querySelector('.fx')?.textContent}`).join('|');
+const fx0 = fxAll();
+const zseg = () => layer().parentElement.querySelector('.stp[data-knob="zero"]');
+const zpick = async (k) => { [...zseg().querySelectorAll('button')].find(b => b.textContent === k).click(); await T.tick(700); };
+await zpick('off');
+T.check('ZeRO off: formulas unchanged, S5 flips 4 → 1', fxAll() === fx0 && rowOf('S5')?.trim().endsWith('1'), rowOf('S5'));
+await zpick('1');
+const p8 = layer().parentElement.querySelector('input[data-knob="fp8params"]');
+p8.click(); await T.tick(700);
+T.check('fp8 params on: formulas unchanged, F1 = 1', fxAll() === fx0 && rowOf('F1')?.trim().endsWith('1'), '');
+p8.click(); await T.tick(400);
+const tcb = layer().parentElement.querySelector('input[data-knob="transposed"]');
+tcb.click(); await T.tick(700);
+T.check('e4m3ᵀ on: formulas unchanged, B8 doubles (dual folded into the input)',
+  fxAll() === fx0 && rowOf('B8')?.includes('2.0625 B/elem'), rowOf('B8'));
+tcb.click(); await T.tick(400);
+const rpick = async (k) => {
+  [...layer().parentElement.querySelector('.stp[data-knob="recipe"]').querySelectorAll('button')]
+    .find(b => b.textContent === k).click();
+  await T.tick(700);
+};
+await rpick('bf16');
+T.check('recipe bf16: formulas unchanged, B8 = 2 B/elem', fxAll() === fx0 && rowOf('B8')?.includes('2 B/elem'), rowOf('B8'));
+await rpick('dsv3-fp8');
 // the tooltip's bold coordinate jumps to (and highlights) the sheet row
 mm(val('total'), 'click'); await T.tick(30);
 tip().querySelector('b[data-jump="T1"]').dispatchEvent(new MouseEvent('click', { bubbles: true }));
