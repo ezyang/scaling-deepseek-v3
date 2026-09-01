@@ -150,8 +150,7 @@ check('a2a toggles on without pipeline', solo.trace.ranks.some(r => r.tracks.som
 // dropped (final norm, block norms), nothing doubled (DualPipeV puts embed
 // AND head on rank 0). The visual audit (src/audit.js) deliberately never
 // re-derives the model — this is where that identity is enforced.
-globalThis.HTMLElement = class {};   // viewer.js defines custom elements; the math exports are DOM-free
-const { ppStage, inflightOf } = await import('../src/viewer.js');
+const { ppStage, inflightOf } = await import('../src/localmodel.js');
 {
   const moeExp = PARAMS.expert * DSV3.routedExperts;
   let worst = null;
@@ -177,7 +176,7 @@ const { ppStage, inflightOf } = await import('../src/viewer.js');
 // rounding — bytes are exact, not float-ish.
 {
   const { buildCells } = await import('../src/cells.js');
-  const { actBucketsOf, ACT_BUCKETS } = await import('../src/viewer.js');
+  const { actBucketsOf, ACT_BUCKETS } = await import('../src/localmodel.js');
   const moeExp = PARAMS.expert * DSV3.routedExperts;
   const mmS = resolveMatmuls({ recipe: 'dsv3-fp8' });
   const anaM = analyze(blockGraph('moe', DSV3, mmS, 4096), RECOMPUTE_PRESETS.dsv3, false);

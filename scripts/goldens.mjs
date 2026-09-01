@@ -17,9 +17,8 @@ import { PARAMS } from '../src/params.js';
 import { resolveMatmuls, RECIPES, memoryUsage } from '../src/memory.js';
 import { blockGraph, analyze, RECOMPUTE_PRESETS, DTYPE_BYTES } from '../src/blockgraph.js';
 import { defaultConfig } from '../src/sim.js';
-globalThis.HTMLElement = class {};   // viewer.js defines custom elements; the math exports are DOM-free
-const { ppStage, actBucketsOf, ACT_BUCKETS } = await import('../src/viewer.js');
-const { buildCells } = await import('../src/cells.js');
+import { ppStage, actBucketsOf, ACT_BUCKETS } from '../src/localmodel.js';
+import { buildCells } from '../src/cells.js';
 
 const FILE = fileURLToPath(new URL('../tests/goldens.json', import.meta.url));
 const G = {};

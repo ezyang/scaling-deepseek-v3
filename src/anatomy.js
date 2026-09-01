@@ -8,7 +8,8 @@
 // internals (that's the block diagram's job).
 
 import { DSV3 } from './model.js';
-import { fmtP, fmtBytes, tokensCss, applyHighlight, BYTE_COMPS, LOCAL_PAR, ppStage, inflightOf } from './viewer.js';
+import { fmtP, fmtBytes, tokensCss, applyHighlight } from './viewer.js';
+import { BYTE_COMPS, LOCAL_PAR, ppStage, inflightOf } from './localmodel.js';
 import { PARAMS } from './params.js';
 
 // named parameter quantities, shared with the diagram's tabs (src/params.js)
