@@ -1498,7 +1498,7 @@ export class Dsv3Layer extends HTMLElement {
       // state (click it to come back), and clicking the ACTIVE chip toggles
       // back to whatever was selected before it
       this._segMem ??= {};
-      const segGrp = (label, name, opts, cur, getState, setPreset, setState) => {
+      const segGrp = (label, name, opts, cur, getState, setPreset, setState, noCustom = false) => {
         const mem = this._segMem[name] ??= {};
         if (cur != null && !opts.includes(cur)) cur = null;   // an uncurated preset reads as custom
         if (cur == null) mem.custom = getState();   // the latest hand-edited composition
@@ -1527,42 +1527,31 @@ export class Dsv3Layer extends HTMLElement {
           else b.onclick = () => pick(k);
           w3.append(b);
         }
-        const cb = document.createElement('button');
-        cb.textContent = 'custom'; cb.type = 'button';
-        if (cur == null) { cb.classList.add('on'); arm(cb); }
-        else if (mem.custom) {
-          cb.title = 'your last hand-edited state';
-          cb.onclick = () => pick('custom', mem.custom);
-        } else cb.disabled = true;
-        w3.append(cb);
+        if (!noCustom) {
+          const cb = document.createElement('button');
+          cb.textContent = 'custom'; cb.type = 'button';
+          if (cur == null) { cb.classList.add('on'); arm(cb); }
+          else if (mem.custom) {
+            cb.title = 'your last hand-edited state';
+            cb.onclick = () => pick('custom', mem.custom);
+          } else cb.disabled = true;
+          w3.append(cb);
+        }
         row.append(w3); g.append(row);
         return g;
       };
       // 'selective' stays a MODEL preset (the trace sim's default; sanity's
       // GB300 anchor pins it) but earns no chip: the section's story is
       // full / attn-replay / dsv3 / none
-      // the dtype tier INHERITS its recompute policy from the AC section
-      // above (pinned via the recompute attr) — read it out in the marks
-      // tier's exact slot, locked, so the two heads mirror each other
-      if (!this._ctl.marks && this.getAttribute('recompute')) {
-        const g4 = el('span', 'pargrp');
-        const l4 = el('div', 'parlab'); l4.textContent = 'recompute policy'; g4.append(l4);
-        const row4 = el('div', 'parrow');
-        const w4 = el('span', 'stp'); w4.dataset.knob = 'recompute';
-        for (const k of ['full', 'attn-replay', 'dsv3', 'none']) {
-          const b = document.createElement('button');
-          b.type = 'button'; b.textContent = k; b.disabled = true;
-          b.title = 'fixed here — the recompute section above owns this knob';
-          if (k === this._origRecompute) b.classList.add('on');
-          w4.append(b);
-        }
-        row4.append(w4); g4.append(row4);
-        hh.append(g4);
-      }
-      if (this._ctl.marks) hh.append(segGrp('recompute policy', 'recompute', ['full', 'attn-replay', 'dsv3', 'none'], curPreset,
+      // BOTH quant tiers get the recompute segment, in the same slot. The
+      // dtype tier's is PRESETS-ONLY (no custom chip): it renders no per-op
+      // mark buttons, so a custom policy can't arise there — the AC section
+      // is where policies are hand-built, this one just replays the presets
+      hh.append(segGrp('recompute policy', 'recompute', ['full', 'attn-replay', 'dsv3', 'none'], curPreset,
         () => ({ ...this.marks }),
         (k) => localTween(() => { this.setAttribute('recompute', k); this.marks = { ...RECOMPUTE_PRESETS[k] }; }),
-        (st) => localTween(() => { this.marks = { ...st }; })));
+        (st) => localTween(() => { this.marks = { ...st }; }),
+        !this._ctl.marks));
       if (this._ctl.dtype) hh.append(segGrp('precision recipe', 'recipe', recipeOpts, curRecipe,
         () => ({ mm: { ...this.matmuls }, t: !!this.transposed }),   // custom memory carries BOTH channels
         (k) => localTween(() => {
@@ -2558,13 +2547,16 @@ export class Dsv3Layer extends HTMLElement {
       // stash at 2.06 B/elem has nothing to brag about). dtype tiers only:
       // the marks tier's story is which tensors exist, not their width
       const bf16B = ids.reduce((t2, i2) => t2 + (ana.byId[i2]?.elems ?? 0) * 2, 0) * (ov?.frac ?? 1);
-      const phFor = (A) => this._ctl.dtype && bf16B > bytesA(A) ? bf16B : 0;
+      // pass the edge UNCONDITIONALLY (blockGrid draws dashed only past the
+      // solid fill): mid-tween the phantom must complement the LERPED fill
+      // frame by frame — an endpoint-gated phantom pops in at the end
+      const phFor = () => this._ctl.dtype ? bf16B : 0;
       // the hollow ↻ counterfactual grid belongs to the AC story — the pure
       // dtype tier (recompute pinned upstairs) drops it
       const redoGrid = this._ctl.marks || !this._ctl.dtype;
       const gridFor = (A, s2) => {
         const [gx, gy] = gpos(s2);
-        return SAVED(s2) ? blockGrid(bytesA(A), gx, gy, true, false, phFor(A)).svg
+        return SAVED(s2) ? blockGrid(bytesA(A), gx, gy, true, false, phFor()).svg
           : s2 === 'redo' && redoGrid ? blockGrid(bytesA(A), gx, gy, true, true).svg : '';
       };
       if (stP2 != null && stP2 !== st)
@@ -2582,7 +2574,7 @@ export class Dsv3Layer extends HTMLElement {
           // The phantom edge is dtype-independent, so it never tweens: the
           // solid fill pours inside the fixed dashed silhouette
           P.push(blockGrid(bT, gx, gy, !VQ || (b0 > 0 && bytes > 0), st === 'redo',
-            st === 'redo' ? 0 : (this._ctl.dtype && bf16B > Math.max(b0, bytes) ? bf16B : 0)).svg);
+            st === 'redo' ? 0 : phFor()).svg);
         }
       }
       if (SAVED(st) || st === 'redo') h = ov?.short ? 25 : 12 + 11 + 2;

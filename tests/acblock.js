@@ -15,10 +15,31 @@ T.check('AC head carries the recompute segment only', seg(ac, 'recompute') && !s
 T.check('fp8 recipe chips are CURATED to the DSv3 story: bf16|dsv3-fp8|custom',
   [...seg(f8, 'recipe').querySelectorAll('button')].map(b => b.textContent).join('|')
   === 'bf16|dsv3-fp8|custom', '');
-T.check('fp8 head: live recipe segment + LOCKED recompute readout (dsv3 lit)',
-  seg(f8, 'recipe') && seg(f8, 'recompute')
-  && [...seg(f8, 'recompute').querySelectorAll('button')].every(b => b.disabled)
-  && seg(f8, 'recompute').querySelector('button.on').textContent === 'dsv3', '');
+T.check('fp8 head: recompute segment is LIVE but PRESETS-ONLY (no custom chip — no marks render here)',
+  [...seg(f8, 'recompute').querySelectorAll('button')].map(b => b.textContent).join('|') === 'full|attn-replay|dsv3|none'
+  && [...seg(f8, 'recompute').querySelectorAll('button')].every(b => !b.disabled)
+  && seg(f8, 'recompute').querySelector('button.on').textContent === 'dsv3'
+  && !f8.querySelector('button[data-mark]'), '');
+{ // the policy composes with the recipe live
+  btn(f8, 'recompute', 'none').click(); await T.tick(450);
+  T.check('fp8 widget at recompute none: 84.1 GiB (dsv3-fp8 recipe, nothing replayed)',
+    /= 84\.1 GiB/.test(tHead(f8)), tHead(f8));
+  btn(f8, 'recompute', 'dsv3').click(); await T.tick(450);
+  T.check('back on the dsv3 preset: 40.8 GiB', /= 40\.8 GiB/.test(tHead(f8)), tHead(f8));
+}
+// phantom squares POUR through recipe tweens (complementary to the solid
+// fill each frame) — never popping in at the end
+{
+  const ph = () => f8.querySelectorAll('.lv-scroll rect[stroke="#d19023"][stroke-dasharray]').length;
+  const p0 = ph();
+  btn(f8, 'recipe', 'bf16').click(); await T.tick(60);
+  const mid = ph();
+  T.check('mid-tween: phantoms partially drained (no end-pop)', mid > 0 && mid < p0, `${mid} of ${p0}`);
+  await T.tick(400);
+  T.check('at bf16: no phantoms (nothing beaten)', ph() === 0, ph());
+  btn(f8, 'recipe', 'dsv3-fp8').click(); await T.tick(450);
+  T.check('restored', ph() === p0, ph());
+}
 T.check('dsv3 preset lights up', btn(ac, 'recompute', 'dsv3').classList.contains('on'), '');
 T.check('custom chip reserved (present, disabled, off)', btn(ac, 'recompute', 'custom').disabled
   && !btn(ac, 'recompute', 'custom').classList.contains('on'), '');
