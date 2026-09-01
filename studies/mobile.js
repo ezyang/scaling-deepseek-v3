@@ -46,6 +46,16 @@ function focus(el, saved, pt) {
   let top = el;
   while (top.parentElement && top.parentElement.tagName !== 'MAIN') top = top.parentElement;
   document.body.classList.add('mfocus');
+  // native pinch zoom is a trap here: no API can reset it on close, and a
+  // pinched-in view loses the ✕ (fixed elements pin to the LAYOUT viewport).
+  // So focus mode locks it — the meta rescale-lock for Android/emulation
+  // (which otherwise re-fits the page when the document turns wide),
+  // touch-action for iOS (which ignores user-scalable=no) — and offers
+  // double-tap 1× ↔ fit-width instead.
+  document.documentElement.classList.add('mta');
+  const vp = document.querySelector('meta[name="viewport"]');
+  const vp0 = vp?.getAttribute('content');
+  vp?.setAttribute('content', 'width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no');
   top.classList.add('mfull-top');
   el.classList.remove('mprev');
   el.style.transform = '';
@@ -54,6 +64,29 @@ function focus(el, saved, pt) {
   const x = document.createElement('button');
   x.type = 'button'; x.className = 'mclose'; x.textContent = '✕';
   document.body.append(x);
+  // belt-and-braces: if a browser zooms anyway (or was already pinched when
+  // focus opened), glue the ✕ to the VISUAL viewport at constant size
+  const vv = window.visualViewport;
+  const glue = vv ? () => {
+    x.style.transform = `translate(${vv.offsetLeft}px, ${vv.offsetTop}px) scale(${1 / vv.scale})`;
+  } : null;
+  if (glue) { vv.addEventListener('resize', glue); vv.addEventListener('scroll', glue); glue(); }
+  // double-tap (anywhere that isn't a control): toggle 1× ↔ fit-width,
+  // keeping the tapped spot centered
+  let z = 1;
+  const fitK = Math.min(1, (innerWidth - 24) / (el.offsetWidth + saved.over));
+  const dbl = (e) => {
+    if (e.target.closest('button, a, input, select, textarea, label')) return;
+    const r0 = el.getBoundingClientRect();
+    const p = { x: (e.clientX - r0.left) / z, y: (e.clientY - r0.top) / z };   // content coords
+    z = z === 1 ? fitK : 1;
+    el.style.transform = z === 1 ? '' : `scale(${z})`;
+    const r1 = el.getBoundingClientRect();
+    scrollTo(Math.max(0, r1.left + scrollX + p.x * z - innerWidth / 2),
+      Math.max(0, r1.top + scrollY + p.y * z - innerHeight / 3));
+    e.preventDefault();
+  };
+  el.addEventListener('dblclick', dbl);
   // start zoomed in ON the tapped spot (photo-viewer style): map the tap
   // through the preview scale and center it; the explore button (no spot)
   // opens at the widget's top
@@ -65,7 +98,11 @@ function focus(el, saved, pt) {
   const close = () => {
     x.remove();
     removeEventListener('keydown', esc);
+    el.removeEventListener('dblclick', dbl);
+    if (glue) { vv.removeEventListener('resize', glue); vv.removeEventListener('scroll', glue); }
     document.body.classList.remove('mfocus');
+    document.documentElement.classList.remove('mta');
+    if (vp && vp0 != null) vp.setAttribute('content', vp0);
     top.classList.remove('mfull-top');
     el.classList.add('mprev');
     el.style.transform = saved.transform;

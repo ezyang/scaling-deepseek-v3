@@ -23,7 +23,21 @@ const sheet = document.querySelector('dsv3-sheet');
 sheet.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 await T.tick();
 T.check('tap on widget body focuses it', document.body.classList.contains('mfocus') && sheet.style.transform === '', '');
+const meta = document.querySelector('meta[name="viewport"]');
+T.check('focus locks the viewport scale (no native re-fit / pinch)',
+  meta.getAttribute('content').includes('maximum-scale=1')
+  && getComputedStyle(document.body).touchAction === 'pan-x pan-y', meta.getAttribute('content'));
+// double-tap on a non-control spot: fit-width; again: back to 1x centered there
+sheet.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, clientX: 5, clientY: 5 }));
+await T.tick();
+T.check('double-tap zooms to fit-width', /^scale\(0\./.test(sheet.style.transform), sheet.style.transform);
+sheet.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, clientX: 5, clientY: 5 }));
+await T.tick();
+T.check('double-tap again returns to 1x', sheet.style.transform === '', sheet.style.transform);
 T.click('.mclose');
 await T.tick();
-T.check('closed clean', !document.body.classList.contains('mfocus') && sheet.classList.contains('mprev'), '');
+T.check('closed clean, viewport lock lifted',
+  !document.body.classList.contains('mfocus') && sheet.classList.contains('mprev')
+  && !meta.getAttribute('content').includes('maximum-scale')
+  && getComputedStyle(document.body).touchAction !== 'pan-x pan-y', meta.getAttribute('content'));
 T.done();

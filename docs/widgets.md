@@ -329,7 +329,15 @@ display-none'd, the widget drops its transform, and the PAGE scrolls it at
 natural width — native two-axis pan, pinch zoom, full-size hit targets, a
 fixed `.mclose` pill (Escape also closes). A tap on the preview itself opens
 ZOOMED TO THE TAPPED SPOT (photo-viewer style: the point maps through the
-preview scale and is centered); the explore button opens at the top. Widgets are never moved in the
+preview scale and is centered); the explore button opens at the top.
+Native pinch zoom is LOCKED while focus is open — it can't be reset
+programmatically on close, it strands the ✕ (fixed elements pin to the
+layout viewport), and emulators re-fit the page scale when the document
+turns wide — via the viewport-meta lock (Android/emulation) plus
+`touch-action: pan-x pan-y` on html/body (iOS ignores user-scalable=no).
+Instead, DOUBLE-TAP toggles 1× ↔ fit-width centered on the tap (taps on
+controls exempt), and the ✕ glues itself to the visual viewport at constant
+size if a browser zooms anyway. Both locks lift on close. Widgets are never moved in the
 DOM: `connectedCallback` does not tolerate a re-mount.
 
 Margin notes become real end-of-post footnotes (`.mnotes` before the series

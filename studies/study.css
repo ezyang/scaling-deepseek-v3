@@ -88,7 +88,11 @@ dsv3-layer, dsv3-trace, dsv3-anatomy, dsv3-beat-deck, dsv3-pp-schedule, dsv3-pp-
 body.mfocus main > :not(.mfull-top) { display: none !important; }
 .mclose { position: fixed; top: 10px; right: 10px; z-index: 1000; font: 18px/1 system-ui;
   padding: 10px 13px; border: 1px solid #c3c2b7; border-radius: 999px; background: #fff;
-  box-shadow: 0 1px 6px rgba(11, 11, 11, 0.15); cursor: pointer; }
+  box-shadow: 0 1px 6px rgba(11, 11, 11, 0.15); cursor: pointer;
+  transform-origin: 100% 0; }   /* visualViewport glue scales it from its own corner */
+/* focus mode: block native pinch zoom (it can't be programmatically undone
+   on close, and it strands the ✕ off-screen); double-tap zooms instead */
+html.mta, html.mta body { touch-action: pan-x pan-y; }
 .mn-ref.live::after { content: none; }
 .mn-ref.live a { color: #b05f00; font-weight: 600; text-decoration: none; }
 .mnotes li { font-size: 13.5px; color: #52514e; margin: 6px 0; }
