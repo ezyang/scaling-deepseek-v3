@@ -137,14 +137,42 @@ const GUTC = { eq: null, add: [46, 160, 67], del: [218, 54, 51], chg: [212, 153,
 function alignPair(A, B) {
   const W2 = Math.max(A.w, B.w);
   const bg = [A.data[0], A.data[1], A.data[2]];
-  const rowHash = (img, y) => {
-    let h = 0x811c9dc5;
-    const off = y * img.w * 4, end = off + img.w * 4;
-    for (let i = off; i < end; i++) { h ^= img.data[i]; h = Math.imul(h, 0x01000193); }
-    return h >>> 0;
+  // per-row hashes: one FULL hash (exact anchors) + K horizontal SLICE
+  // hashes (fuzzy pairing: a row whose formula column changed still matches
+  // on its label/value slices, so it pairs with its counterpart instead of
+  // dissolving into the inserted-rows blob)
+  const K = 8, THRESH = 6;
+  const hashes = (img) => {
+    const full = new Uint32Array(img.h), sl = new Uint32Array(img.h * K);
+    for (let y = 0; y < img.h; y++) {
+      let h = 0x811c9dc5;
+      const off = y * img.w * 4;
+      for (let k = 0; k < K; k++) {
+        const x0 = Math.floor(W2 * k / K), x1 = Math.floor(W2 * (k + 1) / K);
+        let hk = 0x811c9dc5;
+        for (let x = x0; x < x1; x++) {
+          // pad beyond the image's own width with the background pixel
+          const o = off + Math.min(x, img.w - 1) * 4;
+          const inW = x < img.w;
+          for (let c = 0; c < 4; c++) {
+            const v = inW ? img.data[o + c] : (c < 3 ? bg[c] : 255);
+            hk ^= v; hk = Math.imul(hk, 0x01000193);
+            h ^= v; h = Math.imul(h, 0x01000193);
+          }
+        }
+        sl[y * K + k] = hk >>> 0;
+      }
+      full[y] = h >>> 0;
+    }
+    return { full, sl };
   };
-  const hashes = (img) => Array.from({ length: img.h }, (_, y) => rowHash(img, y));
-  const ha = hashes(A), hb = hashes(B);
+  const HA = hashes(A), HB = hashes(B);
+  const ha = HA.full, hb = HB.full;
+  const sim = (ya, yb) => {
+    let m = 0;
+    for (let k = 0; k < K; k++) if (HA.sl[ya * K + k] === HB.sl[yb * K + k]) m++;
+    return m;
+  };
   const count = (arr) => { const m = new Map(); for (const h of arr) m.set(h, (m.get(h) ?? 0) + 1); return m; };
   const ca = count(ha), cb = count(hb);
   const posB = new Map();
@@ -164,15 +192,51 @@ function alignPair(A, B) {
   // walk anchors; between them, trim hash-equal prefix/suffix, pair the rest
   const rows = [];   // { a: y|null, b: y|null, g: 'eq'|'add'|'del'|'chg' }
   let pa = 0, pb = 0;
+  // within a changed segment: pair rows by slice similarity (small
+  // Needleman–Wunsch; free gaps, reward = slices matched beyond THRESH) —
+  // a partially-changed row aligns 1:1 with its counterpart and the diff
+  // mask marks only the slice that really changed
+  const fuzzy = (a0, a1, b0, b1) => {
+    const na = a1 - a0, nb = b1 - b0;
+    if (!na || !nb || na * nb > 6e6) {   // one-sided or too big: plain bands
+      const n = Math.max(na, nb);
+      for (let i = 0; i < n; i++) rows.push({
+        a: i < na ? a0 + i : null, b: i < nb ? b0 + i : null,
+        g: na && nb ? 'chg' : nb ? 'add' : 'del',
+      });
+      return;
+    }
+    const Wd = nb + 1;
+    const dp = new Float64Array((na + 1) * Wd);
+    const mv = new Uint8Array((na + 1) * Wd);   // 1 diag · 2 up (del) · 3 left (add)
+    for (let i = 0; i <= na; i++) {
+      for (let j = 0; j <= nb; j++) {
+        if (!i && !j) continue;
+        const o = i * Wd + j;
+        let best = -Infinity, m = 0;
+        if (i && j) {
+          const sm = sim(a0 + i - 1, b0 + j - 1);
+          if (sm >= THRESH) { best = dp[o - Wd - 1] + (sm - THRESH + 1); m = 1; }
+        }
+        if (i && dp[o - Wd] >= best) { best = dp[o - Wd]; m = 2; }
+        if (j && dp[o - 1] > best) { best = dp[o - 1]; m = 3; }
+        dp[o] = best; mv[o] = m;
+      }
+    }
+    const rev = [];
+    for (let i = na, j = nb; i || j;) {
+      const m = mv[i * Wd + j];
+      if (m === 1) { i--; j--; rev.push({ a: a0 + i, b: b0 + j, g: ha[a0 + i] === hb[b0 + j] ? 'eq' : 'chg' }); }
+      else if (m === 2) { i--; rev.push({ a: a0 + i, b: null, g: 'del' }); }
+      else { j--; rev.push({ a: null, b: b0 + j, g: 'add' }); }
+    }
+    rows.push(...rev.reverse());
+  };
   const seg = (aEnd, bEnd) => {
     while (pa < aEnd && pb < bEnd && ha[pa] === hb[pb]) rows.push({ a: pa++, b: pb++, g: 'eq' });
     let sa = aEnd, sb = bEnd;
     while (sa > pa && sb > pb && ha[sa - 1] === hb[sb - 1]) { sa--; sb--; }
-    const na = sa - pa, nb = sb - pb, n = Math.max(na, nb);
-    for (let i = 0; i < n; i++) rows.push({
-      a: i < na ? pa + i : null, b: i < nb ? pb + i : null,
-      g: na && nb ? 'chg' : nb ? 'add' : 'del',
-    });
+    fuzzy(pa, sa, pb, sb);
     for (let y = sa; y < aEnd; y++) rows.push({ a: y, b: pb + (y - sa) + (sb - pb), g: 'eq' });
     pa = aEnd; pb = bEnd;
   };
