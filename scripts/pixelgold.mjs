@@ -124,6 +124,102 @@ results.sort((a, b) => a.name.localeCompare(b.name));
 const bad = results.filter((r) => r.verdict !== 'match');
 for (const r of results) console.log(`${r.verdict === 'match' ? 'PASS' : update ? 'BASE' : 'FAIL'}  ${r.name}  (${r.img.w}x${r.img.h}${r.verdict === 'match' ? '' : ' — ' + r.verdict})`);
 
+
+// ---- aligned A/B composition -----------------------------------------------
+// Document screenshots REFLOW: one inserted row shifts everything below it,
+// so a naive flip is unreadable past the first insertion. The fix is a text
+// diff on pixels: hash each scanline, anchor on hashes UNIQUE in both images
+// (patience-style, LIS for monotonic order), then compose both images at a
+// COMMON height — gaps padded with tinted spacers so matched content sits at
+// the same y in both panes. Gutter: green added · red removed · amber changed.
+const GUTW = 8;
+const GUTC = { eq: null, add: [46, 160, 67], del: [218, 54, 51], chg: [212, 153, 0] };
+function alignPair(A, B) {
+  const W2 = Math.max(A.w, B.w);
+  const bg = [A.data[0], A.data[1], A.data[2]];
+  const rowHash = (img, y) => {
+    let h = 0x811c9dc5;
+    const off = y * img.w * 4, end = off + img.w * 4;
+    for (let i = off; i < end; i++) { h ^= img.data[i]; h = Math.imul(h, 0x01000193); }
+    return h >>> 0;
+  };
+  const hashes = (img) => Array.from({ length: img.h }, (_, y) => rowHash(img, y));
+  const ha = hashes(A), hb = hashes(B);
+  const count = (arr) => { const m = new Map(); for (const h of arr) m.set(h, (m.get(h) ?? 0) + 1); return m; };
+  const ca = count(ha), cb = count(hb);
+  const posB = new Map();
+  hb.forEach((h, i) => { if (cb.get(h) === 1) posB.set(h, i); });
+  const cand = [];
+  ha.forEach((h, i) => { if (ca.get(h) === 1 && posB.has(h)) cand.push([i, posB.get(h)]); });
+  // LIS by b (cand is increasing in a) — O(n log n) tails
+  const tails = [], back = new Array(cand.length), tidx = [];
+  cand.forEach(([, b], i) => {
+    let lo = 0, hi = tails.length;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (tails[mid] < b) lo = mid + 1; else hi = mid; }
+    tails[lo] = b; tidx[lo] = i; back[i] = lo > 0 ? tidx[lo - 1] : -1;
+  });
+  const anchors = [];
+  for (let i = tidx[tails.length - 1]; i != null && i >= 0; i = back[i]) anchors.unshift(cand[i]);
+  if (anchors.length < 2) return null;   // nothing to anchor on — fall back to raw
+  // walk anchors; between them, trim hash-equal prefix/suffix, pair the rest
+  const rows = [];   // { a: y|null, b: y|null, g: 'eq'|'add'|'del'|'chg' }
+  let pa = 0, pb = 0;
+  const seg = (aEnd, bEnd) => {
+    while (pa < aEnd && pb < bEnd && ha[pa] === hb[pb]) rows.push({ a: pa++, b: pb++, g: 'eq' });
+    let sa = aEnd, sb = bEnd;
+    while (sa > pa && sb > pb && ha[sa - 1] === hb[sb - 1]) { sa--; sb--; }
+    const na = sa - pa, nb = sb - pb, n = Math.max(na, nb);
+    for (let i = 0; i < n; i++) rows.push({
+      a: i < na ? pa + i : null, b: i < nb ? pb + i : null,
+      g: na && nb ? 'chg' : nb ? 'add' : 'del',
+    });
+    for (let y = sa; y < aEnd; y++) rows.push({ a: y, b: pb + (y - sa) + (sb - pb), g: 'eq' });
+    pa = aEnd; pb = bEnd;
+  };
+  for (const [ai, bi] of anchors) {
+    if (ai > pa || bi > pb) seg(ai, bi);
+    else { pa = Math.max(pa, ai); pb = Math.max(pb, bi); }
+    if (ai >= pa && bi >= pb) { rows.push({ a: ai, b: bi, g: 'eq' }); pa = ai + 1; pb = bi + 1; }
+  }
+  seg(A.h, B.h);
+  // render both composites (gutter + padded rows); spacer = bg tinted 12%
+  const H2 = rows.length, OW = GUTW + W2;
+  const mk = () => Buffer.alloc(OW * H2 * 4);
+  const outA = mk(), outB = mk();
+  const put = (out, x, y, r, g2, b2) => { const o = (y * OW + x) * 4; out[o] = r; out[o + 1] = g2; out[o + 2] = b2; out[o + 3] = 255; };
+  rows.forEach((r, y) => {
+    const gc = GUTC[r.g];
+    for (const [out, src, sy] of [[outA, A, r.a], [outB, B, r.b]]) {
+      const tint = sy == null && gc;
+      for (let x = 0; x < GUTW; x++) {
+        const c = gc ?? bg;
+        put(out, x, y, c[0], c[1], c[2]);
+      }
+      for (let x = 0; x < W2; x++) {
+        if (sy != null && x < src.w) {
+          const o = (sy * src.w + x) * 4;
+          put(out, GUTW + x, y, src.data[o], src.data[o + 1], src.data[o + 2]);
+        } else if (tint) put(out, GUTW + x, y, (bg[0] * 7 + gc[0]) >> 3, (bg[1] * 7 + gc[1]) >> 3, (bg[2] * 7 + gc[2]) >> 3);
+        else put(out, GUTW + x, y, bg[0], bg[1], bg[2]);
+      }
+    }
+  });
+  // sparse diff mask on the ALIGNED pair (content columns only)
+  const d = Buffer.alloc(OW * H2 * 4);
+  let ndiff = 0;
+  rows.forEach((r, y) => {
+    if (r.a == null || r.b == null) return;
+    for (let x = 0; x < W2; x++) {
+      const oa = (r.a * A.w + x) * 4, ob = (r.b * B.w + x) * 4;
+      const da = x < A.w ? A.data.readUInt32BE(oa) : 0, db = x < B.w ? B.data.readUInt32BE(ob) : 0;
+      if (da !== db) { ndiff++; const o = (y * OW + GUTW + x) * 4; d[o] = 255; d[o + 3] = 255; }
+    }
+  });
+  const added = rows.filter((r) => r.a == null).length, removed = rows.filter((r) => r.b == null).length;
+  return { a: { w: OW, h: H2, data: outA }, b: { w: OW, h: H2, data: outB },
+    diff: { w: OW, h: H2, data: d }, added, removed, ndiff };
+}
+
 if (bad.length) {   // the A/B viewer: written before any --update overwrites the baseline
   const b64 = (i) => 'data:image/png;base64,' + encode(i.w, i.h, i.data).toString('base64');
   const html = `<!DOCTYPE html><meta charset="utf-8"><title>pixelgold A/B</title>
@@ -134,11 +230,21 @@ if (bad.length) {   // the A/B viewer: written before any --update overwrites th
 body.flip .ab img.B{display:block}body.diff .ab img.D{display:block}
 .ab::after{content:'golden';position:absolute;right:4px;top:4px;background:#0008;color:#fff;padding:1px 7px;border-radius:4px;font-size:12px}
 body.flip .ab::after{content:'NEW';background:#c40}</style>
-<div class="hint"><b>hold mouse / space</b> = flip golden ↔ new · <b>d</b> = red diff mask</div>` +
-    bad.map((r) => `<h2>${r.name} — ${r.verdict}</h2><div class="ab"><img src="${r.gold ? b64(r.gold) : b64(r.img)}"><img class="B" src="${b64(r.img)}">${r.diffImg ? `<img class="D" src="${b64(r.diffImg)}">` : ''}</div>`).join('\n') +
-    `<script>addEventListener('keydown',e=>{if(e.key==='d')document.body.classList.toggle('diff');if(e.key===' '){document.body.classList.toggle('flip');e.preventDefault()}});
-addEventListener('mousedown',()=>document.body.classList.add('flip'));
-addEventListener('mouseup',()=>document.body.classList.remove('flip'));</script>`;
+<div class="hint"><b>space / n</b> = LOCK on new (scroll &amp; eyeball) · <b>hold mouse</b> = momentary flip · <b>d</b> = red diff mask · gutter: <span style="color:#2ea043">■ added</span> <span style="color:#da3633">■ removed</span> <span style="color:#d49900">■ changed</span> (panes are row-aligned: spacer bands hold reflowed content in place)</div>` +
+    bad.map((r) => {
+      // reflow-aware panes: align on unique scanlines so the flip stays
+      // locked below insertions; fall back to the raw pair when unanchorable
+      const al = r.gold && r.img && r.gold !== r.img ? alignPair(r.gold, r.img) : null;
+      const [pa, pb, pd] = al ? [al.a, al.b, al.diff] : [r.gold ?? r.img, r.img, r.diffImg];
+      const note = al ? ` · aligned: +${al.added} / −${al.removed} rows, ${al.ndiff} px differ` : '';
+      return `<h2>${r.name} — ${r.verdict}${note}</h2><div class="ab"><img src="${b64(pa)}"><img class="B" src="${b64(pb)}">${pd ? `<img class="D" src="${b64(pd)}">` : ''}</div>`;
+    }).join('\n') +
+    `<script>let lock=false,hold=false;
+const sync=()=>document.body.classList.toggle('flip',lock!==hold);
+addEventListener('keydown',(e)=>{if(e.key==='d')document.body.classList.toggle('diff');
+if(e.key===' '||e.key==='n'){lock=!lock;sync();e.preventDefault()}});
+addEventListener('mousedown',()=>{hold=true;sync()});
+addEventListener('mouseup',()=>{hold=false;sync()});</script>`;
   writeFileSync('/tmp/pixelgold-report.html', html);
   console.log(`\nA/B viewer: open /tmp/pixelgold-report.html`);
 }
