@@ -5,7 +5,7 @@
 // goldens) import it directly; the renderers in viewer.js build on it.
 import { DSV3 } from './model.js';
 import { PARAMS } from './params.js';
-import { resolveMatmuls } from './recipes.js';
+import { resolveMatmuls, MATMULS } from './recipes.js';
 import { blockGraph, analyze, RECOMPUTE_PRESETS } from './blockgraph.js';
 
 // byte components of the per-op strips (optim / consolidated variants), in the
@@ -136,4 +136,20 @@ export const peakStage = (pp, ep, zero, world = LOCAL_PAR.world, sched = '1f1b',
     if (v > bestV) { bestV = v; best = s2; }
   }
   return best;
+};
+
+// Daniel Haziza's roofline config (the analysis the essay credits) as a
+// one-click cross-check preset for the full model: dsv3-style fp8 GEMMs
+// with a BF16 attn-out stash (no E5M6), e4m3+ᵀ-RESIDENT params, and his
+// exact stash policy — FFN outputs + attn out + norm2 kept; the latents,
+// x1 and the router state replayed.
+// canonical state signatures (recipe recognition + the Haziza button)
+export const mmSig = (m) => MATMULS.map((x) => m[x.id]).concat(m.swiglu_in ?? 'bf16').join(',');
+export const markSig = (m) => Object.keys(m).filter((k) => m[k] === true).sort().join(',');
+export const HAZIZA_CFG = {
+  matmuls: { qkv_down: 'e4m3', q_up: 'e4m3', kv_up: 'e4m3', attn: 'bf16', o_proj: 'bf16',
+    router: 'fp32', ffn_gate_up: 'e4m3', ffn_down: 'e4m3', lm_head: 'bf16', swiglu_in: 'e4m3' },
+  marks: { gate_up: true, ffn_down: true, combine: true, moe_add: true, attn: true, norm2: true, dispatch: true },
+  transposed: false, fp8Params: true,
+  ep: 64, pp: 8, zero: 1, world: 2048, stage: 1, sched: '1f1b',
 };

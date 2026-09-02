@@ -18,8 +18,7 @@ import { memoryUsage } from '../src/memory.js';
 import { resolveMatmuls, RECIPES } from '../src/recipes.js';
 import { blockGraph, analyze, RECOMPUTE_PRESETS, DTYPE_BYTES } from '../src/blockgraph.js';
 import { defaultConfig } from '../src/sim.js';
-import { ppStage, actBucketsOf, ACT_BUCKETS } from '../src/localmodel.js';
-import { buildCells } from '../src/cells.js';
+import { buildCells, cellsEnv } from '../src/cells.js';
 
 const FILE = fileURLToPath(new URL('../tests/goldens.json', import.meta.url));
 const G = {};
@@ -71,20 +70,13 @@ for (const [name, cfg] of [
 }
 
 // the cell graph at story configs (assembly identity is sanity's job; these
-// pin the assembled headline numbers for configs 02's narrative stands on)
-const moeExp = PARAMS.expert * DSV3.routedExperts;
+// pin the assembled headline numbers for configs 02's narrative stands on).
+// cellsEnv IS the production assembly — the same code the widget and sheet run.
 const envFor = ({ pp, ep, zero, stage, fp8p = false, recipe, policy }) => {
   const mm = resolveMatmuls({ recipe });
   const [anaM, anaD, fM, fD] = [['moe', policy], ['dense', policy], ['moe', 'none'], ['dense', 'none']]
     .map(([k, p]) => analyze(blockGraph(k, DSV3, mm, 4096), RECOMPUTE_PRESETS[p], false));
-  return {
-    world: 2048, pp, ep, zero, sched: '1f1b', fp8p,
-    g: ppStage(Math.min(stage, pp - 1), pp, pp > 1 ? 2 : 1, 'reflect'),
-    aM: anaM.savedBytes, aD: anaD.savedBytes,
-    bM: actBucketsOf(anaM), bD: actBucketsOf(anaD), bMF: actBucketsOf(fM), bDF: actBucketsOf(fD),
-    bLabels: ACT_BUCKETS.map((b) => b.label),
-    N: { restLayer: PARAMS.moeBlock - moeExp, denseLayer: PARAMS.denseBlock },
-  };
+  return cellsEnv({ pp, ep, zero, stage, fp8p, vpp: pp > 1 ? 2 : 1, fold: 'reflect' }, anaM, anaD, fM, fD);
 };
 const EP = { pp: 8, ep: 64, zero: 1, stage: 1, recipe: 'dsv3-fp8', policy: 'dsv3' };
 G.cells = {};

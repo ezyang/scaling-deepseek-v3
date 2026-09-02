@@ -22,6 +22,10 @@
 // ---- the mini formula language: numbers, cell ids, + - × / ( ) and ≥ ------
 // (≥ evaluates to 0/1 — indicator arithmetic keeps piecewise rules, like the
 // ZeRO shard groups, expressible without the formula changing shape)
+import { ACT_BUCKETS, actBucketsOf, ppStage, LOCAL_PAR } from './localmodel.js';
+import { PARAMS } from './params.js';
+import { DSV3 } from './model.js';
+
 const AST = new Map();   // expr string → parsed tree (exprs are static per state)
 function parse(src) {
   if (AST.has(src)) return AST.get(src);
@@ -275,3 +279,130 @@ export function buildCells(env) {
   for (const d of defs) { get(d.id); d.refs = d.expr ? refsOf(d.expr) : []; }
   return { cells: defs, byId, get };
 }
+
+// per-bucket rate DECOMPOSITIONS: instead of an opaque literal
+// (59136), the formula shows where the bytes come from — per saved
+// tensor, dims × B• where B• is the bucket's PRECISION INPUT cell
+// (B/elem: 2 bf16 · 1.03125 e4m3+scales · 1.5 e5m6 · 4 fp32; a ᵀ
+// dual stash FOLDS into the value — both orientations counted — so
+// toggling ᵀ or the recipe changes the input, never the formula),
+// + the fp32 aux artifacts (lse/rstd) as literals. Built from the
+// SAVE-EVERYTHING analyses (the R• factorization multiplies full
+// rates) and VALIDATED per kind: if a string does not evaluate back
+// to the exact rate, the literal stands. A bucket whose saved
+// tensors MIX effective precisions gets no B cell (none do today).
+// BREAKOUT buckets — the ones a preset can keep only partially — get
+// per-TENSOR sub-cells instead, so every row stays a whole 0/1 choice:
+// residual (x0 pinned under full while x1 replays), norm outs (attn-
+// replay keeps norm2 as the anchor while norm1 replays), mla latents
+// (dsv3 keeps the latents but replays their norms — and it MIXES
+// precisions, so precision inputs go per tensor there), and the
+// remainder catch-all (its member set comes from the save-everything
+// analysis, so it is policy-stable).
+const BREAKOUT = new Set([0, 1, 2, 4, ACT_BUCKETS.length - 1]);
+const NAMED = new Set(ACT_BUCKETS.flatMap((b) => b.ids));
+const rateExprs = (AM, AD, curM, curD, bFM, bFD) => ACT_BUCKETS.map((b, k) => {
+  // the catch-all's members: everything the save-everything analysis
+  // stashes outside the named buckets (a policy-independent set)
+  const ids = b.ids.length ? b.ids
+    : [...new Set([...Object.keys(AM.savedById ?? {}), ...Object.keys(AD.savedById ?? {})])]
+      .filter((id) => !NAMED.has(id));
+  if (!ids.length && !BREAKOUT.has(k)) return null;
+  let prec = null, mixed = false;
+  // one tensor's rate expression for one layer KIND (dims × B• + aux);
+  // bref names the precision input the terms reference
+  const tExpr = (A, id, bref, withAux = false) => {
+    const n2 = A.byId[id];
+    if (!n2) return null;                       // the dense graph lacks router/dispatch
+    const terms = [];
+    if (A.neededSaved.has(id)) {
+      const bpe = n2.outBytes / n2.elems * (A.dual.has(id) ? 2 : 1);   // ᵀ dual folds into the input
+      if (prec == null) prec = bpe;
+      else if (prec !== bpe) mixed = true;
+      let dims = String(n2.elems);
+      try { if (n2.tdims && evalExpr(n2.tdims, () => NaN) === n2.elems) dims = n2.tdims; } catch { /* keep the literal */ }
+      if (dims.includes('+')) dims = `(${dims})`;   // multi-term tdims must bind before × B•
+      terms.push(`${dims} × ${bref}`);
+    }
+    if (withAux && n2.aux && !A.replayed.has(id)) terms.push(String(n2.aux.bytes));
+    return terms.length ? terms.join(' + ') : null;
+  };
+  const val = (e2, bref, p2) => {
+    const get = (id2) => { if (id2 !== bref) throw new Error(id2); return p2; };
+    try { return e2 == null ? 0 : evalExpr(e2, get); } catch { return NaN; }
+  };
+  if (BREAKOUT.has(k)) {
+    // per-tensor precision inputs (B2a…): a breakout bucket may mix
+    // formats (mla latents: bf16 latents + e4m3-rate norm outs). An
+    // aux artifact (lse, rstd) SPLITS OUT as its own row — it is a
+    // different quantity than the tensor it rides (and the simplify
+    // view drops exactly these rows).
+    let li = 0;
+    const tensors = ids.flatMap((id) => {
+      const nM = AM.byId[id], nD = AD.byId[id], n2 = nM ?? nD;
+      if (!n2) return [];
+      const bref = `B${k + 2}${'abcdefgh'[li]}`;
+      prec = null; mixed = false;
+      const tM = tExpr(AM, id, bref), tD = tExpr(AD, id, bref);
+      const auxOf = (A, n3) => n3?.aux && !A.replayed.has(id) ? n3.aux.bytes : 0;
+      // core bytes = the stash minus its aux (the aux gets its own row)
+      const fMv = (AM.savedById?.[id] ?? 0) - auxOf(AM, nM), fDv = (AD.savedById?.[id] ?? 0) - auxOf(AD, nD);
+      const cMv = (curM.savedById?.[id] ?? 0) - auxOf(curM, curM.byId[id]), cDv = (curD.savedById?.[id] ?? 0) - auxOf(curD, curD.byId[id]);
+      const whole = (cMv === fMv && cDv === fDv) || (cMv === 0 && cDv === 0);
+      const out = [{ id, bref, prec: mixed ? null : prec, dtc: n2.dtc ?? null,
+        label: n2.tensor?.replace(' (checkpoint anchor)', '') ?? id,
+        tM, tD, fMv, fDv, cMv, cDv, whole, r: cMv === fMv && cDv === fDv ? 1 : 0 }];
+      li++;
+      if (n2.aux) {
+        out.push({ aux: true, id: `${id}:aux`, label: `${n2.aux.name} (fp32) · ${out[0].label}`,
+          fMv: nM?.aux?.bytes ?? 0, fDv: nD?.aux?.bytes ?? 0,
+          whole: true, r: curM.replayed.has(id) || curD.replayed.has(id) ? 0 : 1 });
+        li++;
+      }
+      return out;
+    });
+    // validation, per core tensor per kind — a miss drops the breakout
+    for (const t of tensors) {
+      if (t.aux) continue;
+      const strip = (e2) => e2;   // tExpr excludes aux below — nothing to strip
+      if (t.prec == null || val(strip(t.tM), t.bref, t.prec) !== t.fMv || val(strip(t.tD), t.bref, t.prec) !== t.fDv) return null;
+    }
+    // an EMPTY remainder is a valid breakout: the parent reads 0 (+ D3)
+    return { tensors };
+  }
+  // NON-breakout buckets: one whole-bucket expression over a shared B•
+  const bref = `B${k + 2}`;
+  const kindExpr = (A) => {
+    const terms = ids.map((id) => tExpr(A, id, bref, true)).filter(Boolean);
+    return terms.length ? terms.join(' + ') : null;
+  };
+  const eM = kindExpr(AM), eD = kindExpr(AD);
+  if (mixed || prec == null) return null;
+  if (val(eM, bref, prec) !== bFM[k] || val(eD, bref, prec) !== bFD[k]) return null;
+  return { eM, eD, prec, dtc: (AM.byId[ids[0]] ?? AD.byId[ids[0]])?.dtc ?? null };
+});
+// the CELL GRAPH (src/cells.js): every chart number is a cell — a
+// value computed by evaluating the same formula string the tooltips
+// and the spreadsheet display, so the numbers and their shown
+// derivations cannot diverge (scripts/sanity.mjs replays the shard
+// math independently and asserts === across a config matrix).
+// assemble the FULL cell env from plain state S {world?, pp, ep, zero?,
+// sched?, fp8p?, stage, vpp?, fold?} + the four analyses (current policy
+// and save-everything, per kind). This is the production assembly the
+// widget, the sheet, and the goldens all share.
+export const cellsEnv = (S, anaM, anaD, anaMF, anaDF) => ({
+  world: S.world ?? LOCAL_PAR.world, pp: S.pp, ep: S.ep, zero: S.zero ?? 1,
+  sched: S.sched ?? '1f1b', fp8p: !!S.fp8p,
+  g: ppStage(Math.min(S.stage, S.pp - 1), S.pp, S.vpp, S.fold),
+  aM: anaM.savedBytes, aD: anaD.savedBytes,
+  bM: actBucketsOf(anaM), bD: actBucketsOf(anaD), bLabels: ACT_BUCKETS.map((b) => b.label),
+  bIds: ACT_BUCKETS.map((b) => b.ids[0] ?? null),
+  gateSplit: { i: ACT_BUCKETS.findIndex((b) => b.ids[0] === 'gate_up'),
+    routed: `${DSV3.topk}×2×${DSV3.moeInter}`, shared: `2×${DSV3.moeInter}`, dense: `2×${DSV3.denseInter}` },
+  bMF: actBucketsOf(anaMF ?? anaM), bDF: actBucketsOf(anaDF ?? anaD),
+  bRate: anaMF && anaDF
+    ? rateExprs(anaMF, anaDF, anaM, anaD, actBucketsOf(anaMF), actBucketsOf(anaDF))
+    : null,
+  N: { restLayer: PARAMS.moeBlock - moeExp, denseLayer: PARAMS.denseBlock },
+});
+const moeExp = PARAMS.expert * DSV3.routedExperts;
