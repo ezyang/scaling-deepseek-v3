@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>scratch: Blackwell widgets for 03</title>
+  <link rel="stylesheet" href="./study.css">
+</head>
+
+<body>
+  <main>
+    <h1>scratch: Blackwell widgets for 03</h1>
+    <p class="note">Exercises the Megatron-family machinery: interleaved 1F1B
+      with VP, layout strings, GB200/GB300 capacity. Not part of the series.</p>
+
+    <h2>snapshot: GB300 anchor</h2>
+    <dsv3-layer style="min-height:385px" snapshot parts
+      from='{"world":256,"pp":2,"vpp":8,"ep":32,"zero":1,"sched":"interleaved","hw":"gb300"}'
+      local cumulative lens="param-bytes" recipe="nv-mxfp8" recompute="none" controls="static" detail
+      facs="2,2:PP,32:EP,256:GPUs" nocaption></dsv3-layer>
+
+    <h2>fold: Megatron layout, PP2 × VP8</h2>
+    <dsv3-pp-fold pp="2" vpp="8" layout="Et*3|(t*4|)*14t*2mL" ep="32"></dsv3-pp-fold>
+
+    <h2>fold: Megatron-LM GB200 guide, PP8 × VP4</h2>
+    <dsv3-pp-fold pp="8" vpp="4" layout="Et|(tt|)*30L" ep="32"></dsv3-pp-fold>
+
+    <h2>strip: standalone interleaved, PP4 × VP4</h2>
+    <dsv3-pp-schedule pp="4" vpp="4" fold="wrap" sched="interleaved" mb="auto" stage="0"></dsv3-pp-schedule>
+
+    <h2>sandbox</h2>
+    <dsv3-anatomy lens="param-bytes" local cumulative recipe="nv-mxfp8" recipes="bf16,nv-mxfp8" recompute="none"
+      layer="local-diagram" detail controls="static" nocaption
+      world="256" pp="2" vpp="8" ep="32" sched="interleaved" hw="gb300" hws="gb200,gb300" facs="2,2:PP,32:EP,256:GPUs"></dsv3-anatomy>
+
+    <dsv3-pp-schedule layer="local-diagram" mb="auto"></dsv3-pp-schedule>
+
+    <dsv3-sheet layer="local-diagram"></dsv3-sheet>
+
+  </main>
+  <script type="module">
+    import '../src/viewer.js';
+    import '../src/anatomy.js';
+  </script>
+</body>
+
+</html>

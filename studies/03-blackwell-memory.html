@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script data-theme>document.documentElement.classList.toggle('dark', (localStorage.getItem('dsv3-theme') ?? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')) === 'dark');</script>
+  <title>Memory: a Blackwell case study</title>
+  <meta name="description" content="The same model on 3.5× the memory. We redo the Hopper accounting for NVIDIA's published GB300 and GB200 configurations: Megatron's interleaved pipeline schedule, its recompute knobs and MXFP8 recipe, and what memory still forces.">
+  <meta property="og:title" content="Memory: a Blackwell case study">
+  <meta property="og:description" content="The same model on 3.5× the memory. We redo the Hopper accounting for NVIDIA's published GB300 and GB200 configurations: Megatron's interleaved pipeline schedule, its recompute knobs and MXFP8 recipe, and what memory still forces.">
+  <meta property="og:type" content="article">
+  <meta property="og:image" content="https://deepseek-v3.ezyang.com/assets/og-03.png">
+  <meta property="og:image:width" content="2400">
+  <meta property="og:image:height" content="1260">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="stylesheet" href="./study.css?v=9abf5fa0">
+</head>
+
+<body>
+  <main>
+    <h1>Memory: a Blackwell case study</h1>
+    <p class="sub">The same model on 3.5× the memory.<span class="mn-ref"></span><span class="mn">PyTorch reports
+    276.6 GiB of device memory on a GB300 and 184.0 GiB on a GB200 (the spec sheets
+    say "288 GB" and "186 GB").  As in the Hopper post we round down to a yardstick, 276
+    and 184 GiB, since a roofline needs headroom for the intermediates it doesn't model.</span></p>
+
+    <p><em>AI disclosure: the text of this post was drafted by Fable from the
+    author's notes, the model, and a source check of Megatron-Bridge, Megatron-Core,
+    Transformer Engine and the MLPerf v6.0 submissions; it has not yet had its
+    human edit pass.  The figures are the same reviewed widgets as the previous
+    post, extended for Blackwell.</em></p>
+
+    <p>In <a href="./02-hopper-memory.html">the previous post</a> we squeezed
+    DeepSeek-V3 onto 80 GiB with PP8 under DualPipeV, EP64, ZeRO-1, the paper's
+    recompute policy and FP8 stashes, and were left with 18 GiB to spare.
+    Blackwell multiplies the budget by two to three and a half, and NVIDIA
+    publishes the configurations it trains DeepSeek-V3 with on that hardware.
+    This post redoes the accounting for those configurations.  It is shorter
+    than the Hopper post because the levers are the same; what changes is which
+    of them you get to put down.  Blackwell also comes with a different training
+    stack, Megatron rather than DeepSeek's in-house one, so along the way we
+    meet Megatron's pipeline schedule, its recompute knobs, and its MXFP8 recipe.</p>
+
+    <h2>Which configuration?</h2>
+
+    <p>"NVIDIA's DeepSeek-V3 configuration" is several configurations, from
+    two different kinds of source, and it pays to keep them apart.</p>
+
+    <p><strong>The Megatron-Bridge performance archive.</strong> NVIDIA's
+    Megatron-Bridge repository publishes a <a
+    href="https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/docs/performance-summary-archive.md">performance
+    summary</a> with one DeepSeek-V3 row per system per container release.  These
+    are throughput benchmarks: forced-balanced routing, token-dropless, no
+    evaluation, no convergence target.  The 26.06 rows, all 256 GPUs, MXFP8,
+    sequence length 4096, micro-batch 1:</p>
+
+    <ul>
+      <li><strong>DGX-GB300</strong>: TP1 / PP2 / VP8 / EP32, global batch 4096 — 6,338 tokens/s/GPU (6,422 at global batch 15,360).</li>
+      <li><strong>DGX-GB200</strong>: TP1 / PP4 / VP4 / EP64 — 4,969 tokens/s/GPU.</li>
+      <li><strong>DGX-B300</strong> (eight-GPU NVLink domains, not NVL72): TP1 / PP8 / EP8, micro-batch 2 — 3,541 tokens/s/GPU.</li>
+    </ul>
+
+    <p><strong>MLPerf Training v6.0.</strong> MLCommons <a
+    href="https://mlcommons.org/2026/05/deepseek-v3-training-v6-0/">added DeepSeek-V3
+    pretraining</a> as a benchmark in 2026, and the June results include ten
+    closed-division submissions, all on Blackwell.  This is a different workload:
+    real routing on C4, global batch at least 15,360 sequences, MTP on, evaluation
+    after every step, and a validation-loss target.  NVIDIA's 256-GPU GB300
+    submission (result 6.0-0100, 33.4 minutes to train) runs TP1 / PP4 / VP4 / EP32
+    with no activation recompute; its GB200 submissions run TP2 / PP4 / VP4 / EP32
+    with the dense MLPs recomputed.<span class="mn-ref"></span><span class="mn">Configs
+    and logs: <a href="https://github.com/mlcommons/training_results_v6.0">mlcommons/training_results_v6.0</a>,
+    <code>NVIDIA/benchmarks/deepseekv3_671b/implementations/theia_ngpu256_ngc26.04_nemo/</code>.
+    The GB300 config's own header points back at the Megatron-Bridge workload configs
+    as its source.  From the logs, the 256-GPU GB300 run sustains about 6,245
+    tokens/s/GPU in steady state, in line with the archive's 26.06 row.</span></p>
+
+    <p><strong>The public GB200 guide.</strong> Megatron-LM's repository carries a
+    <a href="https://github.com/NVIDIA/Megatron-LM/blob/main/docs/discussions/deepseek-v3-gb200-optimization/deepseek-v3-gb200-reproduce-guide.md">reproduce
+    guide</a> for an older GB200 configuration: PP8 / EP32, a 32-chunk layout, and
+    two recompute modules.  It trains without MTP.</p>
+
+    <p>The two GB300 configurations share one recipe, which is what this post
+    models: MXFP8 on every GEMM including attention and the LM-head projection,
+    FP8 parameter gather, Megatron's distributed optimizer with fp32 master
+    weights and bf16 Adam moments, a bf16 gradient buffer, the pipeline layout
+    <code>Et*4|(t*4|)*14tmL</code>, no recompute, and the 1F1B all-to-all overlap
+    schedule.<span class="mn-ref"></span><span class="mn">Bridge v0.5.0
+    <code>DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX_V2</code> (the archive row) and
+    the MLPerf <code>config_GB300_64x4x240xtp1pp4ep32cp1</code>.  The recipe has
+    been stable from Bridge v0.5.0 through the current tree.</span>  We take the
+    archive's PP2 / VP8 row as the reference configuration, because it is the one
+    with the fewest levers pulled, and show the MLPerf PP4 / VP4 configuration
+    alongside it.</p>
+
+    <p>Here is the whole bill again, before any parallelism, at Megatron's
+    conventions.  Two things differ from the Hopper bill: the cluster is 256
+    GPUs rather than 2048, so every "÷ DP" is eight times weaker, and the
+    gradient buffer is bf16 rather than fp32 (Megatron's perf recipes set
+    <code>grad_reduce_in_fp32=False</code>; the fp32 copy of a rank's gradient
+    <em>shard</em> exists only inside the optimizer step, after the activations
+    are gone).</p>
+
+    <dsv3-layer style="min-height:385px" snapshot parts
+      from='{"world":256,"pp":1,"ep":1,"zero":0,"hw":"gb300","gradB":2}'
+      local cumulative lens="param-bytes" recipe="bf16" recompute="none" controls="static" detail
+      facs="2:PP,32:EP,256:GPUs" nocaption></dsv3-layer>
+
+    <h2>Pipeline parallelism, Megatron style</h2>
+
+    <p>Megatron does not use DualPipeV.  Its production schedule is
+    <em>interleaved 1F1B</em>: each pipeline rank owns not one contiguous
+    chunk of the model but VP of them ("virtual pipeline" stages), dealt out
+    round-robin, chunk <i>i</i> on rank <i>i</i> mod PP.  Where DualPipeV folds
+    the model into a V so that rank 0 holds both ends, interleaving wraps it
+    around the ranks like a spiral.  The reference configuration is PP2 with
+    VP8: two physical ranks, sixteen chunks.</p>
+
+    <p>Megatron describes the split with a small layout language: <code>E</code> is
+    the embedding, <code>t</code> a transformer layer, <code>m</code> the MTP layer,
+    <code>L</code> the loss (final norm and LM head), <code>|</code> ends a chunk, and
+    <code>*N</code> repeats.  <code>Et*4|(t*4|)*14tmL</code> is sixteen chunks: the
+    embedding plus four layers, fourteen chunks of four layers, and a last chunk of
+    one layer plus the MTP layer plus the loss.  Note that the MTP layer counts as
+    a chunk member: Megatron trains it, and it lands on the last rank.<span
+    class="mn-ref"></span><span class="mn">We continue not to model the MTP module,
+    and here that is a bigger omission than on Hopper.  On the last rank it adds a
+    full MoE transformer layer (parameters, gradients, optimizer shard and
+    activations like any other), a 103M-parameter projection, and a second copy of
+    the 926M-parameter embedding table.  The peak rank in this post is rank 0,
+    which holds none of it.</span>  Click "fold" to see the chunks land on the two
+    ranks:</p>
+
+    <dsv3-pp-fold style="min-height:453px" pp="2" vpp="8" layout="Et*4|(t*4|)*14tmL" ep="32"></dsv3-pp-fold>
+
+    <p>Rank 0 gets the embedding and 32 layers; rank 1 gets 29 layers, the MTP
+    layer and the head.  That is the easy half.  The interesting half is, again,
+    how many microbatches' activations each rank holds.  Interleaved 1F1B issues
+    forwards <em>chunk-major</em>: rank 0 runs chunk 0 for PP microbatches, then
+    its next chunk for the same PP microbatches, and so on down its VP chunks
+    before the first backward arrives.  Megatron's warmup on rank <i>r</i> is
+    2(PP − r − 1) + (VP − 1)·PP chunk-forwards, plus one more when the 1F1B
+    all-to-all overlap is on (it is, in every MXFP8 recipe here), and the steady
+    state issues one forward before each backward frees one.  So at the peak
+    rank <i>r</i> holds PP·VP + PP − 2r chunk-stashes: 18 on rank 0, 16 on
+    rank 1.  Select a rank below to see the lifetimes:</p>
+
+    <dsv3-pp-schedule style="min-height:364px" layer="local-diagram" mb="auto"></dsv3-pp-schedule>
+
+    <p>Divide by VP and that is 2.25 microbatches on rank 0 against DualPipeV's
+    uniform PP + ½; averaged over the ranks it is exactly PP.  Interleaving
+    does not add activation memory on average, it flattens plain 1F1B's PP − r
+    staircase toward uniform, adding (PP − 1)/VP on rank 0 and taking it from the
+    last rank.  (Its purpose is to shrink pipeline bubbles by a factor of VP; that
+    is the timing post's story.)  But the count hides where the stashes sit.  The
+    surplus above PP is not spread over a rank's chunks: it lands on the chunks the
+    schedule visited first, so at rank 0's peak its first chunk holds four
+    microbatches and the other seven hold two.  The spreadsheet at the bottom
+    charges each layer by the stashes held on <em>its</em> chunk at the moment the
+    rank's stash bytes peak, which for a rank whose last chunk is light (rank 1's
+    single layer plus MTP plus loss) is not the same moment as the count peak.</p>
+
+    <h2>Activation checkpointing</h2>
+
+    <p>Megatron exposes recompute as a list of modules,
+    <code>--recompute-granularity selective --recompute-modules …</code>, rather
+    than per-op marks.  Each module name is a fixed set of marks in the diagram's
+    terms, so the presets below are Megatron's names:</p>
+
+    <ul>
+      <li><code>moe_act</code>: drop the SwiGLU output and re-make it from the kept
+      gate/up output — the DeepSeek paper's trick, and the one lever NVIDIA's
+      GB300 <em>BF16</em> recipe pulls.</li>
+      <li><code>mla_up_proj</code>: drop the full q/k/v and re-make them from the
+      kept latents (the fused up-projections re-run their latent norms too) — the
+      GB200 recipes' lever.</li>
+      <li><code>layernorm</code>: drop both norm outputs; <code>core_attn</code>:
+      checkpoint the core attention; <code>moe</code>: checkpoint the entire MoE
+      layer, router to combine (not allowed together with the all-to-all
+      overlap).</li>
+      <li><code>mlp</code>: checkpoint the <em>dense</em> MLP — in this model, the
+      three dense layers and nothing else.  The MLPerf GB200 submissions and the
+      public guide use it; it is a rounding error on a 61-layer MoE model, so it
+      is not a preset here.</li>
+    </ul>
+
+    <p>The GB300 MXFP8 recipes recompute nothing.  That is the first inversion
+    of the Hopper post: on 80 GiB, recompute was mandatory; on 276 GiB it is a
+    knob you reach for only in the BF16 variant.</p>
+
+    <dsv3-anatomy style="min-height:998px" layer="ac-layer" ctx='{"world":256,"pp":2,"ep":32,"zero":1,"sched":"interleaved","vpp":8,"hw":"gb300","stage":1,"peak":false,"a2a":true}' controls="marks" recipe="bf16" recompute="none" recomputes="none,moe_act,mla_up_proj,layernorm,moe,full"
+      xlayers="29" xinflight="2.21" xtag="rank 1 of PP2 · interleaved 1F1B, VP8"></dsv3-anatomy>
+
+    <h2>Low precision: MXFP8</h2>
+
+    <p>Blackwell's tensor cores scale 32-element blocks natively, with one
+    power-of-two (E8M0) scale per block, so the recipe question that consumed
+    half of the Hopper post, how to keep an activation usable in both GEMM
+    orientations, has a different answer here.  Transformer Engine quantizes a
+    linear's input in both orientations at once, uses the row-wise copy for the
+    forward GEMM, and keeps <em>only the column-wise copy</em> for the weight-gradient
+    GEMM.  One copy at 1 + 1/32 bytes per element: no transposed dual stash.  The
+    other stash facts of the recipe, as the diagram renders them:</p>
+
+    <ul>
+      <li>Every GEMM runs MXFP8, attention included (<code>fp8_dot_product_attention</code>
+      is on in the GB300 recipes, off in the GB200 one), and on GB300 so does the
+      LM-head projection.  We take FP8 attention to stash q, k and v in MXFP8 and
+      its output in bf16.</li>
+      <li>The attention out-projection does not keep a quantized input at all: it
+      is told to save its original input, which aliases the attention output the
+      attention kernel already saved.</li>
+      <li>Megatron runs the q and kv down-projections as two separate linears, and
+      each keeps its own quantized copy of the norm output, hence the ×2 on that
+      chip.  Megatron's fused SwiGLU saves its input in bf16.<span class="mn-ref"></span><span class="mn">Two
+      things we could not pin from source: what NVIDIA's fused grouped-MLP kernel
+      (<code>NVTE_CUTEDSL_FUSED_GROUPED_MLP</code>) saves between fc1 and fc2, and what
+      Transformer Engine's MXFP8 attention path saves.  The diagram follows the
+      unfused modules for both.</span></li>
+      <li>FP8 parameter gather keeps the compute parameters resident as MXFP8
+      tensors, but in both orientations, row- and column-wise, since neither block
+      scaling can be derived from the other.  That is 2 × (1 + 1/32) bytes per
+      parameter: FP8 parameters save all-gather bytes, not memory.  The bf16
+      gather itself lands in the gradient buffer (<code>reuse_grad_buf_for_mxfp8_param_ag</code>)
+      and does not persist.</li>
+    </ul>
+
+    <dsv3-anatomy style="min-height:1039px" layer="fp8-layer" ctx='{"world":256,"pp":2,"ep":32,"zero":1,"sched":"interleaved","vpp":8,"hw":"gb300","stage":1,"peak":false,"a2a":true}' controls="dtype" recipe="nv-mxfp8" recipes="bf16,nv-mxfp8" recompute="none"
+      xlayers="29" xinflight="2.21" xtag="rank 1 of PP2 · interleaved 1F1B, VP8"></dsv3-anatomy>
+
+    <p>Not modeled, and worth knowing about before comparing this roofline to a
+    real memory trace: NVIDIA's full-iteration CUDA graphs need static shapes,
+    so the MoE buffers are padded to an expert capacity factor of 1.5× and the
+    dispatched activations live in a paged stash with a CPU spill; the LM head's
+    MXFP8 weight copies; and the MTP module described above.</p>
+
+    <h2>Fitting it</h2>
+
+    <p>The Hopper post stepped through the levers until the bar ducked under
+    the line.  On GB300 we run the same steps, and then keep going to see which
+    levers were load-bearing.</p>
+
+    <dsv3-beat-deck id="fitdeck" style="min-height:648px">
+      <section data-config='{"world":256,"pp":1,"ep":1,"zero":0,"hw":"gb300","gradB":2}'>
+        <b>Step 1 — Global memory usage.</b> Everything replicated on every one of the 256 GPUs, with
+        Megatron's bf16 gradient buffer.
+      </section>
+      <section data-config='{"world":256,"pp":1,"ep":1,"zero":1,"hw":"gb300","gradB":2}'>
+        <b>Step 2 — ZeRO-1.</b> Megatron's distributed optimizer shards the optimizer state (fp32 master
+        weights, bf16 moments) over DP — here only 256 ways, not 2048.
+      </section>
+      <section data-config='{"world":256,"pp":1,"ep":32,"zero":1,"hw":"gb300","gradB":2}'>
+        <b>Step 3 — Expert parallelism.</b> EP32 divides the expert weights and gradients by 32.  The
+        expert optimizer shards divide only by the expert data parallelism, DP/EP = 8.  Thirty-two GPUs is
+        less than half an NVL72 rack, so the all-to-all never leaves the NVLink domain.
+      </section>
+      <section data-config='{"world":256,"pp":2,"vpp":8,"ep":32,"zero":1,"sched":"interleaved","fold":"wrap","a2a":true,"hw":"gb300","gradB":2}'>
+        <b>Step 4 — Pipeline parallelism, interleaved 1F1B.</b> PP2 with VP8 halves the weights,
+        gradients and optimizer states.  Activations on rank 0 go from one microbatch in flight to
+        18 chunk-stashes, four of them on its first chunk.
+      </section>
+      <section data-config='{"world":256,"pp":2,"vpp":8,"ep":32,"zero":1,"sched":"interleaved","fold":"wrap","a2a":true,"hw":"gb300","gradB":2,"recipe":"nv-mxfp8","fp8Params":true}'>
+        <b>Step 5 — MXFP8.</b> The stashes shrink; the weights do not, because the resident MXFP8
+        parameters keep both orientations.  This is NVIDIA's GB300 configuration: no recompute needed.
+      </section>
+      <section data-config='{"world":256,"pp":1,"ep":32,"zero":1,"hw":"gb300","gradB":2,"recipe":"nv-mxfp8","fp8Params":true}' data-hypothetical="hypothetical — not NVIDIA's config">
+        <b>What if there were no pipeline at all?</b> Drop PP entirely, keep EP32: the weights and
+        gradients double back, the activations fall to one microbatch, and by this roofline it still fits
+        on a GB300 with 40 GiB to spare.  Memory is not why NVIDIA runs PP2 here.
+      </section>
+      <section data-config='{"world":256,"pp":2,"vpp":8,"ep":32,"zero":1,"sched":"interleaved","fold":"wrap","a2a":true,"hw":"gb200","gradB":2,"recipe":"nv-mxfp8","fp8Params":true}' data-hypothetical="hypothetical — the GB300 config on a GB200">
+        <b>The GB300 config on a GB200.</b> The same configuration against 184 GiB.  By this roofline it
+        fits with 7 GiB to spare — and the intermediates the roofline leaves out (CUDA-graph pools, the
+        1.5× expert-capacity buffers, the paged stash, communicator workspaces) are certainly worth more
+        than that.  So NVIDIA's GB200 recipes move to PP4 / VP4 / EP64 with the MLA up-projections
+        recomputed, and the MLPerf GB200 submissions add TP2 as well.  On GB200, memory is still picking
+        the configuration.
+      </section>
+    </dsv3-beat-deck>
+
+    <p>The MLPerf configuration, PP4 / VP4 at the same EP32, for comparison —
+    rank 0 holds 20 chunk-stashes, eight of them on its first chunk:</p>
+
+    <dsv3-layer style="min-height:385px" snapshot parts
+      from='{"world":256,"pp":2,"vpp":8,"ep":32,"zero":1,"sched":"interleaved","fold":"wrap","a2a":true,"hw":"gb300","gradB":2,"recipe":"nv-mxfp8","fp8Params":true}'
+      to='{"pp":4,"vpp":4}'
+      local cumulative lens="param-bytes" recipe="nv-mxfp8" recompute="none" controls="static" detail
+      facs="2:PP,32:EP,256:GPUs" nocaption></dsv3-layer>
+
+    <h2>Conclusion</h2>
+
+    <p>On Hopper every lever was load-bearing.  On GB300 the reference
+    configuration lands near 177 GiB of 276 with no recompute at all, and the
+    roofline still fits with the pipeline removed.  On GB200 the same
+    configuration lands 7 GiB under the line, which is to say over it in
+    practice, and NVIDIA's GB200 recipes duly pull more levers.  So Blackwell
+    splits the question the Hopper post could not: on GB200 memory still picks
+    the configuration; on GB300 it does not, yet NVIDIA runs PP2 there anyway,
+    and shards the optimizer rather than the parameters (ZeRO-1, not ZeRO-3).
+    Those choices are not explained by anything in this post; they are
+    communication rooflines, and they are what the next post is about.  Below is the full model with every knob from this
+    post, including the GB200 / GB300 switch, the VP stepper, and Megatron's
+    recompute modules.</p>
+
+    <dsv3-anatomy style="min-height:1095px" lens="param-bytes" local cumulative recipe="nv-mxfp8" recipes="bf16,nv-mxfp8" recompute="none" recomputes="none,moe_act,mla_up_proj,layernorm,moe,full" layer="local-diagram" detail controls="static" nocaption
+      world="256" pp="2" vpp="8" ep="32" sched="interleaved" a2a grads="bf16" fp8params hw="gb300" hws="gb200,gb300" facs="2:PP,32:EP,256:GPUs"></dsv3-anatomy>
+
+    <dsv3-sheet layer="local-diagram" style="min-height:2387px"></dsv3-sheet>
+
+  </main>
+  <!-- cache stamps: regenerate with `node scripts/stamp.mjs` -->
+  <script type="importmap">
+  {
+    "imports": {
+      "../src/anatomy.js": "../src/anatomy.js?v=2735aa75",
+      "../src/audit.js": "../src/audit.js?v=55bebb06",
+      "../src/blockgraph.js": "../src/blockgraph.js?v=ab9b7e16",
+      "../src/cells.js": "../src/cells.js?v=c69adfd9",
+      "../src/compare.js": "../src/compare.js?v=d3cae233",
+      "../src/localmodel.js": "../src/localmodel.js?v=aa2db70e",
+      "../src/memory.js": "../src/memory.js?v=abe7690c",
+      "../src/model.js": "../src/model.js?v=7cdef05d",
+      "../src/params.js": "../src/params.js?v=13936278",
+      "../src/recipes.js": "../src/recipes.js?v=c6c7fab6",
+      "../src/sheet.js": "../src/sheet.js?v=04fc79a1",
+      "../src/sim.js": "../src/sim.js?v=d5b0026b",
+      "../src/theme.js": "../src/theme.js?v=cf07b25a",
+      "../src/trace.js": "../src/trace.js?v=61553c96",
+      "../src/viewer.js": "../src/viewer.js?v=230ed5e5",
+      "./mobile.js": "./mobile.js?v=9d15b75d",
+      "./series.js": "./series.js?v=1901fecd",
+      "./toc.js": "./toc.js?v=11b69b8b"
+    }
+  }
+  </script>
+  <script type="module">
+    import '../src/viewer.js';
+    import '../src/anatomy.js';
+    import './series.js';
+  </script>
+</body>
+
+</html>

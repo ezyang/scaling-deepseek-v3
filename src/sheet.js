@@ -360,6 +360,7 @@ export class Dsv3Sheet extends HTMLElement {
       + 'computed by evaluating exactly the formula printed here (hover a chart number for its formula; click to pin, then click names to drill)'
       + `<span style="float:right;display:inline-flex;gap:14px;align-items:center;">`
       + (() => {
+        if (this._layer?.fold === 'wrap') return '';   // the Megatron-family pages: no Hopper cross-check preset
         const on = this._hzOn();
         return `<button class="hzb" style="font:11px ui-monospace,monospace;padding:1px 8px;border:1px solid `
           + (on ? 'var(--c-eda100);background:var(--c-fff8ea);font-weight:600;' : 'var(--c-c3c2b7);background:var(--c-ffffff);')

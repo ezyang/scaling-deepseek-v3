@@ -117,9 +117,10 @@ export class Dsv3AnatomyPlan extends HTMLElement {
     // dense-class — ZeRO-1 shards their optimizer states over the full DP group
     const EPn = l?.ep ?? 64, PPl = l?.pp ?? LOCAL_PAR.pp, Sg = l?.stage ?? 1;
     const DPn = (l?.world ?? LOCAL_PAR.world) / PPl, ZL = l?.zero ?? 1;
-    const stg = LOC ? ppStage(Sg, PPl, l?.vpp ?? 1, l?.fold) : null;
-    const cbpp = (c, cls) => !LOC || ZL < c.zthresh ? c.bpp
-      : c.bpp / (cls === 'e' ? DPn / EPn : DPn);
+    const stg = LOC ? ppStage(Sg, PPl, l?.vpp ?? 1, l?.fold, l?.layout) : null;
+    const bppOf = (c) => c.prop === 'showGrads' ? (l?.gradB ?? 4) : c.bpp;   // the gradient buffer's dtype is a config fact
+    const cbpp = (c, cls) => !LOC || ZL < c.zthresh ? bppOf(c)
+      : bppOf(c) / (cls === 'e' ? DPn / EPn : DPn);
     const BPP = COMPS.reduce((t, c) => t + ((l?.[c.prop] ?? true) ? cbpp(c, 'd') : 0), 0);
     const BPPe = COMPS.reduce((t, c) => t + ((l?.[c.prop] ?? true) ? cbpp(c, 'e') : 0), 0);
     // knob tween mirror: the plan's strips lerp their optimizer factor with
@@ -237,12 +238,12 @@ export class Dsv3AnatomyPlan extends HTMLElement {
       const sw = (c) => `<svg width="5" height="4"><rect width="5" height="4" fill="${c}"/></svg>`;
       const META = {
         showWeights: ['weights', 'bf16 weights, 2 B/param'],
-        showGrads: ['gradients (fp32)', 'fp32 gradient accumulators, 4 B/param'],
+        showGrads: (l?.gradB ?? 4) === 2 ? ['gradients (bf16)', 'bf16 gradient buffer, 2 B/param'] : ['gradients (fp32)', 'fp32 gradient accumulators, 4 B/param'],
         showOptim: ['optimizer states', 'fp32 master + two bf16 moments, 8 B/param'],
       };
       const rows = COMPS.map((c) => ({ prop: c.prop, color: C(c.color), name: META[c.prop][0], title: META[c.prop][1] }));
       if (CONS) rows.push({ prop: 'showActs', color: C('#eda100'),
-        name: LOC ? `activations (× ${inflightOf(l.sched ?? '1f1b', Sg, PPl, l.vpp, l.fold)} mb)` : 'activations (×4096 tok)',
+        name: LOC ? `activations (× ${(() => { const v = inflightOf(l.sched ?? '1f1b', Sg, PPl, l.vpp, l.fold, l.layout, l.kind, { a2a: !!l.a2a }); return Number.isInteger(v * 4) ? v : v.toFixed(2); })()} mb)` : 'activations (×4096 tok)',
         title: 'saved for backward, bf16, 4096-token microbatches' });
       const vals = l._segTotals ?? [];
       lg = `<div class="anp-leg">` + rows.map((r, i) =>
@@ -293,6 +294,7 @@ dsv3-anatomy dsv3-anatomy-plan { margin-top: 46px; }
 }
 `;
 const FWD = ['controls', 'recipe', 'recipes', 'recompute', 'detail', 'transposed', 'for',
+  'world', 'pp', 'vpp', 'ep', 'sched', 'fold', 'layout', 'a2a', 'grads', 'fp8params', 'hw', 'hws', 'facs', 'recomputes',   // the local lens's page-set parallelism + capacity + chip curation
   'nocaption', 'kind', 'xlayers', 'xinflight', 'xtag', 'ctx', 'lens', 'strips', 'nostrips', 'optim', 'consolidated', 'local', 'cumulative'];
 export class Dsv3Anatomy extends HTMLElement {
   connectedCallback() {

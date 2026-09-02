@@ -13,6 +13,7 @@ const W = 1200, H = 630, PAD = 24;
 const SHOTS = [
   { page: 'studies/01-deepseek-diagram.html', sel: '#diagram', out: 'assets/og-01.png' },
   { page: 'studies/02-hopper-memory.html', sel: 'dsv3-anatomy[layer="local-diagram"]', out: 'assets/og-02.png' },
+  { page: 'studies/03-blackwell-memory.html', sel: 'dsv3-anatomy[layer="local-diagram"]', out: 'assets/og-03.png' },
 ];
 
 for (const { page, sel, out } of SHOTS) {

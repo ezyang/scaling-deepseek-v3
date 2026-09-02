@@ -260,6 +260,63 @@ const { ppStage, inflightOf } = await import('../src/localmodel.js');
   check('cells ≡ independent shard math EXACTLY, sub-cells included (96 configs, ===)', worst === null, worst ?? '');
 }
 
+// ---- the Megatron family (03): interleaved 1F1B × layout strings ----------
+// The cell graph's activations under the interleaved schedule must equal an
+// INDEPENDENT simulation: replay Megatron's per-rank program (schedules.py —
+// forwards chunk-major in groups of PP, warmup 2(PP−r−1) + (VP−1)·PP [+1
+// with the a2a overlap], 1F1B pairs, cooldown), track the live stashes per
+// chunk after every op, and take the max over time of Σ live_c × (MoE
+// layers × aM + dense layers × aD) × 4096 (+ the vocab side ×1). P6/P6d
+// must be the per-kind means at that moment, P10 the chunk count law.
+{
+  const { cellsEnv, buildCells: bc2 } = await import('../src/cells.js');
+  const { parseLayout, megatronLayout } = await import('../src/localmodel.js');
+  const mm = resolveMatmuls({ recipe: 'nv-mxfp8' });
+  const [anaM, anaD] = ['moe', 'dense'].map((k) => analyze(blockGraph(k, DSV3, mm, 4096), RECOMPUTE_PRESETS.none, false));
+  const aM = anaM.savedBytes, aD = anaD.savedBytes;
+  let bad = null, n = 0;
+  const LAYOUTS = [[2, 8, 'Et*4|(t*4|)*14tmL'], [4, 4, 'Et*4|(t*4|)*14tmL'], [8, 4, 'Et|(tt|)*30L'], [8, 2, null], [2, 1, null], [1, 1, null]];
+  for (const [pp, vpp, lay] of LAYOUTS) for (let stage = 0; stage < pp; stage++) for (const a2a of [false, true]) for (const gradB of [2, 4]) {
+    const layout = lay ?? megatronLayout(pp, vpp);
+    const S = { world: 256, pp, ep: 32, zero: 1, sched: 'interleaved', vpp, fold: 'wrap', layout, stage, hw: 'gb300', a2a, gradB, mx: true };
+    const env = cellsEnv(S, anaM, anaD, anaM, anaD), { get } = bc2(env);
+    const ch = parseLayout(layout);
+    if (ch.length !== pp * vpp || ch.reduce((t, c) => t + c.layers, 0) !== 61) { bad = `layout ${layout}: ${ch.length} chunks`; break; }
+    // this rank's chunks (chunk i → rank i mod PP, vp ⌊i/PP⌋) with their kind counts
+    let lo = 0; const my = [];
+    let emb = false, head = false;
+    ch.forEach((c, i) => {
+      const dense = Math.max(0, Math.min(lo + c.layers, 3) - Math.min(lo, 3)), moe = c.layers - dense;
+      if (i % pp === stage) { my.push({ moe, dense, w: moe * aM + dense * aD }); emb ||= c.emb; head ||= c.head; }
+      lo += c.layers;
+    });
+    // the program, replayed independently
+    const m = pp * (vpp + 3), total = m * vpp, G = pp * vpp;
+    const W = pp === 1 ? 0 : Math.min(vpp === 1 ? pp - stage - 1 : 2 * (pp - stage - 1) + (vpp - 1) * pp + (a2a ? 1 : 0), total);
+    const cOf = (k, f) => { const c = Math.floor((k % G) / pp); return f ? c : vpp - 1 - c; };
+    const live = Array(vpp).fill(0); let best = -1, at = null, nAt = 0;
+    const see = () => { const v = live.reduce((t, x, c) => t + x * my[c].w, 0); if (v > best) { best = v; at = [...live]; nAt = live.reduce((x, y) => x + y, 0); } };
+    if (pp === 1) { live.fill(1); see(); } else {
+      for (let k = 0; k < W; k++) { live[cOf(k, true)]++; see(); }
+      for (let i = 0; i < total - W; i++) { live[cOf(W + i, true)]++; see(); live[cOf(i, false)]--; see(); }
+    }
+    const acts = best * 4096 + ((emb ? 2 * DSV3.hidden : 0) + (head ? 6 * DSV3.vocab : 0)) * 4096;
+    const L1 = my.reduce((t, c) => t + c.moe, 0), L2 = my.reduce((t, c) => t + c.dense, 0);
+    const want = { A1: acts, L1, L2, P10: pp === 1 ? vpp : nAt,
+      P6: L1 ? my.reduce((t, c, i) => t + c.moe * at[i], 0) / L1 : nAt / vpp,
+      ...(L2 ? { P6d: my.reduce((t, c, i) => t + c.dense * at[i], 0) / L2 } : {}) };
+    for (const [id, v] of Object.entries(want)) if (Math.abs(get(id) - v) > 1e-6 * Math.max(1, v)) bad ??= `${JSON.stringify(S)}: ${id} ${get(id)} ≠ ${v}`;
+    // gradients follow the config's buffer dtype
+    const gWant = gradB * (get('Q1') + get('Q2') + get('Q3'));   // ZeRO-1: gradients unsharded
+    if (Math.abs(get('G1') - gWant) > 1e-6 * gWant) bad ??= `${JSON.stringify(S)}: G1 ${get('G1')} ≠ ${gWant}`;
+    // the rank law without a layout: (PP·VP + PP − 2r [− 1 without a2a]) / VP
+    const rankLaw = pp === 1 ? 1 : vpp === 1 ? pp - stage : (pp * vpp + pp - 2 * stage - (a2a ? 0 : 1)) / vpp;
+    if (Math.abs(inflightOf('interleaved', stage, pp, vpp, 'wrap', null, null, { a2a }) - rankLaw) > 1e-9) bad ??= `${JSON.stringify(S)}: rank law ${rankLaw}`;
+    n++;
+  }
+  check(`cells (interleaved 1F1B × layouts × a2a × grad dtype) ≡ independent schedule replay (${n} configs)`, bad === null, bad ?? '');
+}
+
 function check(name, ok, detail) {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}  (${detail})`);
   if (!ok) process.exitCode = 1;

@@ -58,7 +58,7 @@ export const LOCAL_PAR = { world: 2048, pp: 8 };   // .pp = the default degree
 // unlisted knobs mean these neutral nothing-applied defaults, never
 // "whatever the widget's live defaults happen to be" — a published figure
 // must not drift when the interactive defaults do
-export const CFG_DEFAULTS = { world: 2048, pp: 1, ep: 1, zero: 0, sched: '1f1b' };   // vpp/fold are derived from pp
+export const CFG_DEFAULTS = { world: 2048, pp: 1, ep: 1, zero: 0, sched: '1f1b', hw: 'h100', a2a: false, gradB: 4, fp8Params: false };   // vpp/fold are derived from pp (DualPipeV); sched 'interleaved' takes vpp + layout
 // virtual-stage placement: with VPP = vpp chunks per rank the chain is
 // vpp·pp virtual stages deep; 'wrap' places stage v on rank v mod pp
 // (Megatron interleaving), 'reflect' bounces each pass (ZB-V / DualPipeV:
@@ -67,7 +67,113 @@ export const CFG_DEFAULTS = { world: 2048, pp: 1, ep: 1, zero: 0, sched: '1f1b' 
 export const vstagesOf = (r, pp, vpp = 1, fold = 'reflect') =>
   Array.from({ length: vpp }, (_, c) =>
     c * pp + (fold === 'reflect' && c % 2 ? pp - 1 - r : r));
-export const ppStage = (s, pp = LOCAL_PAR.pp, vpp = 1, fold = 'reflect') => {
+// ---- Megatron pipeline layouts (the Blackwell post's schedule) ------------
+// Megatron-Core's --pipeline-model-parallel-layout grammar: E = embedding,
+// t = transformer layer, m = MTP layer, L = loss (final norm + lm head);
+// '|' ends a chunk (virtual stage), X*N repeats a token, (…)*N repeats a
+// group, separators included — "Et|(tt|)*30L" is 32 chunks. Chunks are
+// dealt round-robin: chunk i lives on pp rank i mod PP as its virtual
+// stage ⌊i/PP⌋ (the 'wrap' fold). Parsed chunks: {emb, layers, mtp, head}.
+export const parseLayout = (str) => {
+  let s = String(str).replace(/\s+/g, '');
+  s = s.replace(/\(([^()]*)\)\*(\d+)/g, (_, g, n) => g.repeat(+n));
+  s = s.replace(/([EtmL])\*(\d+)/g, (_, t, n) => t.repeat(+n));
+  const parts = s.split('|');
+  if (parts[parts.length - 1] === '') parts.pop();   // a trailing '|' ends the last chunk
+  return parts.map((c) => ({
+    emb: c.includes('E'), layers: (c.match(/t/g) ?? []).length,
+    mtp: (c.match(/m/g) ?? []).length, head: c.includes('L'),
+  }));
+};
+// the layout a Megatron config means: an explicit string, else NVIDIA's
+// Megatron-Bridge default for DeepSeek-V3 (set_deepseek_v3_pipeline_model_
+// parallel_layout, recipes/deepseek/h100/deepseek_v3.py:50-68): 16 chunks =
+// "Et*4|(t*4|)*14tmL" (E + 4 layers · fourteen × 4 · 1 layer + MTP + loss);
+// 32 chunks = the H100 recipes' "Et|(tt|)*30mL"; other depths (no Bridge
+// default) deal the 64 slots E · 61 t · m · L as evenly as PP·VP allows
+export const MEGATRON_LAYOUTS = { 16: 'Et*4|(t*4|)*14tmL', 32: 'Et|(tt|)*30mL' };
+export const megatronLayout = (pp, vpp) => {
+  const D = pp * vpp;
+  if (MEGATRON_LAYOUTS[D]) return MEGATRON_LAYOUTS[D];
+  const per = Math.floor(64 / D);
+  let rem = 64 - per * D;
+  const toks = ['E', ...Array(61).fill('t'), 'm', 'L'];
+  const out = []; let k = 0;
+  for (let i = 0; i < D; i++) { const n = per + (rem > 0 ? 1 : 0); rem--; out.push(toks.slice(k, k + n).join('')); k += n; }
+  return out.join('|');
+};
+// schedule GEOMETRY from a config: DualPipeV (02's law) derives vpp/fold from
+// pp — pp > 1 → 2 chunks per rank, reflect; Megatron's interleaved 1F1B (or
+// any config already on the wrap fold, e.g. its ×1 mb) takes vpp + a layout
+// (default megatronLayout) with the wrap fold, plus the a2a-overlap flag. An
+// unknown layout for a new depth re-derives the default.
+export const schedGeom = (c) => {
+  if (!(c.sched === 'interleaved' || c.fold === 'wrap')) return { vpp: c.pp > 1 ? 2 : 1, fold: 'reflect', layout: null, a2a: false };
+  const vpp = c.pp === 1 ? 1 : (c.vpp ?? 1);
+  let layout = c.layout ?? null;
+  if (layout && parseLayout(layout).length !== c.pp * vpp) layout = null;
+  return { vpp, fold: 'wrap', layout: layout ?? megatronLayout(c.pp, vpp), a2a: !!c.a2a };
+};
+// Megatron's interleaved 1F1B, as the sequence of LIVE stashes on one rank.
+// The per-rank program is static (schedules.py: forwards chunk-major in
+// groups of PP microbatches; warmup W = 2(PP−r−1) + (VP−1)·PP chunk-forwards,
+// +1 with the 1F1B all-to-all overlap NVIDIA's MXFP8 recipes enable; then
+// strict 1F1B pairs; then cooldown), and a stash is born at this rank's own
+// F and freed at its own B — so the live multiset after each op depends only
+// on the op ORDER, never on cross-rank timing. Returns one live-per-chunk
+// vector per op. VP1 = the plain schedule (warmup PP−r−1); PP1 = no pipeline.
+export const ilvLive = (r, pp, vpp = 1, a2a = false, m = pp * (vpp + 3)) => {
+  const r2 = Math.min(r, pp - 1);
+  if (pp === 1) return [Array(vpp).fill(1)];
+  const total = m * vpp, G = pp * vpp;
+  const W = Math.min(vpp === 1 ? pp - r2 - 1 : (pp - r2 - 1) * 2 + (vpp - 1) * pp + (a2a ? 1 : 0), total);
+  const chunkOf = (k, fwd) => { const c = Math.floor((k % G) / pp); return fwd ? c : vpp - 1 - c; };
+  const live = Array(vpp).fill(0), out = [];
+  const F = (k) => { live[chunkOf(k, true)]++; out.push([...live]); };
+  const B = (k) => { live[chunkOf(k, false)]--; out.push([...live]); };
+  for (let k = 0; k < W; k++) F(k);
+  for (let i = 0; i < total - W; i++) { F(W + i); B(i); }
+  for (let i = total - W; i < total; i++) B(i);
+  return out;
+};
+// the PEAK moment on rank r: the op after which Σ_c live_c × (its chunk's
+// MoE layers × rateM + dense layers × rateD) is largest (a light last chunk —
+// 1 layer + MTP + loss — makes the byte peak and the count peak differ).
+// Returns the per-chunk live counts there and each layer KIND's mean over
+// its own layers — the numbers the cells charge. Without a layout every
+// chunk weighs the same (the count peak: PP·VP + PP − 2r chunk-stashes with
+// the a2a overlap, one fewer without).
+export const ilvPeak = (r, pp, vpp = 1, layout = null, { a2a = false, rateM = 1, rateD = 1 } = {}) => {
+  const segs = layout ? ppStage(r, pp, vpp, 'wrap', layout).segs : Array(vpp).fill({ moe: 1, dense: 0 });
+  const w = segs.map((sg) => sg.moe * rateM + sg.dense * rateD);
+  let best = -1, live = null;
+  for (const l of ilvLive(r, pp, vpp, a2a)) {
+    const v = l.reduce((t, n, c) => t + n * w[c], 0);
+    if (v > best) { best = v; live = l; }
+  }
+  const mean = (k) => { const L = segs.reduce((t, sg) => t + sg[k], 0); return L ? segs.reduce((t, sg, c) => t + sg[k] * live[c], 0) / L : null; };
+  const n = live.reduce((a, b) => a + b, 0);
+  return { live, n, moe: mean('moe') ?? n / vpp, dense: mean('dense') ?? n / vpp, segs };
+};
+const layoutStage = (s, pp, vpp, layout) => {
+  const ch = parseLayout(layout);
+  const D = pp * vpp;
+  if (ch.length !== D) throw new Error(`layout "${layout}" has ${ch.length} chunks; PP${pp}×VP${vpp} needs ${D}`);
+  const starts = []; let acc = 0;
+  for (const c of ch) { starts.push(acc); acc += c.layers; }
+  const seg = (i) => {
+    const lo = starts[i], hi = lo + ch[i].layers;
+    const dense = Math.max(0, Math.min(hi, 3) - Math.min(lo, 3));
+    return { lo, hi, layers: hi - lo, dense, moe: hi - lo - dense, mtp: ch[i].mtp, emb: ch[i].emb, head: ch[i].head };
+  };
+  const vs = vstagesOf(Math.min(s, pp - 1), pp, vpp, 'wrap');
+  const segs = vs.map(seg);
+  const sum = (k) => segs.reduce((t, g) => t + g[k], 0);
+  return { segs, layers: sum('layers'), dense: sum('dense'), moe: sum('moe'), mtp: sum('mtp'),
+    emb: segs.some((g) => g.emb), head: segs.some((g) => g.head) };
+};
+export const ppStage = (s, pp = LOCAL_PAR.pp, vpp = 1, fold = 'reflect', layout = null) => {
+  if (layout) return layoutStage(s, pp, vpp, layout);
   const D = vpp * pp;
   // SLOT model (author's fiat): the embedding and the lm head each count a
   // layer's worth when balancing, so 63 slots (emb + 61 layers + head) are
@@ -111,8 +217,17 @@ export const actLayerBytes = (kind = 'moe') => ACT_LAYER_B[kind] ??=
 // to 2pp+1 — 8.5 at PP8, vs the DSv3 paper's coarse PP+1 bound); wrap
 // (Megatron interleaving) concentrates at rank 0: pp(vpp+1)/2 − s.
 // 'one' = a single microbatch in flight.
-export const inflightOf = (sched, s, pp, vpp = 1, fold = 'reflect') => {
+// 'interleaved' (Megatron): ilvPeak's numbers — the rank law
+// (PP·VP + PP − 2r [−1 without a2a overlap]) / VP in microbatch-equivalents
+// without a layout, and with a layout AND a layer kind the per-kind mean at
+// the byte-peak moment (the surplus stashes sit on the early chunks, and
+// the kinds are not spread evenly over them), the number the cells charge.
+export const inflightOf = (sched, s, pp, vpp = 1, fold = 'reflect', layout = null, kind = null, opts = {}) => {
   if (sched === 'one') return 1;
+  if (sched === 'interleaved') {
+    const pk = ilvPeak(s, pp, vpp, layout, { rateM: actLayerBytes('moe'), rateD: actLayerBytes('dense'), ...opts });
+    return kind ? pk[kind] : pk.n / vpp;
+  }
   const D = vpp * pp, s2 = Math.min(s, pp - 1);
   return vstagesOf(s2, pp, vpp, fold).reduce((t, v) => t + (D - v), 0) / vpp;
 };
@@ -120,7 +235,7 @@ export const inflightOf = (sched, s, pp, vpp = 1, fold = 'reflect') => {
 // the PP stage holding the most resident bytes under the local model (all
 // components on, vocab counted on the end stages, activations under the
 // schedule) — the default stage to show: the fully loaded rank.
-export const peakStage = (pp, ep, zero, world = LOCAL_PAR.world, sched = '1f1b', vpp = 1, fold = 'reflect') => {
+export const peakStage = (pp, ep, zero, world = LOCAL_PAR.world, sched = '1f1b', vpp = 1, fold = 'reflect', layout = null, a2a = false) => {
   const dp = world / pp;
   const bpp = (cls) => BYTE_COMPS.reduce((t, c) =>
     t + (zero >= c.zthresh ? c.bpp / (cls === 'e' ? dp / ep : dp) : c.bpp), 0);
@@ -129,10 +244,11 @@ export const peakStage = (pp, ep, zero, world = LOCAL_PAR.world, sched = '1f1b',
   const mB = (PARAMS.moeBlock - moeExp) * bpp('d') + (moeExp / ep) * bpp('e');
   let best = 0, bestV = -1;
   for (let s2 = 0; s2 < pp; s2++) {
-    const g = ppStage(s2, pp, vpp, fold);
+    const g = ppStage(s2, pp, vpp, fold, layout);
     const v = g.dense * dB + g.moe * mB
       + (((g.emb ? 1 : 0) + (g.head ? 1 : 0)) * PARAMS.embed * bpp('d'))
-      + (g.dense * actLayerBytes('dense') + g.moe * actLayerBytes('moe')) * inflightOf(sched, s2, pp, vpp, fold);
+      + g.dense * actLayerBytes('dense') * inflightOf(sched, s2, pp, vpp, fold, layout, 'dense', { a2a })
+      + g.moe * actLayerBytes('moe') * inflightOf(sched, s2, pp, vpp, fold, layout, 'moe', { a2a });
     if (v > bestV) { bestV = v; best = s2; }
   }
   return best;

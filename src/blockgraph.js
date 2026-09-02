@@ -69,6 +69,28 @@ export const RECOMPUTE_PRESETS = {
   // either way, so it cannot move the ledger) — the paper doesn't name it.
   dsv3: saveAllExcept('norm1', 'norm2', 'q_norm', 'kv_norm', 'q_up', 'kv_up', 'rope_q', 'rope_kv', 'swiglu'),
   none: saveAllExcept(),
+  // Megatron-Core's --recompute-modules (transformer_config.py:492-509), one
+  // preset per module, named as Megatron names them. NVIDIA's DeepSeek-V3
+  // recipes: GB300 MXFP8 = none; GB300 BF16 = moe_act; GB200 = mla_up_proj;
+  // the public GB200 guide = moe_act + mlp (mlp = the DENSE layers' FFN only
+  // — three layers of this model; not a preset here, the marks are per graph).
+  // 'moe_act': CheckpointWithoutOutput around the SwiGLU — its OUTPUT (the fc2
+  // input) is dropped and re-made from the kept fc1 output: exactly ↻ swiglu.
+  moe_act: saveAllExcept('swiglu'),
+  // 'mla_up_proj': CheckpointWithoutOutput around qkv_up_proj_and_rope_apply —
+  // the full q/k/v are dropped, the (post-norm) latents kept; the fused
+  // LayerNormLinear up-projections re-run their latent norms with them.
+  mla_up_proj: saveAllExcept('q_norm', 'kv_norm', 'q_up', 'kv_up', 'rope_q', 'rope_kv'),
+  // 'layernorm': the input_layernorm and pre_mlp_layernorm outputs are dropped
+  // and re-made from the residual stream (x0 / x1 stay the anchors).
+  layernorm: saveAllExcept('norm1', 'norm2'),
+  // 'core_attn': a normal checkpoint around the core attention — q/k/v kept,
+  // the attention output re-made (Megatron warns it is rarely worth it with
+  // fused attention).
+  core_attn: saveAllExcept('attn'),
+  // 'moe': a normal checkpoint around the ENTIRE MoE layer (router → combine);
+  // its input (norm2 out) is kept. Forbidden alongside the a2a-overlap schedule.
+  moe: saveAllExcept('router', 'dispatch', 'gate_up', 'swiglu', 'ffn_down', 'combine', 'moe_add'),
 };
 
 export function resolveMarks(cfg) {
@@ -185,6 +207,11 @@ export function blockGraph(kind, a, mm, seqLen) {
     N('x2', '+ residual (out)', 'add', [moe ? 'moe_add' : 'ffn_down', 'x1'], 'x2 → next block', h, 2, 0,
       { bucket: 'residual', nomark: true }),   // the block boundary: its output is the next region's x0 (charged there) — no mark exists
   ];
+  // implementation multiplicity: Megatron's DeepSeek-V3 spec runs the q and
+  // kv down-projections as two separate TE linears, and under an fp8 recipe
+  // each quantizes and keeps its OWN copy of the norm output (TE shares no
+  // quantized inputs across modules); bf16 inputs alias, so no copies there
+  if ((mm.norm1_copies ?? 1) > 1) nodes.find((n) => n.id === 'norm1').copies = mm.norm1_copies;
   return nodes;
 }
 
@@ -236,9 +263,11 @@ export function analyze(nodes, marks, transposedStash = false) {
   const savedById = {};                              // per-tensor stash bytes (incl. fp8ᵀ dual copies and aux artifacts)
   let savedBytes = 0;
   const dual = new Set();                            // stashes kept in both fp8 orientations
+  const copies = {};                                 // stashes an implementation keeps N× (node.copies)
   for (const id of neededSaved) {
     const n = byId[id];
     let bytes = n.outBytes;
+    if ((n.copies ?? 1) > 1) { copies[id] = n.copies; bytes *= n.copies; }
     // < 1.2 B/elem = the tile-scaled fp8 class only: the transpose problem is
     // the 1×128 per-row scales, so E5M6 (1.5 B, no tile scales) is exempt
     if (transposedStash && n.outBytes / n.elems < 1.2
@@ -267,7 +296,9 @@ export function analyze(nodes, marks, transposedStash = false) {
   return {
     buckets, savedBytes, savedById, replayFlopsTok, fwdFlopsTok,
     replayFrac: fwdFlopsTok ? replayFlopsTok / fwdFlopsTok : 0,
-    neededSaved, replayed, replayComm, neededBy, byId, dual, pointless,
+    neededSaved, replayed, replayComm, neededBy, byId, dual, copies, pointless,
+    // a stash's byte multiplier over its single-copy outBytes: fp8ᵀ dual × implementation copies
+    mul: (id) => (dual.has(id) ? 2 : 1) * (copies[id] ?? 1),
   };
 }
 

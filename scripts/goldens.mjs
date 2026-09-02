@@ -72,13 +72,16 @@ for (const [name, cfg] of [
 // the cell graph at story configs (assembly identity is sanity's job; these
 // pin the assembled headline numbers for configs 02's narrative stands on).
 // cellsEnv IS the production assembly — the same code the widget and sheet run.
-const envFor = ({ pp, ep, zero, stage, fp8p = false, recipe, policy }) => {
+const envFor = ({ pp, ep, zero, stage, fp8p = false, recipe, policy, ...rest }) => {
   const mm = resolveMatmuls({ recipe });
   const [anaM, anaD, fM, fD] = [['moe', policy], ['dense', policy], ['moe', 'none'], ['dense', 'none']]
     .map(([k, p]) => analyze(blockGraph(k, DSV3, mm, 4096), RECOMPUTE_PRESETS[p], false));
-  return cellsEnv({ pp, ep, zero, stage, fp8p, vpp: pp > 1 ? 2 : 1, fold: 'reflect' }, anaM, anaD, fM, fD);
+  // 02's DualPipeV geometry unless the config says otherwise (03's Megatron family passes sched/vpp/fold/layout/a2a/gradB/mx)
+  return cellsEnv({ pp, ep, zero, stage, fp8p, vpp: pp > 1 ? 2 : 1, fold: 'reflect', ...rest }, anaM, anaD, fM, fD);
 };
 const EP = { pp: 8, ep: 64, zero: 1, stage: 1, recipe: 'dsv3-fp8', policy: 'dsv3' };
+const MEG = { world: 256, zero: 1, stage: 0, recipe: 'nv-mxfp8', policy: 'none', fp8p: true, sched: 'interleaved', fold: 'wrap',
+  layout: 'Et*4|(t*4|)*14tmL', a2a: true, gradB: 2, mx: true, hw: 'gb300' };
 G.cells = {};
 for (const [name, cfg] of [
   ['bf16-none-peak', { ...EP, recipe: 'bf16', policy: 'none' }],
@@ -89,6 +92,14 @@ for (const [name, cfg] of [
   ['endpoint-zero3', { ...EP, zero: 3 }],
   ['endpoint-stage0', { ...EP, stage: 0 }],
   ['no-parallelism', { ...EP, pp: 1, ep: 1, zero: 0, stage: 0 }],
+  // 03: NVIDIA's GB300/GB200 configurations under Megatron's conventions
+  // (bf16 grad buffer, MXFP8 params resident in both orientations, the
+  // interleaved 1F1B a2a-overlap schedule on the Et*4|(t*4|)*14tmL layout)
+  ['gb300-archive-pp2vp8', { ...MEG, pp: 2, vpp: 8, ep: 32 }],
+  ['gb300-archive-rank1', { ...MEG, pp: 2, vpp: 8, ep: 32, stage: 1 }],
+  ['gb300-mlperf-pp4vp4', { ...MEG, pp: 4, vpp: 4, ep: 32 }],
+  ['gb300-no-pp', { ...MEG, pp: 1, vpp: 1, ep: 32, sched: '1f1b', fold: 'reflect', layout: null, a2a: false }],
+  ['gb200-archive-pp4vp4ep64-mla-up-proj', { ...MEG, pp: 4, vpp: 4, ep: 64, hw: 'gb200', policy: 'mla_up_proj' }],
 ]) {
   const { get } = buildCells(envFor(cfg));
   G.cells[name] = Object.fromEntries(['T1', 'W1', 'G1', 'O1', 'A1'].map((id) => [id, get(id)]));

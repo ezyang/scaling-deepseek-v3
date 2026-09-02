@@ -21,6 +21,28 @@ if (typeof document !== 'undefined') {
       (el.render ?? el.draw ?? el.build)?.call(el);
   });
 }
+// per-page capacity/story helpers (the fit chart's red line and its
+// "a span is a factor" ruler are page facts, not model facts)
+const HW_SHORT = { h800: 'H800', h100: 'H100', gb200: 'GB200', gb300: 'GB300' };
+// 02's distances ruler: the factors its story applies (PP8 · EP64 · 2048 GPUs)
+const FACS_02 = [[1, ''], [2, '×2'], [8, '×8 (PP)'], [64, '×64 (EP)'], [2048, '×2048 (GPUs)']];
+// facs="2,8:PP,64:EP,2048:GPUs" → the ruler's [factor, label] ticks (1 = the origin tick)
+const facsOf = (s) => !s ? FACS_02 : [[1, ''], ...s.split(',').map((t) => {
+  const [f, lab] = t.split(':'); return [+f, lab ? `×${f} (${lab})` : `×${f}`];
+})];
+// a stash chip's multiplicity tag: the Hopper fp8ᵀ dual (both orientations)
+// or extra copies an implementation keeps (Megatron's two down-proj linears
+// each quantize the norm output) — one chip, doubled bytes, a tag
+const stashTag = (A, ids) => ids.some((i) => A.dual.has(i)) ? ' ᵀ×2'
+  : ids.some((i) => (A.copies?.[i] ?? 1) > 1) ? ` ×${Math.max(...ids.map((i) => A.copies?.[i] ?? 1))}` : '';
+// a byte component's legend label; the gradient buffer's bytes/param follow the config
+const compLabel = (c, gradB = 4) => c.prop === 'showGrads' && gradB !== 4 ? `gradients (bf16, ${gradB} B/param)` : c.label;
+// in-flight counts print exactly when dyadic (8.5, 2.25) and to 2 decimals otherwise (the chunk-weighted means)
+const fmtIF = (v) => Number.isInteger(v * 4) ? String(v) : v.toFixed(2);
+// the schedule's display name for labels/readouts
+const schedName = (l) => l.sched === 'one' ? '×1mb' : l.sched === 'interleaved'
+  ? (l.pp > 1 ? `1F1B·VP${l.vpp}` : '1F1B') : l.pp > 1 ? 'DualPipeV' : '1F1B';
+import { schedGeom } from './localmodel.js';
 import { BYTE_COMPS, ACT_BUCKETS, actBucketsOf, PP_CHOICES, LOCAL_PAR, CFG_DEFAULTS,
   vstagesOf, ppStage, actLayerBytes, inflightOf, peakStage,
   mmSig, markSig, HAZIZA_CFG } from './localmodel.js';
@@ -179,7 +201,7 @@ function fitSvg(L) {
   const dpx = (f) => x0 + Math.log2(f) / (HI - LO) * bw;
   B.push(`<text class="dims" x="2" y="${f1(dy + 3)}">a span is a factor:</text>`);
   B.push(`<line x1="${x0}" y1="${f1(dy)}" x2="${f1(dpx(2048))}" y2="${f1(dy)}" stroke="${C('#898781')}" stroke-width="1"/>`);
-  for (const [f, lab] of [[1, ''], [2, '×2'], [8, '×8 (PP)'], [64, '×64 (EP)'], [2048, '×2048 (GPUs)']]) {
+  for (const [f, lab] of L.facs ?? FACS_02) {
     B.push(`<line data-fac="${f}" x1="${f1(dpx(f))}" y1="${f1(dy - 4)}" x2="${f1(dpx(f))}" y2="${f1(dy + 4)}" stroke="${C('#898781')}" stroke-width="1"/>`);
     if (lab) B.push(`<text class="dims" x="${f1(dpx(f))}" y="${f1(dy + 13)}" text-anchor="middle">${lab}</text>`);
   }
@@ -193,7 +215,7 @@ function fitSvg(L) {
   // value labels last: ABOVE the scrub, so their raw-byte hover titles work
   // (a drag can still start anywhere else on the band)
   B.push(...VALS);
-  B.push(`<text class="dims" x="${f1(L.capPx)}" y="9" text-anchor="middle">80 GiB (H100)</text>`);
+  B.push(`<text class="dims" x="${f1(L.capPx)}" y="9" text-anchor="middle">${L.capLbl ?? '80 GiB (H100)'}</text>`);
   return `<svg width="${w}" height="${f1(L.HB)}" viewBox="0 0 ${w} ${f1(L.HB)}">${B.join('')}</svg>`;
 }
 
@@ -845,7 +867,7 @@ export class Dsv3Layer extends HTMLElement {
     this.dispLayers = st?.dispLayers ?? +(this.getAttribute('xlayers') ?? 61);
     this.dispInflight = st?.dispInflight ?? +(this.getAttribute('xinflight') ?? 1);
     this.transposed = st?.transposed ?? this.hasAttribute('transposed');
-    this.fp8Params = st?.fp8Params ?? false;
+
     this.detail = st?.detail ?? this.hasAttribute('detail');
     this.flatDims = st?.flatDims ?? false;
     // optim/consolidated lenses: which byte components are visible (strips AND
@@ -856,19 +878,27 @@ export class Dsv3Layer extends HTMLElement {
     this.showActs = st?.showActs ?? true;
     // local lens: the fiat-parallelism selectors (EP width or 1 = off, PP
     // degree, PP stage, ZeRO-1 on/off)
-    this.ep = st?.ep ?? 64;
-    this.pp = st?.pp ?? LOCAL_PAR.pp;
+    // the page seeds the fiat parallelism through attributes (02 = the
+    // LOCAL_PAR defaults: 2048 GPUs · PP8 · EP64 · DualPipeV; 03 sets
+    // world/pp/ep/vpp/sched/hw for its cluster); URL state overrides
+    const A = (k) => this.getAttribute(k);
+    this.ep = st?.ep ?? +(A('ep') ?? 64);
+    this.pp = st?.pp ?? +(A('pp') ?? LOCAL_PAR.pp);
     this.zero = st?.zero ?? (st?.zero1 === false ? 0 : 1);   // ZeRO level 0–3 (1 = DSv3)
-    this.world = st?.world ?? LOCAL_PAR.world;               // cluster size (GPUs)
-    this.sched = st?.sched === 'dpv' ? '1f1b' : st?.sched ?? '1f1b';   // admission: '1f1b' | 'one' (a single microbatch)
-    // the schedule IS DualPipeV: VPP and fold are derived, never knobs
-    // (pp > 1 → the V: 2 chunks/rank, reflect; pp 1 → trivially one chunk).
-    // The law functions stay general (wrap/VPP4 live on for a later post).
-    this.vpp = this.pp > 1 ? 2 : 1;
-    this.fold = 'reflect';
+    this.world = st?.world ?? +(A('world') ?? LOCAL_PAR.world);   // cluster size (GPUs)
+    this.sched = st?.sched === 'dpv' ? '1f1b' : st?.sched ?? A('sched') ?? '1f1b';   // admission: '1f1b' (DualPipeV) | 'interleaved' (Megatron) | 'one' (a single microbatch)
+    this.hw = st?.hw ?? A('hw') ?? 'h100';                   // the capacity yardstick (HARDWARE key)
+    this.a2a = st?.a2a ?? this.hasAttribute('a2a');          // Megatron's 1F1B all-to-all overlap (one extra warmup forward)
+    this.gradB = st?.gradB ?? (A('grads') === 'bf16' ? 2 : 4);   // the gradient buffer's bytes/param (02: fp32; Megatron's perf recipes: bf16)
+    this.fp8Params = st?.fp8Params ?? this.hasAttribute('fp8params');
+    // schedule geometry (schedGeom): under DualPipeV VPP and fold are DERIVED
+    // from pp, never knobs (pp > 1 → the V: 2 chunks/rank, reflect); under
+    // Megatron's interleaved 1F1B the page/URL sets VP and the layout string
+    Object.assign(this, schedGeom({ pp: this.pp, sched: this.sched, fold: st?.fold ?? A('fold') ?? undefined,
+      vpp: st?.vpp ?? (A('vpp') ? +A('vpp') : undefined), layout: st?.layout ?? A('layout') ?? undefined, a2a: this.a2a }));
     // default to the PEAK stage — the fully loaded rank is the story; the
     // selector is there to peek at the lighter ones
-    this.stage = Math.min(st?.stage ?? peakStage(this.pp, this.ep, this.zero, this.world, this.sched, this.vpp, this.fold), this.pp - 1);
+    this.stage = Math.min(st?.stage ?? peakStage(this.pp, this.ep, this.zero, this.world, this.sched, this.vpp, this.fold, this.layout, this.a2a), this.pp - 1);
     // cumulative: every parameter parenthetical multiplies by the selected
     // kind's block count (×3 dense / ×58 MoE); the tabs hide — the kind then
     // comes from the plan selector alone. The local variant is ALWAYS
@@ -931,6 +961,7 @@ export class Dsv3Layer extends HTMLElement {
       showWeights: this.showWeights, showOptim: this.showOptim,
       showGrads: this.showGrads, showActs: this.showActs,
       ep: this.ep, stage: this.stage, pp: this.pp, zero: this.zero, world: this.world, sched: this.sched,
+      hw: this.hw, vpp: this.vpp, fold: this.fold, layout: this.layout, a2a: this.a2a, gradB: this.gradB,
     });
   }
   applyPreset(recipe, recompute, transposed = false) {
@@ -968,9 +999,15 @@ export class Dsv3Layer extends HTMLElement {
   _setPP(v) {
     const world = this.world ?? LOCAL_PAR.world;
     this.pp = v;
-    this.vpp = v > 1 ? 2 : 1;   // the schedule is DualPipeV wherever a pipeline exists
+    // DualPipeV wherever a pipeline exists; the Megatron family keeps its VP
+    // and re-derives the default layout for the new depth
+    Object.assign(this, schedGeom({ pp: v, sched: this.sched, fold: this.fold, vpp: this.vpp, a2a: this.a2a }));
     this.ep = Math.min(this.ep, world / v);
-    this.stage = peakStage(v, this.ep, this.zero ?? 1, world, this.sched, this.vpp, this.fold);   // stage indices don't survive a resplit — jump to the new peak
+    this.stage = peakStage(v, this.ep, this.zero ?? 1, world, this.sched, this.vpp, this.fold, this.layout, this.a2a);   // stage indices don't survive a resplit — jump to the new peak
+  }
+  _setVPP(v) {   // Megatron family only (the knob renders there alone)
+    Object.assign(this, schedGeom({ pp: this.pp, sched: this.sched, fold: 'wrap', vpp: v, a2a: this.a2a }));
+    this.stage = peakStage(this.pp, this.ep, this.zero ?? 1, this.world ?? LOCAL_PAR.world, this.sched, this.vpp, this.fold, this.layout, this.a2a);
   }
   // ---- local-lens knob tween: EVERY knob change (EP/PP/stage/ZeRO/×N) pours
   // squares between the old and new configuration, per-block-tween style.
@@ -1052,7 +1089,7 @@ export class Dsv3Layer extends HTMLElement {
         showWeights: this.showWeights, showGrads: this.showGrads,
         showOptim: this.showOptim, showActs: this.showActs,
         transposed: this.transposed, marks: { ...this.marks }, matmuls: { ...this.matmuls } },
-      label: `EP${this.ep}·PP${this.pp}·rank ${this.stage}·ZeRO-${this.zero ? this.zero : 'off'}·${this.sched === 'one' ? '×1mb' : this.pp > 1 ? 'DualPipeV' : '1F1B'}·${this.world} GPUs`,
+      label: `EP${this.ep}·PP${this.pp}·rank ${this.stage}·ZeRO-${this.zero ? this.zero : 'off'}·${schedName(this)}·${this.world} GPUs${this.hw && this.hw !== 'h100' ? '·' + HW_SHORT[this.hw] : ''}`,
     };
   }
   // apply an authored config patch (snapshot 'from'/'to', sandbox jumps):
@@ -1060,11 +1097,13 @@ export class Dsv3Layer extends HTMLElement {
   _applyCfg(patch) {
     const { recipe, recompute, stage, ...rest } = patch;
     Object.assign(this, rest);
-    this.vpp = this.pp > 1 ? 2 : 1; this.fold = 'reflect';   // derived — authored vpp/fold keys are ignored
+    // geometry is DERIVED from the patch (schedGeom): DualPipeV ignores
+    // authored vpp/fold keys; interleaved/wrap configs carry vpp + layout
+    Object.assign(this, schedGeom({ pp: this.pp, sched: this.sched, fold: patch.fold, vpp: patch.vpp, layout: patch.layout, a2a: patch.a2a }));
     if (recipe) { this.setAttribute('recipe', recipe); this.matmuls = resolveMatmuls({ recipe }); }
     if (recompute) { this.setAttribute('recompute', recompute); this.marks = { ...RECOMPUTE_PRESETS[recompute] }; }
     this.stage = stage ?? peakStage(this.pp, this.ep, this.zero ?? 1,
-      this.world ?? LOCAL_PAR.world, this.sched, this.vpp, this.fold);
+      this.world ?? LOCAL_PAR.world, this.sched, this.vpp, this.fold, this.layout, this.a2a);
   }
   // jump target for snapshots' "open in the full widget" links: land on the
   // snapshot's exact story — its 'from' as the save, its 'to' live, tweened
@@ -1160,7 +1199,8 @@ export class Dsv3Layer extends HTMLElement {
   _snapLocal() {
     return { ep: this.ep, pp: this.pp, stage: this.stage,
       zero: this.zero ?? 1, world: this.world ?? LOCAL_PAR.world,
-      sched: this.sched ?? '1f1b', vpp: this.vpp ?? 1, fold: this.fold ?? 'reflect', cum: !!this.cumulative,
+      sched: this.sched ?? '1f1b', vpp: this.vpp ?? 1, fold: this.fold ?? 'reflect', layout: this.layout ?? null,
+      hw: this.hw ?? 'h100', a2a: !!this.a2a, gradB: this.gradB ?? 4, mx: Object.values(this.matmuls).includes('mxfp8'), cum: !!this.cumulative,
       fp8p: !!this.fp8Params && this.matmuls.ffn_gate_up !== 'bf16',
       // the pre-change analysis: stash-affecting knobs (precision, marks,
       // fp8ᵀ) lerp the diagram's chip squares between old and new bytes
@@ -1168,7 +1208,7 @@ export class Dsv3Layer extends HTMLElement {
   }
   _tweenLocal(prev) {
     this.changed(true);
-    const kindOf = (S) => ppStage(Math.min(S.stage, S.pp - 1), S.pp, S.vpp, S.fold).moe ? 'moe' : 'dense';
+    const kindOf = (S) => ppStage(Math.min(S.stage, S.pp - 1), S.pp, S.vpp, S.fold, S.layout).moe ? 'moe' : 'dense';
     if (kindOf(prev) !== kindOf(this._snapLocal())) { this.render(); return; }
     this._frames((t) => { this._vtween = { t, prev }; }, () => { this._vtween = undefined; });
   }
@@ -1177,7 +1217,7 @@ export class Dsv3Layer extends HTMLElement {
     // local lens: the kind follows the selected PP stage (stage 0 holds the
     // 3 dense blocks; every other stage holds only MoE blocks)
     if (this.hasAttribute('local') && this.getAttribute('lens') === 'param-bytes')
-      this.kind = ppStage(this.stage ?? 1, this.pp, this.vpp, this.fold).moe ? 'moe' : 'dense';
+      this.kind = ppStage(this.stage ?? 1, this.pp, this.vpp, this.fold, this.layout).moe ? 'moe' : 'dense';
     const style = document.createElement('style'); style.textContent = LAYER_CSS;
     const root = el('div', 'lv');
     // progressive disclosure: controls="static|marks|dtype|full" gates which
@@ -1345,8 +1385,8 @@ export class Dsv3Layer extends HTMLElement {
     if (this._ctl.dtype) head.append(tl, tl2);
     // local: the multiplier is the stage's block count, not the whole model's
     const KBLK = this.hasAttribute('local') && this.getAttribute('lens') === 'param-bytes'
-      ? (this.kind === 'dense' ? ppStage(this.stage ?? 1, this.pp, this.vpp, this.fold).dense
-        : ppStage(this.stage ?? 1, this.pp, this.vpp, this.fold).moe)
+      ? (this.kind === 'dense' ? ppStage(this.stage ?? 1, this.pp, this.vpp, this.fold, this.layout).dense
+        : ppStage(this.stage ?? 1, this.pp, this.vpp, this.fold, this.layout).moe)
       : this.kind === 'dense' ? (DSV3.denseLayers ?? 3) : DSV3.layers - (DSV3.denseLayers ?? 3);
     const mkCumBtn = () => {
       const b = document.createElement('button');
@@ -1478,7 +1518,9 @@ export class Dsv3Layer extends HTMLElement {
     // full / attn-replay / dsv3 / none. noCustom = presets-only (a tier or
     // the local head renders no per-op mark buttons, so a custom policy
     // can't arise there — the AC section is where policies are hand-built).
-    const mkPolSeg = (noCustom) => segGrp('recompute policy', 'recompute', ['full', 'attn-replay', 'dsv3', 'none'], curPreset,
+    // recomputes="none,moe_act,mla_up_proj,…" curates the chips (03 lists Megatron's modules); absent = 02's four
+    const polOpts = this.getAttribute('recomputes')?.split(/[ ,]+/).filter((k) => RECOMPUTE_PRESETS[k]) ?? ['full', 'attn-replay', 'dsv3', 'none'];
+    const mkPolSeg = (noCustom) => segGrp('recompute policy', 'recompute', polOpts, curPreset,
       () => ({ ...this.marks }),
       (k) => localTween(() => { this.setAttribute('recompute', k); this.marks = { ...RECOMPUTE_PRESETS[k] }; }),
       (st) => localTween(() => { this.marks = { ...st }; }),
@@ -1519,7 +1561,8 @@ export class Dsv3Layer extends HTMLElement {
       // not levers. It takes the whole width; the policy row sits below.
       let hr = null;
       if (this.getAttribute('ctx')) {
-        const C = JSON.parse(this.getAttribute('ctx'));   // {world, pp, ep, zero}
+        const C = JSON.parse(this.getAttribute('ctx'));   // {world, pp, ep, zero[, sched, vpp, hw]}
+        const ILV = C.sched === 'interleaved';
         hr = el('div', 'lv-head');
         const grp3 = (label) => { const g = el('span', 'pargrp'); const l5 = el('div', 'parlab'); l5.textContent = label; g.append(l5); return g; };
         const row3 = (...kids) => { const d = el('div', 'parrow'); d.append(...kids); return d; };
@@ -1537,12 +1580,17 @@ export class Dsv3Layer extends HTMLElement {
         const chip3 = (name, v) => seg3(name, [String(v)], 0);
         const DPn2 = C.world / C.pp;
         const gC = grp3('cluster');
-        gC.append(row3(txt3('GPUs'), chip3('gpus', C.world)));
+        gC.append(row3(txt3('GPUs'), chip3('gpus', C.world), ...(C.hw ? [txt3('·'), chip3('hw', HW_SHORT[C.hw])] : [])));
         const gP = grp3('pipeline');
         // ONE row (PP · rank · sched inline): the readout is context, not
-        // levers — laptop vspace beats mirroring the sim's two-row group
-        gP.append(
-          row3(txt3('PP'), chip3('pp', C.pp), txt3('rank'),
+        // levers — laptop vspace beats mirroring the sim's two-row group.
+        // Under Megatron's interleaved schedule the rank is a plain number
+        // (every rank differs) and VP joins the row.
+        gP.append(ILV
+          ? row3(txt3('PP'), chip3('pp', C.pp), txt3('VP'), chip3('vpp', C.vpp ?? 1), txt3('rank'),
+            chip3('rank', `r${C.stage ?? 0}${C.peak === false ? '' : ' · peak'}`),
+            txt3('sched'), seg3('sched', [C.a2a ? 'interleaved 1F1B · a2a overlap' : 'interleaved 1F1B', '×1 mb'], 0))
+          : row3(txt3('PP'), chip3('pp', C.pp), txt3('rank'),
             seg3('rank', ['r0 · emb+head', `r1–${C.pp - 1} · peak`], 1),
             txt3('sched'), seg3('sched', ['DualPipeV', '×1 mb'], 0)));
         const gM = grp3('SPMD mesh');
@@ -1650,13 +1698,20 @@ export class Dsv3Layer extends HTMLElement {
         // split every interior rank (1…pp−1) holds the same 8 MoE layers —
         // only rank 0 differs (emb + head + the dense front). 'rank', not
         // 'stage': DualPipeV's stages are the 2·pp chunks.
-        const pkR = peakStage(pp, this.ep, this.zero ?? 1, world, this.sched, this.vpp ?? 1, this.fold);
-        const rankSeg = pp === 1 ? null : knob('rank', seg2(
-          [[0, `r0 · emb+head${pkR === 0 ? ' · peak' : ''}`], [1, `r1–${pp - 1}${pkR !== 0 ? ' · peak' : ''}`]],
-          () => this.stage === 0 ? 0 : 1,
-          (k) => { this.stage = k === 0 ? 0 : pkR || 1; }));
+        const pkR = peakStage(pp, this.ep, this.zero ?? 1, world, this.sched, this.vpp ?? 1, this.fold, this.layout);
+        // the Megatron family (wrap fold): PP over {1,2,4,8}, a VP stepper,
+        // and a plain rank stepper — under a layout every rank differs
+        const MEG = this.fold === 'wrap';
+        const rankSeg = pp === 1 ? null : MEG
+          ? knob('rank', mkStep(() => this.stage, (v) => { this.stage = v; },
+            (v) => `r${v}${v === pkR ? ' · peak' : ''}`, pp - 1, Array.from({ length: pp }, (_, i) => i), 0))
+          : knob('rank', seg2(
+            [[0, `r0 · emb+head${pkR === 0 ? ' · peak' : ''}`], [1, `r1–${pp - 1}${pkR !== 0 ? ' · peak' : ''}`]],
+            () => this.stage === 0 ? 0 : 1,
+            (k) => { this.stage = k === 0 ? 0 : pkR || 1; }));
         gPipe.append(
-          row2(txt2('PP'), knob('pp', mkStep(() => this.pp, (v) => this._setPP(v), String, 64, PP_CHOICES)),
+          row2(txt2('PP'), knob('pp', mkStep(() => this.pp, (v) => this._setPP(v), String, 64, MEG ? [1, 2, 4, 8, 16] : PP_CHOICES)),
+            ...(MEG && pp > 1 ? [txt2('VP'), knob('vpp', mkStep(() => this.vpp, (v) => this._setVPP(v), String, 64 / pp, [1, 2, 4, 8, 16]))] : []),
             ...(rankSeg ? [txt2('rank'), rankSeg] : [])));
         const gMesh = grp2('SPMD mesh');
         const txtR = (t3) => {   // right-aligned row labels, so the mesh rows line up
@@ -1684,9 +1739,14 @@ export class Dsv3Layer extends HTMLElement {
         // admission is the one schedule knob left: DualPipeV steady state
         // (uniform PP+½ in flight, emb+head on rank 0) vs a single
         // microbatch. VPP/fold are derived — the schedule IS DualPipeV.
-        const sw2 = knob('sched', seg2([['1f1b', 'DualPipeV'], ['one', '×1 mb']],
+        const sw2 = knob('sched', seg2(MEG ? [['interleaved', 'interleaved 1F1B'], ['one', '×1 mb']] : [['1f1b', 'DualPipeV'], ['one', '×1 mb']],
           () => this.sched ?? '1f1b', (k) => { this.sched = k; }));
         gPipe.append(row2(txt2('sched'), sw2));
+        // hws="gb200,gb300": the capacity yardstick becomes a knob (the
+        // Blackwell post's GB200-vs-GB300 question); absent = fixed
+        const hws = this.getAttribute('hws')?.split(/[ ,]+/).filter((k) => HARDWARE[k]);
+        if (hws?.length > 1) gCluster.append(row2(txt2('GPU'), knob('hw', seg2(hws.map((k) => [k, `${HW_SHORT[k]} · ${HARDWARE[k].memGB} GiB`]),
+          () => this.hw ?? 'h100', (k) => { this.hw = k; }))));
         const gZ = grp2('ZeRO');
         gZ.classList.add('center');   // spans the mesh rows, like PP: it applies universally
         gZ.append(row2(zw));
@@ -1727,9 +1787,9 @@ export class Dsv3Layer extends HTMLElement {
             return lab;
           };
           const comps2 = cons2 ? BYTE_COMPS : [BYTE_COMPS[0], BYTE_COMPS[2]];
-          leg.append(...comps2.map((c) => cb(c.label, C(c.color), c.prop)));
+          leg.append(...comps2.map((c) => cb(compLabel(c, this.gradB), C(c.color), c.prop)));
           if (cons2) leg.append(cb(this.hasAttribute('local')
-            ? `saved activations (bf16, ×4096 tok × ${inflightOf(this.sched ?? '1f1b', this.stage ?? 1, this.pp ?? LOCAL_PAR.pp, this.vpp, this.fold)} in flight)`
+            ? `saved activations (bf16, ×4096 tok × ${fmtIF(inflightOf(this.sched ?? '1f1b', this.stage ?? 1, this.pp ?? LOCAL_PAR.pp, this.vpp, this.fold, this.layout, this.kind))} in flight)`
             : 'saved activations (bf16, ×4096 tokens)', C('#eda100'), 'showActs'));
           const u = el('span');
           u.style.cssText = 'display:inline-flex;align-items:center;gap:3px;';   // swatch centers regardless of baseline
@@ -1791,7 +1851,10 @@ export class Dsv3Layer extends HTMLElement {
               'the fp32 master lives in the optimizer bar; norms/router (≈0.1% of block params) are booked fp8 too — noise. ' +
               'OFF = bf16 working weights (2 B/param), quantized on the fly.';
           p8.onchange = () => this.setLocal(() => { this.fp8Params = p8.checked; });
-          tl3.append(p8, 'e4m3+ᵀ params');
+          // fp8-RESIDENT parameters: Hopper keeps e4m3 + its transpose; Blackwell's
+          // MXFP8 keeps row- and column-wise copies (TE's post-all-gather
+          // processing) — the same 2 × (1 + 1/32) B/param either way
+          tl3.append(p8, Object.values(this.matmuls).includes('mxfp8') ? 'mxfp8 params (row + col)' : 'e4m3+ᵀ params');
           // recompute is presets-only here (no per-op mark buttons on the
           // local diagram); the recipe segment keeps its custom chip — the
           // stash checkboxes can compose states no recipe names
@@ -1874,7 +1937,7 @@ export class Dsv3Layer extends HTMLElement {
             : `The shared expert${SCOPE === 'model' ? ' and dense MLPs share' : ' shares'} the ffn boxes; `))
           + `RoPE carries its own mark${this._ctl.quant ? ' (every preset replays it; saving it stashes the same bytes post-rotation)' : ''}.`,
       !this._ctl.quant ? '' :
-      'The picket run inside each op is its compute TIME at H100 peak \u2014 one picket \u2248 41 \u00b5s per 4096-token microbatch. ' +
+      `The picket run inside each op is its compute TIME at ${HW_SHORT[JSON.parse(this.getAttribute('ctx') ?? '{}').hw ?? this.hw ?? 'h100']} peak \u2014 one picket \u2248 ${Math.round(10e6 * 4096 / HARDWARE[JSON.parse(this.getAttribute('ctx') ?? '{}').hw ?? this.hw ?? 'h100'].flops.bf16 * 1e6)} \u00b5s per 4096-token microbatch. ` +
       'A picket packs 10 MFLOP/token at bf16\u2019s 989 TFLOP/s; e4m3/mxfp8 run 2\u00d7 (1979), so theirs pack 20; ' +
       'the fp32 router runs on CUDA cores at 67 TFLOP/s (TF32 would truncate the mantissa the pin exists to keep) \u2014 \u224815\u00d7 bf16 time per FLOP. ' +
       'Dtype colors here and on the saved-tensor tags: pink e4m3, purple e5m6, dark bf16, brick fp32. ' +
@@ -1951,21 +2014,25 @@ export class Dsv3Layer extends HTMLElement {
     const DPn = WORLD / PPn;
     const EDP = WORLD / PPn / EPn;                           // expert-DP (EP=1: = DP — no expert parallelism)
     const SCHED = this.sched ?? '1f1b';
-    const VPPn = this.vpp ?? 1, FOLD = this.fold ?? 'reflect';
-    const stg = ppStage(STG, PPn, VPPn, FOLD);
+    const VPPn = this.vpp ?? 1, FOLD = this.fold ?? 'reflect', LAYOUT = this.layout ?? null, HWk = this.hw ?? 'h100';
+    const stg = ppStage(STG, PPn, VPPn, FOLD, LAYOUT);
     // knob tween (local): squares pour between the OLD and NEW configuration —
     // each component's effective factor (bytes/param × EP share × stage ×N)
     // lerps with this._vtween.t; numbers snap to the new config
-    const IFN = inflightOf(SCHED, STG, PPn, VPPn, FOLD);     // microbatches in flight on this stage
-    const Snow = { ep: EPn, pp: PPn, stage: STG, zero: ZL, world: WORLD, sched: SCHED, vpp: VPPn, fold: FOLD, cum: !!this.cumulative,
+    const A2A = !!this.a2a, GRADB = this.gradB ?? 4, MX = Object.values(this.matmuls).includes('mxfp8');
+    const IFN = inflightOf(SCHED, STG, PPn, VPPn, FOLD, LAYOUT, this.kind, { a2a: A2A });     // microbatches in flight on this stage (this kind's layers)
+    const Snow = { ep: EPn, pp: PPn, stage: STG, zero: ZL, world: WORLD, sched: SCHED, vpp: VPPn, fold: FOLD, layout: LAYOUT, hw: HWk,
+      a2a: A2A, gradB: GRADB, mx: MX, cum: !!this.cumulative,
       fp8p: !!this.fp8Params && this.matmuls.ffn_gate_up !== 'bf16' };
     const dLoc = (S) => {
-      const g = ppStage(Math.min(S.stage, S.pp - 1), S.pp, S.vpp, S.fold);
+      const g = ppStage(Math.min(S.stage, S.pp - 1), S.pp, S.vpp, S.fold, S.layout);
       const kmul = this.kind === 'dense' ? g.dense : g.moe;
       const dp = (S.world ?? LOCAL_PAR.world) / S.pp;
+      // the gradient buffer's bytes/param is a config fact (fp32 in 02, bf16 in Megatron's perf recipes)
+      const bppOf = (c) => c.prop === 'showGrads' ? (S.gradB ?? 4) : c.bpp;
       return { mult: S.cum ? kmul : 1, eFrac: 1 / S.ep,
-        acts: (S.cum ? kmul : 1) * inflightOf(S.sched ?? '1f1b', S.stage, S.pp, S.vpp, S.fold),
-        bpp: (c, cls) => (S.zero ?? 1) >= c.zthresh ? c.bpp / (cls === 'e' ? dp / S.ep : dp) : c.bpp };
+        acts: (S.cum ? kmul : 1) * inflightOf(S.sched ?? '1f1b', S.stage, S.pp, S.vpp, S.fold, S.layout, this.kind, { a2a: !!S.a2a }),
+        bpp: (c, cls) => (S.zero ?? 1) >= c.zthresh ? bppOf(c) / (cls === 'e' ? dp / S.ep : dp) : bppOf(c) };
     };
     const W8 = (S, c, cls) => c.prop === 'showWeights' && cls !== 'v' && S.fp8p ? 2.0625 / 2 : 1;
     const fEff = (c, cls, S) => {
@@ -2222,7 +2289,12 @@ export class Dsv3Layer extends HTMLElement {
     // fp8 flavors run at 2× tensor peak (half width); fp32 runs on CUDA
     // cores (989/67 ≈ 14.8× bf16 time per FLOP — TF32 would defeat the
     // router pin's purpose, so it gets the true-fp32 rate)
-    const RF32 = HARDWARE.h100.flops.bf16 / HARDWARE.h100.flops.fp32;
+    // the pickets' TIME base is the section's hardware (ctx.hw / hw attr; 02 = H100):
+    // one picket = 10 MFLOP/token × 4096 tokens at that GPU's bf16 peak
+    const HWP = HARDWARE[JSON.parse(this.getAttribute('ctx') ?? '{}').hw ?? this.hw ?? 'h100'];
+    const HWPn = HW_SHORT[JSON.parse(this.getAttribute('ctx') ?? '{}').hw ?? this.hw ?? 'h100'];
+    const PICKET_US = Math.round(10e6 * 4096 / HWP.flops.bf16 * 1e6);
+    const RF32 = HWP.flops.bf16 / HWP.flops.fp32;
     const flopEq = (flopsTok, d) => flopsTok * (d === 'e4m3' || d === 'mxfp8' || d === 'e5m6' ? 0.5 : d === 'fp32' ? RF32 : 1);
     const opDt = (id) => {
       const n = ana.byId[id];
@@ -2425,8 +2497,8 @@ export class Dsv3Layer extends HTMLElement {
     // graph node — { name, tdims, frac } (bytes and grid scale by frac)
     const tensorChip = (ids, x, y, ov) => {
       const id = ids[0], st = state(id), n = ana.byId[id];
-      const bytes = ids.reduce((t, i) => t + ana.byId[i].outBytes * (ana.dual.has(i) ? 2 : 1), 0) * (ov?.frac ?? 1);
-      const dualTag = ids.some(i => ana.dual.has(i)) ? ' ᵀ×2' : '';
+      const bytes = ids.reduce((t, i) => t + ana.byId[i].outBytes * ana.mul(i), 0) * (ov?.frac ?? 1);
+      const dualTag = stashTag(ana, ids);
       const name0 = ov?.name ?? n.tensor;
       if (PONLY) {
         // consolidated/local: the saved activations live ON THE WIRES, like
@@ -2444,7 +2516,7 @@ export class Dsv3Layer extends HTMLElement {
         // the earlier bf16 pedagogy — tags there just cross the enclosure)
         const dtag = !LOCAL ? () => '' : (A) => {
           const n2 = A.byId[id] ?? n;
-          return ` <tspan fill="${C(DT_STYLE[dtOf(n2)])}">${dtOf(n2)}${ids.some(i2 => A.dual.has(i2)) ? ' ᵀ×2' : ''}</tspan>`;
+          return ` <tspan fill="${C(DT_STYLE[dtOf(n2)])}">${dtOf(n2)}${stashTag(A, ids)}</tspan>`;
         };
         // tips ride the NAME tspan only (the byte value keeps its raw-B
         // hover free of conflicts); data-chip makes the chip a jump target
@@ -2476,8 +2548,8 @@ export class Dsv3Layer extends HTMLElement {
         const VA = this._vtween?.prev?.anaPrev;
         const bytesT = VA
           ? ids.reduce((t2, i2) => {
-            const nb = ana.byId[i2].outBytes * (ana.dual.has(i2) ? 2 : 1);
-            const pb2 = (VA.byId[i2]?.outBytes ?? nb / (ana.dual.has(i2) ? 2 : 1)) * (ana.dual.has(i2) ? 2 : 1);
+            const nb = ana.byId[i2].outBytes * ana.mul(i2);
+            const pb2 = (VA.byId[i2]?.outBytes ?? nb / ana.mul(i2)) * ana.mul(i2);
             return t2 + pb2 + (nb - pb2) * this._vtween.t;
           }, 0) * (ov?.frac ?? 1)
           : bytes;
@@ -2526,7 +2598,7 @@ export class Dsv3Layer extends HTMLElement {
       // stash-knob tween: when the STATE flips (saved ↔ recomputed/idle) the
       // two text forms dissolve through each other, and the grid squares pour
       // between the OLD and NEW bytes (unsaved = 0) — nothing pops
-      const bytesA = (A) => ids.reduce((t2, i2) => t2 + (A.byId[i2]?.outBytes ?? 0) * (A.dual.has(i2) ? 2 : 1), 0) * (ov?.frac ?? 1);
+      const bytesA = (A) => ids.reduce((t2, i2) => t2 + (A.byId[i2]?.outBytes ?? 0) * A.mul(i2), 0) * (ov?.frac ?? 1);
       const stP2 = VQ && anaP ? stateA(anaP, VQ.prev.marks ?? marks, id) : null;
       const chipTxt = (A, s2) => {
         const tip = s2 === 'save' || s2 === 'pin'
@@ -2536,7 +2608,7 @@ export class Dsv3Layer extends HTMLElement {
             : ` data-tip="${escAttr('\u00b7 not needed: no backward op or replay reads this tensor \u2014 saved or not, it is never stashed.')}"`;
         if (s2 === 'save' || s2 === 'pin') {
           const n2 = A.byId[id] ?? n;
-          const dtag = ids.some(i2 => A.dual.has(i2)) ? ' ᵀ×2' : '';
+          const dtag = stashTag(A, ids);
           // narrow fork/shared columns (ov.short) go TWO lines — one line
           // runs into the neighbouring column (the CONS chips' pattern)
           if (ov?.short) return `<text class="tensor tsave"${tip} x="${x}" y="${y + 8}">${needDir(ids, ov?.readers)} ${esc(name0)}${s2 === 'pin' ? ' 🔒' : ''}</text>` +
@@ -2643,7 +2715,7 @@ export class Dsv3Layer extends HTMLElement {
           : CUM ? KMUL : 1;
         const b = ids.reduce((t, i) => {
           const n2 = anaX.byId[i];   // worst case: the ᵀ dual OR the bf16 phantom edge
-          return t + Math.max(n2.outBytes * (anaX.dual.has(i) ? 2 : 1), n2.elems * 2);
+          return t + Math.max(n2.outBytes * anaX.mul(i), n2.elems * 2);
         }, 0) * 4096 * chipF;
         const rows = Math.max(1, Math.ceil(Math.round(b / (PB_UNIT * 2)) / CHIP_ROW));
         return Math.round(18 + (rows * 6 - 2) * mA);
@@ -3291,7 +3363,7 @@ export class Dsv3Layer extends HTMLElement {
       if (CONS) this._segTotals.push(ana.savedBytes * 4096 * m2);
     }
     if (LOCAL) {   // the fit bar renders in its own row under the controls (this._barHtml)
-      const cap = 80 * 2 ** 30;
+      const cap = HARDWARE[HWk].memGB * 2 ** 30;   // the capacity yardstick (GiB) of this rank's GPU
       const moeExp = PARAMS.expert * DSV3.routedExperts;
       // activation bytes are priced BY KIND: the dense front stashes at the
       // dense rate (no router state, no dispatched tokens), the MoE layers
@@ -3329,8 +3401,9 @@ export class Dsv3Layer extends HTMLElement {
       const px = (b) => x0 + Math.max(0, Math.min(1, (Math.log2(Math.max(b, 1)) - LO) / (HI - LO))) * bw;
       const on = [...COMPS.map((c) => this[c.prop] ? 1 : 0), this.showActs ? 1 : 0];
       const colors = [...COMPS.map((c) => C(c.color)), C('#eda100')];
-      const IF2 = inflightOf(SCHED, STG, PPn, VPPn, FOLD);
-      const names = ['weights', 'gradients (fp32)', 'optimizer states', `activations ×${IF2}mb`];
+      // the in-flight count the cells charge THIS kind's layers (P6 / P6d — the byte-peak moment under interleaving)
+      const IF2 = buildCells(envOf(Snow)).get(this.kind === 'dense' && SCHED === 'interleaved' ? 'P6d' : 'P6');
+      const names = ['weights', `gradients (${GRADB === 2 ? 'bf16' : 'fp32'})`, 'optimizer states', `activations ×${fmtIF(IF2)}mb`];
       const totalN = nowB.reduce((t2, b) => t2 + b, 0);
       const pin = this._pinCfg;
       const pinTotal = pin ? pin.segs.reduce((t2, b) => t2 + b, 0) : 0;
@@ -3438,7 +3511,8 @@ export class Dsv3Layer extends HTMLElement {
         // header: PP1 needs no locus (the prose owns the framing); a
         // pipelined chart names whose bytes these are — one GPU's stage
         hdr: PPn === 1 ? 'logarithmic:' : `one GPU, rank ${STG} of PP${PPn} (logarithmic):`,
-        axisY, HB: axisY + 38, capPx: px(cap),   // +38: the distances legend band (shared with the save label)
+        axisY, HB: axisY + 38, capPx: px(cap), capLbl: `${HARDWARE[HWk].memGB} GiB (${HW_SHORT[HWk]})`,   // +38: the distances legend band (shared with the save label)
+        facs: facsOf(this.getAttribute('facs')),
         unit: !this.hasAttribute('barsonly') && !SNAP2 ? `= ${fmtBytes(PB_UNIT * 2)} / square` : null,
         lbl: SHOWLBL ? `saved: ${pin.label}` : null, rows,
       };
@@ -3512,7 +3586,12 @@ export class Dsv3Layer extends HTMLElement {
       // linear counting earns its keep. Ghost = dashed amber OVERHANG only
       // (the stretch the levers shaved off); a dashed tick if the stash
       // ever exceeds the untreated anchor. Width lerps (rule 9).
-      const pxT = (b) => TB_X + b / 2 ** 30 * 6;
+      // the capacity line follows the section's hardware (ctx.hw, else the
+      // instance's); the ruler's px/GiB shrinks so a Blackwell-sized cap
+      // still lands on the runway (80 GiB at 6 px = 480 px; 276 GiB at 2 px)
+      const HWq = JSON.parse(this.getAttribute('ctx') ?? '{}').hw ?? this.hw ?? 'h100';
+      const capGiB = HARDWARE[HWq].memGB, PXG = capGiB > 100 ? 2 : 6, MINOR = PXG === 6 ? 1 : 4;
+      const pxT = (b) => TB_X + b / 2 ** 30 * PXG;
       const totPx = lerpQ(pxT((anaP?.savedBytes ?? ana.savedBytes) * M2b), pxT(totNow));
       const cy0 = ty + 3;
       T.push(`<text class="dims" x="0" y="${cy0 + 10}">total</text>`);
@@ -3522,16 +3601,16 @@ export class Dsv3Layer extends HTMLElement {
       else if (aPx < totPx - 1)
         T.push(`<line x1="${aPx.toFixed(1)}" y1="${cy0 - 1}" x2="${aPx.toFixed(1)}" y2="${cy0 + 13}" stroke="${C('#d19023')}" stroke-dasharray="2 2"/>`);
       T.push(`<rect x="${TB_X}" y="${cy0 + 2}" width="${(totPx - TB_X).toFixed(1)}" height="9" fill="${C('#eda100')}" data-true="${totNow}"/>`);
-      const rext = Math.max(totPx, aPx, pxT(88 * 2 ** 30)) - TB_X + 6;
+      const rext = Math.max(totPx, aPx, pxT((capGiB + 8) * 2 ** 30)) - TB_X + 6;
       const ry = cy0 + 14;
       T.push(`<line x1="${TB_X}" y1="${ry}" x2="${(TB_X + rext).toFixed(1)}" y2="${ry}" stroke="${C('#c3c2b7')}" stroke-width="1"/>`);
-      for (let u = 0; u * 6 <= rext; u++) {
-        const x = TB_X + u * 6, major = u % 8 === 0;
+      for (let u = 0; u * MINOR * PXG <= rext; u++) {
+        const x = TB_X + u * MINOR * PXG, major = u % 8 === 0;
         T.push(`<line x1="${x}" y1="${ry}" x2="${x}" y2="${ry + (major ? 5 : 2.5)}" stroke="${C('#c3c2b7')}" stroke-width="1"/>`);
-        if (major && u > 0) T.push(`<text x="${x}" y="${ry + 14}" text-anchor="middle" font-size="8.5" fill="${C('#898781')}">${u}</text>`);
+        if (major && u > 0) T.push(`<text x="${x}" y="${ry + 14}" text-anchor="middle" font-size="8.5" fill="${C('#898781')}">${u * MINOR}</text>`);
       }
-      T.push(`<text class="dims" x="${(TB_X + rext + 10).toFixed(1)}" y="${ry + 14}">GiB · minor tick = 1 GiB · LINEAR</text>`);
-      const capX = pxT(80 * 2 ** 30);
+      T.push(`<text class="dims" x="${(TB_X + rext + 10).toFixed(1)}" y="${ry + 14}">GiB · minor tick = ${MINOR} GiB · LINEAR</text>`);
+      const capX = pxT(capGiB * 2 ** 30);
       // the badge rides the bar end, but never under the 80 GiB cap label;
       // bar = ghost edge already says untreated — no fallback text needed
       let bdgX = Math.max(totPx, aPx) + 8;
@@ -3539,10 +3618,10 @@ export class Dsv3Layer extends HTMLElement {
       const bdg = facBadge(totNow, anchor);
       if (bdg) T.push(`<text class="dims" x="${bdgX.toFixed(1)}" y="${cy0 + 10}">${bdg}</text>`);
       T.push(`<line x1="${capX}" y1="${cy0 - 2}" x2="${capX}" y2="${cy0 + 14}" stroke="${C('#d03b3b')}"/>` +
-        `<text class="dims" x="${capX + 3}" y="${cy0 + 1}" fill="${C('#d03b3b')}">80 GiB</text>`);
+        `<text class="dims" x="${capX + 3}" y="${cy0 + 1}" fill="${C('#d03b3b')}">${capGiB} GiB</text>`);
       ty = cy0 + 32;
     }
-    T.push(`<text class="grplabel" x="0" y="${ty + 9}">per-layer compute as TIME at H100 peak — one picket ≈ 41 µs per 4096-token microbatch (10 MFLOP/token at the bf16 rate):</text>`);
+    T.push(`<text class="grplabel" x="0" y="${ty + 9}">per-layer compute as TIME at ${HWPn} peak — one picket ≈ ${PICKET_US} µs per 4096-token microbatch (10 MFLOP/token at the bf16 rate):</text>`);
     ty += 14;
     const DT_ORDER = { bf16: 0, e5m6: 1, e4m3: 2, mxfp8: 2, fp32: 3 };
     const ribbon = (label, list, wOf, num, comm, cOv, traffic) => {
@@ -3611,7 +3690,7 @@ export class Dsv3Layer extends HTMLElement {
     let traffic = null;
     if (pillS > 0.01) {
       const tB = tbNow || tbPrev;   // a vanishing pill shrinks out wearing its OLD content
-      const us = (b) => Math.round(b / (HARDWARE.h100.hbm / 1e6));
+      const us = (b) => Math.round(b / (HWP.hbm / 1e6));
       const mib = (b) => Math.round(b / 2 ** 20);
       if (tB) traffic = { s: pillS, txt: `requantᵀ ≈ ${us(2 * tB)} µs`,
         tip: `e4m3ᵀ OFF — DeepSeek's convention: the stash keeps ONE orientation, and backward re-quantizes every fp8 stash a weight gradient reads (dequantize → transpose → quantize into 128×1 tiles). A pure HBM round trip — the stash is cold, nothing to fuse into: read + write ≈ ${mib(2 * tB)} MiB ≈ ${us(2 * tB)} µs per microbatch·layer at 3.35 TB/s. Bandwidth, not GEMM FLOPs: named here, never metered by the ruler. (ᵀ ON avoids this by widening the forward quantize kernel's write — fusable, so unpriced like every stash write; its cost is the extra GiB on the bar.)` };
@@ -3626,7 +3705,7 @@ export class Dsv3Layer extends HTMLElement {
       // directly commensurable with the GEMM runs. Minor = 0.5 ms, labels
       // every 1 ms, majors keep the taller tick at 5 ms.
       const PPF = 3 / FUNIT;                       // px per (bf16-rate) FLOP/token
-      const FPMS = HARDWARE.h100.flops.bf16 / 4096 / 1e3;   // FLOP/token per ms of peak bf16
+      const FPMS = HWP.flops.bf16 / 4096 / 1e3;   // FLOP/token per ms of peak bf16
       const rext = 2 * fwdEq * PPF + 12;           // bwd is always the longest ribbon
       const ry = ty + 2;
       T.push(`<line x1="${TB_X}" y1="${ry}" x2="${(TB_X + rext).toFixed(1)}" y2="${ry}" stroke="${C('#c3c2b7')}" stroke-width="1"/>`);
@@ -3975,16 +4054,17 @@ class Dsv3PpSchedule extends HTMLElement {
       stage: l?.stage ?? this._stage ?? +(this.getAttribute('stage') ?? 0),
       vpp: l?.vpp ?? +(this.getAttribute('vpp') ?? 1),
       fold: l?.fold ?? (this.getAttribute('fold') ?? 'reflect'),
+      a2a: l?.a2a ?? this.hasAttribute('a2a'),
     };
   }
   sync() {
-    const { pp, sched, stage, vpp, fold } = this.cfg();
-    const sig = `${pp}|${sched}|${stage}|${vpp}|${fold}|${this._m}`;
+    const { pp, sched, stage, vpp, fold, a2a } = this.cfg();
+    const sig = `${pp}|${sched}|${stage}|${vpp}|${fold}|${a2a}|${this._m}`;
     if (sig === this._sig) return;   // the layer's tween fires 'recipe' every frame
     const grew = this._sig.split('|').slice(0, 2).join('|') !== `${pp}|${sched}`;
     const prevH = this._sig && grew ? this._scr.getBoundingClientRect().height : 0;
     this._sig = sig;
-    this.draw(pp, sched, stage, vpp, fold);
+    this.draw(pp, sched, stage, vpp, fold, a2a);
     if (prevH) {   // animate the reflow: same deterministic 12-frame ease-out
       const target = this._scr.scrollHeight;
       const FR = 12; let f = 0;
@@ -4039,6 +4119,31 @@ class Dsv3PpSchedule extends HTMLElement {
     }
     return this._resolveProg(prog, pp, D).cells;
   }
+  // Megatron-Core's interleaved 1F1B (schedules.py,
+  // forward_backward_pipelining_with_interleaving), per rank: warmup
+  // forwards, then strict 1F1B pairs, then cooldown backwards. The k-th
+  // forward on a rank is (chunk ⌊(k mod PP·V)/PP⌋, microbatch
+  // ⌊k/(PP·V)⌋·PP + k mod PP): forwards run chunk-major in groups of PP
+  // microbatches; backwards mirror it with the chunks reversed. Warmup =
+  // 2(PP−r−1) + (V−1)·PP + 1 chunk-forwards (V = 1 is the plain schedule:
+  // PP−r−1). No B/W split (Megatron's default). Requires m % PP = 0.
+  _officialInterleaved(pp, vpp, m, a2a = false) {
+    const total = m * vpp, G = pp * vpp;
+    const chunkOf = (k, fwd) => { const c = Math.floor((k % G) / pp); return fwd ? c : vpp - 1 - c; };
+    const mbOf = (k) => Math.floor(k / G) * pp + (k % pp);
+    const prog = [];
+    for (let r = 0; r < pp; r++) {
+      const W = Math.min(vpp === 1 ? pp - r - 1 : (pp - r - 1) * 2 + (vpp - 1) * pp + (a2a ? 1 : 0), total);
+      const ops = [];
+      const F = (k) => ops.push({ ph: 'F', v: chunkOf(k, true) * pp + r, mb: mbOf(k) });
+      const B = (k) => ops.push({ ph: 'B', v: chunkOf(k, false) * pp + r, mb: mbOf(k) });
+      for (let k = 0; k < W; k++) F(k);
+      for (let i = 0; i < total - W; i++) { F(W + i); B(i); }
+      for (let i = total - W; i < total; i++) B(i);
+      prog.push({ ops, i: 0 });
+    }
+    return this._resolveProg(prog, pp, G).cells;
+  }
   // resolve a per-rank op program's timing: rank-sequential, F waits on
   // F@v−1, B on B@v+1 (its own F at the deepest stage), W only on rank
   // order; fused blocks wait on both. Shared by the official DualPipeV
@@ -4087,7 +4192,7 @@ class Dsv3PpSchedule extends HTMLElement {
     const stalled = prog.reduce((t, q) => t + (q.ops.length - q.i), 0);
     return { cells, stalled };
   }
-  draw(pp, sched, stage, vpp = 1, fold = 'reflect') {
+  draw(pp, sched, stage, vpp = 1, fold = 'reflect', a2a = false) {
     this._pinHl = null;
     // one chain of VIRTUAL stages with 1F1B admission per stage, vpp·pp deep;
     // placement per vstagesOf (wrap = Megatron interleaving, reflect = the
@@ -4097,7 +4202,10 @@ class Dsv3PpSchedule extends HTMLElement {
     // F_mb@v waits on F_mb@(v−1); B_mb@v on B_mb@(v+1), or its own forward
     // on the deepest stage. Durations: F = 1 slot, B = 2 (~2× the FLOPs).
     const D = vpp * pp;
-    const m = sched === 'one' ? 1 : this._m === 'auto' ? D + 4 : this._m;
+    const ILV = sched === 'interleaved' && pp > 1;
+    // interleaved 'auto': enough microbatches (a multiple of PP) to reach the
+    // steady state on rank 0 — its warmup is PP·V + PP − 1 chunk-forwards
+    const m = sched === 'one' ? 1 : this._m === 'auto' ? (ILV ? pp * (vpp + 2) : D + 4) : this._m;
     const stagesOf = Array.from({ length: pp }, (_, r) => vstagesOf(r, pp, vpp, fold));
     // the schedule IS DualPipeV: the official program whenever it exists
     // (pp > 1, steady state reachable); the greedy engine covers the rest
@@ -4105,7 +4213,8 @@ class Dsv3PpSchedule extends HTMLElement {
     // shows what the DRAWING holds; the peak label calls out any
     // drawn-vs-law gap.
     const OFFICIAL = sched === '1f1b' && pp > 1 && m >= 2 * pp;
-    const qs = OFFICIAL ? [] : Array.from({ length: D }, (_, v) => {
+    const MEGATRON = ILV && m % pp === 0;
+    const qs = OFFICIAL || MEGATRON ? [] : Array.from({ length: D }, (_, v) => {
       const wu = Math.min(D - 1 - v, m); const items = [];
       for (let j = 0; j < wu; j++) items.push(['F', j]);
       for (let j = wu; j < m; j++) items.push(['F', j], ['B', j - wu]);
@@ -4113,9 +4222,9 @@ class Dsv3PpSchedule extends HTMLElement {
       return { items, i: 0 };
     });
     const done = new Map();
-    let cells = OFFICIAL ? this._officialDPV(pp, m) : [];
+    let cells = OFFICIAL ? this._officialDPV(pp, m) : MEGATRON ? this._officialInterleaved(pp, vpp, m, a2a) : [];
     const rankT = Array(pp).fill(0);
-    let progress = !OFFICIAL;
+    let progress = !OFFICIAL && !MEGATRON;
     while (progress) {
       progress = false;
       for (let r = 0; r < pp; r++) {
@@ -4198,8 +4307,10 @@ class Dsv3PpSchedule extends HTMLElement {
       W: [[C('#fdefe8'), C('#eb6834'), C('#7a2f12')], [C('#f9ded0'), C('#c74e1d'), C('#5c2410')],
         [C('#f3c8b3'), C('#a63c12'), C('#471b09')], [C('#ecb298'), C('#88300c'), C('#361406')]],
     };
+    // beyond four chunks per rank, neighbouring chunks share a shade
+    const shade = (k) => Math.min(3, vpp <= 4 ? k : Math.floor(k * 4 / vpp));
     for (const c of cells) {
-      const [fill, stroke, ink] = STY[c.ph][c.chunk];
+      const [fill, stroke, ink] = STY[c.ph][shade(c.chunk)];
       const xr = GUT + c.t0 * U, span = (c.t1 - c.t0) * U;
       // contiguity IS the fusion cue: ops wear a 2.5px trailing gap, but a
       // fused F&B pair is drawn flush — two full-height cells sharing an edge
@@ -4215,13 +4326,13 @@ class Dsv3PpSchedule extends HTMLElement {
     // ---- the in-flight section (same svg → the horizontal scroll is shared)
     const IFm = peakN / vpp;
     if (FLIGHT) {
-    const law = inflightOf(sched, stage, pp, vpp, fold);
+    const law = inflightOf(sched, stage, pp, vpp, fold, null, null, { a2a });
     const lawTag = Math.abs(IFm - law) > 1e-9 ? ` — the model charges ${law} (its 1F1B law)` : '';
     P.push(`<text x="0" y="${laneY0 - 7}" font-size="10" fill="${C('#52514e')}">in flight on s${Math.min(stage, pp - 1)}`
       + ` — each bar: the F that stashes a microbatch, held (amber) until the B that frees it.`
       + ` The peak is what the memory bars charge</text>`);
     for (const e of stash) {
-      const [f, fs2, fi] = STY.F[e.chunk], [bf, bs, bi] = STY.B[e.chunk];
+      const [f, fs2, fi] = STY.F[shade(e.chunk)], [bf, bs, bi] = STY.B[shade(e.chunk)];
       const y = laneY(e.lane);
       P.push(`<g class="lane" data-mb="${e.mb}" data-v="${e.v}">`);
       // hitbox: the whole row band over the stash's span, not just the marks
@@ -4249,7 +4360,10 @@ class Dsv3PpSchedule extends HTMLElement {
     }
     P.push('</svg>');
     const ppTag = this._layer ? '' : `PP${pp} · `;   // the knob group already names PP
-    const vppTag = OFFICIAL
+    const vppTag = MEGATRON
+      ? `interleaved 1F1B (Megatron) · each rank runs ${vpp} chunk${vpp > 1 ? 's' : ''}, later chunks darker · forwards issued`
+        + ` chunk-major in groups of PP microbatches · warmup 2(PP−r−1) + (VP−1)·PP${a2a ? ' + 1 (a2a overlap)' : ''} chunk-forwards, then strict 1F1B`
+      : OFFICIAL
       ? 'DualPipeV (official program) · down-pass chunk light, up-pass dark · F and B drawn touching = one'
         + ' overlapped F&B block · pale dashed W = deferred weight grads (B alone = input grads)'
       : vpp > 1
@@ -4258,7 +4372,7 @@ class Dsv3PpSchedule extends HTMLElement {
         : '';
     this._hd.textContent = sched === 'one'
       ? `${ppTag}one microbatch at a time — an F wave down the stages, then a B wave back up`
-      : vpp > 1
+      : vpp > 1 || MEGATRON
         ? `${ppTag}${m} microbatches shown · ${vppTag}`
         : `${ppTag}${m} microbatches shown — F = forward (one slot), B = backward (two: ~2× the FLOPs)`;
     this._scr.innerHTML = P.join('');
@@ -4266,10 +4380,12 @@ class Dsv3PpSchedule extends HTMLElement {
 }
 
 // ---- <dsv3-pp-fold> custom element -----------------------------------------
-// How the V-fold distributes PARAMETERS over ranks. Two views of the same
-// 16-chunk contiguous split of the stack (DualPipeV at PP8): 'virtual' lays
-// the chunks out as if each were a rank of a 16-deep chain; 'folded' pairs
-// chunk v with chunk 15−v on physical rank min(v, 15−v) — the V. The toggle
+// How a pipeline fold distributes PARAMETERS over ranks. Two views of the
+// same D-chunk split of the stack (pp × vpp; 02: DualPipeV's 16 chunks at
+// PP8 on the 63-slot split; 03: Megatron layouts): 'virtual' lays the chunks
+// out as if each were a rank of a D-deep chain; 'folded' places them on
+// their physical rank — the V pairs chunk v with D−1−v on rank min(v, D−1−v),
+// the wrap deals chunk v to rank v mod PP. The toggle
 // ANIMATES the fold (each chunk segment flies to its rank; total height is
 // reserved, so nothing reflows). A model-stack MINIMAP on the left lights
 // the hovered rank's layers — on rank 0 BOTH ends of the model light at
@@ -4292,6 +4408,15 @@ ${knobCss('.pf .top')}
 class Dsv3PpFold extends HTMLElement {
   connectedCallback() {
     this.ep = +(this.getAttribute('ep') ?? 64);
+    // geometry: PP ranks × VP chunks per rank; fold = 'reflect' (the V:
+    // chunk v pairs with D−1−v, 02's DualPipeV) or 'wrap' (Megatron
+    // interleaving: chunk v on rank v mod PP); a layout string (Megatron's
+    // grammar, see parseLayout) replaces the 63-slot split and implies wrap
+    this.pp = +(this.getAttribute('pp') ?? 8);
+    this.vpp = +(this.getAttribute('vpp') ?? 2);
+    this.layout = this.getAttribute('layout');
+    this.fold = this.layout ? 'wrap' : (this.getAttribute('fold') ?? 'reflect');
+    this.D = this.pp * this.vpp;
     this.view = this.getAttribute('view') === 'physical' ? 'physical' : 'virtual';
     this._t = this.view === 'physical' ? 1 : 0;
     this._hover = null;
@@ -4331,18 +4456,20 @@ class Dsv3PpFold extends HTMLElement {
     this.chunks = this._chunks();
     this.render();
   }
-  // the 16 chunks: exact params from the SAME split the memory model uses,
-  // experts ÷ the current EP (rank-RESIDENT parameters, not whole-model)
+  // the D chunks: exact params from the SAME split the memory model uses
+  // (the slot split, or the layout's chunks), experts ÷ the current EP
+  // (rank-RESIDENT parameters, not whole-model). An MTP chunk carries no
+  // params here (MTP is outside the model; the strip still shows the slot).
   _chunks() {
     const moeExp = PARAMS.expert * DSV3.routedExperts;
-    return Array.from({ length: 16 }, (_, c) => {
-      const g = ppStage(c, 16, 1, 'reflect');
+    return Array.from({ length: this.D }, (_, c) => {
+      const g = ppStage(c, this.D, 1, this.layout ? 'wrap' : 'reflect', this.layout);
       const seg = g.segs[0];
       const moeLocal = PARAMS.moeBlock - moeExp + moeExp / this.ep;
       const slotsP = [...(g.emb ? [PARAMS.embed] : []),
         ...Array.from({ length: seg.hi - seg.lo }, (_, i) => seg.lo + i < 3 ? PARAMS.denseBlock : moeLocal),
         ...(g.head ? [PARAMS.embed + PARAMS.finalNorm] : [])];
-      return { c, lo: seg.lo, hi: seg.hi, dense: g.dense, moe: g.moe,
+      return { c, lo: seg.lo, hi: seg.hi, dense: g.dense, moe: g.moe, mtp: seg.mtp ?? 0,
         emb: g.emb, head: g.head, slotsP, p: slotsP.reduce((a, b) => a + b, 0) };
     });
   }
@@ -4386,27 +4513,32 @@ class Dsv3PpFold extends HTMLElement {
     };
     setTimeout(step, 16);
   }
-  _rankOf(c) { return Math.min(c, 15 - c); }
+  // physical placement: the V pairs chunk c with D−1−c on rank min(c, D−1−c);
+  // wrap deals chunk c to rank c mod PP
+  _rankOf(c) { return this.fold === 'wrap' ? c % this.pp : Math.min(c, this.D - 1 - c); }
+  _rankChunks(r) { return this.chunks.filter((k) => this._rankOf(k.c) === r); }
   render() {
-    const t = this._t;
-    this._btn.textContent = this.view === 'virtual' ? 'fold onto the 8 ranks ⤵' : 'unroll into 16 chunks ⤴';
+    const t = this._t, D = this.D, pp = this.pp;
+    this._btn.textContent = this.view === 'virtual' ? `fold onto the ${pp} ranks ⤵` : `unroll into ${D} chunks ⤴`;
     this._epUI.sel.value = String(this.ep);
     for (const b of this._epUI.eg.querySelectorAll('button')) {
       const j = [1, 2, 4, 8, 16, 32, 64].indexOf(this.ep) + +b.dataset.dir;
       b.disabled = j < 0 || j > 6;
     }
-    // ONE svg, sixteen UNIFORM rows — each row IS a span of layers: the
-    // grouped stack on the left (emb cap · layer cells, dense dark · head
-    // cap), the parameter bar beside it. Folding never re-pitches the rows:
-    // the up-pass bars POP onto their partner's row (v ↔ 15−v) and rows
-    // 0–7 relabel s0–s7; the vacated rows keep their spans (the stack stays
-    // readable — the fold moves COST, not layers).
+    // ONE svg, D UNIFORM rows — each row IS a span of layers: the grouped
+    // stack on the left (emb cap · layer cells, dense dark · head cap), the
+    // parameter bar beside it. Folding never re-pitches the rows: the
+    // later-pass bars POP onto their rank's row (after the bars already
+    // there) and rows 0–PP−1 relabel s0–s(PP−1); the vacated rows keep
+    // their spans (the stack stays readable — the fold moves COST, not layers).
     // left → right: the CONTINUOUS model strip (63 slots: emb · 61 layers ·
-    // head, top to bottom — tokens flow down the page), chunk brackets,
-    // a routing fan of square-cornered leaders stringing each span to its
-    // bar row, then the v/s axis, range labels, and the bars
+    // head, top to bottom — tokens flow down the page; + an MTP slot when
+    // the layout carries one), chunk brackets, a routing fan of
+    // square-cornered leaders stringing each span to its bar row, then the
+    // v/s axis, range labels, and the bars
     const SL = 8, STW = 16, BRX = SL + STW + 2, RX0 = BRX + 8;
-    const GUT = RX0 + 8 * 1.6 + 22, LX = GUT + 6, X0 = LX + 64;
+    const MTP = this.chunks.some((k) => k.mtp) ? 1 : 0;   // an MTP layer in the layout: one more strip slot, longer range labels
+    const GUT = RX0 + pp * 1.6 + 22, LX = GUT + 6, X0 = LX + (MTP ? 86 : 64);
     // blocks (PROTOTYPE): the linear chart leans into the site convention —
     // squares/units for linear, bars for log. Each slot renders as tall-thin
     // unit rects at the global byte quantum (448 MiB bf16 = 224M params),
@@ -4417,25 +4549,34 @@ class Dsv3PpFold extends HTMLElement {
     // unit RULER under the bars (minor tick = 128 MiB bf16, major = 1 GiB,
     // 8 minors to a major), labels in bytes.
     const RH = 14, PV = 21;
-    const UNITP = 128 * 2 ** 20 / 2, UPX = 6;   // params per ruler unit · px per unit
+    // params per ruler unit · px per unit. The unit is 128 MiB bf16 (02's
+    // EP64 ranks hold ~9 GiB); when a rank holds much more (03: EP32 over
+    // two ranks ≈ 36 GiB) the ruler coarsens ×4 to 512 MiB so the widest
+    // rank still fits the column instead of overflowing it
+    const UNIT0 = 128 * 2 ** 20 / 2, UPX = 6;
+    const maxRankP = Math.max(...Array.from({ length: pp }, (_, r) => this._rankChunks(r).reduce((s, k) => s + k.p, 0)));
+    const KU = maxRankP / UNIT0 * UPX > 1000 ? 4 : 1;
+    const UNITP = UNIT0 * KU;
     const pTs = (c) => this.chunks[c].slotsP.map((v, i) =>
       this._epFrom ? this._epFrom[c][i] + (v - this._epFrom[c][i]) * this._ept : v);
     const pT = (c) => pTs(c).reduce((a, b) => a + b, 0);
-    const rankP = (r) => this.chunks[r].p + this.chunks[15 - r].p;   // labels/data: the exact NEW values
-    const rankPT = (r) => pT(r) + pT(15 - r);                        // geometry: tweened
+    const rankP = (r) => this._rankChunks(r).reduce((s, k) => s + k.p, 0);   // labels/data: the exact NEW values
     const scale = UPX / UNITP;
     const wOf = (k) => pT(k.c) * scale;
-    const H = 16 * PV + 30;
-    const W = X0 + Math.max(...Array.from({ length: 8 }, (_, r) => wOf(this.chunks[r]) + wOf(this.chunks[15 - r]))) + 270;
-    // ONE authored motion — the UNROLL (crease-outward release, v8 first,
-    // decelerating arrivals — the paper-unrolling read): the fold plays the
-    // same video in reverse, at recoil tempo (see _go). t stays raw;
-    // per-chunk easing lives inside each chunk's slice.
+    const rankW = (r) => this._rankChunks(r).reduce((s, k) => s + wOf(k), 0);
+    // where a later-pass chunk DOCKS on its rank's row: after every earlier
+    // chunk of that rank (the V's partner, or the wrap's lower chunks)
+    const dockX = (k) => X0 + this._rankChunks(this._rankOf(k.c)).filter((k2) => k2.c < k.c).reduce((s, k2) => s + wOf(k2) + 3, 0);
+    const H = D * PV + 30;
+    const W = X0 + Math.max(...Array.from({ length: pp }, (_, r) => rankW(r))) + 270;
+    // ONE authored motion — the UNROLL (crease-outward release, the first
+    // flying chunk first, decelerating arrivals — the paper-unrolling read):
+    // the fold plays the same video in reverse, at recoil tempo (see _go).
+    // t stays raw; per-chunk easing lives inside each chunk's slice.
     const tG = fitEase(t);
-    const STAG = 0.4;
-    const tcOf = (c) => c < 8 ? tG
-      : 1 - fitEase(Math.min(1, Math.max(0, ((1 - t) - STAG * ((c - 8) / 7)) / (1 - STAG))));
-    const lerp = (a, b) => a + (b - a) * tG;
+    const STAG = 0.4, NFLY = Math.max(1, D - pp - 1);
+    const tcOf = (c) => c < pp ? tG
+      : 1 - fitEase(Math.min(1, Math.max(0, ((1 - t) - STAG * ((c - pp) / NFLY)) / (1 - STAG))));
     const lerpC = (a, b, c) => a + (b - a) * tcOf(c);
     const hv = this._hover;
     const hvRank = hv == null ? null : this._rankOf(hv);
@@ -4443,52 +4584,57 @@ class Dsv3PpFold extends HTMLElement {
     const hotRow = (row) => hv != null && (folded ? this._rankOf(row) === hvRank : row === hv);
     const yRow = (row) => row * PV + (PV - RH) / 2;
     const B = [`<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" font-family="system-ui">`];
-    for (let row = 0; row < 16; row++) {
+    for (let row = 0; row < D; row++) {
       const k = this.chunks[row];
       if (hotRow(row)) B.push(`<rect x="0" y="${row * PV}" width="${W}" height="${PV}" fill="${C('#fff3d1')}"/>`);
-      // axis: v-labels crossfade into s-labels on rows 0–7; the vacated
+      // axis: v-labels crossfade into s-labels on rows 0–PP−1; the vacated
       // rows keep their v-labels, dimmed (the chunks still live THERE)
-      const sOp = row < 8 ? t : 0, vOp = row < 8 ? 1 - t : 1 - 0.65 * t;
+      const sOp = row < pp ? t : 0, vOp = row < pp ? 1 - t : 1 - 0.65 * t;
       B.push(`<text x="${GUT - 4}" y="${yRow(row) + RH - 3}" text-anchor="end" font-size="9.5" fill="${C('#898781')}" opacity="${vOp.toFixed(2)}">v${row}</text>`);
-      if (row < 8) B.push(`<text x="${GUT - 4}" y="${yRow(row) + RH - 3}" text-anchor="end" font-size="9.5" font-weight="600" fill="${C('#52514e')}" opacity="${sOp.toFixed(2)}">s${row}</text>`);
-      B.push(`<text x="${LX}" y="${yRow(row) + RH - 3}" font-size="9" fill="${C('#898781')}">${k.emb ? 'emb·' : ''}L${k.lo}–${k.hi - 1}${k.head ? '·head' : ''}</text>`);
+      if (row < pp) B.push(`<text x="${GUT - 4}" y="${yRow(row) + RH - 3}" text-anchor="end" font-size="9.5" font-weight="600" fill="${C('#52514e')}" opacity="${sOp.toFixed(2)}">s${row}</text>`);
+      const span = k.hi > k.lo ? `L${k.lo}–${k.hi - 1}` : '';
+      B.push(`<text x="${LX}" y="${yRow(row) + RH - 3}" font-size="9" fill="${C('#898781')}">${k.emb ? 'emb·' : ''}${span}${k.mtp ? (span ? '·' : '') + 'mtp' : ''}${k.head ? '·head' : ''}</text>`);
     }
-    // the model strip: 63 slots top-to-bottom, UNBROKEN (verticality is the
-    // point — the fold moves cost, never the model). Chunk spans wear a
-    // bracket, and a square-cornered leader strings each span to its bar
-    // row; folded, a rank's TWO leaders share a routing lane, so both ends
-    // of the model visibly wire into s0.
-    const SH = (16 * PV - 4) / 63, TOPY = 2;
+    // the model strip: 63 slots top-to-bottom (64 with an MTP layer),
+    // UNBROKEN (verticality is the point — the fold moves cost, never the
+    // model). Chunk spans wear a bracket, and a square-cornered leader
+    // strings each span to its bar row; folded, a rank's leaders share a
+    // routing lane, so both ends of the model visibly wire into one rank.
+    const NS = 63 + MTP, HEADSLOT = 62 + MTP;
+    const SH = (D * PV - 4) / NS, TOPY = 2;
     const slotY = (k2) => TOPY + k2 * SH;
-    const chunkSlots = (k) => ({ s0: k.c === 0 ? 0 : k.lo + 1, s1: k.head ? 63 : k.hi + 1 });
-    for (let sl = 0; sl < 63; sl++) {
-      const cap = sl === 0 || sl === 62;
+    // a chunk's slot range: emb = slot 0, layer l = slot l+1, mtp = slot 62, head = the last
+    const chunkSlots = (k) => ({ s0: k.emb ? 0 : k.hi > k.lo ? k.lo + 1 : k.mtp ? 62 : HEADSLOT,
+      s1: k.head ? NS : k.mtp ? 63 : k.hi + 1 });
+    const hotChunks = hv == null ? [] : folded ? this._rankChunks(hvRank) : [this.chunks[hv]];
+    for (let sl = 0; sl < NS; sl++) {
+      const cap = sl === 0 || sl >= 62;   // emb · mtp · head wear the cap shade
       const l = sl - 1;
-      const inHot = hv != null && [this.chunks[folded ? hvRank : hv], folded ? this.chunks[15 - hvRank] : null]
-        .some((k) => k && sl >= chunkSlots(k).s0 && sl < chunkSlots(k).s1);
+      const inHot = hotChunks.some((k) => sl >= chunkSlots(k).s0 && sl < chunkSlots(k).s1);
       // highlight keeps each cell KIND's relative darkness (caps darkest,
       // dense mid, MoE light) — amber says "selected", shade still says what
       const fill = inHot ? (cap ? C('#8a5f00') : l < 3 ? C('#d19023') : C('#f6cd74'))
         : cap ? C('#8f8d86') : l < 3 ? C('#aba89f') : C('#dcdad2');
-      B.push(`<rect${cap ? '' : ` data-layer="${l}"`} x="${SL}" y="${slotY(sl).toFixed(1)}" width="${STW}" height="${(SH - 1).toFixed(1)}"${cap ? ' rx="2"' : ''} fill="${fill}"/>`);
+      const mtpCell = MTP && sl === 62;   // the MTP slot: dashed — placed, not modeled
+      B.push(`<rect${cap ? '' : ` data-layer="${l}"`} x="${SL}" y="${slotY(sl).toFixed(1)}" width="${STW}" height="${(SH - 1).toFixed(1)}"${cap ? ' rx="2"' : ''} fill="${mtpCell ? 'none' : fill}"${mtpCell ? ` stroke="${fill}" stroke-dasharray="2 1.5"` : ''}/>`);
     }
     for (const k of this.chunks) {
       const { s0, s1 } = chunkSlots(k);
       const y0 = slotY(s0) + 0.5, y1 = slotY(s1) - 1.5, ym = (y0 + y1) / 2;
-      const r = this._rankOf(k.c), down = k.c < 8;
-      const rx = RX0 + r * 1.6;                        // the pair shares a lane
+      const r = this._rankOf(k.c), down = k.c < pp;
+      const rx = RX0 + r * 1.6;                        // the rank's chunks share a lane
       const yb = lerpC(yRow(k.c), yRow(down ? k.c : r), k.c) + RH / 2;   // leaders ride their chunk's stagger
       const hot2 = hotRow(k.c);
       const st = hot2 ? `stroke="${C('#7a5200')}" stroke-width="1.3"` : `stroke="${C('#c3c2b7')}" stroke-width="0.9"`;
       B.push(`<path d="M ${BRX} ${y0.toFixed(1)} h 3 V ${y1.toFixed(1)} h -3" fill="none" ${st}/>`);
       B.push(`<path d="M ${BRX + 3} ${ym.toFixed(1)} H ${rx.toFixed(1)} V ${yb.toFixed(1)} H ${GUT - 12}" fill="none" ${st}${hot2 ? '' : ' opacity="0.75"'}/>`);
     }
-    // chunk bars: down-pass rows keep their bar; up-pass bars FLY to their
-    // partner's row and dock after its bar. Vocab shares wear a dashed
-    // outline (emb at the front, head at the back — the s0 imbalance)
+    // chunk bars: first-pass rows keep their bar; later-pass bars FLY to
+    // their rank's row and dock after the bars already there. Vocab shares
+    // wear a dashed outline (emb at the front, head at the back — the s0 imbalance)
     for (const k of this.chunks) {
-      const c = k.c, down = c < 8, r = this._rankOf(c);
-      const x = down ? X0 : lerpC(X0, X0 + wOf(this.chunks[r]) + 3, c);
+      const c = k.c, down = c < pp, r = this._rankOf(c);
+      const x = down ? X0 : lerpC(X0, dockX(k), c);
       const y = down ? yRow(c) : lerpC(yRow(c), yRow(r), c);
       const w = wOf(k);
       const hot2 = hv != null && (folded ? this._rankOf(c) === hvRank : c === hv);
@@ -4506,10 +4652,10 @@ class Dsv3PpFold extends HTMLElement {
         const layer = k.lo + (i2 - (k.emb ? 1 : 0));
         const dense = !vocab && layer < 3;
         // color = DEPTH in the chain (a stepwise gradient, slot 0 light →
-        // slot 62 dark): the continuous version of the down/up-pass split.
-        // Folded, a rank's two pieces wear complementary shades, and rank 0
-        // holds both extremes — the V as a color story.
-        const gT = (chunkSlots(k).s0 + i2) / 62;
+        // the last slot dark): the continuous version of the pass split.
+        // Folded, a rank's pieces wear graded shades, and the V's rank 0
+        // holds both extremes — the fold as a color story.
+        const gT = (chunkSlots(k).s0 + i2) / (NS - 1);
         const segFill = fitColor(C('#bcd8f3'), C('#134a8e'), gT);
         const ink = gT < 0.5 ? C('#0b3d75') : C('#dcebfa');
         B.push(`<rect x="${sx.toFixed(1)}" y="${y.toFixed(1)}" width="${Math.max(0.5, w2 - 1).toFixed(1)}" height="${RH}" fill="${segFill}"/>`);
@@ -4519,7 +4665,7 @@ class Dsv3PpFold extends HTMLElement {
           B.push(`<text x="${(sx + w2 / 2).toFixed(1)}" y="${y + RH - 4}" text-anchor="middle" font-size="8.5" fill="${ink}">dense</text>`);
         if (vocab) {
           // the dashed outline alone says not-a-layer — no white wash: the
-          // depth ramp must hold (head is slot 62, the DARKEST point)
+          // depth ramp must hold (the head is the last slot, the DARKEST point)
           B.push(`<rect x="${sx.toFixed(1)}" y="${y.toFixed(1)}" width="${Math.max(0.5, w2 - 1).toFixed(1)}" height="${RH}" fill="none" stroke="${gT < 0.5 ? C('#0b3d75') : C('#bcd8f3')}" stroke-dasharray="2.5 2"/>`);
           if (w2 > 30) B.push(`<text x="${(sx + w2 / 2).toFixed(1)}" y="${y + RH - 4}" text-anchor="middle" font-size="8.5" fill="${ink}">${k.emb && i2 === 0 ? 'emb' : 'head'}</text>`);
         }
@@ -4529,23 +4675,25 @@ class Dsv3PpFold extends HTMLElement {
       B.push('</g>');
       const val = (pp2) => fmtBytes(pp2 * 2);   // bytes: the ruler's currency
       B.push(`<text x="${(x + w + 4).toFixed(1)}" y="${(y + RH - 3).toFixed(1)}" font-size="9.5" fill="${C('#898781')}" opacity="${(1 - t).toFixed(2)}">${val(k.p)}</text>`);
-      if (!down) B.push(`<text data-ranktotal="${r}" data-params="${rankP(r)}" x="${(x + w + 4).toFixed(1)}" y="${(y + RH - 3).toFixed(1)}" font-size="9.5" fill="${C('#898781')}" opacity="${t.toFixed(2)}">${val(rankP(r))}</text>`);
+      // the rank total rides the LAST chunk docking on that row
+      const last = this._rankChunks(r).at(-1);
+      if (!down && last.c === c) B.push(`<text data-ranktotal="${r}" data-params="${rankP(r)}" x="${(x + w + 4).toFixed(1)}" y="${(y + RH - 3).toFixed(1)}" font-size="9.5" fill="${C('#898781')}" opacity="${t.toFixed(2)}">${val(rankP(r))}</text>`);
     }
     // the x-axis: these bars are LINEAR (everything else on the site is
     // log₂) — the unit RULER says so out loud, without atomizing the bars
     {
-      const ay = 16 * PV + 4;
-      const ext = Math.max(...Array.from({ length: 8 }, (_, r) => wOf(this.chunks[r]) + wOf(this.chunks[15 - r]))) + UPX;
+      const ay = D * PV + 4;
+      const ext = Math.max(...Array.from({ length: pp }, (_, r) => rankW(r))) + UPX;
       B.push(`<line x1="${X0}" y1="${ay}" x2="${(X0 + ext).toFixed(1)}" y2="${ay}" stroke="${C('#c3c2b7')}" stroke-width="1"/>`);
       for (let u = 0; u * UPX <= ext; u++) {
         const x = X0 + u * UPX, major = u % 8 === 0;
         B.push(`<line x1="${x}" y1="${ay}" x2="${x}" y2="${ay + (major ? 5 : 2.5)}" stroke="${C('#c3c2b7')}" stroke-width="1"/>`);
-        if (major && u > 0) B.push(`<text x="${x}" y="${ay + 14}" text-anchor="middle" font-size="8.5" fill="${C('#898781')}">${u / 8}</text>`);
+        if (major && u > 0) B.push(`<text x="${x}" y="${ay + 14}" text-anchor="middle" font-size="8.5" fill="${C('#898781')}">${u / 8 * KU}</text>`);
       }
-      B.push(`<text x="${(X0 + ext + 10).toFixed(1)}" y="${ay + 14}" font-size="9" fill="${C('#52514e')}">GiB bf16 · minor tick = 128 MiB · LINEAR</text>`);
+      B.push(`<text x="${(X0 + ext + 10).toFixed(1)}" y="${ay + 14}" font-size="9" fill="${C('#52514e')}">GiB bf16 · minor tick = ${128 * KU} MiB · LINEAR</text>`);
     }
     // whole-row hitboxes (stack, label, and bar band alike — easy hovering)
-    for (let row = 0; row < 16; row++)
+    for (let row = 0; row < D; row++)
       B.push(`<rect data-row="${row}" x="0" y="${row * PV}" width="${W}" height="${PV}" fill="transparent"/>`);
     B.push('</svg>');
     this._bars.innerHTML = B.join('');
@@ -4561,17 +4709,18 @@ class Dsv3PpFold extends HTMLElement {
   }
   _readout() {
     const hv = this._hover, folded = this._t > 0.5;
-    const rng = (k) => `L${k.lo}–${k.hi - 1}`;
+    const rng = (k) => [k.emb ? 'emb' : null, k.hi > k.lo ? `L${k.lo}–${k.hi - 1}` : null, k.mtp ? 'MTP' : null,
+      k.head ? 'final norm + lm head' : null].filter(Boolean).join(' + ');
     if (hv == null) {
       this._ro.textContent = 'hover a row — left: the span of layers it holds · dashed = the vocab share (emb / head)';
     } else if (folded) {
-      const r = this._rankOf(hv), a = this.chunks[r], b = this.chunks[15 - r];
-      this._ro.textContent = `s${r} = v${r} + v${15 - r} = `
-        + `${a.emb ? 'emb + ' : ''}${rng(a)} · ${rng(b)}${b.head ? ' + final norm + lm head' : ''}`
-        + ` — ${fmtP(a.p + b.p)} params on this rank${r === 0 ? ' (the fold\u2019s heaviest: both ends of the model)' : ''}`;
+      const r = this._rankOf(hv), ks = this._rankChunks(r);
+      const p = ks.reduce((s, k) => s + k.p, 0);
+      this._ro.textContent = `s${r} = ${ks.map((k) => `v${k.c}`).join(' + ')} = ${ks.map(rng).join(' · ')}`
+        + ` — ${fmtP(p)} params on this rank${this.fold === 'reflect' && r === 0 ? ' (the fold’s heaviest: both ends of the model)' : ''}`;
     } else {
       const k = this.chunks[hv];
-      this._ro.textContent = `v${hv} = ${k.emb ? 'emb + ' : ''}${rng(k)}${k.head ? ' + final norm + lm head' : ''}`
+      this._ro.textContent = `v${hv} = ${rng(k)}`
         + ` (${k.dense ? `${k.dense} dense + ` : ''}${k.moe} MoE) — ${fmtP(k.p)} params`;
     }
   }
@@ -4678,9 +4827,11 @@ class Dsv3BeatDeck extends HTMLElement {
     const c = this._full(this._steps[this._i].cfg);
     const l = this._layer;
     // vpp/fold are DERIVED from pp — never knobs, never a detour
-    const stg = c.stage ?? peakStage(c.pp, c.ep, c.zero ?? 1, c.world, c.sched, c.pp > 1 ? 2 : 1, 'reflect');
+    const g = schedGeom(c);
+    const stg = c.stage ?? peakStage(c.pp, c.ep, c.zero ?? 1, c.world, c.sched, g.vpp, g.fold, g.layout, g.a2a);
     return l.pp !== c.pp || l.ep !== c.ep || (l.zero ?? 0) !== c.zero || l.world !== c.world
-      || (l.sched ?? '1f1b') !== c.sched || l.stage !== stg;
+      || (l.sched ?? '1f1b') !== c.sched || l.stage !== stg || l.vpp !== g.vpp || (l.hw ?? 'h100') !== (c.hw ?? 'h100')
+      || !!l.a2a !== !!g.a2a || (l.gradB ?? 4) !== (c.gradB ?? 4) || !!l.fp8Params !== !!c.fp8Params;
   }
   _syncMod() {
     const f = this._fiddled();

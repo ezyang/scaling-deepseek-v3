@@ -28,19 +28,23 @@ export const HARDWARE = {
   },
   gb200: {
     label: 'GB200 NVL72',
-    flops: { bf16: 2.5e15, fp8: 5.0e15 },
+    flops: { bf16: 2.5e15, fp8: 5.0e15, fp32: 80e12 },   // fp32 = CUDA cores (B200 datasheet: 80 TFLOP/s)
     gemmEff: { bf16: 0.80, mxfp8: 0.85 }, // Blackwell has native MX support
     attnEff: 0.65,
-    hbm: 8e12, hbmEff: 0.78, memGB: 192,
+    // memGB is the capacity YARDSTICK in GiB (the fit charts' red line): what
+    // torch.cuda.get_device_properties reports — 197,568,495,616 B = 184.0 GiB
+    // (spec sheets say "186 GB"); the essay rounds down, headroom being needed anyway
+    hbm: 8e12, hbmEff: 0.78, memGB: 184,
     nvl: 900e9, nvlEff: 0.75, domain: 72, // NVL72: 72 GPUs in one NVLink domain
     nic: 50e9, nicEff: 0.80,              // CX-7, 400 Gb/s
   },
   gb300: {
     label: 'GB300 NVL72',
-    flops: { bf16: 2.5e15, fp8: 5.0e15 }, // dense FP8 ~B200; GB300 mostly adds FP4 + HBM capacity
+    flops: { bf16: 2.5e15, fp8: 5.0e15, fp32: 80e12 }, // dense FP8 ~B200; GB300 mostly adds FP4 + HBM capacity; fp32 taken as B200's
     gemmEff: { bf16: 0.80, mxfp8: 0.85 },
     attnEff: 0.65,
-    hbm: 8e12, hbmEff: 0.78, memGB: 288,
+    // 297,020,948,480 B = 276.6 GiB as PyTorch sees it (spec sheets say "288 GB")
+    hbm: 8e12, hbmEff: 0.78, memGB: 276,
     nvl: 900e9, nvlEff: 0.75, domain: 72,
     nic: 100e9, nicEff: 0.80,             // CX-8, 800 Gb/s
   },

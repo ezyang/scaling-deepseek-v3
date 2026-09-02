@@ -53,7 +53,13 @@ export const RECIPES = {
   // GEMM (32-element MX blocks, UE8M0 scales, via TE) INCLUDING the attention
   // core (Blackwell FP8 attention: q/k/v saved MXFP8). The attention OUTPUT is
   // saved bf16 (o_proj stash wide); router/head bf16.
-  'nv-mxfp8': { qkv_down: 'mxfp8', q_up: 'mxfp8', kv_up: 'mxfp8', attn: 'mxfp8', o_proj: 'bf16', ffn_gate_up: 'mxfp8', ffn_down: 'mxfp8', swiglu_in: 'mxfp8' },
+  // Stash facts from TE (release_v2.9, MLPerf's v2.15 assumed alike): a linear
+  // keeps ONE column-wise MXFP8 copy of its input (the row-wise copy is freed
+  // after the forward GEMM), so no ᵀ dual; the attn out-proj saves the bf16
+  // attention output (save_original_input — it aliases attention's own stash);
+  // Megatron's fused SwiGLU saves its bf16 input (activation_func_fp8_input_store
+  // off); the two down-proj linears each keep a quantized norm1 copy (×2).
+  'nv-mxfp8': { qkv_down: 'mxfp8', q_up: 'mxfp8', kv_up: 'mxfp8', attn: 'mxfp8', o_proj: 'bf16', ffn_gate_up: 'mxfp8', ffn_down: 'mxfp8', swiglu_in: 'bf16', norm1_copies: 2 },
 };
 
 // each recipe's CANONICAL stash-side checkbox state: the e4m3ᵀ dual stash is
