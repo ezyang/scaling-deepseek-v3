@@ -116,7 +116,7 @@ export class Dsv3AnatomyPlan extends HTMLElement {
     // local: the plan's ops (embedding / final norm / lm head) are all
     // dense-class — ZeRO-1 shards their optimizer states over the full DP group
     const EPn = l?.ep ?? 64, PPl = l?.pp ?? LOCAL_PAR.pp, Sg = l?.stage ?? 1;
-    const DPn = (l?.world ?? LOCAL_PAR.world) / PPl, ZL = l?.zero ?? 1;
+    const TPl = l?.tp ?? 1, DPn = (l?.world ?? LOCAL_PAR.world) / PPl / TPl, ZL = l?.zero ?? 1;
     const stg = LOC ? ppStage(Sg, PPl, l?.vpp ?? 1, l?.fold, l?.layout) : null;
     const bppOf = (c) => c.prop === 'showGrads' ? (l?.gradB ?? 4) : c.bpp;   // the gradient buffer's dtype is a config fact
     const cbpp = (c, cls) => !LOC || ZL < c.zthresh ? bppOf(c)
@@ -132,8 +132,8 @@ export class Dsv3AnatomyPlan extends HTMLElement {
       : psel2(l?.partSel ?? null));
     const pf = (c) => {
       if (!LOC) return cbpp(c, 'd');
-      const eff = (S) => (S.zero ?? 1) >= c.zthresh ? c.bpp / ((S.world ?? LOCAL_PAR.world) / S.pp) : c.bpp;
-      const N = { pp: PPl, zero: ZL, world: l?.world ?? LOCAL_PAR.world }, V = l?._vtween;
+      const eff = (S) => (S.zero ?? 1) >= c.zthresh ? c.bpp / ((S.world ?? LOCAL_PAR.world) / S.pp / (S.tp ?? 1)) : c.bpp;
+      const N = { pp: PPl, zero: ZL, world: l?.world ?? LOCAL_PAR.world, tp: TPl }, V = l?._vtween;
       return V ? eff(V.prev) + (eff(N) - eff(V.prev)) * V.t : eff(N);
     };
     const strip = (x, y, nParams) => {
@@ -193,7 +193,8 @@ export class Dsv3AnatomyPlan extends HTMLElement {
     // VPP folds it back onto stage 0
     const headWhere = LOC && (l?.fold ?? 'reflect') === 'reflect' && (l?.vpp ?? 1) % 2 === 0
       ? '(stage 0 only)' : '(last stage only)';
-    op('embedding', !onEmb ? '(stage 0 only)' : AV && !LB ? '(not counted)' : pw(E), 22, 'embed', onEmb ? E : 0);
+    const Ev = LOC ? E / TPl : E;   // vocab-parallel under TP: this GPU's slice of the table
+    op('embedding', !onEmb ? '(stage 0 only)' : AV && !LB ? '(not counted)' : pw(Ev), 22, 'embed', onEmb ? Ev : 0);
     wire(24, `x · ${A.hidden}`);
     // cumulative: the expanded diagram already folds the ×N in, so the plan
     // drops it — "×58" beside an already-multiplied figure reads as overcount
@@ -220,8 +221,8 @@ export class Dsv3AnatomyPlan extends HTMLElement {
     const PL = LB || l?.getAttribute('lens') === 'params';
     S.push(`<g data-op="lm_head"><rect class="box" x="${BX}" y="${y}" width="${W}" height="${LB ? 42 : 34}" rx="4"/>` +
       `<text class="name" x="${BX + 8}" y="${y + 14}">lm head</text>` +
-      `<text class="dims" x="${BX + 8}" y="${y + 27}">${!onHead ? headWhere : PL ? pw(E) : `${A.hidden} → ${A.vocab} ${pw(E)}`}</text>` +
-      (LB && onHead ? strip(BX + 8, y + 31, E) : '') + `</g>`);
+      `<text class="dims" x="${BX + 8}" y="${y + 27}">${!onHead ? headWhere : PL ? pw(Ev) : `${A.hidden} → ${A.vocab} ${pw(Ev)}`}</text>` +
+      (LB && onHead ? strip(BX + 8, y + 31, Ev) : '') + `</g>`);
     y += LB ? 42 : 34;
     wire(24, `logits · ${A.vocab}`);
     op('softmax / loss', null);
@@ -294,7 +295,7 @@ dsv3-anatomy dsv3-anatomy-plan { margin-top: 46px; }
 }
 `;
 const FWD = ['controls', 'recipe', 'recipes', 'recompute', 'detail', 'transposed', 'for',
-  'world', 'pp', 'vpp', 'ep', 'sched', 'fold', 'layout', 'a2a', 'grads', 'fp8params', 'hw', 'hws', 'facs', 'recomputes',   // the local lens's page-set parallelism + capacity + chip curation
+  'world', 'pp', 'vpp', 'ep', 'tp', 'tps', 'sched', 'fold', 'layout', 'a2a', 'grads', 'fp8params', 'hw', 'hws', 'facs', 'recomputes',   // the local lens's page-set parallelism + capacity + chip curation
   'nocaption', 'kind', 'xlayers', 'xinflight', 'xtag', 'ctx', 'lens', 'strips', 'nostrips', 'optim', 'consolidated', 'local', 'cumulative'];
 export class Dsv3Anatomy extends HTMLElement {
   connectedCallback() {

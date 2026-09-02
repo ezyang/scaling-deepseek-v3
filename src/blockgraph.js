@@ -93,6 +93,16 @@ export const RECOMPUTE_PRESETS = {
   moe: saveAllExcept('router', 'dispatch', 'gate_up', 'swiglu', 'ffn_down', 'combine', 'moe_add'),
 };
 
+// Tensor parallelism as Megatron lays DeepSeek-V3 out (sequence parallel on,
+// expert-tensor-parallel 1): the attention up-projections, out-projection,
+// dense FFN, shared expert, embedding and lm head shard over TP; these ops'
+// weights are REPLICATED on every TP rank (TELinear 'duplicated' for the MLA
+// down-projections; the norms and the router) — a full copy per GPU, and an
+// optimizer shard over DP that is not de-duplicated across TP. The routed
+// experts are neither: EP shards them, and TP only widens their replication
+// group (expert-DP = DP·TP/EP).
+export const TP_REPLICATED = ['norm1', 'norm2', 'q_norm', 'kv_norm', 'qkv_down', 'router'];
+
 export function resolveMarks(cfg) {
   const preset = RECOMPUTE_PRESETS[cfg.recompute ?? 'selective'] ?? {};
   return { ...preset, ...(cfg.saved ?? {}) };

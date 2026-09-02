@@ -206,7 +206,7 @@ const { ppStage, inflightOf } = await import('../src/localmodel.js');
   const bMF = actBucketsOf(analyze(blockGraph('moe', DSV3, mmS, 4096), RECOMPUTE_PRESETS.none, false));
   const bDF = actBucketsOf(analyze(blockGraph('dense', DSV3, mmS, 4096), RECOMPUTE_PRESETS.none, false));
   const envOf = (S) => ({
-    world: 2048, pp: S.pp, ep: S.ep, zero: S.zero, sched: '1f1b', fp8p: !!S.fp8p,
+    world: 2048, pp: S.pp, ep: S.ep, zero: S.zero, sched: '1f1b', fp8p: !!S.fp8p, tp: S.tp ?? 1,
     g: ppStage(Math.min(S.stage, S.pp - 1), S.pp, S.pp > 1 ? 2 : 1, 'reflect'),
     aM, aD, bM, bD, bMF, bDF, bLabels: ACT_BUCKETS.map((b) => b.label),
     N: { restLayer: PARAMS.moeBlock - moeExp, denseLayer: PARAMS.denseBlock },
@@ -215,31 +215,46 @@ const { ppStage, inflightOf } = await import('../src/localmodel.js');
   const c6 = buildCells(envOf({ pp: 8, ep: 64, zero: 1, stage: 1 }));
   check('cells: step-6 endpoint total = exactly 66,296,545,344 B (an integer)',
     c6.get('T1') === 66296545344, String(c6.get('T1')));
+  // the TP split of a layer's non-expert params, from the architecture directly
+  // (Megatron's DSv3 spec: up-projections, out-proj, shared expert and dense FFN
+  // shard; MLA down-projections, norms and router replicate) — and it must
+  // partition the checkpoint-exact block totals
+  const A = DSV3;
+  const qkvDown = A.hidden * A.qRank + A.hidden * (A.kvRank + A.qkRope);
+  const qUp = A.qRank * A.heads * (A.qkNope + A.qkRope), kvUp = A.kvRank * A.heads * (A.qkNope + A.vHead);
+  const oProj = A.heads * A.vHead * A.hidden, norms = 2 * A.hidden + A.qRank + A.kvRank, router = (A.hidden + 1) * A.routedExperts;
+  const shared = A.sharedExperts * 3 * A.hidden * A.moeInter, denseFfn = 3 * A.hidden * A.denseInter;
+  const moeSh = qUp + kvUp + oProj + shared, moeRep = qkvDown + norms + router;
+  const denSh = qUp + kvUp + oProj + denseFfn, denRep = qkvDown + norms;
+  check('TP split partitions the block totals exactly', moeSh + moeRep === PARAMS.moeBlock - moeExp && denSh + denRep === PARAMS.denseBlock,
+    `${moeSh + moeRep} / ${PARAMS.moeBlock - moeExp} · ${denSh + denRep} / ${PARAMS.denseBlock}`);
   let worst = null;
   for (const pp of [1, 8]) for (const ep of [1, 4, 64]) for (const zero of [0, 1, 2, 3])
-    for (const stage of [0, 1]) for (const fp8p of [false, true]) {
-      const S = { pp, ep, zero, stage, fp8p };
+    for (const stage of [0, 1]) for (const fp8p of [false, true]) for (const tp of [1, 2]) {
+      const S = { pp, ep, zero, stage, fp8p, tp };
       const env = envOf(S), { get } = buildCells(env);
-      const g = env.g, dp = 2048 / pp, edp = dp / ep;
+      // DP = W/(PP·TP) shards the non-expert params; expert-DP = W/(PP·EP) — TP only widens it (expert-TP is 1)
+      const g = env.g, dp = 2048 / pp / tp, edp = 2048 / pp / ep;
       const q = {
         e: g.moe * moeExp / ep,
-        d: g.dense * PARAMS.denseBlock + g.moe * (PARAMS.moeBlock - moeExp),
-        v: ((g.emb ? 1 : 0) + (g.head ? 1 : 0)) * PARAMS.embed + (g.head ? DSV3.hidden : 0),
+        d: (g.dense * denSh + g.moe * moeSh) / tp + g.dense * denRep + g.moe * moeRep,
+        v: ((g.emb ? 1 : 0) + (g.head ? 1 : 0)) * PARAMS.embed / tp + (g.head ? DSV3.hidden : 0),
       };
       const comp = (bpp, zt, w = 1) => {
         const se = zero >= zt ? bpp / edp : bpp, sd = zero >= zt ? bpp / dp : bpp;
         return q.e * se * w + q.d * sd * w + q.v * sd;
       };
       const IF = inflightOf('1f1b', stage, pp, pp > 1 ? 2 : 1, 'reflect');
-      const acts = (g.dense * aD + g.moe * aM) * 4096 * IF
-        + ((g.emb ? 2 * DSV3.hidden : 0) + (g.head ? 6 * DSV3.vocab : 0)) * 4096;
+      // every stash divides by TP: sequence parallel by tokens, attention by heads, the head by vocab
+      const acts = ((g.dense * aD + g.moe * aM) * 4096 * IF
+        + ((g.emb ? 2 * DSV3.hidden : 0) + (g.head ? 6 * DSV3.vocab : 0)) * 4096) / tp;
       const want = [comp(2, 3, fp8p ? 2.0625 / 2 : 1), comp(4, 2), comp(8, 1), acts];
       const got = ['W1', 'G1', 'O1', 'A1'].map(get);
       if (!got.every((v, i) => v === want[i])) { worst = `${JSON.stringify(S)}: ${got} ≠ ${want}`; }
       if (get('P6') !== IF) worst = `${JSON.stringify(S)}: P6 ${get('P6')} ≠ inflightOf ${IF}`;
       if (get('N1') !== moeExp || get('N4') !== PARAMS.embed
         || get('N2') !== PARAMS.moeBlock - moeExp || get('N3') !== PARAMS.denseBlock
-        || get('H1') !== DSV3.hidden || get('P7') !== 4096) worst = `${JSON.stringify(S)}: N/H-cells drifted from PARAMS`;
+        || get('H1') !== DSV3.hidden || get('P7') !== 4096 / tp) worst = `${JSON.stringify(S)}: N/H-cells drifted from PARAMS`;
       // the accordion sub-cells: per-class components and per-bucket stashes
       // (their sums ARE the parents' formulas — verified against the
       // aggregate math above)
@@ -251,13 +266,13 @@ const { ppStage, inflightOf } = await import('../src/localmodel.js');
       const partIds = [['W2', 'W3', 'W4'], ['G2', 'G3', 'G4'], ['O2', 'O3', 'O4']];
       for (let j = 0; j < 3; j++) for (let k = 0; k < 3; k++)
         if (get(partIds[j][k]) !== partWant[j][k]) worst = `${JSON.stringify(S)}: ${partIds[j][k]} ${get(partIds[j][k])} ≠ ${partWant[j][k]}`;
-      const vocab = ((g.emb ? 2 * DSV3.hidden : 0) + (g.head ? 6 * DSV3.vocab : 0)) * 4096;
+      const vocab = ((g.emb ? 2 * DSV3.hidden : 0) + (g.head ? 6 * DSV3.vocab : 0)) * 4096 / tp;
       for (let k = 0; k < bM.length; k++) {
-        const bw = (g.moe * bM[k] + g.dense * bD[k]) * 4096 * IF + (k === bM.length - 1 ? vocab : 0);
+        const bw = (g.moe * bM[k] + g.dense * bD[k]) * 4096 / tp * IF + (k === bM.length - 1 ? vocab : 0);
         if (get(`A${k + 2}`) !== bw) worst = `${JSON.stringify(S)}: A${k + 2} ${get(`A${k + 2}`)} ≠ ${bw}`;
       }
     }
-  check('cells ≡ independent shard math EXACTLY, sub-cells included (96 configs, ===)', worst === null, worst ?? '');
+  check('cells ≡ independent shard math EXACTLY, sub-cells included (192 configs incl. TP2, ===)', worst === null, worst ?? '');
 }
 
 // ---- the Megatron family (03): interleaved 1F1B × layout strings ----------

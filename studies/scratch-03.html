@@ -32,7 +32,7 @@
     <h2>sandbox</h2>
     <dsv3-anatomy lens="param-bytes" local cumulative recipe="nv-mxfp8" recipes="bf16,nv-mxfp8" recompute="none"
       layer="local-diagram" detail controls="static" nocaption
-      world="256" pp="2" vpp="8" ep="32" sched="interleaved" hw="gb300" hws="gb200,gb300" facs="2,2:PP,32:EP,256:GPUs"></dsv3-anatomy>
+      world="256" pp="2" vpp="8" ep="32" tp="2" tps="1,2,4,8" sched="interleaved" a2a grads="bf16" fp8params hw="gb300" hws="gb200,gb300" facs="2:PP,32:EP,256:GPUs"></dsv3-anatomy>
 
     <dsv3-pp-schedule layer="local-diagram" mb="auto"></dsv3-pp-schedule>
 

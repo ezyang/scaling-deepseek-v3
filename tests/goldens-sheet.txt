@@ -1,10 +1,11 @@
 P1   GPUs in the cluster                                                2048       (model input)
 P2   pipeline stages (PP)                                                  8       (model input)
 P3   expert parallelism (EP)                                              64       (model input)
-P4   data parallelism                                                    256       = P1 / P2
-P5   expert data parallelism                                               4       = P4 / P3
+P4   data parallelism (non-expert params: GPUs ÷ PP ÷ TP)                256       = P1 / (P2 × P11)
+P5   expert data parallelism (GPUs ÷ PP ÷ EP — TP widens it: expert-tensor-parallel is 1)              4       = P4 × P11 / P3
 P6   microbatches in flight (DualPipeV: PP + ½)                          8.5       = P2 + 0.5
-P7   tokens per microbatch (one 4096-token sequence)                    4096       (fixed: seq 4096 · mbs 1)
+P7   tokens per microbatch, this GPU’s share (seq 4096 · mbs 1, ÷ TP under sequence parallel)           4096       = 4096 / P11
+P11  tensor parallelism (TP; sequence parallel on, expert-tensor-parallel 1)              1       (model input)
 S1   ZeRO level (1 optim · 2 +grads · 3 +weights)                          1       (model input)
 S2     shard group · weights, experts                                      1       = (S1 ≥ 3) × (P5 - 1) + 1
 S3     shard group · weights, others                                       1       = (S1 ≥ 3) × (P4 - 1) + 1
@@ -42,10 +43,14 @@ N2f    router (weight + bias)                                        1835264 p  
 N2g    shared expert (gate/up/down)                                 44040192 p     = H13 × 3 × H1 × H2
 N3   params · one dense layer                                      583483392 p     = N2a + N2b + N2c + N2d + N2e + N3a
 N3a    FFN gate/up/down (dense)                                    396361728 p     = 3 × H1 × H5
+N5   params · MoE layer, TP-sharded (q/kv up, attn out, shared expert)      216006656 p     = N2b + N2c + N2d + N2g
+N6   params · MoE layer, TP-replicated (q/kv down, norms, router)       16990464 p     = N2a + N2e + N2f
+N7   params · dense layer, TP-sharded (q/kv up, attn out, dense FFN)      568328192 p     = N2b + N2c + N2d + N3a
+N8   params · dense layer, TP-replicated (q/kv down, norms)         15155200 p     = N2a + N2e
 N4   params · one vocab matrix                                     926679040 p     = H6 × H1
 Q1   expert params on this GPU                                    1409286144 p     = L1 × N1 / P3
-Q2   non-expert block params on this GPU                          1863976960 p     = L2 × N3 + L1 × N2
-Q3   vocab params on this GPU (+ final norm)                               0 p     = L3 × N4 + L5 × H1
+Q2   non-expert block params on this GPU (sharded parts ÷ TP, replicated parts whole)     1863976960 p     = L1 × (N5 / P11 + N6) + L2 × (N7 / P11 + N8)
+Q3   vocab params on this GPU (+ final norm)                               0 p     = L3 × N4 / P11 + L5 × H1
 W1   weights (2 B bf16; F1 flips block params e4m3+ᵀ)             6546526208 B     = W2 + W3 + W4
 W2     experts                                                    2818572288 B     = (2 + F1 × 2 × 4/128) × Q1 / S2
 W3     non-expert blocks                                          3727953920 B     = (2 + F1 × 2 × 4/128) × Q2 / S3

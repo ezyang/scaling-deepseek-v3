@@ -5,7 +5,7 @@
 import { fmtUs, fmtNum, DSV3, HARDWARE } from './model.js';
 import { simulate, LEVELS } from './sim.js';
 import { resolveMatmuls, MATMULS, RECIPES, RECIPE_T } from './recipes.js';
-import { blockGraph, analyze, RECOMPUTE_PRESETS, MARKABLE } from './blockgraph.js';
+import { blockGraph, analyze, RECOMPUTE_PRESETS, MARKABLE, TP_REPLICATED } from './blockgraph.js';
 import { PARAMS } from './params.js';
 import { buildCells, evalExpr, cellsEnv } from './cells.js';
 import { C, initTheme } from './theme.js';
@@ -889,6 +889,7 @@ export class Dsv3Layer extends HTMLElement {
     this.sched = st?.sched === 'dpv' ? '1f1b' : st?.sched ?? A('sched') ?? '1f1b';   // admission: '1f1b' (DualPipeV) | 'interleaved' (Megatron) | 'one' (a single microbatch)
     this.hw = st?.hw ?? A('hw') ?? 'h100';                   // the capacity yardstick (HARDWARE key)
     this.a2a = st?.a2a ?? this.hasAttribute('a2a');          // Megatron's 1F1B all-to-all overlap (one extra warmup forward)
+    this.tp = st?.tp ?? +(A('tp') ?? 1);                       // tensor parallelism (Megatron: sequence parallel on, expert-TP 1)
     this.gradB = st?.gradB ?? (A('grads') === 'bf16' ? 2 : 4);   // the gradient buffer's bytes/param (02: fp32; Megatron's perf recipes: bf16)
     this.fp8Params = st?.fp8Params ?? this.hasAttribute('fp8params');
     // schedule geometry (schedGeom): under DualPipeV VPP and fold are DERIVED
@@ -898,7 +899,7 @@ export class Dsv3Layer extends HTMLElement {
       vpp: st?.vpp ?? (A('vpp') ? +A('vpp') : undefined), layout: st?.layout ?? A('layout') ?? undefined, a2a: this.a2a }));
     // default to the PEAK stage — the fully loaded rank is the story; the
     // selector is there to peek at the lighter ones
-    this.stage = Math.min(st?.stage ?? peakStage(this.pp, this.ep, this.zero, this.world, this.sched, this.vpp, this.fold, this.layout, this.a2a), this.pp - 1);
+    this.stage = Math.min(st?.stage ?? peakStage(this.pp, this.ep, this.zero, this.world, this.sched, this.vpp, this.fold, this.layout, this.a2a, this.tp), this.pp - 1);
     // cumulative: every parameter parenthetical multiplies by the selected
     // kind's block count (×3 dense / ×58 MoE); the tabs hide — the kind then
     // comes from the plan selector alone. The local variant is ALWAYS
@@ -961,7 +962,7 @@ export class Dsv3Layer extends HTMLElement {
       showWeights: this.showWeights, showOptim: this.showOptim,
       showGrads: this.showGrads, showActs: this.showActs,
       ep: this.ep, stage: this.stage, pp: this.pp, zero: this.zero, world: this.world, sched: this.sched,
-      hw: this.hw, vpp: this.vpp, fold: this.fold, layout: this.layout, a2a: this.a2a, gradB: this.gradB,
+      hw: this.hw, vpp: this.vpp, fold: this.fold, layout: this.layout, a2a: this.a2a, gradB: this.gradB, tp: this.tp,
     });
   }
   applyPreset(recipe, recompute, transposed = false) {
@@ -1003,11 +1004,15 @@ export class Dsv3Layer extends HTMLElement {
     // and re-derives the default layout for the new depth
     Object.assign(this, schedGeom({ pp: v, sched: this.sched, fold: this.fold, vpp: this.vpp, a2a: this.a2a }));
     this.ep = Math.min(this.ep, world / v);
-    this.stage = peakStage(v, this.ep, this.zero ?? 1, world, this.sched, this.vpp, this.fold, this.layout, this.a2a);   // stage indices don't survive a resplit — jump to the new peak
+    this.stage = peakStage(v, this.ep, this.zero ?? 1, world, this.sched, this.vpp, this.fold, this.layout, this.a2a, this.tp ?? 1);   // stage indices don't survive a resplit — jump to the new peak
+  }
+  _setTP(v) {
+    this.tp = v;
+    this.stage = peakStage(this.pp, this.ep, this.zero ?? 1, this.world ?? LOCAL_PAR.world, this.sched, this.vpp, this.fold, this.layout, this.a2a, v);
   }
   _setVPP(v) {   // Megatron family only (the knob renders there alone)
     Object.assign(this, schedGeom({ pp: this.pp, sched: this.sched, fold: 'wrap', vpp: v, a2a: this.a2a }));
-    this.stage = peakStage(this.pp, this.ep, this.zero ?? 1, this.world ?? LOCAL_PAR.world, this.sched, this.vpp, this.fold, this.layout, this.a2a);
+    this.stage = peakStage(this.pp, this.ep, this.zero ?? 1, this.world ?? LOCAL_PAR.world, this.sched, this.vpp, this.fold, this.layout, this.a2a, this.tp ?? 1);
   }
   // ---- local-lens knob tween: EVERY knob change (EP/PP/stage/ZeRO/×N) pours
   // squares between the old and new configuration, per-block-tween style.
@@ -1089,7 +1094,7 @@ export class Dsv3Layer extends HTMLElement {
         showWeights: this.showWeights, showGrads: this.showGrads,
         showOptim: this.showOptim, showActs: this.showActs,
         transposed: this.transposed, marks: { ...this.marks }, matmuls: { ...this.matmuls } },
-      label: `EP${this.ep}·PP${this.pp}·rank ${this.stage}·ZeRO-${this.zero ? this.zero : 'off'}·${schedName(this)}·${this.world} GPUs${this.hw && this.hw !== 'h100' ? '·' + HW_SHORT[this.hw] : ''}`,
+      label: `EP${this.ep}·PP${this.pp}${(this.tp ?? 1) > 1 ? `·TP${this.tp}` : ''}·rank ${this.stage}·ZeRO-${this.zero ? this.zero : 'off'}·${schedName(this)}·${this.world} GPUs${this.hw && this.hw !== 'h100' ? '·' + HW_SHORT[this.hw] : ''}`,
     };
   }
   // apply an authored config patch (snapshot 'from'/'to', sandbox jumps):
@@ -1103,7 +1108,7 @@ export class Dsv3Layer extends HTMLElement {
     if (recipe) { this.setAttribute('recipe', recipe); this.matmuls = resolveMatmuls({ recipe }); }
     if (recompute) { this.setAttribute('recompute', recompute); this.marks = { ...RECOMPUTE_PRESETS[recompute] }; }
     this.stage = stage ?? peakStage(this.pp, this.ep, this.zero ?? 1,
-      this.world ?? LOCAL_PAR.world, this.sched, this.vpp, this.fold, this.layout, this.a2a);
+      this.world ?? LOCAL_PAR.world, this.sched, this.vpp, this.fold, this.layout, this.a2a, this.tp ?? 1);
   }
   // jump target for snapshots' "open in the full widget" links: land on the
   // snapshot's exact story — its 'from' as the save, its 'to' live, tweened
@@ -1200,7 +1205,7 @@ export class Dsv3Layer extends HTMLElement {
     return { ep: this.ep, pp: this.pp, stage: this.stage,
       zero: this.zero ?? 1, world: this.world ?? LOCAL_PAR.world,
       sched: this.sched ?? '1f1b', vpp: this.vpp ?? 1, fold: this.fold ?? 'reflect', layout: this.layout ?? null,
-      hw: this.hw ?? 'h100', a2a: !!this.a2a, gradB: this.gradB ?? 4, mx: Object.values(this.matmuls).includes('mxfp8'), cum: !!this.cumulative,
+      hw: this.hw ?? 'h100', a2a: !!this.a2a, gradB: this.gradB ?? 4, mx: Object.values(this.matmuls).includes('mxfp8'), tp: this.tp ?? 1, cum: !!this.cumulative,
       fp8p: !!this.fp8Params && this.matmuls.ffn_gate_up !== 'bf16',
       // the pre-change analysis: stash-affecting knobs (precision, marks,
       // fp8ᵀ) lerp the diagram's chip squares between old and new bytes
@@ -1214,6 +1219,11 @@ export class Dsv3Layer extends HTMLElement {
   }
   render() {
     this.innerHTML = '';
+    // one microbatch is a 4096-token sequence; under tensor parallelism every
+    // stash divides by TP (sequence parallel shards the residual/MoE path by
+    // tokens, attention shards heads, the head shards the vocabulary), so the
+    // chips and readouts count this GPU's SHARE — 4096 / TP tokens
+    const TOK = this._tok();
     // local lens: the kind follows the selected PP stage (stage 0 holds the
     // 3 dense blocks; every other stage holds only MoE blocks)
     if (this.hasAttribute('local') && this.getAttribute('lens') === 'param-bytes')
@@ -1374,7 +1384,7 @@ export class Dsv3Layer extends HTMLElement {
     tl2.title = 'DeepSeek’s customized 12-bit stash format, exclusively for the attention output (it feeds both ' +
       'attention backward and the attn-out wgrad — too sensitive for e4m3, and pow-2 scales make the 1×128 → 128×1 ' +
       'orientation flip lossless from ONE copy). OFF = stash it bf16 instead' +
-      (this.marks.attn === true ? ` (+${(16384 * 0.5 * 4096 * this.dispLayers * this.dispInflight / 2 ** 30).toFixed(1)} GiB at this policy)` : ' (moot right now: this recompute policy replays attention, so attn-out is never stashed)') +
+      (this.marks.attn === true ? ` (+${(16384 * 0.5 * TOK * this.dispLayers * this.dispInflight / 2 ** 30).toFixed(1)} GiB at this policy)` : ' (moot right now: this recompute policy replays attention, so attn-out is never stashed)') +
       '. This checkbox chooses the SAVE format only — the GEMM’s compute dtype follows the recipe (its 🔒 tag).';
     const t2cb = document.createElement('input');
     t2cb.type = 'checkbox'; t2cb.checked = this.matmuls.o_proj === 'e5m6'; t2cb.dataset.knob = 'e5m6';
@@ -1594,8 +1604,9 @@ export class Dsv3Layer extends HTMLElement {
             seg3('rank', ['r0 · emb+head', `r1–${C.pp - 1} · peak`], 1),
             txt3('sched'), seg3('sched', ['DualPipeV', '×1 mb'], 0)));
         const gM = grp3('SPMD mesh');
-        gM.append(
-          row3(txt3(`non-expert: DP ${DPn2}`), txt3('· expert: EP'), chip3('ep', C.ep), txt3(`× EDP ${DPn2 / C.ep}`)));
+        gM.append(C.tp > 1
+          ? row3(txt3('non-expert: TP'), chip3('tp', C.tp), txt3(`× DP ${DPn2 / C.tp}`), txt3('· expert: EP'), chip3('ep', C.ep), txt3(`× EDP ${DPn2 / C.ep}`))
+          : row3(txt3(`non-expert: DP ${DPn2}`), txt3('· expert: EP'), chip3('ep', C.ep), txt3(`× EDP ${DPn2 / C.ep}`)));
         const gZ = grp3('ZeRO'); gZ.classList.add('center');
         gZ.append(row3(seg3('zero', ['off', '1', '2', '3'], C.zero)));
         hr.append(gC, gP, gM, gZ);
@@ -1719,8 +1730,11 @@ export class Dsv3Layer extends HTMLElement {
           sp.style.cssText += 'display:inline-block;width:64px;text-align:right;';
           return sp;
         };
+        const TPS = this.getAttribute('tps')?.split(/[ ,]+/).map(Number).filter((v) => v >= 1);
         gMesh.append(
-          row2(txtR('non-expert:'), txt2(`DP ${world / pp}`)),
+          row2(txtR('non-expert:'), ...(TPS?.length > 1
+            ? [txt2('TP'), knob('tp', mkStep(() => this.tp ?? 1, (v) => this._setTP(v), String, Math.max(...TPS), TPS)), txt2(`× DP ${world / pp / (this.tp ?? 1)}`)]
+            : [txt2(`DP ${world / pp / (this.tp ?? 1)}`)])),
           row2(txtR('expert:'), txt2('EP'), knob('ep', mkStep(() => this.ep, (v) => { this.ep = v; }, String, epMax)),
             txt2(`× EDP ${world / pp / this.ep}`)));
         // ZeRO-(off|1|2|3): a segmented level picker (1 shards optimizer,
@@ -1789,8 +1803,8 @@ export class Dsv3Layer extends HTMLElement {
           const comps2 = cons2 ? BYTE_COMPS : [BYTE_COMPS[0], BYTE_COMPS[2]];
           leg.append(...comps2.map((c) => cb(compLabel(c, this.gradB), C(c.color), c.prop)));
           if (cons2) leg.append(cb(this.hasAttribute('local')
-            ? `saved activations (bf16, ×4096 tok × ${fmtIF(inflightOf(this.sched ?? '1f1b', this.stage ?? 1, this.pp ?? LOCAL_PAR.pp, this.vpp, this.fold, this.layout, this.kind))} in flight)`
-            : 'saved activations (bf16, ×4096 tokens)', C('#eda100'), 'showActs'));
+            ? `saved activations (bf16, ×${TOK} tok × ${fmtIF(inflightOf(this.sched ?? '1f1b', this.stage ?? 1, this.pp ?? LOCAL_PAR.pp, this.vpp, this.fold, this.layout, this.kind))} in flight)`
+            : `saved activations (bf16, ×${TOK} tokens)`, C('#eda100'), 'showActs'));
           const u = el('span');
           u.style.cssText = 'display:inline-flex;align-items:center;gap:3px;';   // swatch centers regardless of baseline
           u.innerHTML = `· ${sw(C('#898781'))} <span>= ${fmtBytes(unit)}</span>`;
@@ -1905,11 +1919,11 @@ export class Dsv3Layer extends HTMLElement {
     }
     if (!this.hasAttribute('barsonly') && !this.hasAttribute('snapshot')) root.append(scroller);
     const note = el('div', 'lv-note');
-    const M2 = this.view === 'combined' ? this.dispLayers * this.dispInflight * 4096 : 1;
+    const M2 = this.view === 'combined' ? this.dispLayers * this.dispInflight * TOK : 1;
     const parts = [
       !this._ctl.quant ? '' :
       (this.view === 'combined'
-        ? `stashed for backward: ${(ana.savedBytes * M2 / 2 ** 30).toFixed(1)} GiB total = ${(ana.savedBytes / 1024).toFixed(0)} KiB/token\u00b7layer \u00d7 ${this.dispLayers} layers \u00d7 ${this.dispInflight} in-flight \u00d7 4096 tokens (set layers/in-flight to your PP stage to tally with the memory bars) \u00b7 `
+        ? `stashed for backward: ${(ana.savedBytes * M2 / 2 ** 30).toFixed(1)} GiB total = ${(ana.savedBytes / 1024).toFixed(0)} KiB/token\u00b7layer \u00d7 ${this.dispLayers} layers \u00d7 ${this.dispInflight} in-flight \u00d7 ${TOK} tokens (set layers/in-flight to your PP stage to tally with the memory bars) \u00b7 `
         : `stashed for backward: ${(ana.savedBytes / 1024).toFixed(0)} KiB/token\u00b7layer \u00b7 `) +
       `backward replays +${(ana.replayFrac * 100).toFixed(0)}% of fwd FLOPs` +
       (ana.replayComm.length ? ` + a2a ${ana.replayComm.join('+')}` : '') + '.',
@@ -1975,7 +1989,13 @@ export class Dsv3Layer extends HTMLElement {
   // cells in this diagram — e.g. the embedding row greys the block out)
   highlightOps(ids) { this._hl = ids ? new Set(ids) : null; this.applyHl(); }
   applyHl() { applyHighlight(this, this._hl); }
+  // this GPU's token share of a microbatch (see render): 4096 / TP
+  _tok() {
+    return 4096 / (this.hasAttribute('local') && this.getAttribute('lens') === 'param-bytes'
+      ? (this.tp ?? 1) : (JSON.parse(this.getAttribute('ctx') ?? '{}').tp ?? 1));
+  }
   buildSvg(ana, anaM = null) {
+    const TOK = this._tok();
     const P = [];
     // Two columns (MLA | MoE), head row underneath. The dataflow spine runs
     // down the LEFT of each column; output tensors are annotated on the spine
@@ -2011,8 +2031,12 @@ export class Dsv3Layer extends HTMLElement {
     const EPn = this.ep ?? 64, PPn = this.pp ?? LOCAL_PAR.pp, STG = this.stage ?? 1;
     const ZL = this.zero ?? 1;                               // ZeRO level (0 off · 1 optim · 2 +grads · 3 +weights)
     const WORLD = this.world ?? LOCAL_PAR.world;
-    const DPn = WORLD / PPn;
-    const EDP = WORLD / PPn / EPn;                           // expert-DP (EP=1: = DP — no expert parallelism)
+    const TPn = this.tp ?? 1;
+    const DPn = WORLD / PPn / TPn;                           // non-expert data parallelism (TP shards those params)
+    const EDP = WORLD / PPn / EPn;                           // expert-DP (EP=1: = DP — no expert parallelism); TP widens it: expert-TP is 1
+    // a parameter class's per-GPU share under TP: sharded ('d' block ops, 'v' vocab) 1/TP; replicated ('r': norms, router,
+    // MLA down-projections) and experts ('e': EP's business) whole
+    const tpfOf = (cls, tp) => cls === 'd' || cls === 'v' ? 1 / tp : 1;
     const SCHED = this.sched ?? '1f1b';
     const VPPn = this.vpp ?? 1, FOLD = this.fold ?? 'reflect', LAYOUT = this.layout ?? null, HWk = this.hw ?? 'h100';
     const stg = ppStage(STG, PPn, VPPn, FOLD, LAYOUT);
@@ -2022,17 +2046,17 @@ export class Dsv3Layer extends HTMLElement {
     const A2A = !!this.a2a, GRADB = this.gradB ?? 4, MX = Object.values(this.matmuls).includes('mxfp8');
     const IFN = inflightOf(SCHED, STG, PPn, VPPn, FOLD, LAYOUT, this.kind, { a2a: A2A });     // microbatches in flight on this stage (this kind's layers)
     const Snow = { ep: EPn, pp: PPn, stage: STG, zero: ZL, world: WORLD, sched: SCHED, vpp: VPPn, fold: FOLD, layout: LAYOUT, hw: HWk,
-      a2a: A2A, gradB: GRADB, mx: MX, cum: !!this.cumulative,
+      a2a: A2A, gradB: GRADB, mx: MX, tp: TPn, cum: !!this.cumulative,
       fp8p: !!this.fp8Params && this.matmuls.ffn_gate_up !== 'bf16' };
     const dLoc = (S) => {
       const g = ppStage(Math.min(S.stage, S.pp - 1), S.pp, S.vpp, S.fold, S.layout);
       const kmul = this.kind === 'dense' ? g.dense : g.moe;
-      const dp = (S.world ?? LOCAL_PAR.world) / S.pp;
+      const tp = S.tp ?? 1, dp = (S.world ?? LOCAL_PAR.world) / S.pp / tp, edp = dp * tp / S.ep;
       // the gradient buffer's bytes/param is a config fact (fp32 in 02, bf16 in Megatron's perf recipes)
       const bppOf = (c) => c.prop === 'showGrads' ? (S.gradB ?? 4) : c.bpp;
       return { mult: S.cum ? kmul : 1, eFrac: 1 / S.ep,
-        acts: (S.cum ? kmul : 1) * inflightOf(S.sched ?? '1f1b', S.stage, S.pp, S.vpp, S.fold, S.layout, this.kind, { a2a: !!S.a2a }),
-        bpp: (c, cls) => (S.zero ?? 1) >= c.zthresh ? bppOf(c) / (cls === 'e' ? dp / S.ep : dp) : bppOf(c) };
+        acts: (S.cum ? kmul : 1) * inflightOf(S.sched ?? '1f1b', S.stage, S.pp, S.vpp, S.fold, S.layout, this.kind, { a2a: !!S.a2a }) / tp,
+        bpp: (c, cls) => tpfOf(cls, tp) * ((S.zero ?? 1) >= c.zthresh ? bppOf(c) / (cls === 'e' ? edp : dp) : bppOf(c)) };
     };
     const W8 = (S, c, cls) => c.prop === 'showWeights' && cls !== 'v' && S.fp8p ? 2.0625 / 2 : 1;
     const fEff = (c, cls, S) => {
@@ -2081,10 +2105,11 @@ export class Dsv3Layer extends HTMLElement {
     // visible bytes per parameter (numbers snap). Two classes under local:
     // 'd' (dense/replicated: optimizer ZeRO-1-sharded /DP) and 'e' (expert:
     // sharded over the smaller expert-DP group)
-    const bppOf = (c, cls) => !LOCAL || ZL < c.zthresh ? c.bpp
-      : c.bpp / (cls === 'e' ? EDP : DPn);
+    const bppOf = (c, cls) => (LOCAL ? tpfOf(cls, TPn) : 1) * (!LOCAL || ZL < c.zthresh ? c.bpp
+      : c.bpp / (cls === 'e' ? EDP : DPn));
     const BPPT = (cls = 'd') => COMPS.reduce((t, c) => t + (this[c.prop] ? bppOf(c, cls) : 0), 0);
-    const clsOf = (id) => LOCAL && this.kind === 'moe' && (id === 'ffn_gate_up' || id === 'ffn_down') ? 'e' : 'd';
+    const clsOf = (id) => LOCAL && this.kind === 'moe' && (id === 'ffn_gate_up' || id === 'ffn_down') ? 'e'
+      : LOCAL && TP_REPLICATED.includes(id) ? 'r' : 'd';
     // param-bytes always shows sizes multiplied out (factored ×256 byte chains
     // pull no weight there; the sizes toggle is hidden in that lens)
     const FLAT = this.flatDims || PBYTES;
@@ -2156,6 +2181,7 @@ export class Dsv3Layer extends HTMLElement {
     // box with an exact ×N/÷N (visible components only — numbers match squares)
     if (LOCAL) this._scalars = {
       d: (CUM ? KMUL : 1) * BPPT('d'),
+      r: (CUM ? KMUL : 1) * BPPT('r'),
       e: (CUM ? KMUL : 1) * BPPT('e') / EPn,
       a: (CUM ? KMUL : 1) * IFN,
     };
@@ -2169,10 +2195,10 @@ export class Dsv3Layer extends HTMLElement {
     // shows the unrounded byte count (attachTip) — the cross-check affordance
     const fmtPV = (n, cls = 'd') => PBYTES
       ? `<tspan data-raw="${(n * BPPT(cls)).toFixed(2)}">${fmtPB(n, cls)}</tspan>` : fmtP(n);
-    const pk = (n, noK = false) => {
+    const pk = (n, noK = false, cls = 'r') => {
       if (PBYTES && !BPPT()) return '';   // nothing visible, nothing to number
       if (LOCAL && this.partSel != null && this.partSel !== 1) return '';   // norms/micro ops are non-expert
-      const v = (CUM && !noK ? fmtPV(n * KMUL) : fmtPV(n)) + facTxt('d');
+      const v = (CUM && !noK ? fmtPV(n * KMUL, cls) : fmtPV(n, cls)) + facTxt(cls);
       return PONLY ? ` ${v}` : ` (${v})`;   // params lenses: no parens — params are the only numbers left
     };
     const pstr = (id) => {
@@ -2273,7 +2299,7 @@ export class Dsv3Layer extends HTMLElement {
     };
     const fmtB = (bytes) => bytes >= 1024 ? (bytes / 1024).toFixed(1) + ' KiB' : bytes + ' B';
     // combined view: totals over the block column — layers × in-flight microbatches × 4096 tokens
-    const M = this.view === 'combined' ? this.dispLayers * this.dispInflight * 4096 : 1;
+    const M = this.view === 'combined' ? this.dispLayers * this.dispInflight * TOK : 1;
     const fmtMem = (bytes) => {
       if (M === 1) return fmtB(bytes);
       const b = bytes * M;
@@ -2522,8 +2548,8 @@ export class Dsv3Layer extends HTMLElement {
         // hover free of conflicts); data-chip makes the chip a jump target
         const nameTip = (txt) => `<tspan data-tip="${escAttr(txt)}">`;
         if (st === 'redo') {   // recomputed: named + the would-be size + the counterfactual grid
-          const cfB = bytes * 4096 * (LOCAL ? (CUM ? KMUL : 1) * IFN : CUM ? KMUL : 1);
-          const cf = Math.round(Math.round(bytes * 4096 * chipF / (PB_UNIT * 2)) * m);
+          const cfB = bytes * TOK * (LOCAL ? (CUM ? KMUL : 1) * IFN : CUM ? KMUL : 1);
+          const cf = Math.round(Math.round(bytes * TOK * chipF / (PB_UNIT * 2)) * m);
           const cfLbl = ` <tspan class="tdim">(<tspan data-raw="${cfB.toFixed(2)}">${fmtBytes(cfB)}</tspan>)</tspan>`;
           const rTip = nameTip('↻ recomputed in backward, not stashed — the (size) and hollow squares price what saving it WOULD cost.');
           // narrow fork columns: the would-be size takes the second line
@@ -2543,7 +2569,7 @@ export class Dsv3Layer extends HTMLElement {
         }
         // cumulative: every block's stash is resident — chips follow the ×N
         // convention (labels snap, squares grow with the tween like the strips)
-        const b4096 = bytes * 4096 * (LOCAL ? (CUM ? KMUL : 1) * IFN : CUM ? KMUL : 1);
+        const b4096 = bytes * TOK * (LOCAL ? (CUM ? KMUL : 1) * IFN : CUM ? KMUL : 1);
         // stash-knob tween: the squares pour between the OLD and NEW bytes
         const VA = this._vtween?.prev?.anaPrev;
         const bytesT = VA
@@ -2553,13 +2579,13 @@ export class Dsv3Layer extends HTMLElement {
             return t2 + pb2 + (nb - pb2) * this._vtween.t;
           }, 0) * (ov?.frac ?? 1)
           : bytes;
-        const full = Math.round(bytesT * 4096 * chipF / (PB_UNIT * 2));
+        const full = Math.round(bytesT * TOK * chipF / (PB_UNIT * 2));
         const nsq = Math.round(full * m), hollow = !nsq && m >= 0.5 && chipF > 0;
         // the bf16 phantom tail: dashed squares out to the 2 B/elem edge —
         // dtype-independent, so recipe flips pour the solid fill inside a
         // fixed dashed silhouette (nothing to brag about when not beating it)
         const bfB = ids.reduce((t2, i2) => t2 + (ana.byId[i2]?.elems ?? 0) * 2, 0) * (ov?.frac ?? 1);
-        const nPh = Math.round(Math.round(bfB * 4096 * chipF / (PB_UNIT * 2)) * m);
+        const nPh = Math.round(Math.round(bfB * TOK * chipF / (PB_UNIT * 2)) * m);
         const lock = st === 'pin' ? ' 🔒' : '';
         // the saved-for-backward tip: BRIEF, and on the name only (the byte
         // value keeps its raw-B hover)
@@ -2716,7 +2742,7 @@ export class Dsv3Layer extends HTMLElement {
         const b = ids.reduce((t, i) => {
           const n2 = anaX.byId[i];   // worst case: the ᵀ dual OR the bf16 phantom edge
           return t + Math.max(n2.outBytes * anaX.mul(i), n2.elems * 2);
-        }, 0) * 4096 * chipF;
+        }, 0) * TOK * chipF;
         const rows = Math.max(1, Math.ceil(Math.round(b / (PB_UNIT * 2)) / CHIP_ROW));
         return Math.round(18 + (rows * 6 - 2) * mA);
       }
@@ -2741,7 +2767,7 @@ export class Dsv3Layer extends HTMLElement {
       // attention sits inside the MLA group: its lse label starts past the
       // group border so the border never cuts through the text
       const xt = (id === 'attn' && MLAGW && !(this._ctl.quant && this.detail) && !LOCAL) ? Math.max(x + W + 14, C1 - 10 + MLAGW + 8) : x + W + 14;
-      const auxSc = n.aux ? n.aux.bytes * 4096 * (CUM ? KMUL : 1) * IFN : 0;
+      const auxSc = n.aux ? n.aux.bytes * TOK * (CUM ? KMUL : 1) * IFN : 0;
       const txt = (rep) => rep
         ? (LOCAL
           ? `<text class="tensor tredo" x="${xt}" y="${yMid + 3}">↻ ${esc(n.aux.name)} <tspan class="tdim">(<tspan data-raw="${auxSc.toFixed(2)}">${fmtBytes(auxSc)}</tspan>)</tspan></text>`
@@ -3208,7 +3234,7 @@ export class Dsv3Layer extends HTMLElement {
         `<text class="grplabel" x="${SHX}" y="${rowG - 6}">shared expert (every token)</text>`);
       shBox('shared gate/up', '7168 → 2×2048',
         'one plain GEMM per token — follows the ffn gate/up mark and dtype (its FLOPs are counted in the grouped strip)', rowG,
-        pk(DSV3.hidden * 2 * DSV3.moeInter), 'gate_up', 'ffn_gate_up');
+        pk(DSV3.hidden * 2 * DSV3.moeInter, false, 'd'), 'gate_up', 'ffn_gate_up');
       tensorChip(['gate_up'], shMid + 14, z + 4, { name: 'gate, up (sh)', tdims: '2×2048', frac: 1 / nExp, chip: 'gate_up:sh' });
     }
     z = wireOut(['gate_up'], SX2, z, DET ? { name: 'gate, up (routed)', tdims: `${DSV3.topk}×2×2048`, frac: DSV3.topk / nExp } : undefined);
@@ -3231,7 +3257,7 @@ export class Dsv3Layer extends HTMLElement {
     if (DET) {
       shBox('shared down', '2048 → 7168',
         'one plain GEMM per token — follows the ffn down mark and dtype; its output joins the routed sum', rowD,
-        pk(DSV3.moeInter * DSV3.hidden), 'ffn_down', 'ffn_down');
+        pk(DSV3.moeInter * DSV3.hidden, false, 'd'), 'ffn_down', 'ffn_down');
       tensorChip(['ffn_down'], shMid + 14, z + 4, { name: 'shared out', tdims: '7168', frac: 1 / nExp });
       shBot = rowD + 34;
     }
@@ -3360,7 +3386,7 @@ export class Dsv3Layer extends HTMLElement {
       const kindP = this.kind === 'dense' ? PARAMS.denseBlock : PARAMS.moeBlock;
       const m2 = CUM ? KMUL : 1;
       this._segTotals = COMPS.map((c) => kindP * c.bpp * m2);
-      if (CONS) this._segTotals.push(ana.savedBytes * 4096 * m2);
+      if (CONS) this._segTotals.push(ana.savedBytes * TOK * m2);
     }
     if (LOCAL) {   // the fit bar renders in its own row under the controls (this._barHtml)
       const cap = HARDWARE[HWk].memGB * 2 ** 30;   // the capacity yardstick (GiB) of this rank's GPU
@@ -3559,12 +3585,12 @@ export class Dsv3Layer extends HTMLElement {
     const replayEq = replayOps.reduce((t, n) => t + eq(n), 0);
     let ty = 2;
     if (this._ctl.quant) {
-      const M2b = this.dispLayers * this.dispInflight * 4096;
+      const M2b = this.dispLayers * this.dispInflight * TOK;
       const xt = this.getAttribute('xtag');
       const totNow = ana.savedBytes * M2b;
       T.push(`<text class="name" x="0" y="${ty + 10}">stashed for backward: ` +
         `${(ana.savedBytes / 1024).toFixed(0)} KiB/token·layer × ${this.dispLayers} layers` +
-        ` × ${this.dispInflight} in flight × 4096 tokens = ${(totNow / 2 ** 30).toFixed(1)} GiB` +
+        ` × ${this.dispInflight} in flight × ${TOK} tokens${TOK !== 4096 ? ' (4096 ÷ TP)' : ''} = ${(totNow / 2 ** 30).toFixed(1)} GiB` +
         (xt ? `<tspan class="dims"> (${esc(xt)})</tspan>` : '') + '</text>');
       ty += 18;
       // the ghost baselines THIS widget's lever at its do-nothing setting,
@@ -3682,7 +3708,7 @@ export class Dsv3Layer extends HTMLElement {
     const pillFor = (mm2, mks, transp) => {
       if (transp) return 0;
       const cf = analyze(blockGraph(this.kind, DSV3, mm2, 4096), mks, true);
-      return [...cf.dual].reduce((t2, i2) => t2 + (cf.byId[i2]?.outBytes ?? 0), 0) * 4096;
+      return [...cf.dual].reduce((t2, i2) => t2 + (cf.byId[i2]?.outBytes ?? 0), 0) * TOK;
     };
     const tbNow = pillFor(this.matmuls, marks, this.transposed);
     const tbPrev = VQ?.prev?.mm ? pillFor(VQ.prev.mm, VQ.prev.marks ?? marks, VQ.prev.transposed ?? this.transposed) : tbNow;   // the LOCAL tween's snapshot has no mm — only the quant tween eases the pill
@@ -4828,10 +4854,10 @@ class Dsv3BeatDeck extends HTMLElement {
     const l = this._layer;
     // vpp/fold are DERIVED from pp — never knobs, never a detour
     const g = schedGeom(c);
-    const stg = c.stage ?? peakStage(c.pp, c.ep, c.zero ?? 1, c.world, c.sched, g.vpp, g.fold, g.layout, g.a2a);
+    const stg = c.stage ?? peakStage(c.pp, c.ep, c.zero ?? 1, c.world, c.sched, g.vpp, g.fold, g.layout, g.a2a, c.tp ?? 1);
     return l.pp !== c.pp || l.ep !== c.ep || (l.zero ?? 0) !== c.zero || l.world !== c.world
       || (l.sched ?? '1f1b') !== c.sched || l.stage !== stg || l.vpp !== g.vpp || (l.hw ?? 'h100') !== (c.hw ?? 'h100')
-      || !!l.a2a !== !!g.a2a || (l.gradB ?? 4) !== (c.gradB ?? 4) || !!l.fp8Params !== !!c.fp8Params;
+      || !!l.a2a !== !!g.a2a || (l.gradB ?? 4) !== (c.gradB ?? 4) || !!l.fp8Params !== !!c.fp8Params || (l.tp ?? 1) !== (c.tp ?? 1);
   }
   _syncMod() {
     const f = this._fiddled();

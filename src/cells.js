@@ -258,8 +258,8 @@ export function buildCells(env) {
     { id: 'P1', label: 'GPUs in the cluster', value: env.world, ui: { k: 'gpus' }, edit: { t: 'step', k: 'gpus' } },
     { id: 'P2', label: 'pipeline stages (PP)', value: env.pp, ui: { k: 'pp' }, edit: { t: 'step', k: 'pp' } },
     { id: 'P3', label: 'expert parallelism (EP)', value: env.ep, ui: { k: 'ep' }, edit: { t: 'step', k: 'ep' } },
-    { id: 'P4', label: 'data parallelism', expr: 'P1 / P2' },
-    { id: 'P5', label: 'expert data parallelism', expr: 'P4 / P3' },
+    { id: 'P4', label: 'data parallelism (non-expert params: GPUs ÷ PP ÷ TP)', expr: 'P1 / (P2 × P11)' },
+    { id: 'P5', label: 'expert data parallelism (GPUs ÷ PP ÷ EP — TP widens it: expert-tensor-parallel is 1)', expr: 'P4 × P11 / P3' },
     ...(ILV ? [
       // Megatron interleaved 1F1B: the rank's peak chunk-stashes (P10) are
       // dealt over its VP chunks in groups of PP, so each layer KIND's
@@ -280,7 +280,11 @@ export function buildCells(env) {
     // formula-switching INPUTS get explicit rows: the ZeRO level picks which
     // components wear a /P4·/P5 sharding term; the fp8-params flag rides the
     // weights formulas as a 0/1 factor
-    { id: 'P7', label: 'tokens per microbatch (one 4096-token sequence)', value: 4096, note: '(fixed: seq 4096 · mbs 1)' },
+    // one 4096-token sequence per microbatch; under TP every stash divides by
+    // TP — sequence parallel shards the residual/MoE path by tokens, attention
+    // shards heads, the head shards the vocabulary (same bytes either way)
+    { id: 'P7', label: 'tokens per microbatch, this GPU\u2019s share (seq 4096 · mbs 1, ÷ TP under sequence parallel)', expr: '4096 / P11' },
+    { id: 'P11', label: 'tensor parallelism (TP; sequence parallel on, expert-tensor-parallel 1)', value: env.tp ?? 1, ui: { k: 'tp' }, edit: { t: 'step', k: 'tp' } },
     { id: 'S1', label: 'ZeRO level (1 optim · 2 +grads · 3 +weights)', value: zero, ui: { k: 'zero' }, edit: { t: 'seg', k: 'zero' } },
     // the level resolves to per-component SHARD GROUPS (1 = unsharded) via
     // indicator arithmetic — the byte formulas below never change shape
@@ -305,15 +309,26 @@ export function buildCells(env) {
       ...N2ROWS.map(([id, label, expr]) => ({ id, depth: 1, unit: 'p', label, expr })),
       { id: 'N3', label: 'params · one dense layer', unit: 'p', expr: 'N2a + N2b + N2c + N2d + N2e + N3a' },
       { id: 'N3a', depth: 1, unit: 'p', label: 'FFN gate/up/down (dense)', expr: N3A },
+      // the TP split of those (Megatron's DSv3 spec): up-projections, out-proj,
+      // shared expert and dense FFN shard over TP; the down-projections, norms
+      // and router are replicated on every TP rank
+      { id: 'N5', label: 'params · MoE layer, TP-sharded (q/kv up, attn out, shared expert)', unit: 'p', expr: 'N2b + N2c + N2d + N2g' },
+      { id: 'N6', label: 'params · MoE layer, TP-replicated (q/kv down, norms, router)', unit: 'p', expr: 'N2a + N2e + N2f' },
+      { id: 'N7', label: 'params · dense layer, TP-sharded (q/kv up, attn out, dense FFN)', unit: 'p', expr: 'N2b + N2c + N2d + N3a' },
+      { id: 'N8', label: 'params · dense layer, TP-replicated (q/kv down, norms)', unit: 'p', expr: 'N2a + N2e' },
     ] : [
       { id: 'N2', label: 'params · rest of a MoE layer', unit: 'p', value: env.N.restLayer },
       { id: 'N3', label: 'params · one dense layer', unit: 'p', value: env.N.denseLayer },
+      { id: 'N5', label: 'params · MoE layer, TP-sharded', unit: 'p', value: env.N.restLayerTp ?? env.N.restLayer },
+      { id: 'N6', label: 'params · MoE layer, TP-replicated', unit: 'p', value: env.N.restLayer - (env.N.restLayerTp ?? env.N.restLayer) },
+      { id: 'N7', label: 'params · dense layer, TP-sharded', unit: 'p', value: env.N.denseLayerTp ?? env.N.denseLayer },
+      { id: 'N8', label: 'params · dense layer, TP-replicated', unit: 'p', value: env.N.denseLayer - (env.N.denseLayerTp ?? env.N.denseLayer) },
     ]),
     { id: 'N4', label: 'params · one vocab matrix', unit: 'p', expr: 'H6 × H1' },
     { id: 'Q1', label: 'expert params on this GPU', unit: 'p', expr: 'L1 × N1 / P3' },
-    { id: 'Q2', label: 'non-expert block params on this GPU', unit: 'p', expr: 'L2 × N3 + L1 × N2' },
+    { id: 'Q2', label: 'non-expert block params on this GPU (sharded parts ÷ TP, replicated parts whole)', unit: 'p', expr: 'L1 × (N5 / P11 + N6) + L2 × (N7 / P11 + N8)' },
     { id: 'Q3', label: 'vocab params on this GPU (+ final norm)', unit: 'p',
-      expr: env.simplify ? 'L3 × N4' : 'L3 × N4 + L5 × H1' },   // the 7 K final norm is a simplify casualty
+      expr: env.simplify ? 'L3 × N4 / P11' : 'L3 × N4 / P11 + L5 × H1' },   // vocab-parallel; the 7 K final norm (replicated) is a simplify casualty
     { id: 'W1', label: env.mx ? 'weights (2 B bf16; F1 flips block params mxfp8 row+col)' : 'weights (2 B bf16; F1 flips block params e4m3+ᵀ)', unit: 'B', expr: 'W2 + W3 + W4' },
     { id: 'W2', depth: 1, label: 'experts', unit: 'B', expr: cls(2, 'Q1', 'S2', true) },
     { id: 'W3', depth: 1, label: 'non-expert blocks', unit: 'B', expr: cls(2, 'Q2', 'S3', true) },
@@ -468,7 +483,7 @@ export const cellsEnv = (S, anaM, anaD, anaMF, anaDF) => ({
   sched: S.sched ?? '1f1b', fp8p: !!S.fp8p,
   vpp: S.vpp ?? 1, stage: S.stage, hw: S.hw ?? 'h100',
   g: ppStage(Math.min(S.stage, S.pp - 1), S.pp, S.vpp, S.fold, S.layout),
-  a2a: !!S.a2a, gradB: S.gradB ?? 4, mx: !!S.mx,   // mx: the instance's fp8 flavour is MXFP8 (F1's story + formula wording)
+  a2a: !!S.a2a, gradB: S.gradB ?? 4, mx: !!S.mx, tp: S.tp ?? 1,   // mx: the instance's fp8 flavour is MXFP8 (F1's story + formula wording)
   ...ilvEnv(S, anaM.savedBytes, anaD.savedBytes),
   aM: anaM.savedBytes, aD: anaD.savedBytes,
   bM: actBucketsOf(anaM), bD: actBucketsOf(anaD), bLabels: ACT_BUCKETS.map((b) => b.label),

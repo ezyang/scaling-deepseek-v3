@@ -58,7 +58,7 @@ export const LOCAL_PAR = { world: 2048, pp: 8 };   // .pp = the default degree
 // unlisted knobs mean these neutral nothing-applied defaults, never
 // "whatever the widget's live defaults happen to be" — a published figure
 // must not drift when the interactive defaults do
-export const CFG_DEFAULTS = { world: 2048, pp: 1, ep: 1, zero: 0, sched: '1f1b', hw: 'h100', a2a: false, gradB: 4, fp8Params: false };   // vpp/fold are derived from pp (DualPipeV); sched 'interleaved' takes vpp + layout
+export const CFG_DEFAULTS = { world: 2048, pp: 1, ep: 1, tp: 1, zero: 0, sched: '1f1b', hw: 'h100', a2a: false, gradB: 4, fp8Params: false };   // vpp/fold are derived from pp (DualPipeV); sched 'interleaved' takes vpp + layout
 // virtual-stage placement: with VPP = vpp chunks per rank the chain is
 // vpp·pp virtual stages deep; 'wrap' places stage v on rank v mod pp
 // (Megatron interleaving), 'reflect' bounces each pass (ZB-V / DualPipeV:
@@ -235,8 +235,8 @@ export const inflightOf = (sched, s, pp, vpp = 1, fold = 'reflect', layout = nul
 // the PP stage holding the most resident bytes under the local model (all
 // components on, vocab counted on the end stages, activations under the
 // schedule) — the default stage to show: the fully loaded rank.
-export const peakStage = (pp, ep, zero, world = LOCAL_PAR.world, sched = '1f1b', vpp = 1, fold = 'reflect', layout = null, a2a = false) => {
-  const dp = world / pp;
+export const peakStage = (pp, ep, zero, world = LOCAL_PAR.world, sched = '1f1b', vpp = 1, fold = 'reflect', layout = null, a2a = false, tp = 1) => {
+  const dp = world / pp / tp;   // TP shards the non-expert params; its stashes divide by TP too (uniformly — the peak pick is unaffected)
   const bpp = (cls) => BYTE_COMPS.reduce((t, c) =>
     t + (zero >= c.zthresh ? c.bpp / (cls === 'e' ? dp / ep : dp) : c.bpp), 0);
   const moeExp = PARAMS.expert * DSV3.routedExperts;
