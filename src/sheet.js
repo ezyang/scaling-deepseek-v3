@@ -353,7 +353,7 @@ export class Dsv3Sheet extends HTMLElement {
     const approx = (c) => c.unit === 'B' ? fmtBytes(c.value)
       : c.unit === 'p' ? fmtP(c.value)
         : c.unit === 'B/tok' ? `${(c.value / 1024).toFixed(1)} KiB` : '';
-    const fx = (c) => !c.expr ? '<span style="color:var(--c-898781)">(model input)</span>'
+    const fx = (c) => !c.expr ? `<span style="color:var(--c-898781)">${esc(c.note ?? '(model input)')}</span>`
       : '= ' + c.expr.split(/([A-Z]\d+[a-z]?)/).map((tok) =>
         /^[A-Z]\d+[a-z]?$/.test(tok) ? `<span class="cellref">${tok}</span>` : esc(tok)).join('');
     this._root.innerHTML = '<div class="hd">the fit chart’s formula sheet — every number the chart below shows is one of these cells, '

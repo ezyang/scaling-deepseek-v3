@@ -18,10 +18,10 @@ T.check('click pins (refs go live)', tip().classList.contains('pinned')
   && tip().querySelector('.cellref[data-cell="A8"]'), '');
 tip().querySelector('.cellref[data-cell="A8"]').dispatchEvent(new MouseEvent('click', { bubbles: true }));
 await T.tick(30);
-T.check('drilling A8 pushes its entry below (rates × 4096 × P6)',
+T.check('drilling A8 pushes its entry below (rates × P7 × P6)',
   tip().querySelectorAll('.lv-cellent').length === 2
   && tip().textContent.includes('dispatched tokens')
-  && /× 4096 × P6/.test(tip().textContent), tip().textContent.slice(-120));
+  && /× P7 × P6/.test(tip().textContent), tip().textContent.slice(-120));
 
 const p6ref = [...tip().querySelectorAll('.lv-cellent[data-k="1"] .cellref')].find(s => s.dataset.cell === 'P6');
 p6ref.dispatchEvent(new MouseEvent('click', { bubbles: true })); await T.tick(30);
@@ -45,7 +45,7 @@ T.check('acts sub-row carries its cell', pv?.dataset.cell === 'A8', pv?.dataset.
 mm(pv); await T.tick(30);
 T.check('bucket hover: 0/1 recompute choice × dims × the B• precision input',
   tip().textContent.includes('dispatched tokens')
-  && tip().textContent.includes('= R8 × (L1 × (8×7168 × B8)) × 4096 × P6 = '), tip().textContent.slice(0, 130));
+  && tip().textContent.includes('= R8 × (L1 × (8×7168 × B8)) × P7 × P6 = '), tip().textContent.slice(0, 130));
 md([...layer().querySelectorAll('.lv-bar g[data-prop]')][3]); await T.tick(700);   // un-solo
 // the parents are accordion SUMS
 mm(val('0')); await T.tick(30);

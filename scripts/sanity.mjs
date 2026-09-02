@@ -94,7 +94,25 @@ check('fp8 recipe shrinks stashes vs bf16', acts[1] < actsBf16,
   `${(acts[1] / 1024).toFixed(0)} < ${(actsBf16 / 1024).toFixed(0)} KiB/tok`);
 
 // ---- block-graph invariants (attn-replay policy, router state, vocab split) -----
-const { blockGraph, analyze, RECOMPUTE_PRESETS } = await import('../src/blockgraph.js');
+const { blockGraph, analyze, RECOMPUTE_PRESETS, layerWeights } = await import('../src/blockgraph.js');
+// ---- weight inventory: the graph's per-node weights must sum EXACTLY to the
+// checkpoint-audited PARAMS — and every symbolic dims string must evaluate
+// to its own params count (the sheet's N sub-rows are written from these)
+{
+  const { evalExpr } = await import('../src/cells.js');
+  const num = (d) => d.replace(/[a-zA-Z]\w*/g, (w) => DSV3[w]);
+  let bad = null;
+  for (const kind of ['moe', 'dense']) {
+    const lw = layerWeights(kind, DSV3);
+    const tot = lw.reduce((t, w) => t + w.params, 0);
+    const routed = lw.filter((w) => w.routed).reduce((t, w) => t + w.params, 0);
+    if (tot !== (kind === 'moe' ? PARAMS.moeBlock : PARAMS.denseBlock)) bad = `${kind} total ${tot}`;
+    if (routed !== (kind === 'moe' ? PARAMS.expert * DSV3.routedExperts : 0)) bad = `${kind} routed ${routed}`;
+    for (const w of lw) if (evalExpr(num(w.dims), () => NaN) !== w.params) bad = `${kind} ${w.node} dims "${w.dims}"`;
+  }
+  check('graph weight inventory ≡ checkpoint PARAMS (incl. symbolic dims)', bad === null,
+    bad ?? 'moe + dense totals, routed split, per-node dims strings');
+}
 const mmFp8 = resolveMatmuls({ recipe: 'dsv3-fp8' });
 const ar = analyze(blockGraph('moe', DSV3, mmFp8, 4096), RECOMPUTE_PRESETS['attn-replay']);
 check('attn-replay stashes only {x0, norm2, dispatch, gate_up, router}',
@@ -219,7 +237,9 @@ const { ppStage, inflightOf } = await import('../src/localmodel.js');
       const got = ['W1', 'G1', 'O1', 'A1'].map(get);
       if (!got.every((v, i) => v === want[i])) { worst = `${JSON.stringify(S)}: ${got} ≠ ${want}`; }
       if (get('P6') !== IF) worst = `${JSON.stringify(S)}: P6 ${get('P6')} ≠ inflightOf ${IF}`;
-      if (get('N1') !== moeExp || get('N4') !== PARAMS.embed) worst = `${JSON.stringify(S)}: N-cells drifted from PARAMS`;
+      if (get('N1') !== moeExp || get('N4') !== PARAMS.embed
+        || get('N2') !== PARAMS.moeBlock - moeExp || get('N3') !== PARAMS.denseBlock
+        || get('H1') !== DSV3.hidden || get('P7') !== 4096) worst = `${JSON.stringify(S)}: N/H-cells drifted from PARAMS`;
       // the accordion sub-cells: per-class components and per-bucket stashes
       // (their sums ARE the parents' formulas — verified against the
       // aggregate math above)

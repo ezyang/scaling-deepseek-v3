@@ -118,9 +118,14 @@ URL state.
 ## `<dsv3-sheet layer=…>` — the full model's formula sheet
 
 A spreadsheet-like readout of the CELL GRAPH (`src/cells.js`) that the bound
-local widget prices from: one row per cell — coordinate names lettered by SECTION (P parallelism &
-schedule · S sharding: S1 the ZeRO level, S2–S7 its shard groups · L this
-rank's layout incl. emb?/head? L4/L5 · N param counts · Q params/GPU · F
+local widget prices from: one row per cell — coordinate names lettered by SECTION (H the architecture:
+hidden/experts/ranks/head geometry as constant cells, so formulas read
+semantically — N1 = H3 × 3 × H1 × H2 · P parallelism &
+schedule incl. P7 tokens/microbatch (the seq-4096 quantum every A formula
+multiplies) · S sharding: S1 the ZeRO level, S2–S7 its shard groups · L this
+rank's layout incl. emb?/head? L4/L5 · N param counts, with N2/N3 decomposed
+into per-weight sub-rows written from the graph's weight inventory
+(blockgraph layerWeights, sanity-proven === the checkpoint PARAMS) · Q params/GPU · F
 format flags · W/G/O byte components · D stash rates · A activations with
 per-tensor a/b/c sub-rows · R kept? and B precision inputs numbered to
 match their A row · T1 the total),

@@ -19,7 +19,7 @@ import { join } from 'node:path';
 import { shoot, root } from './shotlib.mjs';
 import { decode, encode } from './pngio.mjs';
 
-const W = 1500, H = 2200;   // shot window; a widget touching its edge = enlarge it
+const W = 1500, H = 2600;   // shot window; a widget touching its edge = enlarge it
 const PAGE01 = 'studies/01-deepseek-diagram.html', PAGE02 = 'studies/02-hopper-memory.html';
 const SHOTS = [
   { name: '01-diagram', page: PAGE01, sel: 'dsv3-anatomy[layer="diagram"]' },
