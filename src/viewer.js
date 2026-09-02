@@ -4,7 +4,7 @@
 
 import { fmtUs, fmtNum, DSV3, HARDWARE } from './model.js';
 import { simulate, LEVELS } from './sim.js';
-import { resolveMatmuls, MATMULS, RECIPES, RECIPE_T } from './memory.js';
+import { resolveMatmuls, MATMULS, RECIPES, RECIPE_T } from './recipes.js';
 import { blockGraph, analyze, RECOMPUTE_PRESETS, MARKABLE } from './blockgraph.js';
 import { PARAMS } from './params.js';
 import { buildCells, evalExpr } from './cells.js';

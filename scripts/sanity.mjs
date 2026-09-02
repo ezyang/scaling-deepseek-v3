@@ -72,7 +72,8 @@ console.log(`anchor NeMo/GB300 (mxfp8 m=32 pp2 ep32): ${Math.round(nemo.tokPerSe
   `gemmEff/comm assumptions unvalidated; VP8 interleave unmodeled)`);
 
 // ---- memory model (GB300 focus) ----------------------------------------------
-const { memoryUsage, actBreakdownPerToken, resolveMatmuls, totalParams } = await import('../src/memory.js');
+const { memoryUsage, actBreakdownPerToken, totalParams } = await import('../src/memory.js');
+const { resolveMatmuls } = await import('../src/recipes.js');
 check('memory inventory matches exact main-model parameter count',
   totalParams(DSV3, 1, 1) === PARAMS.total,
   totalParams(DSV3, 1, 1).toLocaleString('en-US'));

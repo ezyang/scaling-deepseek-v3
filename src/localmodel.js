@@ -5,7 +5,7 @@
 // goldens) import it directly; the renderers in viewer.js build on it.
 import { DSV3 } from './model.js';
 import { PARAMS } from './params.js';
-import { resolveMatmuls } from './memory.js';
+import { resolveMatmuls } from './recipes.js';
 import { blockGraph, analyze, RECOMPUTE_PRESETS } from './blockgraph.js';
 
 // byte components of the per-op strips (optim / consolidated variants), in the

@@ -55,6 +55,10 @@ export const DSV3 = {
   moeInter: 2048, routedExperts: 256, topk: 8, sharedExperts: 1,
 };
 
+// resolve the architecture: DSV3 unless the config overrides fields (the
+// porting seam: everything downstream of layerOps/blockGraph takes `a`)
+export function archOf(cfg) { return cfg.arch ? { ...DSV3, ...cfg.arch } : DSV3; }
+
 export function peakFlops(hw, dtype) { return dtype === 'mxfp8' ? hw.flops.fp8 : hw.flops.bf16; }
 export function gemmRate(hw, dtype) { return peakFlops(hw, dtype) * hw.gemmEff[dtype]; }
 export function actBytes(dtype) { return dtype === 'mxfp8' ? 1 : 2; } // gemm-input / wire bytes
@@ -143,12 +147,13 @@ export function modelFlopsPerToken(a, seqLen) {
 export function opTimeUs(op, tokens, cfg, hw, phase) {
   const mult = phase === 'B' ? (op.bwdMult ?? 2) : 1;
   if (mult === 0) return 0;
+  const a = archOf(cfg);
   const dtype = cfg.dtype;
   const flops = op.ftok * tokens * mult;
   const rate = op.cat === 'attn' ? hw.flops.bf16 * hw.attnEff
     : op.cat === 'gemm' ? gemmRate(hw, dtype) * (op.effMult ?? 1)
       : hw.flops.bf16; // vector flops rarely bind; memory term below dominates
-  const wbytes = (op.wparams + (op.localExpertParams ?? 0) * DSV3.routedExperts / cfg.ep) * actBytes(dtype);
+  const wbytes = (op.wparams + (op.localExpertParams ?? 0) * a.routedExperts / cfg.ep) * actBytes(dtype);
   const membytes = wbytes + op.abytes * tokens * 2 * mult; // activations move as bf16
   return Math.max(flops / rate, membytes / (hw.hbm * hw.hbmEff)) * 1e6;
 }
@@ -158,7 +163,7 @@ export function opTimeUs(op, tokens, cfg, hw, phase) {
 // experts; cross-node copies are deduplicated per node and capped by
 // node-limited routing (DeepSeek caps each token at 4 nodes).
 export function a2aBytesPerGpu(tokens, bytesPerElem, cfg, hw) {
-  const a = DSV3;
+  const a = archOf(cfg);
   const epNodes = Math.ceil(cfg.ep / hw.domain);
   const intra = tokens * a.topk * a.hidden * bytesPerElem;
   if (epNodes <= 1) return { intra, cross: 0, epNodes };
@@ -176,7 +181,7 @@ export function a2aTimeUs(tokens, bytesPerElem, cfg, hw) {
 }
 
 export function p2pTimeUs(tokens, cfg, hw) {
-  const bytes = tokens * DSV3.hidden * 2; // activations in bf16
+  const bytes = tokens * archOf(cfg).hidden * 2; // activations in bf16
   const bw = cfg.pp <= 1 ? Infinity : (cfg.dp >= hw.domain ? hw.nic * hw.nicEff : hw.nvl * hw.nvlEff);
   return bytes / bw * 1e6;
 }
