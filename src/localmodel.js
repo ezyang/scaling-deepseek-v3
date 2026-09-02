@@ -31,7 +31,9 @@ export const ACT_BUCKETS = [
   { label: 'attention out', ids: ['attn'] },
   { label: 'router state', ids: ['router'] },
   { label: 'dispatched tokens', ids: ['dispatch'] },
-  { label: 'gate, up (routed+sh)', ids: ['gate_up'] },
+  // the stash is the QUANTIZED copy (the 'quant' node); the GEMM's own bf16
+  // output is never stashed (its mark is tied) — listed so the bucket partitions
+  { label: 'gate, up (routed+sh)', ids: ['quant', 'gate_up'] },
   { label: 'swiglu out', ids: ['swiglu'] },
   { label: 'other', ids: [] },
 ];

@@ -25,6 +25,7 @@
 // ZeRO shard groups, expressible without the formula changing shape)
 import { ACT_BUCKETS, actBucketsOf, ppStage, LOCAL_PAR, ilvPeak } from './localmodel.js';
 import { PARAMS } from './params.js';
+import { markKey } from './blockgraph.js';
 import { DSV3 } from './model.js';
 
 // H — the architecture: named dimensions as CELLS, so parameter counts and
@@ -158,7 +159,7 @@ export function buildCells(env) {
       // one choice controls both (an aux row never gets its own R)
       const rows = shown.flatMap(({ t, sid }) => {
         const rid = `R${sid.slice(1)}`, ui = { c: t.id };
-        const mkEdit = t.aux ? undefined : { t: 'mark', k: t.id };
+        const mkEdit = t.aux ? undefined : { t: 'mark', k: markKey(t.id) };
         if (t.aux) {
           const gate = lastRid ?? rid;
           const rate = [t.fMv ? `${L1w} × ${t.fMv}` : null, t.fDv ? `${L2w} × ${t.fDv}` : null].filter(Boolean).join(' + ');
@@ -192,9 +193,10 @@ export function buildCells(env) {
     if (!whole) return [{ id: `A${i + 2}`, unit: 'B', depth: 1, label: `${lbl} (partial under policy)`,
       ui: env.bIds?.[i] ? { c: env.bIds[i] } : undefined,
       expr: `(${L1w} × ${rM} + ${L2w} × ${rD}) × P7${P6t}${tail}` }];
-    // the gate/up bucket is ONE graph node whose elems span routed + shared
-    // (+ the dense MLP in dense layers): split it for display — validated:
-    // the sub-dims must sum exactly to the node's rates
+    // the gate/up bucket is ONE stashed graph node (the SwiGLU-input
+    // quantize's output) whose elems span routed + shared (+ the dense MLP
+    // in dense layers): split it for display — validated: the sub-dims must
+    // sum exactly to the node's rates
     const GS = env.gateSplit;
     if (GS && i === GS.i && R?.prec != null) {
       const B9 = `B${i + 2}`, R9 = `R${i + 2}`;
@@ -212,7 +214,7 @@ export function buildCells(env) {
             expr: `${R9} × ${L1w} × (${GS.shared} × ${B9}) × P7${P6t}` },
           { id: `A${i + 2}c`, depth: 2, unit: 'B', label: 'gate, up · dense MLP (dense layers’ hidden)', ui: ui9,
             expr: `${R9} × ${L2w} × (${GS.dense} × ${B9}) × P7${P6t}` },
-          { id: R9, depth: 2, label: 'kept?', ui: ui9, edit: { t: 'mark', k: env.bIds[i] }, value: kept },
+          { id: R9, depth: 2, label: 'kept?', ui: ui9, edit: { t: 'mark', k: markKey(env.bIds[i]) }, value: kept },
           { id: B9, depth: 2, unit: 'B/e', label: 'precision (B/elem)', ui: ui9,
             edit: R.dtc === 'o_proj' ? { t: 'cb', k: 'e5m6' } : { t: 'dt', k: R.dtc }, value: descale(R.prec) },
         ];
@@ -231,7 +233,7 @@ export function buildCells(env) {
       { id: `A${i + 2}`, unit: 'B', depth: 1, label: lbl, ui,
         expr: `R${i + 2} × (${rate}) × P7${P6t}${tail}` },
       { id: `R${i + 2}`, depth: 2, label: 'kept?', ui,
-        edit: env.bIds?.[i] ? { t: 'mark', k: env.bIds[i] } : undefined,
+        edit: env.bIds?.[i] ? { t: 'mark', k: markKey(env.bIds[i]) } : undefined,
         value: rM === fM && rD === fD ? 1 : 0 },
       ...(R ? [{ id: `B${i + 2}`, depth: 2, unit: 'B/e', label: 'precision (B/elem)', ui, edit: dtE, value: descale(R.prec) }] : []),
     ];
@@ -488,7 +490,7 @@ export const cellsEnv = (S, anaM, anaD, anaMF, anaDF) => ({
   aM: anaM.savedBytes, aD: anaD.savedBytes,
   bM: actBucketsOf(anaM), bD: actBucketsOf(anaD), bLabels: ACT_BUCKETS.map((b) => b.label),
   bIds: ACT_BUCKETS.map((b) => b.ids[0] ?? null),
-  gateSplit: { i: ACT_BUCKETS.findIndex((b) => b.ids[0] === 'gate_up'),
+  gateSplit: { i: ACT_BUCKETS.findIndex((b) => b.ids[0] === 'quant'),
     routed: 'H4×2×H2', shared: 'H13×2×H2', dense: '2×H5' },
   bMF: actBucketsOf(anaMF ?? anaM), bDF: actBucketsOf(anaDF ?? anaD),
   bRate: anaMF && anaDF

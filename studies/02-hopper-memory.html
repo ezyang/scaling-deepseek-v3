@@ -368,7 +368,7 @@
     writing e4m3 to indicate the exponent/mantissa size of the fp8
     quantities.</p>
 
-    <dsv3-anatomy style="min-height:1039px" layer="fp8-layer" ctx='{"world":2048,"pp":8,"ep":64,"zero":1}' controls="dtype" recipe="dsv3-fp8" recipes="bf16,dsv3-fp8" recompute="dsv3"
+    <dsv3-anatomy style="min-height:1073px" layer="fp8-layer" ctx='{"world":2048,"pp":8,"ep":64,"zero":1}' controls="dtype" recipe="dsv3-fp8" recipes="bf16,dsv3-fp8" recompute="dsv3"
       xlayers="8" xinflight="8.5" xtag="an interior rank of PP8 · DualPipeV steady state"></dsv3-anatomy>
 
     <p>Some things to notice from the diagram:</p>
@@ -385,9 +385,26 @@
         on what precision you keep your intermediate activations in: as
         a simplification, we simply assume the input activations will be
         saved in whatever precision the upcoming GEMM is expecting to see,
-        but this isn't a law of nature.  In particular, the saved input to
-        SwiGLU isn't directly going to a GEMM, so we could save it in
-        whatever format we want.</li>
+        but this isn't a law of nature.</li>
+
+        <li>There is something special going on with the input to SwiGLU (the
+        "gate, up" activation).  This activation is quite large and we'd quite
+        like to save it in FP8 for the SwiGLU recompute.  To model this, the
+        diagram inserts an explicit quantization step before the SwiGLU.
+        However, in an optimized
+        implementation (e.g., as can be inferred from the official DeepSeek trace,
+        h/t <a
+        href="https://x.com/TheVladSavinov/status/2095090838002880574">Vlad
+        Savinov</a>), this quantization will be fused into the SwiGLU implementation itself
+        to save on memory bandwidth.  For pedagogical reasons, the diagram keeps them unfused, so
+        that (1) it is clear that this "fake" quantization happens before the SwiGLU
+        <em>even</em> in forwards (ensuring your forward and your recompute
+        give bitwise identical results reduces bias--it's a "fake" quantization because
+        SwiGLU will immediately dequantize it to compute SwiGLU in higher precision
+        internally), and (2) to make it clear that the activation is being
+        saved for recompute (it would be pretty confusing for an output of
+        the fused quantize-SwiGLU kernel to be used for the recompute of the...
+        fused quantize-SwiGLU kernel?)</li>
 
         <li>Most of our memory savings arise from choosing to save expert
         activations in FP8 rather than BF16 for backwards.  This is quite
@@ -462,7 +479,7 @@
     since sometimes the reason you are OOMing because of something very dumb, and the
     roofline will tell you exactly what it is.</p>
 
-    <dsv3-anatomy style="min-height:1035px" lens="param-bytes" local cumulative recipe="dsv3-fp8" recipes="bf16,dsv3-fp8,all-fp8" recompute="dsv3" layer="local-diagram" detail controls="static" nocaption></dsv3-anatomy>
+    <dsv3-anatomy style="min-height:1090px" lens="param-bytes" local cumulative recipe="dsv3-fp8" recipes="bf16,dsv3-fp8,all-fp8" recompute="dsv3" layer="local-diagram" detail controls="static" nocaption></dsv3-anatomy>
 
     <dsv3-sheet layer="local-diagram" style="min-height:2381px"></dsv3-sheet>
 
@@ -473,19 +490,19 @@
     "imports": {
       "../src/anatomy.js": "../src/anatomy.js?v=3eb103c0",
       "../src/audit.js": "../src/audit.js?v=55bebb06",
-      "../src/blockgraph.js": "../src/blockgraph.js?v=3b2c87d1",
-      "../src/cells.js": "../src/cells.js?v=af8392a8",
+      "../src/blockgraph.js": "../src/blockgraph.js?v=59818233",
+      "../src/cells.js": "../src/cells.js?v=179327b1",
       "../src/compare.js": "../src/compare.js?v=d3cae233",
-      "../src/localmodel.js": "../src/localmodel.js?v=8b863038",
+      "../src/localmodel.js": "../src/localmodel.js?v=7b110bff",
       "../src/memory.js": "../src/memory.js?v=abe7690c",
       "../src/model.js": "../src/model.js?v=7cdef05d",
       "../src/params.js": "../src/params.js?v=13936278",
       "../src/recipes.js": "../src/recipes.js?v=c6c7fab6",
       "../src/sheet.js": "../src/sheet.js?v=04fc79a1",
-      "../src/sim.js": "../src/sim.js?v=d5b0026b",
+      "../src/sim.js": "../src/sim.js?v=262eedc6",
       "../src/theme.js": "../src/theme.js?v=cf07b25a",
       "../src/trace.js": "../src/trace.js?v=61553c96",
-      "../src/viewer.js": "../src/viewer.js?v=33d7ff9a",
+      "../src/viewer.js": "../src/viewer.js?v=3a69e5bc",
       "./mobile.js": "./mobile.js?v=9d15b75d",
       "./series.js": "./series.js?v=1901fecd",
       "./toc.js": "./toc.js?v=11b69b8b"

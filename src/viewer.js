@@ -5,7 +5,7 @@
 import { fmtUs, fmtNum, DSV3, HARDWARE } from './model.js';
 import { simulate, LEVELS } from './sim.js';
 import { resolveMatmuls, MATMULS, RECIPES, RECIPE_T } from './recipes.js';
-import { blockGraph, analyze, RECOMPUTE_PRESETS, MARKABLE, TP_REPLICATED } from './blockgraph.js';
+import { blockGraph, analyze, RECOMPUTE_PRESETS, MARKABLE, TP_REPLICATED, markKey } from './blockgraph.js';
 import { PARAMS } from './params.js';
 import { buildCells, evalExpr, cellsEnv } from './cells.js';
 import { C, initTheme } from './theme.js';
@@ -975,6 +975,7 @@ export class Dsv3Layer extends HTMLElement {
     this.render(); this.changed(false);
   }
   toggleMark(ids) {
+    ids = ids.map(markKey);   // tied nodes (the SwiGLU-input quantize) edit their partner's mark
     const mutate = () => {   // save-driven marks: {id: true} = save; unlisted = recompute
       const on = this.marks[ids[0]] === true;
       for (const id of ids) { if (on) delete this.marks[id]; else this.marks[id] = true; }
@@ -2220,7 +2221,7 @@ export class Dsv3Layer extends HTMLElement {
       // the checkpoint-anchor lock only means something when a replay exists
       // to terminate at it: with recompute none, x0 is just a saved tensor
       if (n.always) return A.replayed.size ? 'pin' : (A.neededSaved.has(id) ? 'save' : 'idle');
-      if (mks[id] !== true) return 'redo';
+      if (mks[markKey(id)] !== true) return 'redo';   // tied nodes read their partner's mark
       return A.neededSaved.has(id) ? 'save' : 'idle';
     };
     const state = (id) => stateA(ana, marks, id);
@@ -2251,6 +2252,7 @@ export class Dsv3Layer extends HTMLElement {
       `title="locked: this add's output IS the next block's x0 \u2014 the checkpoint anchor, always saved (charged to the next block)">\ud83d\udd12</button></foreignObject>`;
     const modeBtn = (ids, x, y) => {
       if (!this._ctl.marks) return '';       // hidden below the marks tier
+      ids = ids.map(markKey);                // tied nodes (the SwiGLU-input quantize) mirror their partner's mark
       const st = state(ids[0]);
       if (st === 'pin') return '';
       const redo = this.marks[ids[0]] !== true;
@@ -2549,8 +2551,8 @@ export class Dsv3Layer extends HTMLElement {
         const nameTip = (txt) => `<tspan data-tip="${escAttr(txt)}">`;
         if (st === 'redo') {   // recomputed: named + the would-be size + the counterfactual grid
           const cfB = bytes * TOK * (LOCAL ? (CUM ? KMUL : 1) * IFN : CUM ? KMUL : 1);
-          const cf = Math.round(Math.round(bytes * TOK * chipF / (PB_UNIT * 2)) * m);
-          const cfLbl = ` <tspan class="tdim">(<tspan data-raw="${cfB.toFixed(2)}">${fmtBytes(cfB)}</tspan>)</tspan>`;
+          const cf = ov?.flat ? 0 : Math.round(Math.round(bytes * TOK * chipF / (PB_UNIT * 2)) * m);
+          const cfLbl = ov?.flat ? '' : ` <tspan class="tdim">(<tspan data-raw="${cfB.toFixed(2)}">${fmtBytes(cfB)}</tspan>)</tspan>`;   // flat: never a stash, no counterfactual
           const rTip = nameTip('↻ recomputed in backward, not stashed — the (size) and hollow squares price what saving it WOULD cost.');
           // narrow fork columns: the would-be size takes the second line
           let g = ov?.short
@@ -2674,7 +2676,7 @@ export class Dsv3Layer extends HTMLElement {
       const phFor = () => this._ctl.dtype ? bf16B : 0;
       // the hollow ↻ counterfactual grid belongs to the AC story — the pure
       // dtype tier (recompute pinned upstairs) drops it
-      const redoGrid = this._ctl.marks || !this._ctl.dtype;
+      const redoGrid = (this._ctl.marks || !this._ctl.dtype) && !ov?.flat;
       const gridFor = (A, s2) => {
         const [gx, gy] = gpos(s2);
         return SAVED(s2) ? blockGrid(bytesA(A), gx, gy, true, false, phFor()).svg
@@ -2754,7 +2756,10 @@ export class Dsv3Layer extends HTMLElement {
     const gapM = (ids) => Math.max(22, chipSpaceA(anaM, ids) + 10);
     const wireOut = (ids, sx, y, ov) => {
       tensorChip(ids, sx + 14, y + 4, ov);
-      const gap = Math.max(22, chipSpace(ids) + 10);
+      // ov.flat: a wire that is never stashed (the gate/up GEMM's bf16
+      // output — the quantized copy below it is the stash): one text line,
+      // no grid, no worst-case reservation
+      const gap = Math.max(22, (ov?.flat ? 18 : chipSpace(ids)) + 10);
       wire(sx, y, y + gap);
       return y + gap;
     };
@@ -2853,22 +2858,27 @@ export class Dsv3Layer extends HTMLElement {
       paramBlocks(x + 8, y + 30, sqParam(ids[0]), clsOf(ids[0]));
       return y + BH + extra;
     };
+    // the SwiGLU-input quantize pill's tooltip (dtype tiers only draw the pill)
+    const QUANT_TIP = 'quantize the gate/up GEMM’s bf16 output for the stash — FUSED into the SwiGLU kernel in production (one pass reads gate,up in bf16 and writes both the swiglu output and this copy). ' +
+      'This copy IS the gate/up stash: an fp8 GEMM’s own output is high precision and nothing in backward reads it (a matmul’s backward needs its INPUT; the SwiGLU’s backward reads this). ' +
+      'Its format is free-floating — no GEMM ever consumes it, so no GEMM forces the precision; the paper CHOOSES fp8 (§3.3.3: ‘cache the inputs of the SwiGLU operator in FP8’). bf16 = the identity (the GEMM output kept as-is). ' +
+      'Its ↻ mark is the gate/up GEMM’s: recomputing the GEMM re-quantizes.';
     const opNode = (id, label, x, y, cls = 'op', pc = '') => {
       const h2 = cls === 'comm' || !BQ ? 22 : this._ctl.quant ? 34 : 27;   // the extra rows hold the fig-leaf + recompute stubs
-      // the SwiGLU pill carries the one-off 'in:' stash-format button: its
-      // INPUT's save precision is free-floating (the elementwise backward is
-      // the only reader — no GEMM forces it), so it gets its own lever
-      // outside the GEMM boxes
-      const swIn = id === 'swiglu' && this._ctl.dtype
-        ? `<foreignObject x="${x + W - 92}" y="${y + 1}" width="58" height="20">` +
-          `<button xmlns="http://www.w3.org/1999/xhtml" class="st dtb" data-dt="swiglu_in" style="color:${C(DT_STYLE[this.matmuls.swiglu_in ?? 'bf16'])};width:56px" ` +
-          `title="the SwiGLU INPUT's save format (the gate/up stash) — free-floating: no GEMM reads it in forward or backward (SwiGLU backward is elementwise), ` +
-          `so no GEMM forces its precision. The paper CHOOSES fp8 for it (§3.3.3: 'cache the inputs of the SwiGLU operator in FP8'). Toggle bf16 ⇄ ${FP8K}.">in: ${this.matmuls.swiglu_in ?? 'bf16'}</button></foreignObject>`
+      // the quantize pill carries the stash-format button (data-dt swiglu_in):
+      // the SwiGLU INPUT's save precision is free-floating (the elementwise
+      // backward is the only reader — no GEMM forces it), so it gets its own
+      // lever outside the GEMM boxes; its ↻ is the gate/up GEMM's (tied mark)
+      const quantBtn = id === 'quant' && this._ctl.dtype
+        ? `<foreignObject x="${x + W - 88}" y="${y + 1}" width="54" height="20">` +
+          `<button xmlns="http://www.w3.org/1999/xhtml" class="st dtb" data-dt="swiglu_in" style="color:${C(DT_STYLE[this.matmuls.swiglu_in ?? 'bf16'])};width:52px" ` +
+          `title="the gate/up STASH format (the SwiGLU input) — free-floating: no GEMM reads it in forward or backward (SwiGLU backward is elementwise), ` +
+          `so no GEMM forces its precision. The paper CHOOSES fp8 (§3.3.3: 'cache the inputs of the SwiGLU operator in FP8'); bf16 = no quantize. Toggle bf16 ⇄ ${FP8K}.">${this.matmuls.swiglu_in ?? 'bf16'}</button></foreignObject>`
         : '';
-      P.push(`<g data-op="${id}"${boxTip(id)}>` +
+      P.push(`<g data-op="${id}"${id === 'quant' ? ` data-tip="${escAttr(QUANT_TIP)}"` : boxTip(id)}>` +
         `<rect class="${cls}" x="${x}" y="${y}" width="${W}" height="${h2}" rx="6"/>` +
         `<text class="oplabel" x="${x + 10}" y="${y + 15}">${label}${pc ? `<tspan class="dims"> ${pc}</tspan>` : ''}</text></g>` +
-        swIn + modeBtn([id], x + W - 30, y + 1));
+        quantBtn + modeBtn([id], x + W - 30, y + 1));
       auxOut(id, x, y + Math.round(h2 / 2));
       if (cls !== 'comm') { flopBar(x + 10, y + 19, ana.byId[id]?.flopsTok, 'vector', W - 16, undefined, id); paramBlocks(x + 10, y + 19, sqParam(id)); }
       return y + h2;
@@ -3125,7 +3135,14 @@ export class Dsv3Layer extends HTMLElement {
       const gTop = z + 3; z += 21;
       wire(SX2, spineFrom, gTop - 3);   // arrow stops above the group, like the MoE rows
       z = mmBox(['ffn_gate_up'], C2, z, ['gate_up'], 'ffn gate/up', `7168 → 2×${DSV3.denseInter}`);
-      z = wireOut(['gate_up'], SX2, z);
+      // dtype tiers draw the SwiGLU-input quantize as its own pill (the GEMM
+      // emits bf16; the quantized copy is the stash); the structure/AC tiers
+      // hang the stash chip straight off the GEMM (quantize = identity there)
+      if (this._ctl.dtype) {
+        z = wireOut(['gate_up'], SX2, z, { flat: true });
+        z = opNode('quant', 'quantize', C2, z);
+      }
+      z = wireOut(['quant'], SX2, z);
       z = opNode('swiglu', 'SwiGLU', C2, z);
       z = wireOut(['swiglu'], SX2, z);
       z = mmBox(['ffn_down'], C2, z, undefined, 'ffn down', `${DSV3.denseInter} → 7168`);
@@ -3235,10 +3252,29 @@ export class Dsv3Layer extends HTMLElement {
       shBox('shared gate/up', '7168 → 2×2048',
         'one plain GEMM per token — follows the ffn gate/up mark and dtype (its FLOPs are counted in the grouped strip)', rowG,
         pk(DSV3.hidden * 2 * DSV3.moeInter, false, 'd'), 'gate_up', 'ffn_gate_up');
-      tensorChip(['gate_up'], shMid + 14, z + 4, { name: 'gate, up (sh)', tdims: '2×2048', frac: 1 / nExp, chip: 'gate_up:sh' });
+      if (this._ctl.dtype)
+        tensorChip(['gate_up'], shMid + 14, z + 4, { name: 'gate, up (sh)', tdims: '2×2048', frac: 1 / nExp, chip: 'gate_up:sh', flat: true });
     }
-    z = wireOut(['gate_up'], SX2, z, DET ? { name: 'gate, up (routed)', tdims: `${DSV3.topk}×2×2048`, frac: DSV3.topk / nExp } : undefined);
-    if (DET) wire(shMid, rowG + 34, z);
+    // the SwiGLU-input quantize: dtype tiers draw it as its own pill (the
+    // gate/up GEMM emits bf16 — never stashed; the quantized copy is the
+    // stash), the structure/AC tiers hang the stash chip straight off the
+    // GEMM (quantize = identity under bf16)
+    if (this._ctl.dtype) {
+      z = wireOut(['gate_up'], SX2, z, DET ? { name: 'gate, up (routed)', frac: DSV3.topk / nExp, flat: true } : { flat: true });
+      if (DET) wire(shMid, rowG + 34, z);
+      const rowQ = z;
+      z = opNode('quant', DET ? 'quantize · for the stash' : 'quantize', C2, z);
+      if (DET) {
+        micro('quantize', SHX, rowQ, 140, QUANT_TIP, '', 'quant');
+        tensorChip(['quant'], shMid + 14, z + 4, { name: 'gate, up (sh)', tdims: '2×2048', frac: 1 / nExp, chip: 'quant:sh' });
+      }
+      z = wireOut(['quant'], SX2, z, DET ? { name: 'gate, up (routed)', tdims: `${DSV3.topk}×2×2048`, frac: DSV3.topk / nExp } : undefined);
+      if (DET) wire(shMid, rowQ + 18, z);
+    } else {
+      if (DET) tensorChip(['quant'], shMid + 14, z + 4, { name: 'gate, up (sh)', tdims: '2×2048', frac: 1 / nExp, chip: 'quant:sh' });
+      z = wireOut(['quant'], SX2, z, DET ? { name: 'gate, up (routed)', tdims: `${DSV3.topk}×2×2048`, frac: DSV3.topk / nExp } : undefined);
+      if (DET) wire(shMid, rowG + 34, z);
+    }
     // gate-at-swiglu, not gate-at-combine: by linearity the router weights can
     // multiply the swiglu output before the down-proj (one fused kernel,
     // a fused swiglu-and-scale kernel) — this is what makes the expert outputs a pure

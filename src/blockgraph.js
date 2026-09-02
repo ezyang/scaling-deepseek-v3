@@ -42,6 +42,10 @@ export const DTYPE_BYTES = { bf16: 2, e4m3: 1 + 1 / 32, mxfp8: 1 + 1 / 32, e5m6:
 export const MARKABLE = ['norm1', 'qkv_down', 'q_norm', 'kv_norm', 'q_up', 'kv_up', 'rope_q', 'rope_kv',
   'attn', 'o_proj', 'x1', 'norm2', 'router', 'dispatch', 'gate_up', 'swiglu', 'ffn_down', 'combine', 'moe_add'];
 const saveAllExcept = (...redo) => Object.fromEntries(MARKABLE.filter(i => !redo.includes(i)).map(i => [i, true]));
+// nodes whose mark is another op's (blockGraph's markOf): the SwiGLU-input
+// quantize follows the gate/up GEMM. Every mark reader/writer resolves through this.
+export const MARK_ALIAS = { quant: 'gate_up' };
+export const markKey = (id) => MARK_ALIAS[id] ?? id;
 export const RECOMPUTE_PRESETS = {
   // ORDERED as the authoring direction reads: start from the empty policy
   // (recompute everything) and write saves in — the stash grows rightward,
@@ -64,7 +68,8 @@ export const RECOMPUTE_PRESETS = {
   // RMSNorm operations and MLA up-projections during back-propagation"
   // (ALL norms — the latent norms included), and \u00a73.3.3 "we cache the
   // inputs of the SwiGLU operator and recompute its output in the backward
-  // pass" (hence gate/up-out stays stashed here while swiglu goes \u21bb).
+  // pass" (hence the quantized gate/up-out \u2014 the 'quant' node's output,
+  // tied to the gate_up mark \u2014 stays stashed here while swiglu goes \u21bb).
   // RoPE \u21bb is OUR extension (fused production kernels; a zero-byte choice
   // either way, so it cannot move the ledger) — the paper doesn't name it.
   dsv3: saveAllExcept('norm1', 'norm2', 'q_norm', 'kv_norm', 'q_up', 'kv_up', 'rope_q', 'rope_kv', 'swiglu'),
@@ -130,6 +135,8 @@ export function blockGraph(kind, a, mm, seqLen) {
     weight: opts.weight ?? null,
     always: opts.always ?? false, nomark: opts.nomark ?? false, needsOwnOutput: opts.needsOwnOutput ?? false,
     aux: opts.aux ?? null, bwdNeeds: opts.bwdNeeds ?? null,
+    markOf: opts.markOf ?? null,          // this node's mark lives on another op (tied: one ↻ decision, two boxes)
+    fused: opts.fused ?? false,           // rides another kernel's pass (no separate replay charge in the sim)
     tdims: opts.tdims ?? String(elems),   // unitless per-token size, factored like the op dims
   });
   const nodes = [
@@ -185,19 +192,33 @@ export function blockGraph(kind, a, mm, seqLen) {
       N('dispatch', 'a2a dispatch', 'comm', ['norm2', 'router'], 'dispatched tokens', a.topk * h, 'ffn_gate_up', 0,
         { tdims: `${a.topk}\u00d7${h}` }),
     ] : []),
-    // the gate/up stash (= the SwiGLU input) has a FREE-FLOATING save format
-    // (mm.swiglu_in): its only backward reader is the elementwise SwiGLU
-    // backward \u2014 no GEMM ever consumes it, so no GEMM forces its precision
-    // (the paper CHOOSES fp8 for it, \u00a73.3.3). ?? ffn_down covers stale
-    // hand-rolled matmul dicts from before the channel existed.
-    N('gate_up', 'ffn gate/up', 'matmul', moe ? ['dispatch', 'norm2'] : ['norm2'], 'gate, up',
-      experts * 2 * inter, 'swiglu_in', 2 * 2 * h * inter * experts,
+    // the gate/up GEMM emits bf16 (an fp8 GEMM's output is high precision;
+    // nothing downstream reads it in backward \u2014 a matmul's backward needs
+    // its INPUT, and the SwiGLU's backward reads the quantized copy below),
+    // so its output is never stashed: the 'quant' node's is.
+    N('gate_up', 'ffn gate/up', 'matmul', moe ? ['dispatch', 'norm2'] : ['norm2'], 'gate, up (GEMM out)',
+      experts * 2 * inter, 2, 2 * 2 * h * inter * experts,
       { tdims: moe ? `${experts}\u00d72\u00d7${inter}` : `2\u00d7${inter}`,
         weight: moe
           ? [{ dims: 'routedExperts × 2 × hidden × moeInter', params: a.routedExperts * 2 * h * inter, routed: true },
             { dims: 'sharedExperts × 2 × hidden × moeInter', params: a.sharedExperts * 2 * h * inter }]
           : [{ dims: '2 × hidden × denseInter', params: 2 * h * inter }] }),
-    N('swiglu', 'SwiGLU', 'vector', ['gate_up'], 'swiglu out', experts * inter, 'ffn_down', 6 * experts * inter,
+    // the SwiGLU-input quantize: a dedicated node (fused into the SwiGLU
+    // kernel in production \u2014 one pass reads the bf16 gate/up, writes the
+    // swiglu output AND this copy) whose output is THE gate/up stash. Its
+    // save format (mm.swiglu_in) is FREE-FLOATING: the only backward reader
+    // is the elementwise SwiGLU backward \u2014 no GEMM ever consumes it, so no
+    // GEMM forces its precision (the paper CHOOSES fp8, \u00a73.3.3); bf16 is
+    // the identity (the GEMM output kept as-is). Its own backward is the
+    // straight-through identity (needs nothing). Its mark is TIED to the
+    // gate/up GEMM's (markOf): one \u21bb decision, two boxes \u2014 recomputing
+    // the GEMM re-quantizes, and a stashed quantized copy makes the bf16
+    // GEMM output unneeded either way. ?? ffn_down covers stale hand-rolled
+    // matmul dicts from before the channel existed.
+    N('quant', 'quantize', 'vector', ['gate_up'], 'gate, up',
+      experts * 2 * inter, 'swiglu_in', 0,   // 0 FLOP: fused into the SwiGLU kernel, whose fig-leaf prices the pass
+      { tdims: moe ? `${experts}\u00d72\u00d7${inter}` : `2\u00d7${inter}`, bwdNeeds: [], markOf: 'gate_up', fused: true }),
+    N('swiglu', 'SwiGLU', 'vector', ['quant'], 'swiglu out', experts * inter, 'ffn_down', 6 * experts * inter,
       { tdims: moe ? `${experts}\u00d7${inter}` : String(inter) }),
     N('ffn_down', 'ffn down', 'matmul', ['swiglu'], moe ? 'expert outputs' : 'ffn out',
       moe ? a.topk * h : h, 2, 2 * h * inter * experts,
@@ -240,7 +261,7 @@ const bwdNeedsInputs = (n) => BWD_NEEDS_INPUTS[n.opKind];
 // need no transpose, so those stashes are exempt either way.
 export function analyze(nodes, marks, transposedStash = false) {
   const byId = Object.fromEntries(nodes.map(n => [n.id, n]));
-  const saved = (n) => n.always || n.nomark || marks[n.id] === true;
+  const saved = (n) => n.always || n.nomark || marks[n.markOf ?? n.id] === true;   // tied nodes read their partner's mark
   const neededSaved = new Set(), replayed = new Set();
   const neededBy = new Map();                        // tensor id -> Set of ops whose backward/replay reads it
   const need = (id, by) => {

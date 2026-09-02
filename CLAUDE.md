@@ -47,7 +47,11 @@ generality.
   widget renderer at its published resting state. On drift open the A/B
   report (/tmp/pixelgold-report.html: hold to flip golden↔new, `d` = diff
   mask), then `--update`. To review a golden-changing COMMIT (binary pngs
-  defeat git diff): `--vs HEAD~1` rebuilds the A/B report against any rev. Machine-tied (local fonts + Playwright's pinned
+  defeat git diff): `--vs HEAD~1` rebuilds the A/B report against any rev.
+  Whenever you re-baseline pixel goldens, ALWAYS leave a fresh A/B report
+  for the author: after `--update`, run `--vs HEAD` (uncommitted work) or
+  `--vs HEAD~1` (just committed) so /tmp/pixelgold-report.html shows
+  old↔new, and hand over its path. Machine-tied (local fonts + Playwright's pinned
   chrome-headless-shell): expect a wholesale re-baseline after Chrome/OS
   updates.
 - `node scripts/battery.mjs [filter…]` — the whole battery (sanity +

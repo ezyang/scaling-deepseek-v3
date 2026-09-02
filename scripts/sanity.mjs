@@ -115,8 +115,8 @@ const { blockGraph, analyze, RECOMPUTE_PRESETS, layerWeights } = await import('.
 }
 const mmFp8 = resolveMatmuls({ recipe: 'dsv3-fp8' });
 const ar = analyze(blockGraph('moe', DSV3, mmFp8, 4096), RECOMPUTE_PRESETS['attn-replay']);
-check('attn-replay stashes only {x0, norm2, dispatch, gate_up, router}',
-  [...ar.neededSaved].sort().join(',') === 'dispatch,gate_up,norm2,router,x0',
+check('attn-replay stashes only {x0, norm2, dispatch, quant (the quantized gate/up), router}',
+  [...ar.neededSaved].sort().join(',') === 'dispatch,norm2,quant,router,x0',
   [...ar.neededSaved].sort().join(','));
 check('attn-replay replays the whole MLA path (incl. residual add)',
   ['norm1', 'qkv_down', 'q_up', 'kv_up', 'attn', 'o_proj', 'x1'].every(id => ar.replayed.has(id)),

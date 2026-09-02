@@ -1,14 +1,21 @@
 // @page studies/02-hopper-memory.html
-// the free-floating SwiGLU-input stash format (Haziza): its own 'in:' button
+// the free-floating SwiGLU-input stash format (Haziza): the quantize pill's own dtype button
 const f8 = document.querySelector('dsv3-anatomy[controls="dtype"]');
 const gib = () => +([...f8.querySelectorAll('.lv-scroll text, svg text')].map(t => t.textContent).join(' ').match(/= ([\d.]+) GiB/) ?? [])[1];
 const swb = () => f8.querySelector('button[data-dt="swiglu_in"]');
 const chipOn = (name) => [...f8.querySelectorAll('.stp[data-knob="recipe"] button')].find(b => b.classList.contains('on'))?.textContent === name;
-T.check('swiglu pill carries the in: button (e4m3 under dsv3-fp8)', swb()?.textContent === 'in: e4m3', swb()?.textContent);
+T.check('quantize pill carries the stash-format button (e4m3 under dsv3-fp8)', swb()?.textContent === 'e4m3', swb()?.textContent);
+T.check('quantize pill sits between gate/up and SwiGLU', !!f8.querySelector('g[data-op="quant"]')
+  && f8.querySelector('g[data-op="quant"] rect').getBBox().y > f8.querySelector('g[data-op="ffn_gate_up"] rect').getBBox().y
+  && f8.querySelector('g[data-op="quant"] rect').getBBox().y < f8.querySelector('g[data-op="swiglu"] rect').getBBox().y, '');
+// the GEMM's own bf16 output is never stashed; the quantized copy is
+const chips = (cls) => [...f8.querySelectorAll(`.lv-scroll text.${cls}`)].map(t => t.textContent).filter(t => t.includes('gate, up (routed)'));
+T.check('gate/up GEMM output reads as an unstashed bf16 wire', chips('tidle').some(t => t.startsWith('·') && t.includes('bf16')), chips('tidle').join('|'));
+T.check('the quantized copy is the e4m3 stash', chips('tsave').some(t => /^[↓⇓]/.test(t) && t.includes('e4m3')), chips('tsave').join('|'));
 T.check('recipe recognized at load', chipOn('dsv3-fp8'), '');
 const g0 = gib();
 swb().click(); await T.tick(500);
-T.check('flip to bf16: label + custom + stash grows', swb().textContent === 'in: bf16'
+T.check('flip to bf16: label + custom + stash grows', swb().textContent === 'bf16'
   && chipOn('custom') && gib() > g0, `${swb().textContent} ${gib()} vs ${g0}`);
 T.log('delta GiB', (gib() - g0).toFixed(1));
 swb().click(); await T.tick(500);

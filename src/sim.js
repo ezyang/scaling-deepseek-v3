@@ -112,6 +112,7 @@ export function simulate(overrides = {}) {
     for (const id of ana.replayed) {
       const n = ana.byId[id];
       if (n.opKind === 'comm') continue; // charged below at a2a cost
+      if (n.fused) continue;             // rides another replayed kernel's pass (the SwiGLU-input quantize)
       const rate = n.opKind === 'attn' ? hw.flops.bf16 * hw.attnEff
         : n.opKind === 'matmul' ? M.gemmRate(hw, cfg.dtype)
           : null;                        // vector: bandwidth-bound
