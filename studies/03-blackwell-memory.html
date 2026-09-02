@@ -231,8 +231,10 @@
 
     <p>Not modeled, and worth knowing about before comparing this roofline to a
     real memory trace: NVIDIA's full-iteration CUDA graphs need static shapes,
-    so the MoE buffers are padded to an expert capacity factor of 1.5× and the
-    dispatched activations live in a paged stash with a CPU spill; the LM head's
+    so the MoE buffers are padded to a fixed expert capacity (1.5× the balanced
+    load in the archive recipe, 4× in the MLPerf submission, which routes for
+    real) and the dispatched activations live in a paged stash with a CPU
+    spill; the LM head's
     MXFP8 weight copies; and the MTP module described above.</p>
 
     <h2>Fitting it</h2>
