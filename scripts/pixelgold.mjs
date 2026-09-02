@@ -12,9 +12,13 @@
 //   node scripts/pixelgold.mjs             # compare (battery job)
 //   node scripts/pixelgold.mjs --update    # re-baseline (writes the report first)
 //   node scripts/pixelgold.mjs 02-final    # filter by name substring
+//   node scripts/pixelgold.mjs --vs HEAD~1  # A/B the checked-in goldens against
+//                                          # a git revision (no shooting) — the
+//                                          # review tool for golden-changing commits
 // On drift an A/B viewer is written: open /tmp/pixelgold-report.html
 // (hold mouse or space = flip golden/new, d = red diff mask).
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
+import { execSync } from 'node:child_process';
 import { join } from 'node:path';
 import { shoot, root } from './shotlib.mjs';
 import { decode, encode } from './pngio.mjs';
@@ -36,7 +40,9 @@ const SHOTS = [
 ];
 
 const update = process.argv.includes('--update');
-const filters = process.argv.slice(2).filter((a) => !a.startsWith('--'));
+const vsIdx = process.argv.indexOf('--vs');
+const VS = vsIdx > -1 ? (process.argv[vsIdx + 1] ?? 'HEAD~1') : null;
+const filters = process.argv.slice(2).filter((a, i) => !a.startsWith('--') && process.argv[2 + i - 1] !== '--vs');
 // every shot has a night twin: same widget, theme flipped through setTheme()
 const ALL = SHOTS.flatMap((s) => [s, { ...s, name: s.name + '-dark', dark: true }]);
 const picked = ALL.filter((s) => !filters.length || filters.some((f) => s.name.includes(f)));
@@ -64,8 +70,35 @@ function trim(img) {
 }
 
 const results = [];
+if (VS) {
+  // review mode: current baselines vs a git revision — old plays 'golden',
+  // current plays 'NEW' in the report
+  const revNames = execSync(`git ls-tree -r --name-only ${VS} -- tests/pixel`, { cwd: root })
+    .toString().trim().split('\n').filter(Boolean).map((p) => p.split('/').pop().slice(0, -4));
+  const names = [...new Set([...readdirSync(GOLD).filter((f) => f.endsWith('.png')).map((f) => f.slice(0, -4)), ...revNames])]
+    .filter((n) => !filters.length || filters.some((f) => n.includes(f)));
+  for (const name of names.sort()) {
+    const curPath = join(GOLD, name + '.png');
+    const cur = existsSync(curPath) ? decode(readFileSync(curPath)) : null;
+    let old = null;
+    try { old = decode(execSync(`git show ${VS}:tests/pixel/${name}.png`, { cwd: root, maxBuffer: 64 * 1024 * 1024 })); } catch { /* absent at rev */ }
+    if (!cur && !old) continue;
+    let verdict = 'match', ndiff = 0, diffImg = null;
+    if (!old) verdict = `new since ${VS}`;
+    else if (!cur) verdict = `removed since ${VS}`;
+    else if (old.w !== cur.w || old.h !== cur.h) verdict = `size ${old.w}x${old.h} → ${cur.w}x${cur.h}`;
+    else if (!old.data.equals(cur.data)) {
+      const d = Buffer.alloc(cur.w * cur.h * 4);
+      for (let i = 0; i < d.length; i += 4)
+        if (cur.data.readUInt32BE(i) !== old.data.readUInt32BE(i)) { ndiff++; d[i] = 255; d[i + 3] = 255; }
+      verdict = `${ndiff} px differ`;
+      diffImg = { w: cur.w, h: cur.h, data: d };
+    }
+    results.push({ name, img: cur ?? old, gold: old, verdict, diffImg });
+  }
+}
 let next = 0;
-await Promise.all(Array.from({ length: 4 }, async () => {
+if (!VS) await Promise.all(Array.from({ length: 4 }, async () => {
   while (next < picked.length) {
     const s = picked[next++];
     const tmp = join('/tmp', `pixelgold-${s.name}.png`);
@@ -109,7 +142,9 @@ addEventListener('mouseup',()=>document.body.classList.remove('flip'));</script>
   writeFileSync('/tmp/pixelgold-report.html', html);
   console.log(`\nA/B viewer: open /tmp/pixelgold-report.html`);
 }
-if (update) {
+if (VS) {
+  console.log(`pixelgold: ${bad.length ? bad.length + ' golden(s) differ from ' + VS : 'identical to ' + VS} (review mode — not a gate)`);
+} else if (update) {
   for (const r of bad) writeFileSync(r.goldPath, encode(r.img.w, r.img.h, r.img.data));
   console.log(`pixelgold: baselined ${bad.length ? bad.map((r) => r.name).join(', ') : 'nothing (all matched)'}`);
 } else if (bad.length) {
