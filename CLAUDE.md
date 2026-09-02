@@ -40,7 +40,9 @@ generality.
 - `node scripts/goldens.mjs` — numeric goldens (tests/goldens.json): stash
   rates, FLOP counts, sim step times, memory watermarks, story-config cell
   totals. Changing a number is fine; changing one invisibly is not — on
-  drift, `--update` and review the git diff.
+  drift, `--update` and review the git diff. Also emits the sheet as TEXT
+  (tests/goldens-sheet.txt: every cell's label, exact value, formula at the
+  endpoint config) — the reviewable diff for sheet-restructuring commits.
 - `node scripts/pixelgold.mjs` — pixel goldens (tests/pixel/*.png): every
   widget renderer at its published resting state. On drift open the A/B
   report (/tmp/pixelgold-report.html: hold to flip golden↔new, `d` = diff

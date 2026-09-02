@@ -1,0 +1,117 @@
+P1   GPUs in the cluster                                                2048       (model input)
+P2   pipeline stages (PP)                                                  8       (model input)
+P3   expert parallelism (EP)                                              64       (model input)
+P4   data parallelism                                                    256       = P1 / P2
+P5   expert data parallelism                                               4       = P4 / P3
+P6   microbatches in flight (DualPipeV: PP + ½)                          8.5       = P2 + 0.5
+P7   tokens per microbatch (one 4096-token sequence)                    4096       (fixed: seq 4096 · mbs 1)
+S1   ZeRO level (1 optim · 2 +grads · 3 +weights)                          1       (model input)
+S2     shard group · weights, experts                                      1       = (S1 ≥ 3) × (P5 - 1) + 1
+S3     shard group · weights, others                                       1       = (S1 ≥ 3) × (P4 - 1) + 1
+S4     shard group · gradients, experts                                    1       = (S1 ≥ 2) × (P5 - 1) + 1
+S5     shard group · gradients, others                                     1       = (S1 ≥ 2) × (P4 - 1) + 1
+S6     shard group · optimizer, experts                                    4       = (S1 ≥ 1) × (P5 - 1) + 1
+S7     shard group · optimizer, others                                   256       = (S1 ≥ 1) × (P4 - 1) + 1
+F1   e4m3+ᵀ-resident params? (0/1)                                         0       (model input)
+L1   MoE layers on this rank (slot split)                                  8       (model input)
+L2   dense layers on this rank (slot split)                                0       (model input)
+L3   vocab matrices on this rank                                           0       = L4 + L5
+L4     embedding on this rank? (0/1)                                       0       (model input)
+L5     lm head on this rank? (0/1)                                         0       (model input)
+H1   hidden dim                                                         7168       (architecture)
+H2   expert FFN inter dim                                               2048       (architecture)
+H3   routed experts                                                      256       (architecture)
+H4   top-k routed per token                                                8       (architecture)
+H5   dense-layer FFN inter dim                                         18432       (architecture)
+H6   vocabulary                                                       129280       (architecture)
+H7   q latent rank                                                      1536       (architecture)
+H8   kv latent rank                                                      512       (architecture)
+H9   attention heads                                                     128       (architecture)
+H10  head dim · qk (nope)                                                128       (architecture)
+H11  head dim · rope                                                      64       (architecture)
+H12  head dim · v                                                        128       (architecture)
+H13  shared experts                                                        1       (architecture)
+N1   params · routed experts, one MoE layer                      11274289152 p     = H3 × 3 × H1 × H2
+N2   params · rest of a MoE layer                                  232997120 p     = N2a + N2b + N2c + N2d + N2e + N2f + N2g
+N2a    q/kv down-proj                                               15138816 p     = H1 × H7 + H1 × (H8 + H11)
+N2b    q up-proj                                                    37748736 p     = H7 × H9 × (H10 + H11)
+N2c    kv up-proj                                                   16777216 p     = H8 × H9 × (H10 + H12)
+N2d    attn out-proj                                               117440512 p     = H9 × H12 × H1
+N2e    RMSNorms (norm1 · norm2 · 2 latent norms)                       16384 p     = 2 × H1 + H7 + H8
+N2f    router (weight + bias)                                        1835264 p     = (H1 + 1) × H3
+N2g    shared expert (gate/up/down)                                 44040192 p     = H13 × 3 × H1 × H2
+N3   params · one dense layer                                      583483392 p     = N2a + N2b + N2c + N2d + N2e + N3a
+N3a    FFN gate/up/down (dense)                                    396361728 p     = 3 × H1 × H5
+N4   params · one vocab matrix                                     926679040 p     = H6 × H1
+Q1   expert params on this GPU                                    1409286144 p     = L1 × N1 / P3
+Q2   non-expert block params on this GPU                          1863976960 p     = L2 × N3 + L1 × N2
+Q3   vocab params on this GPU (+ final norm)                               0 p     = L3 × N4 + L5 × H1
+W1   weights (2 B bf16; F1 flips block params e4m3+ᵀ)             6546526208 B     = W2 + W3 + W4
+W2     experts                                                    2818572288 B     = (2 + F1 × 2 × 4/128) × Q1 / S2
+W3     non-expert blocks                                          3727953920 B     = (2 + F1 × 2 × 4/128) × Q2 / S3
+W4     emb + lm head (bf16 always)                                         0 B     = 2 × Q3 / S3
+G1   gradients (fp32, 4 B/param)                                 13093052416 B     = G2 + G3 + G4
+G2     experts                                                    5637144576 B     = 4 × Q1 / S4
+G3     non-expert blocks                                          7455907840 B     = 4 × Q2 / S5
+G4     emb + lm head                                                       0 B     = 4 × Q3 / S5
+O1   optimizer states (8 B/param)                                 2876821568 B     = O2 + O3 + O4
+O2     experts                                                    2818572288 B     = 8 × Q1 / S6
+O3     non-expert blocks                                            58249280 B     = 8 × Q2 / S7
+O4     emb + lm head                                                       0 B     = 8 × Q3 / S7
+D1   stash/token · one MoE layer (the chips’ sum)                     157184 B/tok (model input)
+D2   stash/token · one dense layer                                     95872 B/tok (model input)
+D3   stash/token · vocab side (x0 / logits + loss)                         0 B/tok = L4 × 2 × H1 + L5 × 6 × H6
+A1   saved activations                                           43780145152 B     = A2 + A3 + A4 + A5 + A6 + A7 + A8 + A9 + A10 + A11
+A2     x0, x1 (residual)                                          7985954816 B     = A2a + A2b
+A2a      x0                                                       3992977408 B     = R2a × (L1 × (7168 × B2a) + L2 × (7168 × B2a)) × P7 × P6
+R2a        kept?                                                           1       (model input)
+B2a        precision (B/elem)                                              2 B/e   (model input)
+A2b      x1 (residual)                                            3992977408 B     = R2b × (L1 × (7168 × B2b) + L2 × (7168 × B2b)) × P7 × P6
+R2b        kept?                                                           1       (model input)
+B2b        precision (B/elem)                                              2 B/e   (model input)
+A3     norm outs                                                           0 B     = A3a + A3b + A3c + A3d
+A3a      norm1 out                                                         0 B     = R3a × (L1 × (7168 × B3a) + L2 × (7168 × B3a)) × P7 × P6
+R3a        kept?                                                           0       (model input)
+B3a        precision (B/elem)                                        1.03125 B/e   (model input)
+A3b      rstd (fp32) · norm1 out                                           0 B     = R3a × (L1 × 4 + L2 × 4) × P7 × P6
+A3c      norm2 out (shared expert input)                                   0 B     = R3c × (L1 × (7168 × B3c) + L2 × (7168 × B3c)) × P7 × P6
+R3c        kept?                                                           0       (model input)
+B3c        precision (B/elem)                                        1.03125 B/e   (model input)
+A3d      rstd (fp32) · norm2 out                                           0 B     = R3c × (L1 × 4 + L2 × 4) × P7 × P6
+A4     mla latents                                                1140850688 B     = A4a + A4b + A4c + A4d + A4e
+A4a      latents                                                  1140850688 B     = R4a × (L1 × ((1536 + 512) × B4a) + L2 × ((1536 + 512) × B4a)) × P7 × P6
+R4a        kept?                                                           1       (model input)
+B4a        precision (B/elem)                                              2 B/e   (model input)
+A4b      norm(q latent)                                                    0 B     = R4b × (L1 × (1536 × B4b) + L2 × (1536 × B4b)) × P7 × P6
+R4b        kept?                                                           0       (model input)
+B4b        precision (B/elem)                                        1.03125 B/e   (model input)
+A4c      rstd (fp32) · norm(q latent)                                      0 B     = R4b × (L1 × 4 + L2 × 4) × P7 × P6
+A4d      norm(kv latent)                                                   0 B     = R4d × (L1 × (512 × B4d) + L2 × (512 × B4d)) × P7 × P6
+R4d        kept?                                                           0       (model input)
+B4d        precision (B/elem)                                        1.03125 B/e   (model input)
+A4e      rstd (fp32) · norm(kv latent)                                     0 B     = R4d × (L1 × 4 + L2 × 4) × P7 × P6
+A5     q · k,v                                                             0 B     = R5 × (L1 × (128×192 × B5 + (128×(192+128)) × B5) + L2 × (128×192 × B5 + (128×(192+128)) × B5)) × P7 × P6
+R5       kept?                                                             0       (model input)
+B5       precision (B/elem)                                                2 B/e   (model input)
+A6     attention out                                              6987710464 B     = A6a + A6b
+A6a      attn out                                                 6845104128 B     = R6a × (L1 × (128×128 × B6a) + L2 × (128×128 × B6a)) × P7 × P6
+R6a        kept?                                                           1       (model input)
+B6a        precision (B/elem)                                            1.5 B/e   (model input)
+A6b      lse (fp32) · attn out                                     142606336 B     = R6a × (L1 × 512 + L2 × 512) × P7 × P6
+A7     router state                                                606076928 B     = R7 × (L1 × ((2×256 + 4×8) × B7)) × P7 × P6
+R7       kept?                                                             1       (model input)
+B7       precision (B/elem)                                                4 B/e   (model input)
+A8     dispatched tokens (routed experts’ input)                 16471031808 B     = R8 × (L1 × (8×7168 × B8)) × P7 × P6
+R8       kept?                                                             1       (model input)
+B8       precision (B/elem)                                          1.03125 B/e   (model input)
+A9     gate, up (routed+sh)                                      10588520448 B     = A9a + A9b + A9c
+A9a      gate, up · routed (routed experts’ hidden, pre-SwiGLU)     9412018176 B     = R9 × L1 × (H4×2×H2 × B9) × P7 × P6
+A9b      gate, up · shared (shared expert hidden, pre-SwiGLU)     1176502272 B     = R9 × L1 × (H13×2×H2 × B9) × P7 × P6
+A9c      gate, up · dense MLP (dense layers’ hidden)                       0 B     = R9 × L2 × (2×H5 × B9) × P7 × P6
+R9       kept?                                                             1       (model input)
+B9       precision (B/elem)                                          1.03125 B/e   (model input)
+A10    swiglu out                                                          0 B     = R10 × (L1 × (9×2048 × B10) + L2 × (18432 × B10)) × P7 × P6
+R10      kept?                                                             0       (model input)
+B10      precision (B/elem)                                          1.03125 B/e   (model input)
+A11    other (+ vocab D3)                                                  0 B     = 0 + D3 × P7
+T1   total resident bytes on this GPU                            66296545344 B     = W1 + G1 + O1 + A1

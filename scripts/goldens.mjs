@@ -94,10 +94,25 @@ for (const [name, cfg] of [
   G.cells[name] = Object.fromEntries(['T1', 'W1', 'G1', 'O1', 'A1'].map((id) => [id, get(id)]));
 }
 
+// ---- the sheet as TEXT (tests/goldens-sheet.txt) ---------------------------
+// One line per cell at the essay's endpoint config: id · label · exact value
+// · unit · formula (or input kind). Formulas are SHAPE-STABLE across configs
+// (the stability rule), so one config pins every formula string — this file
+// is the reviewable git diff for sheet-restructuring commits (the pixel
+// goldens defeat git diff; this doesn't). Values are dyadic: String() is
+// exact and round-trips.
+const SHEET_FILE = fileURLToPath(new URL('../tests/goldens-sheet.txt', import.meta.url));
+const sheetText = () => buildCells(envFor(EP)).cells.map((c) => {
+  const label = '  '.repeat(c.depth ?? 0) + c.label;
+  return (c.id.padEnd(5) + label.padEnd(56) + String(c.value).padStart(15)
+    + ' ' + (c.unit ?? '').padEnd(6) + (c.expr ? '= ' + c.expr : (c.note ?? '(model input)'))).trimEnd();
+}).join('\n') + '\n';
+
 // ---- compare / update -----------------------------------------------------
 if (process.argv.includes('--update')) {
   writeFileSync(FILE, JSON.stringify(G, null, 2) + '\n');
-  console.log(`goldens: wrote ${Object.keys(G).map((k) => `${k}(${Object.keys(G[k]).length})`).join(' ')}`);
+  writeFileSync(SHEET_FILE, sheetText());
+  console.log(`goldens: wrote ${Object.keys(G).map((k) => `${k}(${Object.keys(G[k]).length})`).join(' ')} + sheet text`);
   process.exit(0);
 }
 let old;
@@ -118,6 +133,15 @@ const walk = (a, b, path) => {
   } else if (JSON.stringify(a) !== JSON.stringify(b)) diffs.push(`${path}: ${JSON.stringify(b)} → ${JSON.stringify(a)}`);
 };
 walk(G, old, '');
+// the sheet text compares line-wise (the git diff of the file is the review)
+try {
+  const oldTxt = readFileSync(SHEET_FILE, 'utf8'), newTxt = sheetText();
+  if (oldTxt !== newTxt) {
+    const A = oldTxt.split('\n'), B = newTxt.split('\n');
+    for (let i = 0; i < Math.max(A.length, B.length); i++)
+      if (A[i] !== B[i]) { diffs.push(`sheet-text line ${i + 1}: ${JSON.stringify(A[i] ?? '∅')} → ${JSON.stringify(B[i] ?? '∅')}`); if (diffs.length > 40) break; }
+  }
+} catch { diffs.push('sheet-text: tests/goldens-sheet.txt missing — run --update'); }
 for (const d of diffs) console.log('DRIFT ' + d);
 if (diffs.length) console.log(`\ngoldens: ${diffs.length} drift(s) — intentional? \`node scripts/goldens.mjs --update\` and review the git diff`);
 else console.log(`goldens: match (${Object.entries(G).reduce((n, [, v]) => n + Object.keys(v).length, 0)} pinned groups)`);
