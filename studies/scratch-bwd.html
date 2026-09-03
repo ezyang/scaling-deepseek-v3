@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>scratch: the backward pass, unrolled (precision view)</title>
+  <link rel="stylesheet" href="./study.css">
+  <style> main { max-width: none; } </style>
+</head>
+
+<body>
+  <main>
+    <h1>scratch: the backward pass, unrolled</h1>
+    <p class="note">DRAFT. One DSv3 transformer block under the paper's FP8 recipe, with the
+      backward written out explicitly: one backward node per forward node, plus a
+      weight-gradient column. The question this answers is "what precision is
+      everything running in", forward and backward. No recompute is modeled and
+      nothing is fused. Backward precisions are our reading of the DSv3 report §3.3
+      (Fig. 6) plus production practice where the paper is silent (marked ~).
+      Not part of the series.</p>
+
+    <p class="note">Reading it: boxes wear the dtype the op <em>computes</em> in; chips wear
+      the dtype the tensor is <em>carried</em> in. Solid boxes are forward, dashed boxes
+      backward; the backward column flows upward, and the chip across from a forward
+      tensor is that tensor's gradient. <span style="color:var(--c-7a5200);font-weight:600">⇢ amber</span>
+      chips are saved for backward. Edges are colored by destination:
+      <span style="color:var(--c-eda100);font-weight:600">amber</span> lands on a backward op that
+      reads the stash (a norm, SwiGLU or attention backward),
+      <span style="color:var(--c-2a78d6);font-weight:600">blue</span> on a weight-grad GEMM (a stash
+      that exists only for dW), and <span style="color:var(--c-eb6834);font-weight:600">orange</span>
+      carries the incoming gradient dY into the weight-grad column. Left rails are the residual
+      stream and the shared expert's input; right rails the top-k gate and the routed
+      sum hopping over the shared chain.</p>
+
+    <dsv3-bwd></dsv3-bwd>
+
+    <h2>What is asserted, and from where</h2>
+    <ul>
+      <li><b>All three GEMMs of every linear run E4M3</b> (Fprop, Dgrad, Wgrad), with the
+        1×128 activation / 128×128 weight tile scales and fp32-promoted accumulation
+        (DSv3 report §3.3.1, Fig. 6). Their outputs: forward activations and input
+        gradients in BF16, weight gradients in FP32 (§3.3.2 "master weights, weight
+        gradients and optimizer states in higher precision").</li>
+      <li><b>dY is quantized to E4M3 before Dgrad and Wgrad</b> (Fig. 6: "Output Grad" enters
+        both backward GEMMs through a to-fp8 cast). The transposed operands for Wgrad
+        are re-quantized 128×1 from the saved tensors (the Hopper layout point from
+        post 02).</li>
+      <li><b>Kept high precision</b> in both directions: embedding, output head, MoE gating
+        (router, fp32), normalization, attention (§3.3.2). We draw the norms and
+        attention as BF16 with fp32 statistics; the router fp32 throughout.</li>
+      <li><b>Norm backwards read their inputs</b> (x0, x1, the bf16 latents). The paper does not
+        state the form, but its policy of recomputing every RMSNorm in backward (§3.2.3)
+        implies it: the replay runs from the input, so the input is on hand and an
+        output-form backward (reconstructing x from the E4M3 normed output) would buy
+        nothing. With recompute off, as here, that is the only reason the latents are
+        stashed.</li>
+      <li><b>Communication</b> (§3.3.3): forward dispatch payload E4M3, forward combine BF16;
+        backward, the activation gradient before the MoE down-projections travels
+        E4M3 (the combine's backward is a dispatch) and the backward of the dispatch
+        (a combine) stays BF16.</li>
+      <li><b>Saved formats</b> (§3.3.3): SwiGLU input E4M3 (the quantize box; see the 02
+        errata), attention output E5M6 (read by both the attention backward and the
+        out-proj Wgrad), everything else follows the consuming GEMM.</li>
+      <li><b>Where casts are drawn.</b> A quantization is a kernel, so it appears where it would
+        run. It rides the nearest vector kernel when there is one: the box wears a
+        second <span style="color:var(--c-d6408b);font-weight:600">⇒ e4m3</span> tag and the chip it
+        emits is E4M3 (the norms mint the GEMM operands and the dispatch payload; the RoPE,
+        latent-norm and SwiGLU backwards mint the next dgrad's and wgrad's operands in both
+        tile orientations, marked <em>(+ᵀ)</em>). It gets its own box when there is nothing to
+        fuse it into: after attention in forward, and after a junction in backward (before
+        the out-proj dgrad, the backward combine, and the shared down dgrad). A wgrad's
+        stash operand is re-tiled 128×1 by the small <em>requant ᵀ</em> box on its blue edge,
+        the Hopper layout point from post 02. Widening (an E4M3 GEMM emitting BF16 or
+        FP32) is the accumulator and is never marked. Which kernel hosts each fused cast
+        is production practice, not the paper (~).</li>
+      <li><b>Attention output.</b> The paper pins the E5M6 cache (1×128 tiles, power-of-two scales,
+        converted to 128×1 in backward) and its two readers, the attention backward and the
+        out-proj wgrad. We draw attention writing the E5M6 in its epilogue and the out-proj's
+        forward E4M3 operand <em>derived from that cache</em> by a requant box, the fake-quant
+        chain, since the paper calls the cached tensor the linear's input. It does not say so
+        outright; the operand could equally be quantized straight from bf16, and the two differ
+        numerically (~).</li>
+      <li><b>Marked ~ (inferred, not in the paper)</b>: RMSNorm γ gradients in fp32; the
+        SwiGLU backward computing in BF16 from the dequantized E4M3 input; the
+        quantize's straight-through backward; the gating-weight gradient in fp32.</li>
+    </ul>
+    <p class="note">AI disclosure: the diagram module and this page's text were drafted by
+      Claude from the DeepSeek-V3 report and the conventions of the earlier posts; not
+      yet hand-edited.</p>
+  </main>
+  <script type="module">
+    import { initTheme } from '../src/theme.js';
+    initTheme();
+    import '../src/bwd.js';
+  </script>
+</body>
+
+</html>
