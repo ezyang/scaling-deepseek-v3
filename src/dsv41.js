@@ -475,21 +475,26 @@ export class Dsv41AnatomyPlan extends HTMLElement {
     wire(16);
     blockBox('swa', 'SWA-only block', `layer 1 · ${fmtP(K.block.swa)}`, BX, W, 'block-swa');
     wire(24, xs);
-    // causal encoder: 3 groups of (Full m=2 + Reuse ×5)
-    let gTop = y; y += 20;
-    blockBox('full2', 'CSA2 Full · m=2', `${fmtP(K.block.full2)}`, BX + 6, W - 12);
-    wire(22, xs);
-    blockBox('reuse', 'CSA2 Reuse · m=2 ×5', `${fmtP(K.block.reuse)} each`, BX + 6, W - 12);
-    y += 8;
-    S.push(`<rect class="grp" x="${BX - 4}" y="${gTop}" width="${W + 8}" height="${y - gTop}" rx="6"/>` +
-      `<text class="grplabel" x="${BX + 4}" y="${gTop + 14}">causal encoder ×3 (layers 2–19)</text>`);
+    // causal encoder: 3 groups of (Full m=2 + Reuse ×5), unrolled around the
+    // second Engram module, which runs at the input of layer 14 = group 3's Full
+    const encGroup = (label) => {
+      const gTop = y; y += 20;
+      blockBox('full2', 'CSA2 Full · m=2', `${fmtP(K.block.full2)}`, BX + 6, W - 12);
+      wire(22, xs);
+      blockBox('reuse', 'CSA2 Reuse · m=2 ×5', `${fmtP(K.block.reuse)} each`, BX + 6, W - 12);
+      y += 8;
+      S.push(`<rect class="grp" x="${BX - 4}" y="${gTop}" width="${W + 8}" height="${y - gTop}" rx="6"/>` +
+        `<text class="grplabel" x="${BX + 4}" y="${gTop + 14}">${label}</text>`);
+    };
+    encGroup('causal encoder ×2 (layers 2–13)');
     wire(16);
     op('Engram · layer 14', `(${fmtP(K.engram[1])})`, 'engram2', 'eng');
-    note('(sits before encoder group 3)');
+    wire(16);
+    encGroup('causal encoder (layers 14–19)');
     wire(22, 'enc. hidden state');
     note('→ decoder global KV (CED)');
     // decoder: Full + Reuse ×3, then [Reindex + Reuse ×3] ×4
-    gTop = y; y += 20;
+    let gTop = y; y += 20;
     blockBox('full1', 'CSA2 Full · m=1', `layer 20 · ${fmtP(K.block.full1)}`, BX + 6, W - 12);
     wire(22, xs);
     blockBox('reuse', 'CSA2 Reuse · m=1 ×3', `${fmtP(K.block.reuse)} each`, BX + 6, W - 12);
