@@ -3083,6 +3083,11 @@ export class Dsv3Layer extends HTMLElement {
     // kind-pinned tiers keep the ENCLOSURE but drop the tab flaps
     const FLAPS = TABS && !this._noKind;
     const FFN_RIDS = ['router', 'dispatch', 'gate_up', 'swiglu', 'ffn_down', 'combine', 'moe_add'];
+    // the SwiGLU-input quantize pill is drawn in the dtype tiers only. Tried in every tier (2026-09-03):
+    // under a bf16 recipe it is the identity, so the structure diagram (01) and the AC tier (02/03) gain a
+    // no-op box labeled 'quantize' in sections that never mention precision, +50px on 01 and its og image.
+    // Flip to `true` to see it again.
+    const QBOX = this._ctl.dtype;
     let z = ONLY === 'ffn' ? 36 : 16;
     let encTop = 0, encBot = 0;   // enclosure extent: just the kind-dependent region
     if (ONLY !== 'mla') {
@@ -3138,7 +3143,7 @@ export class Dsv3Layer extends HTMLElement {
       // dtype tiers draw the SwiGLU-input quantize as its own pill (the GEMM
       // emits bf16; the quantized copy is the stash); the structure/AC tiers
       // hang the stash chip straight off the GEMM (quantize = identity there)
-      if (this._ctl.dtype) {
+      if (QBOX) {
         z = wireOut(['gate_up'], SX2, z, { flat: true });
         z = opNode('quant', 'quantize', C2, z);
       }
@@ -3252,14 +3257,14 @@ export class Dsv3Layer extends HTMLElement {
       shBox('shared gate/up', '7168 → 2×2048',
         'one plain GEMM per token — follows the ffn gate/up mark and dtype (its FLOPs are counted in the grouped strip)', rowG,
         pk(DSV3.hidden * 2 * DSV3.moeInter, false, 'd'), 'gate_up', 'ffn_gate_up');
-      if (this._ctl.dtype)
+      if (QBOX)
         tensorChip(['gate_up'], shMid + 14, z + 4, { name: 'gate, up (sh)', tdims: '2×2048', frac: 1 / nExp, chip: 'gate_up:sh', flat: true });
     }
     // the SwiGLU-input quantize: dtype tiers draw it as its own pill (the
     // gate/up GEMM emits bf16 — never stashed; the quantized copy is the
     // stash), the structure/AC tiers hang the stash chip straight off the
     // GEMM (quantize = identity under bf16)
-    if (this._ctl.dtype) {
+    if (QBOX) {
       z = wireOut(['gate_up'], SX2, z, DET ? { name: 'gate, up (routed)', frac: DSV3.topk / nExp, flat: true } : { flat: true });
       if (DET) wire(shMid, rowG + 34, z);
       const rowQ = z;

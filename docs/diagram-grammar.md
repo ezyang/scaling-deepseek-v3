@@ -19,10 +19,19 @@ the rest are conventions to uphold when editing the renderer.
    (right side, `gateX`). Rails turn with right angles only.
 4. **Forks get a junction dot** (`r=2.5` filled circle) at the point where a
    tensor is consumed by two paths; a tensor drawn twice without a dot implies
-   (incorrectly) that it is duplicated.
+   (incorrectly) that it is duplicated. ✓ (`fork-without-dot`: a wire whose
+   start lies on the interior of another wire must start at a dot)
 5. **Arrowheads appear only at destinations** — one `marker-end` per wire, at
    the point of consumption. No mid-wire arrowheads. ✓ (the linter flags
-   arrowheads landing inside text)
+   arrowheads landing inside text; `arrowhead-mid-wire` / `arrowhead-on-nothing`:
+   a tip must land on a box edge, a junction rim, the SIDE of another wire, or
+   point at / sit beside a label — the block's entry and exit markers)
+5a. **Junction circles (`+`) are ops, not crossings.** Nothing passes through
+   one; wires meeting it stop at the rim, arrowhead on. ✓ (`wire-through-junction`)
+   (Rules 4–5a were worked out on the backward-unrolled scratch diagram,
+   `studies/scratch-bwd.html`, which is in the lint matrix; there they also
+   mean: identity and fan-out backwards are junctions rather than boxes, and a
+   forward fan-out becomes a `+` accumulation in backward.)
 6. **Related boxes align by row** across columns/kinds: the shared-expert
    boxes align with the grouped-GEMM rows; the dense FFN boxes align with
    their MoE counterparts (enforced by advancing through MoE row arithmetic

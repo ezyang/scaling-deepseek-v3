@@ -323,7 +323,7 @@ class Dsv3Bwd extends HTMLElement {
       const n2 = rowOf('norm2'), rt = rowOf('router'), gt = rowOf('gate'), yy = tapY(n2);
       for (const col of ['F', 'B']) {
         const sx = mainSpine(col), rx = COLS[col] + SUBW + SUBGAP + SPX;
-        if (col === 'F') dot(sx, yy); else plus(sx, yy);
+        if (col === 'F') dot(sx, yy);   // (B: the + at this tap is drawn by the shared rail / its elision stub)
         arrow(col === 'F' ? `M ${sx} ${yy} H ${rx} V ${rt.yBox - 1}` : `M ${rx} ${rt.yBox} V ${yy} H ${sx + PR + 1}`);
         arrow(col === 'F' ? `M ${rx} ${botY(rt)} V ${gt.yBox - 1}` : `M ${rx} ${gt.yBox} V ${botY(rt) + 1}`);   // GEMM ⇄ gating
         if (col === 'F') {   // the gating's output runs on into the dispatch (its routing indices); the gate rail and the saves fork off it

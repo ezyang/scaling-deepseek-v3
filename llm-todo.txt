@@ -1,0 +1,110 @@
+TO DISCUSS:
+
+  - studies/02-hopper-memory.html:34: “global (across all ranks)” is misleading. The figures show one GPU
+    holding an unsharded model copy plus one 4,096-token microbatch—not aggregate cluster memory.
+
+Need to check what exactly we should pick as the microbatch for these bars.  This affects the activation numbers only
+
+  - studies/02-hopper-memory.html:100: the 105.1 GiB figure covers transformer-block stashes, not literally all
+    activations. It omits roughly 3 GiB for the LM-head/loss convention used elsewhere in the repository. It
+    also includes FP32 router/normalization/attention metadata, despite saying activations are assumed BF16.
+
+Check this and see why we omitted them.
+
+- we need to talk about MTP, because it adds material memory pressure and it
+  also affects pipeline scheduling
+  [NOT easy — this is modeling + prose: MTP module params (+0.9B-ish: one
+  extra block + its emb/head tie), its stash under the recompute policy, and
+  the extra virtual stage on the last rank. Moved to TO DISCUSS territory.]
+
+  - The router expression is incomplete. The correction bias affects expert
+    selection only. The weights applied to expert outputs come from the original
+    sigmoid scores, are normalized across the selected eight experts, and are
+    then scaled. “sigmoid + bias + top-k + scale” can incorrectly imply that
+    biased scores become gating weights.
+
+Not sure if there's a good way to be more pedantic like this in the chart
+
+  - Forward and backward combine are explicitly BF16 in the paper. The diagram
+    leaves the combine precision unstated.
+
+Not just this, but I feel we should properly state the precisions of all intermediate activations
+(not only when they are saved)
+
+  - Labeling the attention output projection itself “E5M6” is misleading. The
+    paper says its activation input is cached in custom E5M6; the projection
+    weight remains E4M3 and its output is high precision.
+
+Wow! Is this true? I'm not sure how to diagram this. Did they write a quantization kernel after the BF16?
+
+  - It also omits the special power-of-two scale rule for:
+      - the activation feeding the post-attention linear;
+      - the activation dispatched before MoE up-projections;
+      - the corresponding activation-gradient communication.
+
+I don't know what this is, and I need to figure out if it's relevant to the exposition
+
+  - q latent = BF16, kv latent = BF16, and the exact router-state contents are
+    likewise implementation inferences.
+
+Are there really that many degrees of freedom here?
+
+  The memory labels are also mislabeled:
+
+  - For 64 × 4096 = 262,144 tokens, the BF16 residual is
+    262144 × 7168 × 2 = 3.758 GB = 3.50 GiB, but the graph says 3.7 GiB.
+
+  - A densely packed 12-bit E5M6 attention result is
+    262144 × 16384 × 1.5 = 6.44 GB = 6.00 GiB, matching the displayed 6.4 only
+    in decimal GB.
+
+  - The 8.8 routed gate/up figure similarly matches decimal GB after adding FP32
+    scales.
+
+  So the labels consistently use SI GB/MB while calling them GiB/MiB. More
+  fundamentally, the paper never specifies whether E5M6 is physically packed at
+  12 bits, so the 6.4 GB estimate is speculative
+
+These are serious bugs if true.
+[CHECKED — not bugs: the reviewer substituted 64 mb × 4096 = 262,144 tokens
+for the widget's own multiplier (× 8 layers × 8.5 in flight × 4096 =
+278,528 tokens, printed in the readout header). Under OUR multiplier the
+labels are exact binary GiB: residual 3.72, attn-out-at-1.5B 6.38, routed
+gate/up 8.77. Their decimal-GB "matches" are a near-cancellation
+coincidence (their token count is 94.1% of ours; GB/GiB is 93.1%). The one
+fair point: E5M6 packed at 12 bits IS an inference — the paper doesn't
+state the physical layout. Worth a disclosure note.]
+
+EASY STUFF 2 — ALL DONE (8e9ec38):
+- hover box: ::before hitbox to ~80px wide (plan starts x=85 at 1366), ±70px vertical
+- vspace: −40px (1087 → 1047): ctx pipeline+mesh groups fold to one row; .lv-compact paddings (quant tiers only)
+- recompute legend: gutter 44 → 62; WHY lint missed it: picket-size rects escaped the >8px text-rule filter
+  (new text-under-marks rule, validated red first) + a bonus gap closed (crashed widgets rendered <40px and
+  were silently SKIPPED — now 'widget-rendered-empty')
+
+EASY STUFF 3 — ALL DONE (f4ab819, 4cd926b):
+- precision palette: warm-magenta family (e4m3 pink #d6408b, e5m6 plum #9c3a96, fp32 maroon #7a2c2c) — clear
+  of weights-blue/optim-green; CLAUDE.md convention line updated
+- bf16 dashed phantoms on sub-bf16 stashes (fixed silhouette — the bf16 edge is dtype-independent, solid fill
+  pours inside it); redo hollow grids dropped in the pure dtype tier
+- shared-expert dtype mirrors: compact 40px button in the (free) mark slot, bottom-right; params parenthetical
+  yields its spot (count stays in tooltip + grouped box)
+- ×61/×58 dropped on ctx'd instances. WHY the semantic lint missed it: audit.js only checks the fit chart's
+  REGISTERED patterns (via data-true); enclosure ×N labels carry no data-true and no registered implication —
+  by the grammar's own contract they were an unregistered claim. Registering block-diagram label implications
+  is open follow-up.
+- top-k weights label hugs its rail's down-elbow (quant tiers; static keeps the old spot — its compressed rows
+  put other rails in that pocket)
+
+EASY STUFF 4 — ALL DONE (4cd926b):
+- '(one fused kernel)' removed
+- fp8 → e4m3 (dtype key + all labels; toggle now 'e4m3ᵀ dual stash (expert inputs)')
+- recompute pickets = the op's FORWARD dtype color at fill-opacity 0.38 (lighter, position carries the meaning)
+
+EASY STUFF 5
+- when animating yellow boxes expanding to fill ghosts we incrementally
+  convert the ghosts to full, not delete the ghosts in one flash and then ease in the boxes
+- the full sim diagram at the bottom is getting out of date relative to the UI
+  control elements we developed in the AC and low prec sections, update it to match them
+- the page scroll animation on click is too slow. Speed it up.  Also the left
+  sidebar animation slide is annoying, make it quicker (and maybe not slidey)

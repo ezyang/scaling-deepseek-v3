@@ -28,11 +28,13 @@
   <div data-widget="local-dense-stage0"><dsv3-layer id="w19" detail controls="static" tabs lens="param-bytes" local recipe="bf16" kind="dense" scope="block" nocaption></dsv3-layer></div>
   <div data-widget="anatomy-wrapper"><dsv3-anatomy layer="w13" detail controls="static" nocaption></dsv3-anatomy></div>
   <div data-widget="anatomy-plan"><dsv3-anatomy-plan id="wp"></dsv3-anatomy-plan></div>
+  <div data-widget="bwd-scratch"><dsv3-bwd></dsv3-bwd></div>
   <pre id="lint-out"></pre>
 </main>
 <script type="module">
 import '../src/viewer.js';
 import '../src/anatomy.js';
+import '../src/bwd.js';
 
 const out = [];
 const push = (v) => { if (out.length < 400) out.push(v); };
@@ -73,8 +75,34 @@ function lintWidget(name, host) {
       .filter(r => r.r.width > 8 && r.r.height > 8)
       .filter(r => OPBOX.some(c => r.cls.split(' ').includes(c)) ||
         (r.el.getAttribute('stroke') && r.el.getAttribute('fill') !== 'none') || r.cls === 'grp' || r.cls === 'card');
-    const wires = [...svg.querySelectorAll('line.wire, path.wire')];
+    const wires = [...svg.querySelectorAll('line.wire, path.wire, path.save, path.savew, path.grad, path.elide')];
     const arrows = [...svg.querySelectorAll('[marker-end]')];
+    // screen-space endpoints + a dense sample of every wire (for the wire-geometry rules below)
+    const endsOf = (el) => {
+      try {
+        const L = el.getTotalLength(), m = el.getScreenCTM(), sv = el.ownerSVGElement;
+        const at = (d) => { const p = el.getPointAtLength(d), q = sv.createSVGPoint(); q.x = p.x; q.y = p.y; const r = q.matrixTransform(m); return [r.x, r.y]; };
+        return { a: at(0), b: at(L), a2: at(Math.min(4, L)), b2: at(Math.max(0, L - 4)), L };
+      } catch { return null; }
+    };
+    const W = wires.map(el => ({ el, e: endsOf(el), pts: samples(el, 2) })).filter(w => w.e && w.e.L > 2);
+    const dist = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1]);
+    // nearest sample of wire w to point p, ignoring the first/last `skip` px of w
+    const nearOn = (p, w, tol, skip = 5) => w.pts.some(([x, y, d, len]) => d >= skip && d <= len - skip && Math.hypot(x - p[0], y - p[1]) <= tol);
+    const dots = [...svg.querySelectorAll('circle')].filter(c => +c.getAttribute('r') <= 3.5)
+      .map(c => { const r = c.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; });
+    const pluses = [...svg.querySelectorAll('circle')].filter(c => +c.getAttribute('r') >= 6 && c.parentElement)
+      .map(c => { const r = c.getBoundingClientRect(); return { c: [r.left + r.width / 2, r.top + r.height / 2], r: r.width / 2 }; });
+    const strokedRects = [...svg.querySelectorAll('rect')].map(r => r.getBoundingClientRect()).filter(r => r.width > 8 && r.height > 8);
+    const onRectEdge = (p, tol = 3.5) => strokedRects.some(r =>
+      (p[0] >= r.left - 2 && p[0] <= r.right + 2 && (Math.abs(p[1] - r.top) <= tol || Math.abs(p[1] - r.bottom) <= tol)) ||
+      (p[1] >= r.top - 2 && p[1] <= r.bottom + 2 && (Math.abs(p[0] - r.left) <= tol || Math.abs(p[0] - r.right) <= tol)));
+    const onPlusRim = (p) => pluses.some(q => Math.abs(dist(p, q.c) - q.r) <= 4.5);   // arrow tips may stop a few px short of the rim
+    // an arrow may point AT a label (the block's entry/exit markers): a text box within 14px ahead of the tip
+    const pointsAtText = (p, dir) => { const dl = Math.hypot(dir[0], dir[1]) || 1;
+      for (let k = 2; k <= 14; k += 2) { const x = p[0] + dir[0] / dl * k, y = p[1] + dir[1] / dl * k; if (texts.some(t => ptIn(x, y, t.r, 2))) return true; }
+      // or a label sits BESIDE the tip (the exit marker's 'x2 → next block' style): a text box starting within 18px right of it
+      return texts.some(t => t.r.left >= p[0] && t.r.left - p[0] <= 18 && p[1] >= t.r.top - 8 && p[1] <= t.r.bottom + 8); };
 
     // A. arrowhead landing inside a label
     for (const a of arrows) {
@@ -94,17 +122,19 @@ function lintWidget(name, host) {
       for (const [x, y, d, len] of samples(w)) {
         if (d < 8 || d > len - 8) continue;
         for (const t of texts)
-          if (!hit.has(t) && x > t.r.left + 1 && x < t.r.right - 1 && y > t.r.top + 1 && y < t.r.bottom - 1) {
+          if (!hit.has(t) && !t.el.classList.contains('raillab') && x > t.r.left + 1 && x < t.r.right - 1 && y > t.r.top + 1 && y < t.r.bottom - 1) {
             hit.add(t);
             const d0 = w.getAttribute('d') ?? `${w.getAttribute('x1')},${w.getAttribute('y1')}->${w.getAttribute('x2')},${w.getAttribute('y2')}`;
             push({ check: 'wire-through-text', widget: name, text: t.s, x: Math.round(x - svgR.left), y: Math.round(y - svgR.top), wire: d0.slice(0, 60) });
           }
       }
     }
-    // C. label-label overlap
+    // C. label-label overlap — a real one overlaps in BOTH axes (a sub-2px sliver is a
+    // bounding-box artefact: superscript tspans lift a line's box into the line above)
+    const overlap2 = (a, b) => Math.min(a.right, b.right) - Math.max(a.left, b.left) > 2 && Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > 2;
     for (let i = 0; i < texts.length; i++)
       for (let j = i + 1; j < texts.length; j++)
-        if (inter(texts[i].r, texts[j].r) > 6)
+        if (inter(texts[i].r, texts[j].r) > 6 && overlap2(texts[i].r, texts[j].r))
           push({ check: 'text-overlap', widget: name, a: texts[i].s, b: texts[j].s });
     // D. text clipped by the SVG edge
     for (const t of texts)
@@ -131,6 +161,42 @@ function lintWidget(name, host) {
       });
       if (under.length >= 1)
         push({ check: 'text-under-marks', widget: name, text: t.s, marks: under.length });
+    }
+    // H. a wire that BRANCHES off another (starts on its interior) must do so at a fork dot — no sprouting
+    for (const w of W) {
+      const p = w.e.a;
+      const host = W.find(o => o !== w && nearOn(p, o, 2.5));
+      if (host && !dots.some(d => dist(d, p) <= 3.5) && !onPlusRim(p))
+        push({ check: 'fork-without-dot', widget: name, x: Math.round(p[0] - svgR.left), y: Math.round(p[1] - svgR.top) });
+    }
+    // I. junction circles (+): nothing passes through one; wires meeting it stop at the rim
+    for (const q of pluses) for (const w of W) {
+      const atRim = [w.e.a, w.e.b].some(p => Math.abs(dist(p, q.c) - q.r) <= 2.5);
+      if (atRim) continue;
+      if (w.pts.some(([x, y]) => Math.hypot(x - q.c[0], y - q.c[1]) < q.r - 1))
+        push({ check: 'wire-through-junction', widget: name, x: Math.round(q.c[0] - svgR.left), y: Math.round(q.c[1] - svgR.top) });
+    }
+    // J. an arrowhead lands on a box edge, a junction rim, or the SIDE of another wire — never collinear mid-wire, never on nothing
+    for (const a of arrows) {
+      const e = endsOf(a);
+      if (!e || e.L < 2) continue;
+      const p = e.b;
+      const dir = [p[0] - e.b2[0], p[1] - e.b2[1]];
+      if (onRectEdge(p) || onPlusRim(p) || pointsAtText(p, dir)) continue;
+      const dl = Math.hypot(dir[0], dir[1]) || 1;
+      let landed = false, collinear = false;
+      for (const w of W) {
+        if (w.el === a) continue;
+        const near = w.pts.filter(([x, y]) => Math.hypot(x - p[0], y - p[1]) <= 5.5);
+        if (!near.length) continue;
+        landed = true;
+        // the host wire's direction at the landing sample
+        const [x, y, d] = near[0], nb = w.pts.find(([, , d2]) => d2 >= d + 4) ?? w.pts[w.pts.length - 1];
+        const hv = [nb[0] - x, nb[1] - y], hl = Math.hypot(hv[0], hv[1]) || 1;
+        if (Math.abs(dir[0] / dl * hv[1] / hl - dir[1] / dl * hv[0] / hl) < 0.15) collinear = true;
+      }
+      if (!landed || collinear)
+        push({ check: collinear ? 'arrowhead-mid-wire' : 'arrowhead-on-nothing', widget: name, x: Math.round(p[0] - svgR.left), y: Math.round(p[1] - svgR.top) });
     }
     // F. op boxes partially overlapping (containers may contain, not cross)
     const ops = rects.filter(r => OPBOX.some(c => r.cls.split(' ').includes(c)));
