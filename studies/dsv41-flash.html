@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script data-theme>document.documentElement.classList.toggle('dark', (localStorage.getItem('dsv3-theme') ?? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')) === 'dark');</script>
+  <title>An infra-oriented diagram of the DeepSeek-V4.1-Flash architecture</title>
+  <meta name="description" content="An infra-oriented description of the DeepSeek-V4.1-Flash architecture: the causal encoder–decoder, CSA2's Full / Reindex / Reuse attention layers, the mHC residual streams, and where the 552B (+196B Engram) parameters live.">
+  <link rel="stylesheet" href="./study.css">
+  <style>
+    /* pre-upgrade reservation for this page's widgets (study.css carries the
+       dsv3-* rules; the dsv41-* elements need the same treatment) */
+    dsv41-anatomy, dsv41-layer { display: block; margin: 14px 0 26px; }
+  </style>
+</head>
+
+<body>
+  <main>
+    <h1>An infra-oriented diagram of the DeepSeek-V4.1-Flash architecture</h1>
+
+    <p class="note">DRAFT (unlisted study). Prose below is AI-drafted and awaits a human
+    edit pass — see the disclosure footnote.<sup><a id="fnref1" href="#fn1">1</a></sup></p>
+
+    <p>DeepSeek's <a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash">V4.1-Flash</a>
+    (September 2026) is a 552B-parameter MoE, plus 196B of Engram lookup
+    tables, that activates 8B parameters per prompt token and 16B per
+    generated token. Three ideas do most of the work. A <em>causal
+    encoder–decoder</em> split: the lower 20 layers are the encoder, and the
+    upper 20 layers' global KV cache is projected once from the encoder's
+    output rather than computed per layer, so prefill runs half the network.
+    <em>Compressed Sparse Attention 2</em>: each layer's global attention is
+    statically one of three modes — <em>Full</em> layers build a KV cache and
+    an index, <em>Reindex</em> layers borrow the cache but pick their own
+    top-512, <em>Reuse</em> layers borrow both — so only four of forty layers
+    hold global KV. And <em>Single-Pass mHC</em>: the residual stream is four
+    parallel copies, mixed by per-token coefficients around every sub-layer.
+    Below is the same infra-oriented treatment the
+    <a href="./01-deepseek-diagram.html">DeepSeek-V3 diagram</a> got: the
+    kernels you actually run, with their parameter counts. Primary sources:
+    the <a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/main/DeepSeek_V41_Tech_Report.pdf">V4.1 tech report</a>,
+    the checkpoint's <code>config.json</code> and reference
+    <code>inference/model.py</code>, and the tensor shapes in its safetensors
+    headers.</p>
+
+    <dsv41-anatomy style="min-height:950px" layer="diagram" detail nocaption></dsv41-anatomy>
+
+    <p>Reading notes, relative to the DeepSeek-V3 diagram:</p>
+
+    <ul>
+      <li>The attention enclosure has five tabs — one per static CSA2 role.
+      The two SWA-only layers at the bottom of the stack see only a 128-token
+      window. Every other layer attends over that window <em>plus</em> 512
+      selected entries of a global KV cache, and the tab decides where those
+      entries come from. The plan on the left shows which layers wear which
+      role; click a block to flip the diagram.</li>
+
+      <li>There is one KV latent per token and it is shared by all 64 query
+      heads (k = v, 512-wide — the "absorbed" MLA form made literal). Queries
+      are low-rank (5120 → 1280 → 64×512), and the output projection is
+      low-rank too, in 8 groups of 8 heads (4096 → 1024 each, kept in bf16),
+      before a single 8192 → 5120 GEMM. RoPE touches 64 of the 512 dims, and
+      is <em>un</em>-rotated on the attention output so the cache can stay in
+      one rotated form.</li>
+
+      <li>A Full layer's global KV is a second projection of the same
+      normalized input. In the encoder (m=2) two consecutive tokens are pooled
+      into one entry with a learned softmax gate; the decoder's single Full
+      layer (layer 20) keeps one entry per token (m=1) and reads the
+      <em>encoder's</em> final hidden state — this is the causal
+      encoder–decoder: all twenty decoder layers share that one cache. The
+      indexer's key is a 512 → 128 projection of the same latent, and the
+      main cache is stored in FP4 (E2M1, one E4M3 scale per 16 channels).</li>
+
+      <li>The indexer is DeepSeek-V3.2's lightning indexer: 32 FP4 query heads
+      of 128 dims against one shared key per entry, ReLU'd scores summed with
+      per-head weights from a 5120 → 32 projection, top-512. Reindex layers in
+      the decoder only score a 16,384-entry candidate pool that layer 20 chose
+      by blocks of 8, so their cost stops growing with context length.</li>
+
+      <li>The MoE block is DeepSeekMoE with 384 routed experts (6 active, FP4)
+      and one FP8 shared expert, √softplus scoring, and <em>two</em>
+      correction-bias vectors — text tokens and image tokens are load-balanced
+      separately. SwiGLU is clamped at 10.</li>
+
+      <li>The <span style="white-space:nowrap">mHC pre-mix / post-mix</span>
+      pills replace the residual add. Each sub-layer collapses the four residual
+      copies into one input with a 4-vector of coefficients, and writes back
+      with a 4-vector plus a 4×4 doubly-stochastic (Sinkhorn) mix of the copies;
+      the coefficients are a 20480 → 24 projection of the flattened stream.
+      Single-Pass mHC's twist is that the collapse uses the coefficients the
+      <em>previous</em> sub-layer computed, so one fused kernel can do the
+      update, the mix and the coefficient prediction in a single read.</li>
+    </ul>
+
+    <h2>Computing the parameter count</h2>
+
+    <p>The tally in the margin sums the grey parentheticals; hover a row to see
+    which boxes it covers. It has three positions: <em>total</em>, and the
+    parameters touched per token in <em>decode</em> (all 40 layers plus the
+    head) and in <em>prefill</em> (the 20 encoder layers plus the decoder's
+    single KV projection — the decoder body never runs on prompt tokens). The
+    routed experts are 543.6B of the 552B; the attention path of a whole layer
+    is 127M, and a Full layer's CSA2 machinery adds 8–11M on top of
+    that.<sup><a id="fnref2" href="#fn2">2</a></sup></p>
+
+    <dsv41-anatomy style="min-height:1637px" tally lens="params" layer="params-diagram" detail nocaption></dsv41-anatomy>
+
+    <h2>The KV cache</h2>
+
+    <p>The headline of the tech report is 890 bytes of global KV per token,
+    and it falls straight out of the diagram. Four layers hold a main KV cache
+    of 512 FP4 values with one E4M3 scale per 16 channels (288 bytes per
+    entry) and an indexer key of 128 FP4 values with one E8M0 scale per 32
+    (68 bytes). The three encoder caches hold one entry per two tokens and the
+    decoder cache one per token, so per token there are 2.5 entries:
+    2.5 × (288 + 68) = 890. The sliding-window caches are per layer but
+    bounded (128 entries of 528 FP8 bytes each), and are never persisted.</p>
+
+    <div class="fnotes">
+      <p class="note" id="fn1"><sup>1</sup> Disclosure: this draft study —
+      prose, diagram, and parameter model — was generated by Fable (Claude)
+      from primary sources, and has not yet had a human edit pass. It is not
+      part of the published series.
+      <a href="#fnref1">↩</a></p>
+
+      <p class="note" id="fn2"><sup>2</sup> Counting conventions. Tensor
+      shapes were read from the safetensors headers of all 48 shards of the
+      published checkpoint (FP4 experts count two parameters per stored byte)
+      and cross-checked against <code>config.json</code> and
+      <code>inference/model.py</code>. Everything is counted — RMSNorm
+      weights, both router biases, the attention sinks, the mHC coefficient
+      predictors. The backbone (embedding, 40 layers, final norm, head) is
+      then exactly <strong>551,566,180,464</strong> parameters, the advertised
+      552B; the two Engram modules add exactly
+      <strong>196,928,504,320</strong>, the advertised 196B. Excluded: the
+      485M DeepSeek-ViT vision tower and aligner (a separate input pathway)
+      and the 14.2B DSpark drafter (three extra MoE blocks under
+      <code>mtp.*</code>, trained after pre-training). For the per-token
+      counts we follow DeepSeek's convention: the embedding and Engram table
+      lookups are not counted, the head is. Decode gives
+      <strong>16,130,588,784</strong> ("16B"); prefill gives
+      <strong>7,895,563,064</strong> ("8B").
+      <a href="#fnref2">↩</a></p>
+    </div>
+  </main>
+  <script type="module">
+    import '../src/viewer.js';
+    import '../src/dsv41.js';
+    import './series.js';
+  </script>
+</body>
+
+</html>

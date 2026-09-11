@@ -14,7 +14,7 @@
 // One-way: runs once when the viewport first matches; widening afterwards
 // keeps the mobile framing (a reload restores the desktop layout).
 const MQ = matchMedia('(max-width: 860px)');
-const W = 'dsv3-anatomy, dsv3-layer, dsv3-pp-schedule, dsv3-pp-fold, dsv3-beat-deck, dsv3-sheet';
+const W = 'dsv3-anatomy, dsv3-layer, dsv3-pp-schedule, dsv3-pp-fold, dsv3-beat-deck, dsv3-sheet, dsv41-anatomy, dsv41-layer';
 
 // footnote hops follow the toc convention: scroll, NEVER touch the hash —
 // location.hash is widget-state territory. A real #mnote anchor would

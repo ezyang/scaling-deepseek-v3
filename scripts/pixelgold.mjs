@@ -25,6 +25,7 @@ import { decode, encode } from './pngio.mjs';
 
 const W = 1500, H = 2600;   // shot window; a widget touching its edge = enlarge it
 const PAGE01 = 'studies/01-deepseek-diagram.html', PAGE02 = 'studies/02-hopper-memory.html', PAGE03 = 'studies/03-blackwell-memory.html';
+const PAGE41 = 'studies/dsv41-flash.html';
 const SHOTS = [
   { name: '01-diagram', page: PAGE01, sel: 'dsv3-anatomy[layer="diagram"]' },
   { name: '01-params', page: PAGE01, sel: 'dsv3-anatomy[layer="params-diagram"]' },
@@ -46,6 +47,9 @@ const SHOTS = [
   { name: '03-mlperf', page: PAGE03, sel: 'dsv3-layer[parts][to]' },
   { name: '03-final', page: PAGE03, sel: 'dsv3-anatomy[layer="local-diagram"]' },
   { name: '03-sheet', page: PAGE03, sel: 'dsv3-sheet' },
+  // V4.1-Flash (unpublished draft): the CSA2-tabbed block diagram + params view
+  { name: 'v41-diagram', page: PAGE41, sel: 'dsv41-anatomy[layer="diagram"]' },
+  { name: 'v41-params', page: PAGE41, sel: 'dsv41-anatomy[layer="params-diagram"]' },
 ];
 
 const update = process.argv.includes('--update');

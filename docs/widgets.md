@@ -329,6 +329,28 @@ PP32 (cell budget).
 PP/sched changes tween the strip's height (12-frame ease-out, deterministic).
 No state of its own; unbound instances read `pp`/`sched`/`stage` attributes.
 
+## `<dsv41-anatomy>` family — the DeepSeek-V4.1-Flash study (src/dsv41.js, unlisted draft)
+
+Self-contained sibling of `<dsv3-anatomy>` for studies/dsv41-flash.html:
+the same composition (margin plan + expansion cone + block diagram, optional
+compact tally) drawn in the shared visual grammar, with the numbers coming
+from the pure module src/dsv41model.js (node-importable; scripts/sanity.mjs
+pins its totals to the checkpoint's safetensors headers: 551,566,180,464
+backbone, 196,928,504,320 Engram, 16,130,588,784 / 7,895,563,064 active per
+decode / prefill token, 890 B of global KV per token).
+
+| element / attribute | meaning |
+|---|---|
+| `<dsv41-layer>` | one V4.1 block: attention column TABBED by CSA2 role — `swa` (layers 0–1) · `full2` (encoder Full, m=2 gated pooling) · `full1` (decoder Full, layer 20, projects the ENCODER output — CED) · `reindex` (reads layer 20's main KV + index K, runs its own indexer inside the candidate pool) · `reuse` (reads main KV + top-512 indices) — plus the single-kind MoE FFN column; both wrapped in the mHC pre/post-mix pills (the residual add generalized; the stream is 4×5120) |
+| `kind` | initial tab (`full2` default); `flat` = multiplied-out sizes; `detail` accepted (no micro pills currently render); `lens="params"` drops tensor chips and shows counts |
+| state | `#v41:<id>={k,flat}` in the URL hash; `recipe` event on change; `activeView` (null · `decode` · `prefill`) is set by the tally and switches the expert boxes to ×6 |
+| `<dsv41-anatomy-plan layer=…>` | the model stack: embedding → SWA ×2 (Engram after layer 0) → causal encoder ×3 groups (Full m=2 + Reuse ×5; Engram before group 3) → decoder (Full m=1 + Reuse ×3, then [Reindex + Reuse ×3] ×4) → final norm → head. Blocks carry `data-kind`; clicking flips the layer |
+| `<dsv41-param-tally layer=… [compact] [mode=total\|decode\|prefill]>` | rows per block role + Engram modules; footer = backbone (with a "with Engram" line in total mode; the active modes fold Engram's projections in, per DeepSeek's 8B/16B convention). Hover/pin highlight `data-op` cells and plan blocks; pinning a role's row flips the layer |
+| `<dsv41-anatomy layer=… [tally] [lens] [kind] [flat] [detail] [nocaption]>` | the grid wrapper; forwards `detail lens nocaption kind flat` to the layer |
+
+Excluded from the tally (footnoted on the page): the 485M vision tower +
+aligner and the 14.2B DSpark drafter (`mtp.*`).
+
 ## Other elements (unchanged conventions)
 - `<dsv3-trace level height title config>` — the canvas trace viewer over the
   simulator (not yet on a published page; the timing posts' widget).

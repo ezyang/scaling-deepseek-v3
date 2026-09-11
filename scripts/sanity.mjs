@@ -39,6 +39,20 @@ check('DSv3 exact main-model parameter count', PARAMS.total === 671026419200,
 check('DSv3 exact activated parameter count', PARAMS.activeTotal === 36625618432,
   PARAMS.activeTotal.toLocaleString('en-US'));
 
+// DeepSeek-V4.1-Flash study (src/dsv41model.js): formula-derived totals must
+// equal the checkpoint's safetensors headers (FP4 experts = 2 params/byte)
+{
+  const { VPARAMS: V, KV_PER_TOKEN: KV } = await import('../src/dsv41model.js');
+  check('DSv4.1-Flash exact backbone parameter count (552B)', V.backbone === 551566180464, V.backbone.toLocaleString('en-US'));
+  check('DSv4.1-Flash exact Engram parameter count (196B)', V.engramTotal === 196928504320, V.engramTotal.toLocaleString('en-US'));
+  check('DSv4.1-Flash exact DSpark + vision counts', V.dspark === 14225362530 && V.vision === 485268480,
+    `${V.dspark.toLocaleString('en-US')} / ${V.vision.toLocaleString('en-US')}`);
+  check('DSv4.1-Flash active/token lands on the advertised 16B decode / 8B prefill',
+    V.activeDecode === 16130588784 && V.activePrefill === 7895563064,
+    `${V.activeDecode.toLocaleString('en-US')} / ${V.activePrefill.toLocaleString('en-US')}`);
+  check('DSv4.1-Flash global KV = 890 B/token', KV.total === 890, `${KV.main} main + ${KV.idx} index`);
+}
+
 // 1F1B bubble fraction ≈ (p-1)/(m+p-1) (approximate: stages are not uniform)
 const l2 = simulate({ ...base, level: 2 }).stats;
 const analytic = (cfg.pp - 1) / (cfg.microbatches + cfg.pp - 1);

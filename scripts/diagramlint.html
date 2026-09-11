@@ -29,12 +29,21 @@
   <div data-widget="anatomy-wrapper"><dsv3-anatomy layer="w13" detail controls="static" nocaption></dsv3-anatomy></div>
   <div data-widget="anatomy-plan"><dsv3-anatomy-plan id="wp"></dsv3-anatomy-plan></div>
   <div data-widget="bwd-scratch"><dsv3-bwd></dsv3-bwd></div>
+  <div data-widget="v41-full2"><dsv41-layer id="v1" detail></dsv41-layer></div>
+  <div data-widget="v41-full1"><dsv41-layer id="v2" detail kind="full1"></dsv41-layer></div>
+  <div data-widget="v41-reindex-flat"><dsv41-layer id="v3" detail kind="reindex" flat></dsv41-layer></div>
+  <div data-widget="v41-reuse"><dsv41-layer id="v4" kind="reuse"></dsv41-layer></div>
+  <div data-widget="v41-swa"><dsv41-layer id="v5" detail kind="swa"></dsv41-layer></div>
+  <div data-widget="v41-params"><dsv41-layer id="v6" detail lens="params"></dsv41-layer></div>
+  <div data-widget="v41-anatomy-wrapper"><dsv41-anatomy layer="v7" detail></dsv41-anatomy></div>
+  <div data-widget="v41-anatomy-plan"><dsv41-anatomy-plan id="vp"></dsv41-anatomy-plan></div>
   <pre id="lint-out"></pre>
 </main>
 <script type="module">
 import '../src/viewer.js';
 import '../src/anatomy.js';
 import '../src/bwd.js';
+import '../src/dsv41.js';
 
 const out = [];
 const push = (v) => { if (out.length < 400) out.push(v); };
@@ -214,9 +223,9 @@ function lintWidget(name, host) {
 // — reserved, non-reflowing space applies to the page too)
 async function lintPlaceholders() {
   const PAGES = ['/index.html', '/studies/01-deepseek-diagram.html', '/studies/02-hopper-memory.html',
-    '/studies/03-blackwell-memory.html',
+    '/studies/03-blackwell-memory.html', '/studies/dsv41-flash.html',
     '/studies/scratch-bars.html', '/studies/scratch-globals.html', '/studies/scratch-fold.html'];
-  const WTAGS = 'dsv3-anatomy, dsv3-layer, dsv3-trace, dsv3-param-tally, dsv3-pp-schedule, dsv3-pp-fold, dsv3-beat-deck, dsv3-sheet';
+  const WTAGS = 'dsv3-anatomy, dsv3-layer, dsv3-trace, dsv3-param-tally, dsv3-pp-schedule, dsv3-pp-fold, dsv3-beat-deck, dsv3-sheet, dsv41-anatomy, dsv41-layer';
   // two widths: 1366 is the SUPPORTED MINIMUM viewport (the anatomy grid
   // saturates its 1330px cap at ~1362; every container is width-capped, so
   // layout must be IDENTICAL at any width ≥ 1366 — checking a wide viewport
@@ -228,7 +237,7 @@ async function lintPlaceholders() {
     await new Promise(r => { f.onload = r; f.src = p; });
     await new Promise(r => setTimeout(r, 400));
     for (const el of f.contentDocument.querySelectorAll(WTAGS)) {
-      if (!['DSV3-ANATOMY', 'DSV3-BEAT-DECK'].includes(el.tagName) && el.closest('dsv3-anatomy, dsv3-beat-deck')) continue;  // the wrapper's min-height covers its children
+      if (!['DSV3-ANATOMY', 'DSV3-BEAT-DECK', 'DSV41-ANATOMY'].includes(el.tagName) && el.closest('dsv3-anatomy, dsv3-beat-deck, dsv41-anatomy')) continue;  // the wrapper's min-height covers its children
       // measure the CONTENT height: min-height inflates the element itself,
       // which would hide too-large declarations
       const decl = parseFloat(el.style.minHeight) || 0;
