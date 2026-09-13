@@ -53,8 +53,8 @@ for (const [name, cfg] of [['dsv3-z3', {}], ['dsv3-z1', { zero: 1 }], ['dense-z3
 
 // the summed step (studies/03-sol.html): per pass × op group seconds at the story configs
 G.sol = {};
-for (const [name, cfg] of [['h800-dsv3', {}], ['h800-bf16-none', { recipe: 'bf16', recompute: 'none' }],
-  ['h800-attn-replay', { recompute: 'attn-replay' }], ['gb300-nemo', { hw: 'gb300', recipe: 'nv-mxfp8', recompute: 'none', gpus: 256, gbs: 4096 }]]) {
+for (const [name, cfg] of [['h800-dsv3', {}], ['h800-none', { recompute: 'none' }],
+  ['h800-attn-replay', { recompute: 'attn-replay' }], ['h800-full', { recompute: 'full' }]]) {
   const S = solStep(cfg);
   G.sol[name] = { total: S.total, reported: S.reported, flopsTok: S.flopsTok, rows: S.rows,
     cells: Object.fromEntries(S.cells.map((c) => [`${c.pass}·${c.group}`, c.s])) };
