@@ -6,17 +6,17 @@ const rows = () => [...w.querySelectorAll('g[data-row]')].filter((g) => +(g.getA
 const ro = () => w.querySelector('.ro').textContent;
 T.check('12 live rows at 2048 GPUs (G = 1 … 2048), 13 reserved', rows().length === 12 && w.querySelectorAll('g[data-row]').length === 13, rows().length);
 T.check('first fit band on G = 128', w.querySelector('rect[data-first]')?.dataset.first === '128', w.querySelector('rect[data-first]')?.dataset.first);
-T.check('resting readout states the pincer', /ZeRO-3 first fits at G = 128/.test(ro()) && /InfiniBand/.test(ro()) && /×20\.\d speed-of-light|×20\.\d\)/.test(ro()), ro());
+T.check('resting readout states the pincer', /ZeRO-3 first fits at G = 128/.test(ro()) && /16 nodes/.test(ro()) && /\(×7\.\d\)/.test(ro()), ro());
 // exact terms ride data-true: G = 2048 ZeRO-3 memory = 14 B/param ÷ 2048
 const g2048 = w.querySelector('g[data-row="2048"]');
 const memVal = +g2048.querySelector('text[data-memval]').dataset.memval;
 T.check('G = 2048: 14 B/param ÷ 2048', Math.abs(memVal - 671026419200 * 14 / 2048) < 1, memVal);
 const g1 = w.querySelector('g[data-row="1"]');
-T.check('G = 1: no reduce-scatter, no all-gather — but the all-reduce across 2048 replicas remains',
-  !g1.querySelector('rect[data-time="ag"]') && +g1.querySelector('rect[data-time="grad"]').dataset.true > 100, g1.querySelector('rect[data-time="grad"]')?.dataset.true);
+T.check('G = 1: no reduce-scatter, no all-gather — but the hierarchical all-reduce across 2048 replicas remains (~37 s)',
+  !g1.querySelector('rect[data-time="ag"]') && Math.abs(+g1.querySelector('rect[data-time="grad"]').dataset.true - 36.9) < 0.2, g1.querySelector('rect[data-time="grad"]')?.dataset.true);
 // hover a row: exact readout
 g2048.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })); await T.tick(50);
-T.check('hover readout names G and the link', /G = 2048/.test(ro()) && /InfiniBand/.test(ro()), ro());
+T.check('hover readout names G and splits the links', /G = 2048/.test(ro()) && /NVLink 17\.\d s · InfiniBand 10\.0 s/.test(ro()), ro());
 w.querySelector('svg').dispatchEvent(new MouseEvent('mouseleave')); await T.tick(50);
 // ZeRO-1: never fits (weights + grads replicated)
 const h0 = w.getBoundingClientRect().height;
@@ -26,8 +26,8 @@ T.check('knob flip: height reserved (no reflow)', Math.abs(w.getBoundingClientRe
 w.querySelector('[data-knob="zero"] button[data-v="3"]').click(); await T.tick(350);
 // the dense counterfactual threads the needle inside one node
 w.querySelector('[data-knob="model"] button[data-v="dense"]').click(); await T.tick(350);
-T.check('dense 37B: first fits at G = 8, on NVLink, under speed of light',
-  /first fits at G = 8 / .test(ro()) && /NVLink/.test(ro()) && /×0\.\d speed-of-light|\(×0\.\d\)/.test(ro()), ro());
+T.check('dense 37B: first fits at G = 8 (one node), sync under compute at peak, with an InfiniBand share',
+  /first fits at G = 8 / .test(ro()) && /one node/.test(ro()) && /0\.7\d s of it on InfiniBand/.test(ro()) && /\(×0\.4\)/.test(ro()), ro());
 T.check('URL hash carries the state', /f%3Asweep=|f:sweep=/.test(decodeURIComponent(location.hash)) && /dense/.test(location.hash), location.hash);
 w.querySelector('[data-knob="model"] button[data-v="dsv3"]').click(); await T.tick(350);
 // cluster stepper: fewer GPUs → fewer live rows, more tokens per GPU → longer compute

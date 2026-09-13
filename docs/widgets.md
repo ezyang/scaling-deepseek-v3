@@ -359,11 +359,13 @@ parameters over G GPUs, or partition the work? Rows = sharding degree G
 reflows); left panel = bytes per GPU at rest in the byte-component colors
 (weights · grads · optim, 14 B/param under DeepSeek's recipe, log₂ axis,
 the past-capacity region shaded); right panel = per-step sync at raw link
-bandwidth (gradient reduce-scatter + cross-replica all-reduce, violet; ONE
-bf16 weight all-gather, dark violet) against two reference lines: speed-of-
-light compute at the fp8 peak (solid) and DeepSeek's realized step at 1,475
-tok/s/GPU (dashed). Node boundary drawn between G = 8 and 16 (NVLink above,
-InfiniBand below).
+bandwidth with HIERARCHICAL collectives (in-node phase on NVLink over the
+full bytes, cross-node phase on the NIC over 1/8 of them): gradient
+reduce-scatter + cross-replica all-reduce (violet) and ONE bf16 weight
+all-gather (comm-box style), against two reference lines: compute at the
+fp8 peak (solid) and the step implied by DeepSeek's GPU-hours, 1,475
+tok/s/GPU (dashed). Node boundary drawn between G = 8 and 16 (the shard
+group fits one node above it).
 
 | attr | kind | values | meaning |
 |---|---|---|---|

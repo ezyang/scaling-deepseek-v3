@@ -25,8 +25,9 @@
     <p>Suppose you have a cluster of H800s and a copy of DeepSeek-V3, and you
     have not yet decided how to lay the model across the GPUs. The first fact
     is that you must decide something: 671B parameters of bf16 weights alone
-    are 1.25 TiB, and one GPU has 80 GiB. There are only two ways to spread
-    them. Either the parameters are <em>sharded and gathered</em> — every GPU
+    are 1.25 TiB, and one GPU has 80 GiB. Keeping everything resident on the
+    GPUs (host offload is out of scope here), there are only two ways to
+    spread them. Either the parameters are <em>sharded and gathered</em> — every GPU
     stores a slice, and the slices are reassembled over the network whenever
     they are needed, which is what ZeRO and FSDP do — or the <em>work</em> is
     partitioned, so that a GPU only ever touches the parameters it owns and
@@ -58,14 +59,18 @@
     <p>Each row is one sharding degree. On the left, the bytes each GPU
     holds at rest, in the byte-component colors of the memory posts; the
     shaded region is past the 80 GiB the GPU has. On the right, the time the
-    step's collectives take at raw link bandwidth: the gradient reduction, a
-    reduce-scatter over the G-way shard group followed by an all-reduce of
-    each shard across its replicas, and the one all-gather that brings the
-    updated weights back.<sup><a id="fnref3" href="#fn3">3</a></sup> The solid line
-    is the speed-of-light compute the sync would have to hide behind; the
-    dashed line is DeepSeek's realized step at their reported 1,475 tokens per
-    second per GPU. Both scale with tokens per GPU, so the cluster and batch
-    knobs move them together. Hover a row for the exact terms.</p>
+    step's collectives take at raw link bandwidth, run the way a good
+    implementation runs them: the in-node phase over NVLink, then only an
+    eighth of the bytes across nodes through each GPU's NIC. The terms are
+    the gradient reduction, a reduce-scatter over the G-way shard group
+    followed by an all-reduce of each shard across its replicas, and the one
+    all-gather that brings the updated weights
+    back.<sup><a id="fnref3" href="#fn3">3</a></sup> The solid line is the
+    compute at the fp8 tensor-core peak that the sync would have to hide
+    behind; the dashed line is the step implied by DeepSeek's reported
+    GPU-hours, 1,475 tokens per second per GPU. Both scale with tokens per
+    GPU, so the cluster and batch knobs move them together. Hover a row for
+    the exact terms.</p>
 
     <h2>Reading the sweep</h2>
 
@@ -79,35 +84,39 @@
       needs G of at least 110 for the parameter state alone, before a single
       activation is stored.</li>
 
-      <li><strong>The sync cost is almost flat in G.</strong> A ring collective
+      <li><strong>The sync cost is flat in G.</strong> A ring collective
       moves (G − 1)/G of the bytes through every GPU, so G = 2 already pays
-      half the full cost and G = 8 pays 88% of it. The one real step in the
-      right-hand panel is the node boundary: below it the shard group sits on
-      NVLink at 200 GB/s, above it every GPU is talking through its 50 GB/s
-      NIC, and the time jumps fourfold. There is no sweet spot to tune toward.
-      Sharding a little buys almost no memory and still costs most of the
-      traffic.</li>
+      half the full cost and G = 8 pays 88% of it, and what the shard group
+      doesn't move, the replica all-reduce does: the whole right-hand panel
+      sits between 28 and 37 seconds. Even the node boundary barely
+      registers, because a hierarchical collective does its heavy lifting on
+      NVLink and only ships an eighth of the bytes over InfiniBand — about
+      10 of those 28 seconds. There is no sweet spot to tune toward. Sharding
+      a little buys almost no memory and costs the same traffic.</li>
 
-      <li><strong>The pincer.</strong> Memory forces G ≥ 110, which is fourteen
-      nodes and therefore InfiniBand. Bandwidth past a node costs about 80
-      seconds of sync per step against 3.9 seconds of speed-of-light compute,
-      and against the 21-second step DeepSeek actually achieved. Inside a node
-      the sync would be a tolerable few times compute, but memory is over by
-      more than an order of magnitude. No G satisfies both. This is the
-      precise form of "FSDP is communication-bound or out of memory": it is
-      not one or the other, it is one <em>and then</em> the other, with no
-      gap between them.</li>
+      <li><strong>The pincer.</strong> Memory forces G ≥ 110. Bandwidth costs
+      about 28 seconds of sync per step at <em>every</em> G, against 3.9
+      seconds of compute at peak and against the 21-second step DeepSeek's
+      GPU-hours imply. So at the sharding degrees that fit, the collectives
+      alone outlast the entire real step, and at the degrees where they would
+      be a few times compute (never fewer), memory is over by more than an
+      order of magnitude. No G satisfies both. This is the precise form of
+      "FSDP is communication-bound or out of memory": it is not one or the
+      other, it is both at once.</li>
     </ul>
 
     <h2>Sparsity is the culprit</h2>
 
     <p>Now flip the model knob to the dense counterfactual: a model with
     DeepSeek's <em>active</em> parameter count, 36.6B, which does the same
-    FLOPs per token and therefore has the same compute line. Its ZeRO-3
-    memory curve crosses 80 GiB at G = 8, exactly one node, and there the sync
-    runs on NVLink and comes in under two seconds, below speed-of-light
-    compute with room to spare. FSDP is a perfectly good answer for a dense
-    model of this size. What breaks it for DeepSeek-V3 is that parameter
+    FLOPs per token and therefore has the same compute line. It is a
+    controlled experiment on bytes versus FLOPs, not a real architecture. Its
+    ZeRO-3 memory curve crosses 80 GiB at G = 8, exactly one node, and there
+    the sync comes in at 1.7 seconds, well under compute at peak — with the
+    familiar proviso that most of that is the replica all-reduce over
+    InfiniBand, which any data-parallel training has to overlap with the
+    backward. FSDP is a workable answer for a dense model of this size. What
+    breaks it for DeepSeek-V3 is that parameter
     traffic scales with the <em>total</em> parameters while compute scales
     with the <em>active</em> ones, and for this model those differ by a factor
     of eighteen. The same ratio is why a mixture-of-experts model is cheap to
@@ -115,10 +124,13 @@
 
     <p>The cluster knob makes the same point from the other side. Tokens per
     GPU per step is the batch divided by the world size, so at a fixed batch
-    the sync-to-compute ratio grows linearly with the number of GPUs. Speed of
-    light breaks even at roughly 320,000 tokens per GPU per step, which at
-    DeepSeek's batch is about 200 GPUs, and on 200 GPUs the memory column says
-    no anyway.</p>
+    the sync-to-compute ratio grows linearly with the number of GPUs. At
+    peak-rate compute the sync breaks even at roughly 220,000 tokens per GPU
+    per step, which at DeepSeek's batch is about 290 GPUs — and on 290 GPUs
+    ZeRO-3 does fit. On a cluster a seventh the size, FSDP would be a
+    contender at speed of light, and the question would become how much of a
+    28-second sync hides behind a backward pass several times longer than
+    peak. On 2,048 GPUs there is no such question.</p>
 
     <h2>What this decides, and what it doesn't</h2>
 
@@ -137,8 +149,9 @@
     <p>What the sweep does not tell you is <em>which</em> partition. Once the
     parameters are partitioned, the question becomes which arrangement of
     pipeline, expert, and data parallelism fits in 80 GiB with the activations
-    included, and that is a memory question — the one the
-    <a href="./02-hopper-memory.html">Hopper memory post</a> takes up. It also
+    included and which schedules its communication under the compute. The
+    memory half of that is the
+    <a href="./02-hopper-memory.html">Hopper memory post</a>. It also
     does not tell you that partitioning is free: sending activations instead
     of parameters has its own per-token bill, and whether it hides behind
     compute is the subject of the timing posts.</p>
@@ -160,17 +173,22 @@
       <a href="#fnref2">↩</a></p>
 
       <p class="note" id="fn3"><sup>3</sup> Speed-of-light conventions.
-      Collectives are priced as rings, (n − 1)/n of the bytes per GPU at the
-      link's data-sheet rate with no efficiency factor: NVLink when the group
-      fits in one 8-GPU node, otherwise the per-GPU InfiniBand NIC. The
-      gradient reduction is fp32, per the recipe. The weight all-gather is
+      Collectives are priced as hierarchical rings at data-sheet rates with no
+      efficiency factor: the members of a group that share an 8-GPU node run
+      their phase over NVLink on the full bytes, (m − 1)/m per GPU, then the
+      cross-node phase moves 1/m of the bytes through each GPU's InfiniBand
+      NIC, (k − 1)/k over the k nodes; an all-reduce is a reduce-scatter plus
+      an all-gather. This is the network's best case. The gradient reduction
+      is fp32, per the recipe. The weight all-gather is
       charged <em>once</em> per step, in bf16: for ZeRO-1 and ZeRO-2 that is
       what happens after the optimizer step; for ZeRO-3 it pretends the
       gathered weights could be held for the whole step, which is exactly what
       cannot be done, so the real ZeRO-3 cost re-gathers per microbatch and is
       several times larger. Compute is at the fp8 tensor-core peak; the
-      realized step uses the paper's 2.788M GPU-hours for 14.8T tokens. Every
-      simplification here favors FSDP.
+      "implied step" divides the paper's 2.788M GPU-hours for 14.8T tokens
+      into a per-step time at this batch; it is an aggregate, not a measured
+      profiler step. Summed collective time is a floor on traffic, not a
+      claim about how much of it ends up exposed.
       <a href="#fnref3">↩</a></p>
     </div>
   </main>

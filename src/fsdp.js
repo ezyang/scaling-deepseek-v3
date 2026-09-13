@@ -2,8 +2,8 @@
 // on one GPU, so its parameters are spread over G GPUs and either GATHERED
 // back each step (ZeRO/FSDP) or the work is partitioned instead. This module
 // prices the gather route at speed of light — raw link bandwidth, FP8 peak,
-// one weight all-gather per step (generous: nothing can hold the gathered
-// weights) — across every sharding degree G, next to the memory each GPU
+// hierarchical collectives, one weight all-gather per step (generous: nothing
+// can hold the gathered weights) — across every sharding degree G, next to the memory each GPU
 // then holds. <dsv3-fsdp> draws the sweep: rows = G, memory left, sync right.
 import { DSV3, HARDWARE, modelFlopsPerToken } from './model.js';
 import { PARAMS } from './params.js';
@@ -32,18 +32,28 @@ export function fsdpRow(cfg, G) {
   const mem = {};
   for (const k of COMPS) mem[k] = P * STATE_BYTES[k] * (sh.includes(k) ? 1 / G : 1);
   const memTotal = COMPS.reduce((t, k) => t + mem[k], 0);
-  // a group of n GPUs sits inside one node (NVLink) or spans nodes (one NIC per GPU)
-  const link = (n) => n <= hw.domain ? hw.nvl : hw.nic;
-  // gradient sync, fp32: reduce-scatter over the shard group, then all-reduce
-  // each shard across its replicas (ring: (n−1)/n of the bytes per GPU)
-  const rs = G > 1 ? P * 4 * (G - 1) / G / link(G) : 0;
-  const ar = R > 1 ? 2 * (P / G) * 4 * (R - 1) / R / link(W) : 0;
-  // the updated weights come back with ONE all-gather per step — ZeRO-1/2
+  // collectives are HIERARCHICAL (the best case for the network): a group of
+  // n GPUs with m members per node runs its in-node phase over NVLink on the
+  // full bytes, then the cross-node phase over each GPU's NIC on 1/m of them
+  // (ring factors (k−1)/k). Returns [NVLink s, InfiniBand s].
+  const D = hw.domain;
+  const coll = (bytes, n, m) => { const k = n / m;
+    return [m > 1 ? bytes * (m - 1) / m / hw.nvl : 0, k > 1 ? (bytes / m) * (k - 1) / k / hw.nic : 0]; };
+  const add = (a, b) => [a[0] + b[0], a[1] + b[1]];
+  // gradient sync, fp32: reduce-scatter over the shard group (m = the members
+  // sharing a node), then all-reduce (= RS + AG) of each shard across its R
+  // replicas (m = D/G of them share a node when the shard group is sub-node)
+  const mG = Math.min(G, D), mR = G < D ? D / G : 1;
+  const rsT = coll(P * 4, G, mG);
+  const arT = coll((P / G) * 4, R, mR).map((t) => 2 * t);
+  // the updated weights come back with ONE bf16 all-gather per step — ZeRO-1/2
   // after the optimizer step, ZeRO-3 as if the gathered model could be kept
-  const ag = G > 1 ? P * 2 * (G - 1) / G / link(G) : 0;
+  const agT = coll(P * 2, G, mG);
+  const [rs, ar, ag] = [rsT, arT, agT].map((t) => t[0] + t[1]);
+  const [nvS, ibS] = add(add(rsT, arT), agT);
   const tokens = cfg.gbs * cfg.seq / W;
   const comp = tokens * modelFlopsPerToken(DSV3, cfg.seq) / hw.flops.fp8;
-  return { G, P, mem, memTotal, rs, ar, ag, sync: rs + ar + ag, tokens, comp,
+  return { G, P, mem, memTotal, rs, ar, ag, sync: rs + ar + ag, nvS, ibS, tokens, comp,
     realized: tokens / REALIZED_TOK_S, fits: memTotal <= hw.memGB * 2 ** 30, crossNode: G > hw.domain };
 }
 
@@ -214,11 +224,11 @@ class Dsv3Fsdp extends (typeof HTMLElement === 'undefined' ? class {} : HTMLElem
     B.push(`<line data-comp="${L.comp}" x1="${f1(L.compX)}" y1="${TOP - 4}" x2="${f1(L.compX)}" y2="${aY}" stroke="${C('#0b0b0b')}" stroke-width="1"/>`);
     B.push(`<text ${dims} x="${f1(L.compX)}" y="${TOP - 7}" text-anchor="middle" fill="${C('#0b0b0b')}">compute at fp8 peak ${fmtS(L.comp)}</text>`);
     B.push(`<line data-real="${L.realized}" x1="${f1(L.realX)}" y1="${TOP - 4}" x2="${f1(L.realX)}" y2="${aY}" stroke="${C('#898781')}" stroke-width="1" stroke-dasharray="3 2"/>`);
-    B.push(`<text ${dims} x="${f1(L.realX)}" y="${TOP - 16}" text-anchor="middle">DeepSeek's realized step ${fmtS(L.realized)}</text>`);
+    B.push(`<text ${dims} x="${f1(L.realX)}" y="${TOP - 16}" text-anchor="middle">step implied by DeepSeek's GPU-hours ${fmtS(L.realized)}</text>`);
     // node boundary
     B.push(`<line x1="${GUT - 6}" y1="${f1(L.nodeY)}" x2="${TX0 + PW}" y2="${f1(L.nodeY)}" stroke="${C('#898781')}" stroke-width="1" stroke-dasharray="2 3"/>`);
-    B.push(`<text ${dims} x="${TX0 + PW + 12}" y="${f1(L.nodeY - 3)}">↑ one node · NVLink ${L.hw.nvl / 1e9} GB/s</text>`);
-    B.push(`<text ${dims} x="${TX0 + PW + 12}" y="${f1(L.nodeY + 10)}">↓ across nodes · IB ${L.hw.nic / 1e9} GB/s</text>`);
+    B.push(`<text ${dims} x="${TX0 + PW + 12}" y="${f1(L.nodeY - 3)}">↑ shard group within one node</text>`);
+    B.push(`<text ${dims} x="${TX0 + PW + 12}" y="${f1(L.nodeY + 10)}">↓ shard group spans nodes</text>`);
     for (const r of L.rows) {
       const op = r.op < 0.999 ? ` opacity="${r.op.toFixed(3)}"` : '';
       if (r.first && r.op > 0.5) B.push(`<rect data-first="${r.G}" x="0" y="${f1(r.y - 3)}" width="${W}" height="${ROWH}" fill="${C('#fff8ea')}"/>`);
@@ -248,7 +258,7 @@ class Dsv3Fsdp extends (typeof HTMLElement === 'undefined' ? class {} : HTMLElem
       this._ro.innerHTML = `<b>G = ${r.G}</b> (${(cfg.gpus / r.G).toLocaleString('en-US')} replicas): ${fmtBytes(r.memTotal)}/GPU`
         + ` = weights ${fmtBytes(r.mem.weights)} + grads ${fmtBytes(r.mem.grads)} + optimizer ${fmtBytes(r.mem.optim)}`
         + ` → ${r.fits ? 'fits' : 'does not fit'} in ${hw.memGB} GiB. Sync ${fmtS(r.sync)}/step = gradient reduce ${fmtS(r.rs + r.ar)}`
-        + ` + weight all-gather ${fmtS(r.ag)}, over ${r.crossNode ? 'InfiniBand' : 'NVLink'}: ${x(r.sync, r.comp)} speed-of-light compute, ${x(r.sync, r.realized)} the realized step.`;
+        + ` + weight all-gather ${fmtS(r.ag)} (NVLink ${fmtS(r.nvS)} · InfiniBand ${fmtS(r.ibS)}): ${x(r.sync, r.comp)} compute at fp8 peak, ${x(r.sync, r.realized)} the implied step.`;
       return;
     }
     const z = `ZeRO-${cfg.zero}`;
@@ -258,9 +268,10 @@ class Dsv3Fsdp extends (typeof HTMLElement === 'undefined' ? class {} : HTMLElem
       this._ro.innerHTML = `<b>${z} never fits</b> on ${cfg.gpus.toLocaleString('en-US')} GPUs: even at G = ${last.G} each GPU holds ${fmtBytes(last.memTotal)} — the replicated state alone exceeds ${hw.memGB} GiB.`;
       return;
     }
-    this._ro.innerHTML = `<b>${z} first fits at G = ${ff.G}</b> (${fmtBytes(ff.memTotal)}/GPU), ${ff.crossNode ? `${ff.G / hw.domain} nodes, so the sync runs over InfiniBand` : 'inside one node, on NVLink'}:`
-      + ` ${fmtS(ff.sync)}/step against ${fmtS(ff.comp)} of speed-of-light compute (${x(ff.sync, ff.comp)})`
-      + ` and ${fmtS(ff.realized)} realized (${x(ff.sync, ff.realized)}).`;
+    const where = ff.G > hw.domain ? `${ff.G / hw.domain} nodes` : ff.G === hw.domain ? 'one node' : `${ff.G} GPUs`;
+    this._ro.innerHTML = `<b>${z} first fits at G = ${ff.G}</b> (${fmtBytes(ff.memTotal)}/GPU, ${where}):`
+      + ` sync ${fmtS(ff.sync)}/step, ${fmtS(ff.ibS)} of it on InfiniBand, against ${fmtS(ff.comp)} of compute at fp8 peak (${x(ff.sync, ff.comp)})`
+      + ` and the ${fmtS(ff.realized)} step implied by DeepSeek's GPU-hours (${x(ff.sync, ff.realized)}).`;
   }
 }
 function blend(A, B, t) {
