@@ -21,6 +21,7 @@ import { defaultConfig } from '../src/sim.js';
 import { buildCells, cellsEnv } from '../src/cells.js';
 import { fsdpSweep } from '../src/fsdp.js';
 import { solStep, anchors } from '../src/sol.js';
+import { clock } from '../src/clock.js';
 
 const FILE = fileURLToPath(new URL('../tests/goldens.json', import.meta.url));
 const G = {};
@@ -58,6 +59,13 @@ for (const [name, cfg] of [['h800-dsv3', {}], ['h800-none', { recompute: 'none' 
   const S = solStep(cfg);
   G.sol[name] = { total: S.total, reported: S.reported, flopsTok: S.flopsTok, rows: S.rows,
     cells: Object.fromEntries(S.cells.map((c) => [`${c.pass}·${c.group}`, c.s])) };
+}
+
+// the first picture (studies/03-sol.html): one elementwise kernel on both meters, per dtype × op
+G.clock = {};
+for (const dtype of ['fp32', 'bf16', 'fp8']) for (const op of ['mul', 'add']) {
+  const K = clock({ dtype, op });
+  G.clock[`${dtype}-${op}`] = { compute: K.compute, read: K.read, write: K.write, ratio: K.ratio, hbmNumsPerUs: K.window.hbmNums };
 }
 
 // the anchors table (exchange rates + per-token budget) per Hopper GPU, as displayed strings
