@@ -32,5 +32,14 @@ w.querySelector('[data-knob="gpus"] button[data-dir="1"]').click(); await T.tick
 w.querySelector('[data-knob="hw"] button[data-v="h100"]').click(); await T.tick(350);
 T.check('H100: sheet flips NVLink to 450, sum unchanged, no reported line', w.querySelector('[data-sheet="NVLink"]').textContent === '450 GB/s' && Math.abs(rowval('total') - 3.99) < 0.01 && !w.querySelector('line[data-rep]') && /No reported throughput/.test(ro()), '');
 w.querySelector('[data-knob="hw"] button[data-v="h800"]').click(); await T.tick(350);
+// the anchors table follows the GPU knob: exchange rates are the sheet's ratios
+const an = document.querySelector('dsv3-anchors');
+const anchor = (l) => an.querySelector(`td[data-anchor="${l}"]`).textContent;
+T.check('anchors: IB exchange rate = 1979e12 / 50e9', anchor('one byte over InfiniBand') === '39,580 FLOP', anchor('one byte over InfiniBand'));
+T.check('anchors: one token buys 6.3 MB over IB, needs 20.0 MB of expert traffic', anchor('buys, over InfiniBand') === '6.3 MB' && anchor('needs: expert dispatch + combine, undeduplicated') === '20.0 MB', '');
+w.querySelector('[data-knob="hw"] button[data-v="h100"]').click(); await T.tick(350);
+T.check('anchors follow the knob: H100 NVLink rate 1979e12 / 450e9', anchor('one byte over NVLink') === '4,398 FLOP', anchor('one byte over NVLink'));
+w.querySelector('[data-knob="hw"] button[data-v="h800"]').click(); await T.tick(350);
 T.log('widget height', w.getBoundingClientRect().height);
+T.log('anchors height', an.getBoundingClientRect().height);
 T.done();

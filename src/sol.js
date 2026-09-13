@@ -7,7 +7,8 @@
 // step is the whole batch's compute divided by the cluster. <dsv3-sol> draws
 // the sum as stacked rows (forward / backward / recompute / total) by op
 // group, against the step the vendor-reported throughput implies.
-import { DSV3, HARDWARE, HEAD_OPS } from './model.js';
+import { DSV3, HARDWARE, HEAD_OPS, modelFlopsPerToken } from './model.js';
+import { PARAMS } from './params.js';
 import { blockGraph, analyze, RECOMPUTE_PRESETS } from './blockgraph.js';
 import { C } from './theme.js';
 import { knobCss } from './ui.js';
@@ -37,9 +38,87 @@ export const REPORTED = {
 // the tech sheet: what the GPU knob shows (per GPU, per direction, data-sheet peaks)
 export const SHEET = (hw) => [
   ['FP8', `${(hw.flops.fp8 / 1e12).toLocaleString('en-US')} TFLOP/s`],
+  ['HBM', `${(hw.hbm / 1e12).toFixed(2)} TB/s`],
   ['NVLink', `${hw.nvl / 1e9} GB/s`],
   ['InfiniBand', `${hw.nic / 1e9} GB/s`],
 ];
+
+// ---- anchors: the tech sheet turned into exchange rates ---------------------
+// Latency numbers are the wrong intuition for a kernel-pipelined step: nothing
+// waits on a round trip, everything waits on bytes ÷ bandwidth and trades it
+// against FLOPs ÷ peak. So the anchors are RATIOS of the sheet's numbers —
+// FLOPs the tensor cores finish while one byte moves over each link — and a
+// few objects priced in them, all denominated in the unit the reader already
+// holds: one token. Returns [{section, label, value, tip}] for one GPU.
+export function anchors(hwKey) {
+  const hw = HARDWARE[hwKey], a = DSV3, F = hw.flops.fp8;
+  const tokFlops = modelFlopsPerToken(a, 4096);                    // fwd + bwd, seq 4096
+  const tokUs = tokFlops / F * 1e6;
+  const links = [['HBM', hw.hbm], ['NVLink', hw.nvl], ['InfiniBand', hw.nic]];
+  const n = (x, d = 0) => x.toLocaleString('en-US', { maximumFractionDigits: d, minimumFractionDigits: d });
+  const us = (s) => s >= 1 ? `${n(s, 1)} s` : s >= 1e-3 ? `${n(s * 1e3, s >= 1e-2 ? 1 : 2)} ms` : `${n(s * 1e6, s >= 1e-4 ? 0 : s >= 1e-5 ? 1 : 2)} µs`;
+  const bytes = (b) => b >= 1e9 ? `${n(b / 1e9, 2)} GB` : b >= 1e6 ? `${n(b / 1e6, 1)} MB` : `${n(b / 1e3, 1)} KB`;
+  const rows = [];
+  for (const [name, bw] of links)
+    rows.push({ section: 'exchange rate', label: `one byte over ${name}`, value: `${n(F / bw)} FLOP`,
+      tip: `${n(F / 1e12)} TFLOP/s ÷ ${n(bw / 1e9)} GB/s — the roofline ridge point: FLOPs the tensor cores finish in the time one byte moves` });
+  rows.push({ section: 'one token', label: `compute, forward + backward`, value: `${n(tokFlops / 1e9, 1)} GFLOP = ${us(tokUs / 1e6)}`,
+    tip: `${n(tokFlops / 1e9, 1)} GFLOP/token ÷ ${n(F / 1e12)} TFLOP/s` });
+  for (const [name, bw] of links)
+    rows.push({ section: 'one token', label: `buys, over ${name}`, value: bytes(tokUs / 1e6 * bw),
+      tip: `${us(tokUs / 1e6)} × ${n(bw / 1e9)} GB/s — the traffic a token can afford before the link, not compute, sets the step` });
+  // the token's own expert traffic: fp8 dispatch + bf16 combine per MoE layer,
+  // forward; the backward is the same pair again (grad dispatch fp8, grad combine bf16)
+  const a2a = 2 * (a.topk * a.hidden * 1 + a.topk * a.hidden * 2) * (a.layers - a.denseLayers);
+  rows.push({ section: 'one token', label: 'needs: expert dispatch + combine, undeduplicated', value: bytes(a2a),
+    tip: `${a.layers - a.denseLayers} MoE layers × 2 passes × (top-${a.topk} × ${a.hidden} × 1 B fp8 dispatch + top-${a.topk} × ${a.hidden} × 2 B bf16 combine) — before node-limited routing and NVLink dedup` });
+  rows.push({ section: 'objects', label: 'one hidden vector, fp8 (7 KiB)', value: `NVLink ${us(a.hidden / hw.nvl)} · InfiniBand ${us(a.hidden / hw.nic)}`,
+    tip: `${a.hidden} B over each link` });
+  rows.push({ section: 'objects', label: 'one layer’s forward, one 4,096-token microbatch', value: us(4096 * tokFlops / 3 / a.layers / F),
+    tip: `4,096 × ${n(tokFlops / 3 / 1e9, 1)} GFLOP ÷ ${a.layers} layers ÷ ${n(F / 1e12)} TFLOP/s — the tick of every timeline` });
+  rows.push({ section: 'objects', label: 'one expert’s weights, fp8, through the NIC', value: us(PARAMS.expert / hw.nic),
+    tip: `${n(PARAMS.expert / 1e6, 1)} MB ÷ ${n(hw.nic / 1e9)} GB/s` });
+  rows.push({ section: 'objects', label: 'the whole model’s weights, fp8, through one NIC', value: us(PARAMS.total / hw.nic),
+    tip: `${n(PARAMS.total / 1e9)} GB ÷ ${n(hw.nic / 1e9)} GB/s — the FSDP study in one line` });
+  rows.push({ section: 'objects', label: `one pass over HBM (${hw.memGB} GiB)`, value: us(hw.memGB * 2 ** 30 / hw.hbm),
+    tip: `${hw.memGB} GiB ÷ ${n(hw.hbm / 1e12, 2)} TB/s` });
+  return rows;
+}
+
+const ANCHOR_CSS = `
+dsv3-anchors { display: block; margin: 14px 0 26px; }
+.an { font: 12px system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--c-0b0b0b);
+  border: 1px solid var(--c-e1e0d9); border-radius: 6px; background: var(--c-fcfcfb); padding: 8px 12px 6px;
+  width: max-content; max-width: 100%; box-sizing: border-box; }
+.an table { border-collapse: collapse; font-size: 12px; }
+.an td { padding: 2px 14px 2px 0; border-bottom: 1px solid var(--c-eeede7); vertical-align: baseline; font-variant-numeric: tabular-nums; }
+.an td:last-child { padding-right: 0; font: 11.5px ui-monospace, Menlo, monospace; color: var(--c-0b0b0b); white-space: nowrap; }
+.an td.sec { font: italic 10px system-ui; color: var(--c-898781); padding-right: 12px; white-space: nowrap; }
+.an td.lab { color: var(--c-52514e); }
+.an tr[data-first] td { padding-top: 6px; }
+.an .hw { font: 10px system-ui; color: var(--c-898781); margin-bottom: 2px; }
+`;
+// <dsv3-anchors for=id | hw=key>: follows the named <dsv3-sol>'s GPU knob (its
+// 'dsv3-sol' change event), or stands alone at a fixed hw
+class Dsv3Anchors extends (typeof HTMLElement === 'undefined' ? class {} : HTMLElement) {
+  connectedCallback() {
+    const style = document.createElement('style'); style.textContent = ANCHOR_CSS;
+    this._root = el('div', 'an');
+    this.append(style, this._root);
+    const src = this.getAttribute('for') ? document.getElementById(this.getAttribute('for')) : null;
+    this.hw = src?.cfg?.hw ?? this.getAttribute('hw') ?? 'h800';
+    this.render();
+    if (src) src.addEventListener('dsv3-sol', (e) => { this.hw = e.detail.hw; this.render(); });
+  }
+  render() {
+    const rows = anchors(this.hw);
+    let last = null;
+    this._root.innerHTML = `<div class="hw">${HARDWARE[this.hw].label} · at speed of light</div><table>` + rows.map((r) => {
+      const first = r.section !== last; last = r.section;
+      return `<tr${first ? ' data-first' : ''} title="${r.tip.replace(/"/g, '&quot;')}"><td class="sec">${first ? r.section : ''}</td><td class="lab">${r.label}</td><td data-anchor="${r.label}">${r.value}</td></tr>`;
+    }).join('') + '</table>';
+  }
+}
 
 const GROUP_OF = { attn: 'attn', qkv_down: 'mla', q_up: 'mla', kv_up: 'mla', o_proj: 'mla', router: 'router' };
 // every op is a matmul at the FP8 rate here; blockGraph wants a dtype table
@@ -203,6 +282,7 @@ class Dsv3Sol extends (typeof HTMLElement === 'undefined' ? class {} : HTMLEleme
     this.cfg[k] = v;
     this._syncKnobs();
     if (this.id) writeState('s:' + this.id, this.cfg);
+    this.dispatchEvent(new CustomEvent('dsv3-sol', { detail: { ...this.cfg } }));
     this._animateTo(this._layout());
   }
   // pixel-space layout: the axis autoscales to whatever is longest (the
@@ -331,4 +411,7 @@ function writeState(key, obj) {
   p.set(key, JSON.stringify(obj));
   history.replaceState(null, '', '#' + p.toString());
 }
-if (typeof customElements !== 'undefined' && !customElements.get('dsv3-sol')) customElements.define('dsv3-sol', Dsv3Sol);
+if (typeof customElements !== 'undefined' && !customElements.get('dsv3-sol')) {
+  customElements.define('dsv3-sol', Dsv3Sol);
+  customElements.define('dsv3-anchors', Dsv3Anchors);
+}

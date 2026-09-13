@@ -20,7 +20,7 @@ import { blockGraph, analyze, RECOMPUTE_PRESETS, DTYPE_BYTES } from '../src/bloc
 import { defaultConfig } from '../src/sim.js';
 import { buildCells, cellsEnv } from '../src/cells.js';
 import { fsdpSweep } from '../src/fsdp.js';
-import { solStep } from '../src/sol.js';
+import { solStep, anchors } from '../src/sol.js';
 
 const FILE = fileURLToPath(new URL('../tests/goldens.json', import.meta.url));
 const G = {};
@@ -59,6 +59,9 @@ for (const [name, cfg] of [['h800-dsv3', {}], ['h800-none', { recompute: 'none' 
   G.sol[name] = { total: S.total, reported: S.reported, flopsTok: S.flopsTok, rows: S.rows,
     cells: Object.fromEntries(S.cells.map((c) => [`${c.pass}·${c.group}`, c.s])) };
 }
+
+// the anchors table (exchange rates + per-token budget) per Hopper GPU, as displayed strings
+G.anchors = Object.fromEntries(['h800', 'h100'].map((hw) => [hw, Object.fromEntries(anchors(hw).map((r) => [r.label, r.value]))]));
 
 // trace sim: step time + MFU per refinement level (seeded — deterministic),
 // plus the two calibration anchors

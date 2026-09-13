@@ -1639,6 +1639,38 @@
       }
     }
   },
+  "anchors": {
+    "h800": {
+      "one byte over HBM": "591 FLOP",
+      "one byte over NVLink": "9,895 FLOP",
+      "one byte over InfiniBand": "39,580 FLOP",
+      "compute, forward + backward": "250.5 GFLOP = 127 µs",
+      "buys, over HBM": "424.0 MB",
+      "buys, over NVLink": "25.3 MB",
+      "buys, over InfiniBand": "6.3 MB",
+      "needs: expert dispatch + combine, undeduplicated": "20.0 MB",
+      "one hidden vector, fp8 (7 KiB)": "NVLink 0.04 µs · InfiniBand 0.14 µs",
+      "one layer’s forward, one 4,096-token microbatch": "2.83 ms",
+      "one expert’s weights, fp8, through the NIC": "881 µs",
+      "the whole model’s weights, fp8, through one NIC": "13.4 s",
+      "one pass over HBM (80 GiB)": "25.6 ms"
+    },
+    "h100": {
+      "one byte over HBM": "591 FLOP",
+      "one byte over NVLink": "4,398 FLOP",
+      "one byte over InfiniBand": "39,580 FLOP",
+      "compute, forward + backward": "250.5 GFLOP = 127 µs",
+      "buys, over HBM": "424.0 MB",
+      "buys, over NVLink": "57.0 MB",
+      "buys, over InfiniBand": "6.3 MB",
+      "needs: expert dispatch + combine, undeduplicated": "20.0 MB",
+      "one hidden vector, fp8 (7 KiB)": "NVLink 0.02 µs · InfiniBand 0.14 µs",
+      "one layer’s forward, one 4,096-token microbatch": "2.83 ms",
+      "one expert’s weights, fp8, through the NIC": "881 µs",
+      "the whole model’s weights, fp8, through one NIC": "13.4 s",
+      "one pass over HBM (80 GiB)": "25.6 ms"
+    }
+  },
   "sim": {
     "L0-roofline": {
       "stepUs": 1556224.0085647402,

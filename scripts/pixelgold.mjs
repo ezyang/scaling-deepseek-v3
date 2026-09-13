@@ -54,6 +54,7 @@ const SHOTS = [
   { name: 'fsdp-sweep', page: PAGEF, sel: 'dsv3-fsdp' },
   // 03 (draft): the summed step
   { name: '03-sol', page: PAGES, sel: 'dsv3-sol' },
+  { name: '03-anchors', page: PAGES, sel: 'dsv3-anchors' },
 ];
 
 const update = process.argv.includes('--update');

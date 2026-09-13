@@ -418,6 +418,23 @@ share. `solStep(cfg)` / `solFlops(cfg)` are node-importable (goldens
 `rect[data-seg=<group>]` with `data-true`, `text[data-rowval]`,
 `[data-sheet=FP8|NVLink|InfiniBand]`, `line[data-ghost]`, `line[data-rep]`.
 
+## `<dsv3-anchors for=… | hw=…>` — the tech sheet as exchange rates (src/sol.js, post 03 draft)
+
+The intuition table under the summed step: latency numbers are the wrong
+anchor for a kernel-pipelined step (nothing waits on a round trip;
+everything waits on bytes ÷ bandwidth traded against FLOPs ÷ peak), so the
+anchors are RATIOS of the tech sheet. Three sections: exchange rates
+(FLOPs the tensor cores finish while one byte moves over HBM / NVLink /
+InfiniBand — the roofline ridge points); one token (its fwd+bwd compute in
+GFLOP and µs at peak, the bytes that time buys over each link, and the
+expert dispatch+combine traffic it needs, undeduplicated); objects (a
+hidden vector over each link, one layer's forward for a 4,096-token
+microbatch, one expert and the whole model through a NIC, one pass over
+HBM). `for=<id>` follows that `<dsv3-sol>`'s GPU knob (its `dsv3-sol`
+change event); `hw=` stands alone. Rows carry their formula as a title.
+`anchors(hwKey)` is node-importable (goldens `anchors.*`); cells are
+`td[data-anchor=<label>]`.
+
 ## Other elements (unchanged conventions)
 - `<dsv3-trace level height title config>` — the canvas trace viewer over the
   simulator (not yet on a published page; the timing posts' widget).
