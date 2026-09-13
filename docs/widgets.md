@@ -383,27 +383,29 @@ G, its link, sync vs SOL vs realized); on row hover the exact terms.
 with `data-true`, `text[data-memval|data-syncval]`, `rect[data-first]`,
 `line[data-comp|data-real]`.
 
-## `<dsv3-clock hw=… dtype=… op=…>` — one microsecond on each meter (src/clock.js, post 03 draft)
+## `<dsv3-clock hw=… dtype=… tokens=…>` — one microsecond on each meter (src/clock.js, post 03 draft)
 
 The first picture of studies/03-sol.html, before any model: what a fixed
 slice of time buys on one GPU, and the simplest kernel priced on it. The
 GPU group carries the 1 µs sheet — tensor cores (FP8 matmul) in FLOP, CUDA
 cores in fp32 FLOP and FMA slots, HBM in bytes AND in numbers at the chosen
-storage dtype. Below it, one elementwise kernel over one 4,096 × 7,168
-tensor (a microbatch's hidden states) on a µs axis: the CUDA-cores row is
+storage dtype. Below it, one elementwise kernel — x × 2, read the tensor
+once and write it once — over tokens × 7,168 hidden states on a µs axis:
+the CUDA-cores row is
 its arithmetic (N ÷ half the fp32 peak — an FMA counts as two FLOP, a lone
-multiply or add fills one slot); the HBM row is its bytes, the reads then
-the write end to end (one pipe), in the dtype's precision-family color.
-The axis is FIXED at the worst case on it (fp32, the two-input op) so a
-dtype flip visibly halves the byte bars while the arithmetic bar holds; the
-shaded band at the origin is the 1 µs window.
+multiply fills one slot); the HBM row is its bytes, the read then the write
+end to end (one pipe), in the dtype's precision-family color. The axis
+spans the fp32 case at the current size, so a dtype flip visibly halves the
+byte bars while the arithmetic bar holds and a size change rescales the
+axis (labels snap, positions tween); the shaded band at the origin is the
+1 µs window.
 
 | attr | kind | values | meaning |
 |---|---|---|---|
 | `hw` | attr | `h800` (default) · `h100` | fixed; no knob |
 | `dtype` | state | `fp32` · `bf16` · `fp8` | bytes per number (4 · 2 · 1) |
-| `op` | state | `mul` (x × 2: read 1, write 1) · `add` (x + y: read 2, write 1) | the kernel |
-| state | | `#c:<id>={hw,dtype,op}` | URL hash, when the element has an id |
+| `tokens` | state | 512 … 32768 | tensor rows (× 7,168 hidden) |
+| state | | `#c:<id>={hw,dtype,tokens}` | URL hash, when the element has an id |
 
 Readout (`.ro`, height reserved): every term, the memory-bound verdict and
 its ratio. `clock(cfg)` is node-importable (goldens `clock.*`); test
