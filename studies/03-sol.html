@@ -8,13 +8,15 @@
   <title>03 (draft)</title>
   <link rel="stylesheet" href="./study.css?v=9abf5fa0">
   <style>
-    dsv3-sol, dsv3-anchors { display: block; margin: 14px 0 26px; }
+    dsv3-gemm, dsv3-sol, dsv3-anchors { display: block; margin: 14px 0 26px; }
   </style>
 </head>
 
 <body>
   <main>
     <h1>03 (draft)</h1>
+
+    <dsv3-gemm id="gemm" style="min-height:334px"></dsv3-gemm>
 
     <dsv3-sol id="sum" style="min-height:336px"></dsv3-sol>
 
@@ -34,6 +36,7 @@
       "../src/dsv41.js": "../src/dsv41.js?v=01491f34",
       "../src/dsv41model.js": "../src/dsv41model.js?v=db63a9e2",
       "../src/fsdp.js": "../src/fsdp.js?v=9330595a",
+      "../src/gemm.js": "../src/gemm.js?v=20821ad5",
       "../src/localmodel.js": "../src/localmodel.js?v=7b110bff",
       "../src/memory.js": "../src/memory.js?v=abe7690c",
       "../src/model.js": "../src/model.js?v=7cdef05d",
@@ -54,6 +57,7 @@
   </script>
   <script type="module">
     import '../src/viewer.js';
+    import '../src/gemm.js';
     import '../src/sol.js';
     import './series.js';
   </script>

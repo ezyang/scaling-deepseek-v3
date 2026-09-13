@@ -53,6 +53,7 @@ const SHOTS = [
   // the FSDP sweep (unpublished standalone study)
   { name: 'fsdp-sweep', page: PAGEF, sel: 'dsv3-fsdp' },
   // 03 (draft): the summed step
+  { name: '03-gemm', page: PAGES, sel: 'dsv3-gemm' },
   { name: '03-sol', page: PAGES, sel: 'dsv3-sol' },
   { name: '03-anchors', page: PAGES, sel: 'dsv3-anchors' },
 ];

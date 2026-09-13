@@ -383,6 +383,37 @@ G, its link, sync vs SOL vs realized); on row hover the exact terms.
 with `data-true`, `text[data-memval|data-syncval]`, `rect[data-first]`,
 `line[data-comp|data-real]`.
 
+## `<dsv3-gemm hw=… dtype=… shape=… tokens=…>` — one matmul on both meters (src/gemm.js, post 03 draft)
+
+The first picture of studies/03-sol.html, before any model: a GEMM
+Y = X · W (X = tokens × K, W = K × N, one of DeepSeek-V3's own projections)
+priced on the tensor cores (2·M·K·N FLOP ÷ the dtype's tensor peak) and on
+HBM (X + W + Y bytes ÷ bandwidth; inputs at the dtype, Y always bf16), the
+two on one µs axis that autoscales to the longer (labels snap, positions
+tween). The GPU group carries the 1 µs sheet — FLOP at the dtype's peak, HBM
+bytes and numbers, and their ratio, FLOP per HBM byte (the roofline ridge).
+The tokens knob walks a shape from weight-read-bound (128 tokens through an
+expert: 240 FLOP/B, memory-bound ×2.5) to compute-bound (a 4,096-token
+microbatch: 2,607 FLOP/B, ×4.4); the dtype knob halves X and W and doubles
+the peak at once. The HBM row is X, then W (lighter), then Y (grey), end to
+end (one pipe); the shaded band at the origin is the 1 µs window.
+
+| attr | kind | values | meaning |
+|---|---|---|---|
+| `hw` | attr | `h800` (default) · `h100` | fixed; no knob |
+| `dtype` | state | `bf16` · `fp8` | GEMM input bytes (2 · 1) and tensor peak |
+| `shape` | state | `q_down` · `kv_down` · `q_up` · `kv_up` · `o_proj` · `expert_up` (default) · `expert_down` · `dense_up` · `head` | W = K → N from DSV3 |
+| `tokens` | state | 16 … 32768 | M, rows of X |
+| state | | `#g:<id>={hw,dtype,shape,tokens}` | URL hash, when the element has an id |
+
+Readout (`.ro`, height reserved): every term, the intensity vs the ridge,
+the verdict and its ratio. `gemm(cfg)` is node-importable (goldens
+`gemm.*`, every shape × dtype at 128 and 4,096 tokens); test affordances:
+`rect[data-bar=compute]` with `data-true` (seconds), `rect[data-bar=X|W|Y]`
+with `data-true` (bytes), `text[data-val=compute|mem]`,
+`[data-sheet="tensor cores"|HBM|"FLOP per HBM byte"]`, `select[data-knob=shape]`,
+`rect[data-window]`.
+
 ## `<dsv3-sol hw=… recompute=… gpus=… gbs=… seq=…>` — the summed step (src/sol.js, post 03 draft)
 
 The stupidest step-time model (studies/03-sol.html): no timeline, no

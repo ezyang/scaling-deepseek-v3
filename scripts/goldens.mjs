@@ -21,6 +21,7 @@ import { defaultConfig } from '../src/sim.js';
 import { buildCells, cellsEnv } from '../src/cells.js';
 import { fsdpSweep } from '../src/fsdp.js';
 import { solStep, anchors } from '../src/sol.js';
+import { gemm, SHAPES } from '../src/gemm.js';
 
 const FILE = fileURLToPath(new URL('../tests/goldens.json', import.meta.url));
 const G = {};
@@ -58,6 +59,13 @@ for (const [name, cfg] of [['h800-dsv3', {}], ['h800-none', { recompute: 'none' 
   const S = solStep(cfg);
   G.sol[name] = { total: S.total, reported: S.reported, flopsTok: S.flopsTok, rows: S.rows,
     cells: Object.fromEntries(S.cells.map((c) => [`${c.pass}·${c.group}`, c.s])) };
+}
+
+// the first picture (studies/03-sol.html): one GEMM on both meters, every shape × dtype at the story sizes
+G.gemm = {};
+for (const shape of Object.keys(SHAPES)) for (const dtype of ['bf16', 'fp8']) for (const tokens of [128, 4096]) {
+  const g = gemm({ shape, dtype, tokens });
+  G.gemm[`${shape}-${dtype}-${tokens}`] = { flops: g.flops, bytes: g.total, compute: g.compute, mem: g.mem, intensity: g.intensity, bound: g.bound };
 }
 
 // the anchors table (exchange rates + per-token budget) per Hopper GPU, as displayed strings
