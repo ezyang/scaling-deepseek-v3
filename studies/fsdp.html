@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script data-theme>document.documentElement.classList.toggle('dark', (localStorage.getItem('dsv3-theme') ?? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')) === 'dark');</script>
+  <title>Can DeepSeek-V3 just be sharded? The FSDP sweep</title>
+  <meta name="description" content="Before choosing any parallelism for DeepSeek-V3 training: a speed-of-light sweep over the ZeRO/FSDP sharding degree, memory per GPU against per-step sync time, showing why the parameters must be partitioned rather than gathered.">
+  <link rel="stylesheet" href="./study.css">
+  <style>
+    /* pre-upgrade reservation (study.css carries the dsv3-* rules for the
+       series' widgets; this study's element needs the same treatment) */
+    dsv3-fsdp { display: block; margin: 14px 0 26px; }
+  </style>
+</head>
+
+<body>
+  <main>
+    <h1>Can DeepSeek-V3 just be sharded? The FSDP sweep</h1>
+
+    <p class="note">DRAFT (unlisted study). Prose below is AI-drafted and awaits a human
+    edit pass — see the disclosure footnote.<sup><a id="fnref1" href="#fn1">1</a></sup></p>
+
+    <p>Suppose you have a cluster of H800s and a copy of DeepSeek-V3, and you
+    have not yet decided how to lay the model across the GPUs. The first fact
+    is that you must decide something: 671B parameters of bf16 weights alone
+    are 1.25 TiB, and one GPU has 80 GiB. There are only two ways to spread
+    them. Either the parameters are <em>sharded and gathered</em> — every GPU
+    stores a slice, and the slices are reassembled over the network whenever
+    they are needed, which is what ZeRO and FSDP do — or the <em>work</em> is
+    partitioned, so that a GPU only ever touches the parameters it owns and
+    sends activations instead. This study prices the first route at speed of
+    light, before any other parallelism is on the table.</p>
+
+    <h2>Five inputs</h2>
+
+    <p>The whole calculation runs on five numbers, none of which requires a
+    memory model of the training step.<sup><a id="fnref2" href="#fn2">2</a></sup></p>
+
+    <table class="xcheck">
+      <tr><th>input</th><th>value</th><th>where it comes from</th></tr>
+      <tr><td>parameters</td><td>671,026,419,200</td><td>the published checkpoint (the untied head counted, the MTP module not)</td></tr>
+      <tr><td>state per parameter</td><td>14 bytes</td><td>DeepSeek's recipe: bf16 weight, fp32 gradient, fp32 master weight, two bf16 AdamW moments</td></tr>
+      <tr><td>compute per token</td><td>250.5 GFLOP</td><td>forward matmul FLOPs from the architecture, times three for the backward</td></tr>
+      <tr><td>H800 peaks</td><td>1,979 TFLOP/s fp8 · 200 GB/s NVLink · 50 GB/s InfiniBand</td><td>data sheet; per GPU, per direction, no efficiency factor</td></tr>
+      <tr><td>tokens per GPU per step</td><td>30,720</td><td>DeepSeek's batch of 15,360 sequences of 4,096 tokens, over 2,048 GPUs</td></tr>
+    </table>
+
+    <p>From these: one step of speed-of-light compute is 30,720 × 250.5 GFLOP
+    at 1,979 TFLOP/s, or 3.9 seconds. Every step also has to move gradients
+    and weights, and that cost depends on <em>G</em>, the number of GPUs a
+    parameter is sharded across. The chart sweeps G from 1 (every GPU holds
+    the whole model) to the full cluster (every GPU holds one 2,048th).</p>
+
+    <dsv3-fsdp id="sweep" style="min-height:457px"></dsv3-fsdp>
+
+    <p>Each row is one sharding degree. On the left, the bytes each GPU
+    holds at rest, in the byte-component colors of the memory posts; the
+    shaded region is past the 80 GiB the GPU has. On the right, the time the
+    step's collectives take at raw link bandwidth: the gradient reduction, a
+    reduce-scatter over the G-way shard group followed by an all-reduce of
+    each shard across its replicas, and the one all-gather that brings the
+    updated weights back.<sup><a id="fnref3" href="#fn3">3</a></sup> The solid line
+    is the speed-of-light compute the sync would have to hide behind; the
+    dashed line is DeepSeek's realized step at their reported 1,475 tokens per
+    second per GPU. Both scale with tokens per GPU, so the cluster and batch
+    knobs move them together. Hover a row for the exact terms.</p>
+
+    <h2>Reading the sweep</h2>
+
+    <ul>
+      <li><strong>ZeRO-1 and ZeRO-2 never fit.</strong> They shard the
+      optimizer state, and ZeRO-2 the gradients too, but leave the bf16
+      weights replicated, and those alone are 1.25 TiB on every GPU. Flip the
+      first knob: the memory bars barely move as G grows, because the part
+      being sharded was never the problem. Only ZeRO-3, which shards the
+      weights as well, has a memory curve that reaches 80 GiB at all — and it
+      needs G of at least 110 for the parameter state alone, before a single
+      activation is stored.</li>
+
+      <li><strong>The sync cost is almost flat in G.</strong> A ring collective
+      moves (G − 1)/G of the bytes through every GPU, so G = 2 already pays
+      half the full cost and G = 8 pays 88% of it. The one real step in the
+      right-hand panel is the node boundary: below it the shard group sits on
+      NVLink at 200 GB/s, above it every GPU is talking through its 50 GB/s
+      NIC, and the time jumps fourfold. There is no sweet spot to tune toward.
+      Sharding a little buys almost no memory and still costs most of the
+      traffic.</li>
+
+      <li><strong>The pincer.</strong> Memory forces G ≥ 110, which is fourteen
+      nodes and therefore InfiniBand. Bandwidth past a node costs about 80
+      seconds of sync per step against 3.9 seconds of speed-of-light compute,
+      and against the 21-second step DeepSeek actually achieved. Inside a node
+      the sync would be a tolerable few times compute, but memory is over by
+      more than an order of magnitude. No G satisfies both. This is the
+      precise form of "FSDP is communication-bound or out of memory": it is
+      not one or the other, it is one <em>and then</em> the other, with no
+      gap between them.</li>
+    </ul>
+
+    <h2>Sparsity is the culprit</h2>
+
+    <p>Now flip the model knob to the dense counterfactual: a model with
+    DeepSeek's <em>active</em> parameter count, 36.6B, which does the same
+    FLOPs per token and therefore has the same compute line. Its ZeRO-3
+    memory curve crosses 80 GiB at G = 8, exactly one node, and there the sync
+    runs on NVLink and comes in under two seconds, below speed-of-light
+    compute with room to spare. FSDP is a perfectly good answer for a dense
+    model of this size. What breaks it for DeepSeek-V3 is that parameter
+    traffic scales with the <em>total</em> parameters while compute scales
+    with the <em>active</em> ones, and for this model those differ by a factor
+    of eighteen. The same ratio is why a mixture-of-experts model is cheap to
+    run; here it is what makes it expensive to synchronize.</p>
+
+    <p>The cluster knob makes the same point from the other side. Tokens per
+    GPU per step is the batch divided by the world size, so at a fixed batch
+    the sync-to-compute ratio grows linearly with the number of GPUs. Speed of
+    light breaks even at roughly 320,000 tokens per GPU per step, which at
+    DeepSeek's batch is about 200 GPUs, and on 200 GPUs the memory column says
+    no anyway.</p>
+
+    <h2>What this decides, and what it doesn't</h2>
+
+    <p>The gradient column in the chart is not specific to FSDP. Any data
+    parallelism pays a synchronization cost proportional to the parameter
+    bytes each GPU is <em>responsible for</em>. ZeRO keeps that responsibility
+    at the whole model and only spreads the storage; the traffic follows the
+    responsibility, not the storage. Partitioning the work — by pipeline
+    stage, by expert, by tensor slice — shrinks the responsibility itself, and
+    the memory column and the sync column collapse together. On 2,048 GPUs a
+    full partition leaves each GPU answering for about 330M parameters. So
+    "FSDP versus model parallelism" is less a choice between two strategies
+    than one slider, <em>how many parameters does each GPU answer for</em>,
+    and DeepSeek-V3's sparsity pushes it hard toward the partitioned end.</p>
+
+    <p>What the sweep does not tell you is <em>which</em> partition. Once the
+    parameters are partitioned, the question becomes which arrangement of
+    pipeline, expert, and data parallelism fits in 80 GiB with the activations
+    included, and that is a memory question — the one the
+    <a href="./02-hopper-memory.html">Hopper memory post</a> takes up. It also
+    does not tell you that partitioning is free: sending activations instead
+    of parameters has its own per-token bill, and whether it hides behind
+    compute is the subject of the timing posts.</p>
+
+    <div class="fnotes">
+      <p class="note" id="fn1"><sup>1</sup> Disclosure: this draft study —
+      prose, chart, and model — was generated by Fable (Claude) from the
+      series' existing parameter and hardware tables, and has not yet had a
+      human edit pass. It is not part of the published series.
+      <a href="#fnref1">↩</a></p>
+
+      <p class="note" id="fn2"><sup>2</sup> The one memory fact used is the
+      14 bytes of optimizer and gradient state per parameter against 80 GiB
+      of capacity; activations, workspace, and fragmentation are all left out,
+      which only makes the memory column more generous than reality. The
+      parameter count is the series' exact tally of the published checkpoint;
+      the dense counterfactual uses DeepSeek's own active-parameter convention
+      (input embedding excluded, output head included).
+      <a href="#fnref2">↩</a></p>
+
+      <p class="note" id="fn3"><sup>3</sup> Speed-of-light conventions.
+      Collectives are priced as rings, (n − 1)/n of the bytes per GPU at the
+      link's data-sheet rate with no efficiency factor: NVLink when the group
+      fits in one 8-GPU node, otherwise the per-GPU InfiniBand NIC. The
+      gradient reduction is fp32, per the recipe. The weight all-gather is
+      charged <em>once</em> per step, in bf16: for ZeRO-1 and ZeRO-2 that is
+      what happens after the optimizer step; for ZeRO-3 it pretends the
+      gathered weights could be held for the whole step, which is exactly what
+      cannot be done, so the real ZeRO-3 cost re-gathers per microbatch and is
+      several times larger. Compute is at the fp8 tensor-core peak; the
+      realized step uses the paper's 2.788M GPU-hours for 14.8T tokens. Every
+      simplification here favors FSDP.
+      <a href="#fnref3">↩</a></p>
+    </div>
+  </main>
+  <script type="module">
+    import '../src/viewer.js';
+    import '../src/fsdp.js';
+    import './series.js';
+  </script>
+</body>
+
+</html>

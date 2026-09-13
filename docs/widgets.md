@@ -351,6 +351,36 @@ decode / prefill token, 890 B of global KV per token).
 Excluded from the tally (footnoted on the page): the 485M vision tower +
 aligner and the 14.2B DSpark drafter (`mtp.*`).
 
+## `<dsv3-fsdp gpus=… gbs=… zero=… model=… hw=…>` — the FSDP sharding-degree sweep (src/fsdp.js, unlisted study)
+
+The pre-parallelism question (studies/fsdp.html): shard-and-gather the
+parameters over G GPUs, or partition the work? Rows = sharding degree G
+(1 … the cluster; 13 rows are always reserved so the cluster knob never
+reflows); left panel = bytes per GPU at rest in the byte-component colors
+(weights · grads · optim, 14 B/param under DeepSeek's recipe, log₂ axis,
+the past-capacity region shaded); right panel = per-step sync at raw link
+bandwidth (gradient reduce-scatter + cross-replica all-reduce, violet; ONE
+bf16 weight all-gather, dark violet) against two reference lines: speed-of-
+light compute at the fp8 peak (solid) and DeepSeek's realized step at 1,475
+tok/s/GPU (dashed). Node boundary drawn between G = 8 and 16 (NVLink above,
+InfiniBand below).
+
+| attr | kind | values | meaning |
+|---|---|---|---|
+| `gpus` | state | 8 … 4096 (powers of two) | cluster size W; tokens/GPU/step = gbs·4096/W |
+| `gbs` | state | 1920 … 30720 | sequences per step (DeepSeek's 15,360 default) |
+| `zero` | state | 1 · 2 · 3 | what is sharded: optimizer · + grads · + weights |
+| `model` | state | `dsv3` · `dense` | 671B total, or the dense counterfactual at the 36.6B ACTIVE count (same FLOPs/token) |
+| `hw` | view | HARDWARE key | link rates, fp8 peak, capacity (H800 default) |
+| state | | `#f:<id>={gpus,gbs,zero,model}` | URL hash, when the element has an id |
+
+Readout (`.ro`, height reserved): at rest the pincer sentence (first fitting
+G, its link, sync vs SOL vs realized); on row hover the exact terms.
+`fsdpSweep(cfg)` is node-importable (goldens `fsdp.*`); test affordances:
+`g[data-row=G]` (opacity 0 past the cluster), `rect[data-mem|data-time]`
+with `data-true`, `text[data-memval|data-syncval]`, `rect[data-first]`,
+`line[data-comp|data-real]`.
+
 ## Other elements (unchanged conventions)
 - `<dsv3-trace level height title config>` — the canvas trace viewer over the
   simulator (not yet on a published page; the timing posts' widget).

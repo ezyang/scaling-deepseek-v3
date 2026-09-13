@@ -19,6 +19,7 @@ import { resolveMatmuls, RECIPES } from '../src/recipes.js';
 import { blockGraph, analyze, RECOMPUTE_PRESETS, DTYPE_BYTES } from '../src/blockgraph.js';
 import { defaultConfig } from '../src/sim.js';
 import { buildCells, cellsEnv } from '../src/cells.js';
+import { fsdpSweep } from '../src/fsdp.js';
 
 const FILE = fileURLToPath(new URL('../tests/goldens.json', import.meta.url));
 const G = {};
@@ -40,6 +41,14 @@ for (const kind of ['moe', 'dense'])
         G.stash[`${kind}·${recipe}·${policy}${T ? '·T' : ''}`] =
           { savedBytes: a.savedBytes, replayFrac: a.replayFrac, ...(T ? {} : { buckets: a.buckets }) };
       }
+
+// the FSDP sweep (studies/fsdp.html): per-G memory + sync at the story configs
+G.fsdp = {};
+for (const [name, cfg] of [['dsv3-z3', {}], ['dsv3-z1', { zero: 1 }], ['dense-z3', { model: 'dense' }], ['dsv3-z3-1024', { gpus: 1024 }]]) {
+  const S = fsdpSweep(cfg);
+  G.fsdp[name] = { firstFit: S.firstFit?.G ?? null, comp: S.rows[0].comp, realized: S.rows[0].realized,
+    rows: Object.fromEntries(S.rows.map((r) => [r.G, { mem: r.memTotal, sync: r.sync, rs: r.rs, ar: r.ar, ag: r.ag }])) };
+}
 
 // trace sim: step time + MFU per refinement level (seeded — deterministic),
 // plus the two calibration anchors
