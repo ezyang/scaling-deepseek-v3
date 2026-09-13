@@ -383,6 +383,42 @@ G, its link, sync vs SOL vs realized); on row hover the exact terms.
 with `data-true`, `text[data-memval|data-syncval]`, `rect[data-first]`,
 `line[data-comp|data-real]`.
 
+## `<dsv3-sol hw=… recipe=… recompute=… gpus=… gbs=… seq=…>` — the summed step (src/sol.js, post 03 draft)
+
+The stupidest step-time model (studies/03-sol.html): no timeline, no
+overlap, no communication. Every op of the 61-layer stack plus the head is
+priced at the PEAK rate of the dtype its recipe runs it in (fp8 flavors at
+the fp8 peak, the fp32 router on CUDA cores, vector work at the bf16 rate —
+the FLOP strips' flopEq convention), forward + backward (2× forward, the
+loss forward-only) + whatever the recompute policy replays, and summed.
+Compute is conserved under any parallelism, so there is no parallelism
+knob: the per-GPU step is tokens/GPU (gbs·seq/gpus) × Σ FLOP/token ÷ rate.
+Rows = forward / backward / recompute / total, each a stack by op group
+(attention core · MLA projections · routed experts · shared expert · dense
+FFN · router · norms/RoPE/SwiGLU · lm head/loss); a linear seconds axis that
+autoscales to the longest thing on it (labels snap, positions tween); on
+the total row a dashed ghost of the untreated step (all-bf16, nothing
+recomputed) — overhang past the bar, or a tick where the total overshoots;
+and a dashed "reported step" line = tokens/GPU ÷ the vendor-reported
+throughput (H800: implied by DeepSeek's GPU-hours, 1,475 tok/s/GPU; GB200/
+GB300: NVIDIA's NeMo numbers; none for H100).
+
+| attr | kind | values | meaning |
+|---|---|---|---|
+| `hw` | state | `h800` · `h100` · `gb200` · `gb300` | peak rates + the reported line |
+| `recipe` | state | RECIPES key | which dtype each matmul runs in |
+| `recompute` | state | `none` · `dsv3` · `attn-replay` · `full` | RECOMPUTE_PRESETS key: what replays in backward |
+| `gpus` | state | 8 … 4096 | cluster size |
+| `gbs` · `seq` | state | 1920 … 30720 · 2048 … 32768 | sequences per step × tokens per sequence (attention is quadratic in seq) |
+| state | | `#s:<id>={hw,recipe,recompute,gpus,gbs,seq}` | URL hash, when the element has an id |
+
+Readout (`.ro`, height reserved): at rest the sum and its terms; row hover
+the row's pieces; segment hover the piece's FLOP/token, dtype peak, seconds
+and share. `solStep(cfg)` / `solFlops(cfg)` are node-importable (goldens
+`sol.*`); test affordances: `g[data-row=fwd|bwd|replay|total]`,
+`rect[data-seg=<group>]` with `data-true`, `text[data-rowval]`,
+`[data-ghost]`, `line[data-rep]`.
+
 ## Other elements (unchanged conventions)
 - `<dsv3-trace level height title config>` — the canvas trace viewer over the
   simulator (not yet on a published page; the timing posts' widget).

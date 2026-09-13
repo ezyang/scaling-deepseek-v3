@@ -25,7 +25,7 @@ import { decode, encode } from './pngio.mjs';
 
 const W = 1500, H = 2600;   // shot window; a widget touching its edge = enlarge it
 const PAGE01 = 'studies/01-deepseek-diagram.html', PAGE02 = 'studies/02-hopper-memory.html', PAGE03 = 'studies/blackwell-memory.html';
-const PAGE41 = 'studies/dsv41-flash.html', PAGEF = 'studies/fsdp.html';
+const PAGE41 = 'studies/dsv41-flash.html', PAGEF = 'studies/fsdp.html', PAGES = 'studies/03-sol.html';
 const SHOTS = [
   { name: '01-diagram', page: PAGE01, sel: 'dsv3-anatomy[layer="diagram"]' },
   { name: '01-params', page: PAGE01, sel: 'dsv3-anatomy[layer="params-diagram"]' },
@@ -52,6 +52,8 @@ const SHOTS = [
   { name: 'v41-params', page: PAGE41, sel: 'dsv41-anatomy[layer="params-diagram"]' },
   // the FSDP sweep (unpublished standalone study)
   { name: 'fsdp-sweep', page: PAGEF, sel: 'dsv3-fsdp' },
+  // 03 (draft): the summed step
+  { name: '03-sol', page: PAGES, sel: 'dsv3-sol' },
 ];
 
 const update = process.argv.includes('--update');

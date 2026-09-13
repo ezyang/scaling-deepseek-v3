@@ -20,6 +20,7 @@ import { blockGraph, analyze, RECOMPUTE_PRESETS, DTYPE_BYTES } from '../src/bloc
 import { defaultConfig } from '../src/sim.js';
 import { buildCells, cellsEnv } from '../src/cells.js';
 import { fsdpSweep } from '../src/fsdp.js';
+import { solStep } from '../src/sol.js';
 
 const FILE = fileURLToPath(new URL('../tests/goldens.json', import.meta.url));
 const G = {};
@@ -48,6 +49,15 @@ for (const [name, cfg] of [['dsv3-z3', {}], ['dsv3-z1', { zero: 1 }], ['dense-z3
   const S = fsdpSweep(cfg);
   G.fsdp[name] = { firstFit: S.firstFit?.G ?? null, comp: S.rows[0].comp, realized: S.rows[0].realized,
     rows: Object.fromEntries(S.rows.map((r) => [r.G, { mem: r.memTotal, sync: r.sync, rs: r.rs, ar: r.ar, ag: r.ag }])) };
+}
+
+// the summed step (studies/03-sol.html): per pass × op group seconds at the story configs
+G.sol = {};
+for (const [name, cfg] of [['h800-dsv3', {}], ['h800-bf16-none', { recipe: 'bf16', recompute: 'none' }],
+  ['h800-attn-replay', { recompute: 'attn-replay' }], ['gb300-nemo', { hw: 'gb300', recipe: 'nv-mxfp8', recompute: 'none', gpus: 256, gbs: 4096 }]]) {
+  const S = solStep(cfg);
+  G.sol[name] = { total: S.total, reported: S.reported, flopsTok: S.flopsTok, rows: S.rows,
+    cells: Object.fromEntries(S.cells.map((c) => [`${c.pass}·${c.group}`, c.s])) };
 }
 
 // trace sim: step time + MFU per refinement level (seeded — deterministic),

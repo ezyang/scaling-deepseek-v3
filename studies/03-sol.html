@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script data-theme>document.documentElement.classList.toggle('dark', (localStorage.getItem('dsv3-theme') ?? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')) === 'dark');</script>
+  <title>03 (draft)</title>
+  <link rel="stylesheet" href="./study.css?v=9abf5fa0">
+  <style>
+    dsv3-sol { display: block; margin: 14px 0 26px; }
+  </style>
+</head>
+
+<body>
+  <main>
+    <h1>03 (draft)</h1>
+
+    <dsv3-sol id="sum" style="min-height:330px"></dsv3-sol>
+
+  </main>
+  <!-- cache stamps: regenerate with `node scripts/stamp.mjs` -->
+  <script type="importmap">
+  {
+    "imports": {
+      "../src/anatomy.js": "../src/anatomy.js?v=3eb103c0",
+      "../src/audit.js": "../src/audit.js?v=55bebb06",
+      "../src/blockgraph.js": "../src/blockgraph.js?v=59818233",
+      "../src/bwd.js": "../src/bwd.js?v=92618f1f",
+      "../src/cells.js": "../src/cells.js?v=179327b1",
+      "../src/compare.js": "../src/compare.js?v=d3cae233",
+      "../src/dsv41.js": "../src/dsv41.js?v=01491f34",
+      "../src/dsv41model.js": "../src/dsv41model.js?v=db63a9e2",
+      "../src/fsdp.js": "../src/fsdp.js?v=9330595a",
+      "../src/localmodel.js": "../src/localmodel.js?v=7b110bff",
+      "../src/memory.js": "../src/memory.js?v=abe7690c",
+      "../src/model.js": "../src/model.js?v=7cdef05d",
+      "../src/params.js": "../src/params.js?v=13936278",
+      "../src/recipes.js": "../src/recipes.js?v=c6c7fab6",
+      "../src/sheet.js": "../src/sheet.js?v=04fc79a1",
+      "../src/sim.js": "../src/sim.js?v=262eedc6",
+      "../src/sol.js": "../src/sol.js?v=f046efdf",
+      "../src/theme.js": "../src/theme.js?v=cf07b25a",
+      "../src/trace.js": "../src/trace.js?v=61553c96",
+      "../src/ui.js": "../src/ui.js?v=36c43837",
+      "../src/viewer.js": "../src/viewer.js?v=aaa62d87",
+      "./mobile.js": "./mobile.js?v=2dbf376b",
+      "./series.js": "./series.js?v=1901fecd",
+      "./toc.js": "./toc.js?v=11b69b8b"
+    }
+  }
+  </script>
+  <script type="module">
+    import '../src/viewer.js';
+    import '../src/sol.js';
+    import './series.js';
+  </script>
+</body>
+
+</html>
