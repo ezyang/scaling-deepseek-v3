@@ -193,8 +193,8 @@ class Dsv3Fsdp extends (typeof HTMLElement === 'undefined' ? class {} : HTMLElem
     B.push(`<text ${dims} x="${MX0}" y="9" font-weight="600" fill="${C('#0b0b0b')}">memory per GPU</text>`);
     let lx = MX0 + 92;
     for (const k of COMPS) { B.push(`<rect x="${lx}" y="3" width="7" height="7" fill="${C(COMP_C[k])}"/><text ${dims} x="${lx + 10}" y="9">${k}</text>`); lx += 10 + k.length * 5.2 + 12; }
-    B.push(`<text ${dims} x="${TX0}" y="9" font-weight="600" fill="${C('#0b0b0b')}">sync per step</text>`);
-    lx = TX0 + 82;
+    B.push(`<text ${dims} x="${TX0}" y="9" font-weight="600" fill="${C('#0b0b0b')}">sync per step at link speed of light</text>`);
+    lx = TX0 + 218;
     for (const [c, lab, st] of [['#6b5bd2', 'gradient reduce'], ['#f3f1fb', 'weight all-gather', '#6b5bd2']]) {
       B.push(`<rect x="${lx}" y="3" width="7" height="7" fill="${C(c)}"${st ? ` stroke="${C(st)}"` : ''}/><text ${dims} x="${lx + 10}" y="9">${lab}</text>`); lx += 10 + lab.length * 5 + 12;
     }
@@ -212,7 +212,7 @@ class Dsv3Fsdp extends (typeof HTMLElement === 'undefined' ? class {} : HTMLElem
     B.push(`<rect data-cap x="${f1(L.capX)}" y="${TOP - 4}" width="${f1(MX0 + PW - L.capX)}" height="${aY - TOP + 4}" fill="${C('#0b0b0b')}" opacity="0.07"/>`);
     B.push(`<text ${dims} x="${f1(L.capX)}" y="${TOP - 7}" text-anchor="middle">${L.hw.memGB} GiB</text>`);
     B.push(`<line data-comp="${L.comp}" x1="${f1(L.compX)}" y1="${TOP - 4}" x2="${f1(L.compX)}" y2="${aY}" stroke="${C('#0b0b0b')}" stroke-width="1"/>`);
-    B.push(`<text ${dims} x="${f1(L.compX)}" y="${TOP - 7}" text-anchor="middle" fill="${C('#0b0b0b')}">speed of light ${fmtS(L.comp)}</text>`);
+    B.push(`<text ${dims} x="${f1(L.compX)}" y="${TOP - 7}" text-anchor="middle" fill="${C('#0b0b0b')}">compute at fp8 peak ${fmtS(L.comp)}</text>`);
     B.push(`<line data-real="${L.realized}" x1="${f1(L.realX)}" y1="${TOP - 4}" x2="${f1(L.realX)}" y2="${aY}" stroke="${C('#898781')}" stroke-width="1" stroke-dasharray="3 2"/>`);
     B.push(`<text ${dims} x="${f1(L.realX)}" y="${TOP - 16}" text-anchor="middle">DeepSeek's realized step ${fmtS(L.realized)}</text>`);
     // node boundary
