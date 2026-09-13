@@ -1,4 +1,4 @@
-// @page studies/03-blackwell-memory.html
+// @page studies/blackwell-memory.html
 // the Megatron family: interleaved 1F1B with VP chunks on the wrap fold,
 // layout strings, GB200/GB300 capacity — the schedule strip's drawn peak
 // equals the law, the fold deals chunks round-robin, the sheet carries the

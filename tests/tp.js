@@ -1,4 +1,4 @@
-// @page studies/03-blackwell-memory.html
+// @page studies/blackwell-memory.html
 // tensor parallelism in the local model (Megatron's layout: SP on, expert-TP 1):
 // the TP stepper, DP = GPUs/PP/TP, expert-DP unchanged, sharded vs replicated
 // parameter classes, every stash ÷ TP — checked against the cells

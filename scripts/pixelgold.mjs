@@ -24,7 +24,7 @@ import { shoot, root } from './shotlib.mjs';
 import { decode, encode } from './pngio.mjs';
 
 const W = 1500, H = 2600;   // shot window; a widget touching its edge = enlarge it
-const PAGE01 = 'studies/01-deepseek-diagram.html', PAGE02 = 'studies/02-hopper-memory.html', PAGE03 = 'studies/03-blackwell-memory.html';
+const PAGE01 = 'studies/01-deepseek-diagram.html', PAGE02 = 'studies/02-hopper-memory.html', PAGE03 = 'studies/blackwell-memory.html';
 const PAGE41 = 'studies/dsv41-flash.html';
 const SHOTS = [
   { name: '01-diagram', page: PAGE01, sel: 'dsv3-anatomy[layer="diagram"]' },
@@ -39,14 +39,14 @@ const SHOTS = [
   { name: '02-final', page: PAGE02, sel: 'dsv3-anatomy[layer="local-diagram"]' },
   { name: '02-sheet', page: PAGE02, sel: 'dsv3-sheet' },
   // 03 (unpublished draft): the Megatron family — interleaved 1F1B, layouts, GB300/GB200 capacity
-  { name: '03-bill', page: PAGE03, sel: 'dsv3-layer[parts]:not([to])' },
-  { name: '03-ppfold', page: PAGE03, sel: 'dsv3-pp-fold' },
-  { name: '03-ppsched', page: PAGE03, sel: 'dsv3-pp-schedule[layer="local-diagram"]' },
-  { name: '03-ac', page: PAGE03, sel: 'dsv3-anatomy[layer="ac-layer"]' },
-  { name: '03-fp8', page: PAGE03, sel: 'dsv3-anatomy[layer="fp8-layer"]' },
-  { name: '03-mlperf', page: PAGE03, sel: 'dsv3-layer[parts][to]' },
-  { name: '03-final', page: PAGE03, sel: 'dsv3-anatomy[layer="local-diagram"]' },
-  { name: '03-sheet', page: PAGE03, sel: 'dsv3-sheet' },
+  { name: 'blackwell-bill', page: PAGE03, sel: 'dsv3-layer[parts]:not([to])' },
+  { name: 'blackwell-ppfold', page: PAGE03, sel: 'dsv3-pp-fold' },
+  { name: 'blackwell-ppsched', page: PAGE03, sel: 'dsv3-pp-schedule[layer="local-diagram"]' },
+  { name: 'blackwell-ac', page: PAGE03, sel: 'dsv3-anatomy[layer="ac-layer"]' },
+  { name: 'blackwell-fp8', page: PAGE03, sel: 'dsv3-anatomy[layer="fp8-layer"]' },
+  { name: 'blackwell-mlperf', page: PAGE03, sel: 'dsv3-layer[parts][to]' },
+  { name: 'blackwell-final', page: PAGE03, sel: 'dsv3-anatomy[layer="local-diagram"]' },
+  { name: 'blackwell-sheet', page: PAGE03, sel: 'dsv3-sheet' },
   // V4.1-Flash (unpublished draft): the CSA2-tabbed block diagram + params view
   { name: 'v41-diagram', page: PAGE41, sel: 'dsv41-anatomy[layer="diagram"]' },
   { name: 'v41-params', page: PAGE41, sel: 'dsv41-anatomy[layer="params-diagram"]' },
