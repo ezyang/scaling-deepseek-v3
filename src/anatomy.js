@@ -95,6 +95,8 @@ export class Dsv3AnatomyPlan extends HTMLElement {
     const kind = l?.kind ?? 'moe';
     const AV = !!l?.activeView;                                  // the tally's active/token toggle
     const LB = l?.getAttribute('lens') === 'param-bytes';        // bytes framing
+    const SQ = l?.getAttribute('lens') === 'params' && l?.hasAttribute('squares');   // count squares: one square = one expert (or one expert matrix)
+    const SQU = l?.getAttribute('squares') === 'matrix' ? PARAMS.expert / 3 : PARAMS.expert;
     const KM = kind === 'dense' ? A.denseLayers : A.layers - A.denseLayers;
     // byte strips share the diagram's scale unit: the block's largest op
     // fills one row (× block count under cumulative). Block boxes get NO
@@ -136,7 +138,15 @@ export class Dsv3AnatomyPlan extends HTMLElement {
       const N = { pp: PPl, zero: ZL, world: l?.world ?? LOCAL_PAR.world, tp: TPl }, V = l?._vtween;
       return V ? eff(V.prev) + (eff(N) - eff(V.prev)) * V.t : eff(N);
     };
-    const strip = (x, y, nParams) => {
+    const strip = (x, y, nParams, ghost = 0) => {
+      if (SQ) {   // count squares: solid for counted params, hollow for resident-but-uncounted (active view)
+        let g = '', i = 0;
+        const col = C(BYTE_COMPS[0].color), n = Math.floor(nParams / SQU), ng = Math.floor(ghost / SQU);
+        for (; i < n; i++) g += `<rect x="${x + (i % 30) * 5}" y="${y + Math.floor(i / 30) * 5}" width="4" height="3.5" fill="${col}"/>`;
+        for (let k = 0; k < ng; k++, i++) g += `<rect x="${x + (i % 30) * 5 + 0.4}" y="${y + Math.floor(i / 30) * 5 + 0.4}" width="3.2" height="2.7" fill="none" stroke="${col}" stroke-width="0.8"/>`;
+        if (!i && (nParams + ghost) / SQU > 0.02) g += `<rect x="${x + 0.4}" y="${y + 0.4}" width="3.2" height="2.7" fill="none" stroke="${col}" stroke-width="0.8"/>`;
+        return g;
+      }
       if (!LB || !nParams) return '';
       // FLOOR per comp (remainders round down); one hollow trace only when
       // the op would otherwise show nothing, in the largest remainder's color
@@ -171,10 +181,10 @@ export class Dsv3AnatomyPlan extends HTMLElement {
     S.push(`<text class="oplabel" x="${CX - 22}" y="${y - 2}">tokens</text>`);
     wire(14);
     const op = (label, dims, h = 22, opId = null, stripN = 0) => {
-      const hh = LB && stripN ? h + 8 : h;   // reserved strip row (stable across toggles)
+      const hh = (LB || SQ) && stripN ? h + 8 : h;   // reserved strip row (stable across toggles)
       S.push(`${opId ? `<g data-op="${opId}">` : ''}<rect class="op" x="${BX}" y="${y}" width="${W}" height="${hh}" rx="6"/>` +
         `<text class="oplabel" x="${BX + 9}" y="${y + 15}">${label}${dims ? ` <tspan class="dims">${dims}</tspan>` : ''}</text>` +
-        (LB && stripN ? strip(BX + 9, y + 20, stripN) : '') + `${opId ? '</g>' : ''}`);
+        ((LB || SQ) && stripN ? strip(BX + 9, y + 20, AV && SQ && opId === 'embed' ? 0 : stripN, AV && SQ && opId === 'embed' ? stripN : 0) : '') + `${opId ? '</g>' : ''}`);
       y += hh;
     };
     const blockBox = (k, label, dims) => {
@@ -219,11 +229,11 @@ export class Dsv3AnatomyPlan extends HTMLElement {
     wire(24, `norm out · ${A.hidden}`);
     // param lenses hide op dims uniformly — the lm head's 7168 → 129280 goes too
     const PL = LB || l?.getAttribute('lens') === 'params';
-    S.push(`<g data-op="lm_head"><rect class="box" x="${BX}" y="${y}" width="${W}" height="${LB ? 42 : 34}" rx="4"/>` +
+    S.push(`<g data-op="lm_head"><rect class="box" x="${BX}" y="${y}" width="${W}" height="${LB || SQ ? 42 : 34}" rx="4"/>` +
       `<text class="name" x="${BX + 8}" y="${y + 14}">lm head</text>` +
       `<text class="dims" x="${BX + 8}" y="${y + 27}">${!onHead ? headWhere : PL ? pw(Ev) : `${A.hidden} → ${A.vocab} ${pw(Ev)}`}</text>` +
-      (LB && onHead ? strip(BX + 8, y + 31, Ev) : '') + `</g>`);
-    y += LB ? 42 : 34;
+      ((LB || SQ) && onHead ? strip(BX + 8, y + 31, Ev) : '') + `</g>`);
+    y += LB || SQ ? 42 : 34;
     wire(24, `logits · ${A.vocab}`);
     op('softmax / loss', null);
     y += 8;
@@ -296,7 +306,7 @@ dsv3-anatomy dsv3-anatomy-plan { margin-top: 46px; }
 `;
 const FWD = ['controls', 'recipe', 'recipes', 'recompute', 'detail', 'transposed', 'for',
   'world', 'pp', 'vpp', 'ep', 'tp', 'tps', 'sched', 'fold', 'layout', 'a2a', 'grads', 'fp8params', 'hw', 'hws', 'facs', 'recomputes',   // the local lens's page-set parallelism + capacity + chip curation
-  'nocaption', 'kind', 'xlayers', 'xinflight', 'xtag', 'ctx', 'lens', 'strips', 'nostrips', 'optim', 'consolidated', 'local', 'cumulative'];
+  'nocaption', 'kind', 'xlayers', 'xinflight', 'xtag', 'ctx', 'lens', 'squares', 'strips', 'nostrips', 'optim', 'consolidated', 'local', 'cumulative'];
 export class Dsv3Anatomy extends HTMLElement {
   connectedCallback() {
     const lid = this.getAttribute('layer') ?? ((this.id || 'anatomy') + '-layer');

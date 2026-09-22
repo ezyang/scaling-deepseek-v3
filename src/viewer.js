@@ -1741,6 +1741,14 @@ export class Dsv3Layer extends HTMLElement {
         for (const [k2, g3] of [['cluster', gCluster], ['pipeline', gPipe], ['mesh', gMesh], ['zero', gZ]])
           if (KN(k2)) mini.append(g3);
       }
+      if (this.getAttribute('lens') === 'params' && this.hasAttribute('squares')) {
+        const leg = el('span');
+        leg.style.cssText = 'color:var(--c-52514e);margin-left:10px;font-size:11px;white-space:nowrap;';
+        leg.innerHTML = `<svg width="5" height="4" style="display:inline-block;margin:0;vertical-align:baseline"><rect width="5" height="4" fill="${C(BYTE_COMPS[0].color)}"/></svg>` +
+          (this.getAttribute('squares') === 'matrix' ? ` = one ${DSV3.hidden}×${DSV3.moeInter} expert matrix (${fmtP(PARAMS.expert / 3)} params)` : ` = one expert (${fmtP(PARAMS.expert)} params)`) +
+          (this.activeView ? ` · <svg width="5" height="4" style="display:inline-block;margin:0;vertical-align:baseline"><rect x="0.4" y="0.4" width="4.2" height="3.2" fill="none" stroke="${C(BYTE_COMPS[0].color)}" stroke-width="0.8"/></svg> = resident, not fired` : '');
+        mini.append(leg);
+      }
       if (this.getAttribute('lens') === 'param-bytes') {
         // the strip unit rescales with the ×N toggle — label it so the jump
         // reads as a unit change, not a glitch (▫ = nonzero but sub-square)
@@ -1982,6 +1990,11 @@ export class Dsv3Layer extends HTMLElement {
     const LENS = this.getAttribute('lens');
     const PBYTES = LENS === 'param-bytes';   // parameter MEMORY at bf16 (2 B/param)
     const PONLY = LENS === 'params' || PBYTES;   // parameter focus: intermediates/dims/aux hidden
+    // params lens + squares (PROTOTYPE): the COUNT as squares, one square =
+    // one routed expert's parameters (44M) — unitless, so no dtype is needed;
+    // the ×256 becomes a countable 8×32 grid. In the tally's active view the
+    // resident-but-idle experts (and the uncounted embedding) go hollow.
+    const PSQ = LENS === 'params' && this.hasAttribute('squares');
     // byte components stacked under each op, colored to match the memory-bars
     // segments, ONE global unit — the ratios ARE the picture. optim = weights +
     // optimizer states; consolidated = + fp32 gradients + a saved-activations
@@ -2090,7 +2103,7 @@ export class Dsv3Layer extends HTMLElement {
     // static/params tiers can never fill the in-box strip band (FLOP strips
     // need a dtype tier, param strips need the bytes lens) — compact boxes
     // instead of reserving space for strips that can't appear
-    const BQ = this._ctl.quant || PBYTES;
+    const BQ = this._ctl.quant || PBYTES || PSQ;
     // quant tiers reserve TWO picket rows per box (fwd + recompute) so the
     // recompute row pouring in/out never reflows
     const BH = this._ctl.quant ? 45 : BQ ? 38 : 32;      // bold matmul box height
@@ -2332,7 +2345,10 @@ export class Dsv3Layer extends HTMLElement {
     // flips may reflow in this profile.
     const ABS = PBYTES && this.getAttribute('strips') === 'absolute';
     const PB_BASE = PARAMS.largestOp.moe / FLOP_ROW;
-    const PB_UNIT = PB_BASE * (CUM && !ABS && !LOCAL ? KMUL : 1);   // local keeps the fixed 448 MiB unit
+    // squares="matrix": one square = one 7168×2048 expert matrix (a third of
+    // an expert) — the routed down-proj box is then exactly 256 squares
+    const SQ_UNIT = this.getAttribute('squares') === 'matrix' ? PARAMS.expert / 3 : PARAMS.expert;
+    const PB_UNIT = PSQ ? SQ_UNIT : PB_BASE * (CUM && !ABS && !LOCAL ? KMUL : 1);   // local keeps the fixed 448 MiB unit; squares = one expert
     // absolute profile: the STRIP grows, not the unit. The ×N toggle tweens
     // this._tween 0→1: squares pour in and the boxes grow with the filled
     // rows (compact at per-block, tall at cumulative).
@@ -2368,17 +2384,30 @@ export class Dsv3Layer extends HTMLElement {
       const n = cells.reduce((t, r) => t + r.n, 0);
       return n || (cells.some((r) => r.f > 0.02) ? 1 : 0);
     };
-    const stripExtra = (nParams, cls, row = FLOP_ROW) => {   // box growth beyond the built-in strip row
-      if (NOSTRIPS || !nParams || !(ABS || OPTIM)) return 0;
-      return (Math.max(1, Math.ceil(stripCells(nParams, cls) / row)) - 1) * 6;
+    // squares lens, active view: the routed experts this token does NOT fire
+    // are still resident — drawn hollow after the solid ones (the box keeps
+    // its resident height, so the toggle never reflows)
+    const ghostParam = (id) => {
+      if (!PSQ || !this.activeView || this.kind !== 'moe') return 0;
+      const p = PCNT[id];
+      return Array.isArray(p) ? p[0] * (DSV3.routedExperts - DSV3.topk) : 0;
     };
-    const paramBlocks = (x, y, nParams, cls, row = FLOP_ROW) => {
-      if (NOSTRIPS || !PBYTES || !nParams) return;
+    const stripExtra = (nParams, cls, row = FLOP_ROW, ghost = 0) => {   // box growth beyond the built-in strip row
+      if (NOSTRIPS || !(nParams + ghost) || !(ABS || OPTIM || PSQ)) return 0;
+      return (Math.max(1, Math.ceil((stripCells(nParams, cls) + stripCells(ghost, cls)) / row)) - 1) * 6;
+    };
+    const paramBlocks = (x, y, nParams, cls, row = FLOP_ROW, ghost = 0) => {
+      if (NOSTRIPS || !(PBYTES || PSQ) || !(nParams + ghost)) return;
       const cells = compCells(nParams, cls);
       let g = '', i = 0;
       for (const { c, n } of cells)
         for (let k = 0; k < n; k++, i++)
           g += `<rect x="${x + (i % row) * 6}" y="${y + Math.floor(i / row) * 6}" width="5" height="4" fill="${C(c.color)}"/>`;
+      if (ghost) {
+        const gc = C(COMPS[0].color);
+        for (let k = 0, n = stripCells(ghost, cls); k < n; k++, i++)
+          g += `<rect x="${x + (i % row) * 6 + 0.4}" y="${y + Math.floor(i / row) * 6 + 0.4}" width="4.2" height="3.2" fill="none" stroke="${gc}" stroke-width="0.8"/>`;
+      }
       if (!i) {
         const top = cells.reduce((b2, r) => r.f > b2.f ? r : b2, { f: 0 });
         if (top.f > 0.02)
@@ -2817,7 +2846,7 @@ export class Dsv3Layer extends HTMLElement {
     };
     const mmBox = (ids, x, y, markIds, label, dims) => {
       const spec = MATMULS.find(m => m.id === ids[0]);
-      const extra = stripExtra(sqParam(ids[0]), clsOf(ids[0]))
+      const extra = stripExtra(sqParam(ids[0]), clsOf(ids[0]), FLOP_ROW, ghostParam(ids[0]))
         + barExtra(ana.byId[(markIds ?? ids)[0]]?.flopsTok, dt(ids[0]), W - 16, dtPm(ids[0]));
       P.push(`<g data-op="${ids[0]}"${boxTip((markIds ?? ids)[0], dims ? undefined : spec.dimsNote, ids[0])}>` +
         `<rect class="box" x="${x}" y="${y}" width="${W}" height="${BH + extra}" rx="4"/>` +
@@ -2828,7 +2857,7 @@ export class Dsv3Layer extends HTMLElement {
       P.push(dtBtn(ids[0], x + W - 58, y + 6));
       auxOut((markIds ?? ids)[0], x, y + 19);
       flopBar(x + 8, y + 30, ana.byId[(markIds ?? ids)[0]]?.flopsTok, dt(ids[0]), W - 16, dtPm(ids[0]), (markIds ?? ids)[0]);
-      paramBlocks(x + 8, y + 30, sqParam(ids[0]), clsOf(ids[0]));
+      paramBlocks(x + 8, y + 30, sqParam(ids[0]), clsOf(ids[0]), FLOP_ROW, ghostParam(ids[0]));
       return y + BH + extra;
     };
     // the SwiGLU-input quantize pill's tooltip (dtype tiers only draw the pill)
