@@ -28,6 +28,19 @@ T.log('gate/up dims multiplied', gu);
 T.check('gate/up shows 7.5B', gu?.includes('7.5B'), gu);
 sizesBtn.click(); await T.tick();   // restore
 
-// params-lens instance: same compact boxes
-T.check('params diagram also compact', !boxes(pl()).includes(38) && boxes(pl()).includes(32), boxes(pl()).join(','));
+// params-lens instance: count squares, one square = one 7168×2048 expert
+// matrix — active (blue) first, inactive (grey) after
+const fills = (id) => {
+  const g = pl().querySelector(`g[data-op="${id}"]`), b = g.getBBox();
+  const r = [...pl().querySelectorAll('rect[width="5"][height="4"]')].filter((q) => {
+    const x = +q.getAttribute('x'), y = +q.getAttribute('y');
+    return x >= b.x && x <= b.x + b.width && y >= b.y && y <= b.y + b.height;
+  });
+  return { blue: r.filter((q) => q.getAttribute('fill') === '#2a78d6').length, grey: r.filter((q) => q.getAttribute('fill') === '#c3c2b7').length };
+};
+T.check('gate/up: 16 active + 496 inactive matrices', JSON.stringify(fills('ffn_gate_up')) === '{"blue":16,"grey":496}', JSON.stringify(fills('ffn_gate_up')));
+T.check('down: 8 active + 248 inactive matrices', JSON.stringify(fills('ffn_down')) === '{"blue":8,"grey":248}', JSON.stringify(fills('ffn_down')));
+const emb = document.querySelector('dsv3-anatomy:has(#params-diagram) [data-op="embed"]');
+const embF = [...(emb?.querySelectorAll('rect[width="4"]') ?? [])].map((q) => q.getAttribute('fill'));
+T.check('plan: embedding squares all inactive grey', embF.length > 0 && embF.every((f) => f === '#c3c2b7'), embF.length + ' ' + [...new Set(embF)]);
 T.done();

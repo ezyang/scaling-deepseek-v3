@@ -45,7 +45,7 @@ const fmtIF = (v) => Number.isInteger(v * 4) ? String(v) : v.toFixed(2);
 const schedName = (l) => l.sched === 'one' ? '×1mb' : l.sched === 'interleaved'
   ? (l.pp > 1 ? `1F1B·VP${l.vpp}` : '1F1B') : l.pp > 1 ? 'DualPipeV' : '1F1B';
 import { schedGeom } from './localmodel.js';
-import { BYTE_COMPS, ACT_BUCKETS, actBucketsOf, PP_CHOICES, LOCAL_PAR, CFG_DEFAULTS,
+import { BYTE_COMPS, INACTIVE, ACT_BUCKETS, actBucketsOf, PP_CHOICES, LOCAL_PAR, CFG_DEFAULTS,
   vstagesOf, ppStage, actLayerBytes, inflightOf, peakStage,
   mmSig, markSig, HAZIZA_CFG } from './localmodel.js';
 
@@ -1744,9 +1744,11 @@ export class Dsv3Layer extends HTMLElement {
       if (this.getAttribute('lens') === 'params' && this.hasAttribute('squares')) {
         const leg = el('span');
         leg.style.cssText = 'color:var(--c-52514e);margin-left:10px;font-size:11px;white-space:nowrap;';
-        leg.innerHTML = `<svg width="5" height="4" style="display:inline-block;margin:0;vertical-align:baseline"><rect width="5" height="4" fill="${C(BYTE_COMPS[0].color)}"/></svg>` +
-          (this.getAttribute('squares') === 'matrix' ? ` = one ${DSV3.hidden}×${DSV3.moeInter} expert matrix (${fmtP(PARAMS.expert / 3)} params)` : ` = one expert (${fmtP(PARAMS.expert)} params)`) +
-          (this.activeView ? ` · <svg width="5" height="4" style="display:inline-block;margin:0;vertical-align:baseline"><rect x="0.4" y="0.4" width="4.2" height="3.2" fill="none" stroke="${C(BYTE_COMPS[0].color)}" stroke-width="0.8"/></svg> = resident, not fired` : '');
+        const sw = (r) => `<svg width="5" height="4" style="display:inline-block;margin:0;vertical-align:baseline">${r}</svg>`;
+        leg.innerHTML = `${sw(`<rect width="5" height="4" fill="${C(BYTE_COMPS[0].color)}"/>`)} active · ` +
+          sw(this.activeView ? `<rect x="0.4" y="0.4" width="4.2" height="3.2" fill="none" stroke="${C(INACTIVE)}" stroke-width="0.8"/>` : `<rect width="5" height="4" fill="${C(INACTIVE)}"/>`) +
+          (this.activeView ? ' inactive (not counted)' : ' inactive') +
+          (this.getAttribute('squares') === 'matrix' ? ` · one square = one ${DSV3.hidden}×${DSV3.moeInter} expert matrix (${fmtP(PARAMS.expert / 3)} params)` : ` · one square = one expert (${fmtP(PARAMS.expert)} params)`);
         mini.append(leg);
       }
       if (this.getAttribute('lens') === 'param-bytes') {
@@ -1990,10 +1992,10 @@ export class Dsv3Layer extends HTMLElement {
     const LENS = this.getAttribute('lens');
     const PBYTES = LENS === 'param-bytes';   // parameter MEMORY at bf16 (2 B/param)
     const PONLY = LENS === 'params' || PBYTES;   // parameter focus: intermediates/dims/aux hidden
-    // params lens + squares (PROTOTYPE): the COUNT as squares, one square =
+    // params lens + squares: the COUNT as squares, one square =
     // one routed expert's parameters (44M) — unitless, so no dtype is needed;
-    // the ×256 becomes a countable 8×32 grid. In the tally's active view the
-    // resident-but-idle experts (and the uncounted embedding) go hollow.
+    // the ×256 becomes a countable 8×32 grid: 8 active blue, 248 inactive
+    // grey (INACTIVE). In the tally's active view the inactive go hollow.
     const PSQ = LENS === 'params' && this.hasAttribute('squares');
     // byte components stacked under each op, colored to match the memory-bars
     // segments, ONE global unit — the ratios ARE the picture. optim = weights +
@@ -2384,14 +2386,16 @@ export class Dsv3Layer extends HTMLElement {
       const n = cells.reduce((t, r) => t + r.n, 0);
       return n || (cells.some((r) => r.f > 0.02) ? 1 : 0);
     };
-    // squares lens, active view: the routed experts this token does NOT fire
-    // are still resident — drawn hollow after the solid ones (the box keeps
-    // its resident height, so the toggle never reflows)
+    // squares lens: the routed experts a token does NOT fire (inactive) draw
+    // grey after the active blue ones, in BOTH tally views — filled in the
+    // total view (counted), hollow in the active view (resident, uncounted;
+    // the box keeps its resident height, so the toggle never reflows)
     const ghostParam = (id) => {
-      if (!PSQ || !this.activeView || this.kind !== 'moe') return 0;
+      if (!PSQ || this.kind !== 'moe') return 0;
       const p = PCNT[id];
       return Array.isArray(p) ? p[0] * (DSV3.routedExperts - DSV3.topk) : 0;
     };
+    const liveParam = (id) => sqParam(id) - (this.activeView ? 0 : ghostParam(id));   // the blue (active) share
     const stripExtra = (nParams, cls, row = FLOP_ROW, ghost = 0) => {   // box growth beyond the built-in strip row
       if (NOSTRIPS || !(nParams + ghost) || !(ABS || OPTIM || PSQ)) return 0;
       return (Math.max(1, Math.ceil((stripCells(nParams, cls) + stripCells(ghost, cls)) / row)) - 1) * 6;
@@ -2404,9 +2408,11 @@ export class Dsv3Layer extends HTMLElement {
         for (let k = 0; k < n; k++, i++)
           g += `<rect x="${x + (i % row) * 6}" y="${y + Math.floor(i / row) * 6}" width="5" height="4" fill="${C(c.color)}"/>`;
       if (ghost) {
-        const gc = C(COMPS[0].color);
+        const gc = C(INACTIVE);
         for (let k = 0, n = stripCells(ghost, cls); k < n; k++, i++)
-          g += `<rect x="${x + (i % row) * 6 + 0.4}" y="${y + Math.floor(i / row) * 6 + 0.4}" width="4.2" height="3.2" fill="none" stroke="${gc}" stroke-width="0.8"/>`;
+          g += this.activeView
+            ? `<rect x="${x + (i % row) * 6 + 0.4}" y="${y + Math.floor(i / row) * 6 + 0.4}" width="4.2" height="3.2" fill="none" stroke="${gc}" stroke-width="0.8"/>`
+            : `<rect x="${x + (i % row) * 6}" y="${y + Math.floor(i / row) * 6}" width="5" height="4" fill="${gc}"/>`;
       }
       if (!i) {
         const top = cells.reduce((b2, r) => r.f > b2.f ? r : b2, { f: 0 });
@@ -2846,7 +2852,7 @@ export class Dsv3Layer extends HTMLElement {
     };
     const mmBox = (ids, x, y, markIds, label, dims) => {
       const spec = MATMULS.find(m => m.id === ids[0]);
-      const extra = stripExtra(sqParam(ids[0]), clsOf(ids[0]), FLOP_ROW, ghostParam(ids[0]))
+      const extra = stripExtra(liveParam(ids[0]), clsOf(ids[0]), FLOP_ROW, ghostParam(ids[0]))
         + barExtra(ana.byId[(markIds ?? ids)[0]]?.flopsTok, dt(ids[0]), W - 16, dtPm(ids[0]));
       P.push(`<g data-op="${ids[0]}"${boxTip((markIds ?? ids)[0], dims ? undefined : spec.dimsNote, ids[0])}>` +
         `<rect class="box" x="${x}" y="${y}" width="${W}" height="${BH + extra}" rx="4"/>` +
@@ -2857,7 +2863,7 @@ export class Dsv3Layer extends HTMLElement {
       P.push(dtBtn(ids[0], x + W - 58, y + 6));
       auxOut((markIds ?? ids)[0], x, y + 19);
       flopBar(x + 8, y + 30, ana.byId[(markIds ?? ids)[0]]?.flopsTok, dt(ids[0]), W - 16, dtPm(ids[0]), (markIds ?? ids)[0]);
-      paramBlocks(x + 8, y + 30, sqParam(ids[0]), clsOf(ids[0]), FLOP_ROW, ghostParam(ids[0]));
+      paramBlocks(x + 8, y + 30, liveParam(ids[0]), clsOf(ids[0]), FLOP_ROW, ghostParam(ids[0]));
       return y + BH + extra;
     };
     // the SwiGLU-input quantize pill's tooltip (dtype tiers only draw the pill)
@@ -3173,13 +3179,17 @@ export class Dsv3Layer extends HTMLElement {
     } else {
     let shBot = 0, shTop = 0;
     const SHX = C2 + 320, shMid = SHX + 22;        // shared-expert mini column; spine down its LEFT, like every column
+    // squares lens: the shared expert counts too — always active (blue),
+    // its own strip row (the box grows by it)
+    const SHH = PSQ ? BH : 34;
     const shBox = (name, dims, tip, yy, pc = '', markId = null, dtId = null) => {
       const n = name.includes('gate/up') ? 2 * DSV3.hidden * DSV3.moeInter : DSV3.hidden * DSV3.moeInter;
       P.push(`<g data-op="shared" data-tip="${escAttr(`${tip}\nparameters: ${n.toLocaleString('en-US')}`)}">` +
-      `<rect class="box" x="${SHX}" y="${yy}" width="140" height="34" rx="4"/>` +
+      `<rect class="box" x="${SHX}" y="${yy}" width="140" height="${SHH}" rx="4"/>` +
       `<text class="name" x="${SHX + 6}" y="${yy + 14}">${name}</text>` +
       `<text class="dims" x="${SHX + 6}" y="${yy + 27}">${PONLY ? pc.trim()
         : flatten(dims) + (dtId && this._ctl.dtype && !this._ctl.marks ? '' : pc)}</text></g>`);   // the dtype mirror takes the params' spot (the count stays in the tooltip + grouped box)
+      if (PSQ) paramBlocks(SHX + 6, yy + 30, n, 'd', 21);
       // MIRRORED mark: the shared expert lives inside the grouped node, so
       // its button toggles the same mark (both buttons re-render in sync).
       // The dtype MIRROR takes the same top-right slot in the dtype tier
@@ -3268,7 +3278,7 @@ export class Dsv3Layer extends HTMLElement {
     // GEMM (quantize = identity under bf16)
     if (QBOX) {
       z = wireOut(['gate_up'], SX2, z, DET ? { name: 'gate, up (routed)', frac: DSV3.topk / nExp, flat: true } : { flat: true });
-      if (DET) wire(shMid, rowG + 34, z);
+      if (DET) wire(shMid, rowG + SHH, z);
       const rowQ = z;
       z = opNode('quant', DET ? 'quantize · for the stash' : 'quantize', C2, z);
       if (DET) {
@@ -3280,7 +3290,7 @@ export class Dsv3Layer extends HTMLElement {
     } else {
       if (DET) tensorChip(['quant'], shMid + 14, z + 4, { name: 'gate, up (sh)', tdims: '2×2048', frac: 1 / nExp, chip: 'quant:sh' });
       z = wireOut(['quant'], SX2, z, DET ? { name: 'gate, up (routed)', tdims: `${DSV3.topk}×2×2048`, frac: DSV3.topk / nExp } : undefined);
-      if (DET) wire(shMid, rowG + 34, z);
+      if (DET) wire(shMid, rowG + SHH, z);
     }
     // gate-at-swiglu, not gate-at-combine: by linearity the router weights can
     // multiply the swiglu output before the down-proj (one fused kernel,
@@ -3302,7 +3312,7 @@ export class Dsv3Layer extends HTMLElement {
         'one plain GEMM per token — follows the ffn down mark and dtype; its output joins the routed sum', rowD,
         pk(DSV3.moeInter * DSV3.hidden, false, 'd'), 'ffn_down', 'ffn_down');
       tensorChip(['ffn_down'], shMid + 14, z + 4, { name: 'shared out', tdims: '7168', frac: 1 / nExp });
-      shBot = rowD + 34;
+      shBot = rowD + SHH;
     }
     // group tally like the MLA label/tabs; the routing description (top-8 of
     // 256) lives on the router/dispatch boxes, not here

@@ -18,6 +18,10 @@ export const BYTE_COMPS = [
   { prop: 'showGrads', color: '#eb6834', bpp: 4, zthresh: 2, label: 'gradients (fp32, 4 B/param)' },
   { prop: 'showOptim', color: '#1baf7a', bpp: 8, zthresh: 1, label: 'optimizer states (8 B/param)' },
 ];
+// params-squares lens: active params wear the weights blue, inactive (idle
+// routed experts, the embedding table) this grey — in BOTH tally views;
+// the active view only switches the inactive squares to hollow (uncounted)
+export const INACTIVE = '#c3c2b7';
 
 // per-op activation buckets for the fit chart's acts breakdown — the same
 // stashes the wire chips draw, grouped Haziza-style. 'other' is a catch-all

@@ -10,7 +10,7 @@
 import { DSV3 } from './model.js';
 import { fmtP, fmtBytes, tokensCss, applyHighlight } from './viewer.js';
 import { C } from './theme.js';
-import { BYTE_COMPS, LOCAL_PAR, ppStage, inflightOf } from './localmodel.js';
+import { BYTE_COMPS, INACTIVE, LOCAL_PAR, ppStage, inflightOf } from './localmodel.js';
 import { PARAMS } from './params.js';
 
 // named parameter quantities, shared with the diagram's tabs (src/params.js)
@@ -139,12 +139,14 @@ export class Dsv3AnatomyPlan extends HTMLElement {
       return V ? eff(V.prev) + (eff(N) - eff(V.prev)) * V.t : eff(N);
     };
     const strip = (x, y, nParams, ghost = 0) => {
-      if (SQ) {   // count squares: solid for counted params, hollow for resident-but-uncounted (active view)
+      if (SQ) {   // count squares: active blue, then inactive grey (hollow = uncounted, active view)
         let g = '', i = 0;
-        const col = C(BYTE_COMPS[0].color), n = Math.floor(nParams / SQU), ng = Math.floor(ghost / SQU);
+        const col = C(BYTE_COMPS[0].color), gc = C(INACTIVE), n = Math.floor(nParams / SQU), ng = Math.floor(ghost / SQU);
         for (; i < n; i++) g += `<rect x="${x + (i % 30) * 5}" y="${y + Math.floor(i / 30) * 5}" width="4" height="3.5" fill="${col}"/>`;
-        for (let k = 0; k < ng; k++, i++) g += `<rect x="${x + (i % 30) * 5 + 0.4}" y="${y + Math.floor(i / 30) * 5 + 0.4}" width="3.2" height="2.7" fill="none" stroke="${col}" stroke-width="0.8"/>`;
-        if (!i && (nParams + ghost) / SQU > 0.02) g += `<rect x="${x + 0.4}" y="${y + 0.4}" width="3.2" height="2.7" fill="none" stroke="${col}" stroke-width="0.8"/>`;
+        for (let k = 0; k < ng; k++, i++) g += AV
+          ? `<rect x="${x + (i % 30) * 5 + 0.4}" y="${y + Math.floor(i / 30) * 5 + 0.4}" width="3.2" height="2.7" fill="none" stroke="${gc}" stroke-width="0.8"/>`
+          : `<rect x="${x + (i % 30) * 5}" y="${y + Math.floor(i / 30) * 5}" width="4" height="3.5" fill="${gc}"/>`;
+        if (!i && (nParams + ghost) / SQU > 0.02) g += `<rect x="${x + 0.4}" y="${y + 0.4}" width="3.2" height="2.7" fill="none" stroke="${nParams ? col : gc}" stroke-width="0.8"/>`;
         return g;
       }
       if (!LB || !nParams) return '';
@@ -184,7 +186,7 @@ export class Dsv3AnatomyPlan extends HTMLElement {
       const hh = (LB || SQ) && stripN ? h + 8 : h;   // reserved strip row (stable across toggles)
       S.push(`${opId ? `<g data-op="${opId}">` : ''}<rect class="op" x="${BX}" y="${y}" width="${W}" height="${hh}" rx="6"/>` +
         `<text class="oplabel" x="${BX + 9}" y="${y + 15}">${label}${dims ? ` <tspan class="dims">${dims}</tspan>` : ''}</text>` +
-        ((LB || SQ) && stripN ? strip(BX + 9, y + 20, AV && SQ && opId === 'embed' ? 0 : stripN, AV && SQ && opId === 'embed' ? stripN : 0) : '') + `${opId ? '</g>' : ''}`);
+        ((LB || SQ) && stripN ? strip(BX + 9, y + 20, SQ && opId === 'embed' ? 0 : stripN, SQ && opId === 'embed' ? stripN : 0) : '') + `${opId ? '</g>' : ''}`);
       y += hh;
     };
     const blockBox = (k, label, dims) => {
