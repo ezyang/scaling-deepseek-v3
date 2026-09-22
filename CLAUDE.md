@@ -23,8 +23,8 @@ generality.
   screenshot of its signature widget; `node scripts/ogshot.mjs` regenerates
   them after visual changes to those widgets (not battery-enforced).
 - Shipping a new post: uncomment its entry in BOTH studies/series.js
-  (`SERIES` — drives the prev/next cards and the "post N of M" strip) and
-  index.html's posts list. The two must stay in step; tests/seriesnav*.js
+  (`SERIES` — drives the prev/next cards, the "post N of M" strip, and
+  which pages stamp.mjs stamps) and index.html's posts list. The two must stay in step; tests/seriesnav*.js
   pin the links.
 
 ## Testing (run after any renderer change)

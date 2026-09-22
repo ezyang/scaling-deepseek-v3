@@ -386,7 +386,7 @@ with `data-true`, `text[data-memval|data-syncval]`, `rect[data-first]`,
 
 ## `<dsv3-gemm hw=… dtype=… shape=… tokens=…>` — one matmul on both meters (src/gemm.js, post 03 draft)
 
-The first picture of studies/03-sol.html, before any model: a GEMM
+The first picture of studies/03-roofline.html, before any model: a GEMM
 Y = X · W (X = tokens × K, W = K × N, one of DeepSeek-V3's own projections)
 priced on the tensor cores (2·M·K·N FLOP ÷ the dtype's tensor peak) and on
 HBM (X + W + Y bytes ÷ bandwidth; inputs at the dtype, Y always bf16), the
@@ -417,7 +417,7 @@ with `data-true` (bytes), `text[data-val=compute|mem]`,
 
 ## `<dsv3-sol hw=… recompute=… gpus=… gbs=… seq=…>` — the summed step (src/sol.js, post 03 draft)
 
-The stupidest step-time model (studies/03-sol.html): no timeline, no
+The stupidest step-time model (studies/03-roofline.html): no timeline, no
 overlap, no communication, ONE rate. Every op of the 61-layer stack plus
 the head is priced at the GPU's FP8 tensor peak (the ops that really run
 bf16/fp32 — attention core, router — are a later negotiation), forward +

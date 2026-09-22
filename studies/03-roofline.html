@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script data-theme>document.documentElement.classList.toggle('dark', (localStorage.getItem('dsv3-theme') ?? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')) === 'dark');</script>
+  <title>03 (draft)</title>
+  <link rel="stylesheet" href="./study.css">
+  <style>
+  </style>
+</head>
+
+<body>
+  <main>
+    <h1>Working the roofline for DeepSeek-V3 on Hopper</h1>
+
+    <p>In part 2, we worked through how memory constraints force us into certain
+    parallelism choices simply to get the model to fit into memory.  However, I
+    cheated slightly in the memory exercise: for example, we simply assumed
+    that full FSDP (ZeRO-3) wouldn't be a good idea for DeepSeek-V3 on Hopper.
+    How did we know this? A roofline analysis for FLOPs and distributed communications
+    can easily tell us that we would be communication bound.  So in this part,
+    we are going to work out the DeepSeek-V3 roofline in more detail than you
+    ever wanted to know.  (A future promise: we could also consider a harder problem,
+    where we the infra team are codesigning a model architecture with the research
+    team.  Why does DSv3 make the choices it does?  That will be another post!)</p>
+
+    <p>In particular, one pedagogical objective in this essay is to explain the
+    underlying reasoning behind the common approximations that are used when we
+    do a rooflining analysis.  The 6ND compute approximation is really useful
+    because it is easy to keep in your head and cuts out the complication about having
+    to reason in detail about what the inside of your model looks like.  But at the
+    same time, if you haven't thought about why this approximation is valid, it can
+    seem like magic, and I want to explain in enough detail so that you could derive
+    this formula from first principles, and you can also intuitively understand when
+    you shouldn't use this approximation.
+    </p>
+
+    <h2>The overall plan</h2>
+
+    <p>Unlike HBM rooflines, where the memory transfer you have to do into each GEMM is usually
+    inviolable (the reason you can't "fuse" two GEMMs together, or even
+    usefully fuse into a GEMM prologue, is because input tiles are used multiple times when
+    computing the GEMM: to avoid repeatedly recomputing an input tile, you need to store
+    it somewhere that all of your SMs can access, and has enough space to
+    store everything you need.. usually HBM is the most convenient thing that actually fits),
+    we have a large degree of control over what distributed communication we do, because we
+    have to pick our parallelism.  However, as we saw in the previous post, we desire to
+    make our model bigger and we wish to do strong scaling over a bigger GPU cluster, and
+    these lead us to want to parallelize.  But parallelization means distributed communication,
+    and distributed communication can then become a bottleneck.  This is where the roofline
+    analysis comes into play.
+    </p>
+
+    <p>So a way to think about what we're trying to do is we're trying to solve a problem
+    (our model doesn't fit; we are trying to make good use of our GPUs).  We will solve our
+    problem by adding parallelization.  But these parallelization introduce communication costs.
+    However, thanks to overlapping, it may be possible that we don't need to pay for these
+    costs (it's free because it's perfectly overlapped).  But we need to assess if it is actually
+    possible to hide these costs.  Thus we do roofline to cheaply see what we expect to happen.
+    </p>
+
+    <p>So to do the roofline, we have to think about what exact parallelization/distributed
+    communication we are considering to assess the impact.  From our DSv3 memory analysis,
+    there are already the parallelisms we were forced into in order to fit it in memory:</p>
+
+    <ol>
+        <li>Expert parallelism</li>
+        <li>ZeRO/FSDP (1 or 3?)</li>
+        <li>Pipeline parallelism</li>
+    </ol>
+
+    <p>We use the roofline to see how much compute we have to cover up these communications,
+    and then we can compare to see if we are likely to be comms
+    bound.</p>
+
+    <h3>How many FLOPs do we need to do</h3>
+
+    <p>How many FLOPs does it take to train a model?  In part 1, we mentioned
+    in passing that we often approximate this by considering only matmuls, as
+    they usually end up taking the bulk of the FLOPs in this model: the
+    classic training flops approximation is 6ND
+    (where N is the number of activated parameters in the model, D is the
+    total number of training tokens, and the 6 FLOPs per parameter per token derives
+    from the multiply and add you need per parameter per token in forwards,
+    and the fact that backwards costs roughly twice the forward pass).  If we
+    are reasoning about the wall time of a single training step, we can set D
+    to the number of tokens in a global batch (global batch size x sequence length).
+    Importantly, the global batch size is typically set by science (infra cannot
+    freely adjust it the way they can adjust parallelism), because at a critical
+    batch size, increasing batch size yields diminishing returns on optimization
+    efficiency.</p>
+
+    <p>6ND is a really handy approximation since it is so simple (you don't
+    need to know anything about the inside of the model! Just count up the
+    parameters!) However, I want to more carefully explain why
+    this approximation makes sense.  When we say that
+    non-matmul compute is negligible, we are making an argument about asymptotics
+    while we scale compute.  This might seem like a funny thing to do for
+    DeepSeek-V3: you can have any size you like, as long as it's 671B.  What
+    exactly are you scaling?</p>
+
+    <p>In pretraining research, it is natural to think of an architecture as
+    actually a family of architectures of different sizes, designed to be as
+    similar to each other as possible, so that we can do science on the
+    smaller sizes, fit scaling laws, and then extrapolate them to the
+    expensive hero run.  What happens to the FLOPs of a model as we increase
+    compute, trying to keep the architecture otherwise the same?  Given some
+    compute budget C, here is a standard recipe for defining this family
+    (for example, this matches this scaling ladder design in the MAI-Thinking
+    tech report):</p>
+
+    <ul>
+        <li>Per Chinchilla, we will choose to keep tokens-per-parameter (TPP)
+        fixed, so that our parameter count and number of tokens grow
+        proportionally.</li>
+        <li>We will choose to keep the aspect ratio (AR) of our model fixed,
+        so that the depth and width of our model are proportionally related
+        as we increase parameter count.
+        </li>
+        <li>We will choose to keep our compute allocation between
+        attention and MLP fixed, so the hidden size and intermediate size
+        (the MLP hidden size) are proportionally related as we increase
+        the width of our network.</li>
+        <li>We will choose to keep the MoE sparsity structure fixed: so
+        the number of experts and how many experts we route to stay fixed
+        even as compute grows.</li>
+    </ul>
+
+    <p>When we increase depth, all of the transformer block FLOPs increase
+    uniformly linearly with depth.  However, when we increase width,
+    while non-matmul compute increases linearly, the learned linear
+    transformations (matmuls that are activation x weight) increase
+    quadratically, since both the input and output spaces get bigger.  This
+    means that, in the limit, learned linear transformation FLOPs dominate everything else.</p>
+
+    <p>There is a caveat: inside attention, there are attention activation matmuls that don't
+    (directly) take a weight matrix.  These don't scale in parameter count, but instead scale on
+    sequence length.  It's common to pretrain with some fixed sequence length,
+    and then only scale the sequence length in some midtraining
+    for context length.  This commonly results in a situation where the 6ND approximation
+    is good for pretraining (sequence length not too long) but bad for midtraining (long sequence
+    length means attention is now a bottleneck).  We'll delay addressing this until we
+    move on from rooflines to try to build a more accurate model.</p>
+
+    LLM TODO: Diagram: have sliders for compute budget with the ratios fixed to the DSv3 setting.  Could
+    also have a slider for sequence length
+    Show the 6ND prediction.  You can see as you increase compute the more accurate model matches
+    more closely, but it gets worse as seq len increases. What is the more
+    accurate model? There are a few obvious approximations.  We can do matmuls
+    only, which means it's the learnable linear transformations versus not (plus some
+    other weirdos like the routing matmul).  We should have a graph that color codes these
+    so you can easily see the asymptotics.  We could also try to model the FLOPs for all the
+    non matmul things too, but this would be a quick and dirty estimate, I can't think of
+    a clean approximation here.  (We eventually want to do this for understanding all the
+    kernels in the profile, but definitely not here in this article.)
+
+    <p>So what does the 6ND roofline say for DSv3</p>
+
+    LLM TODO: calculation here, equation in big letters, and then putting together the
+    numbers to figure out the FLOPs.  And then show the division by accelerator FLOPs
+    to compute the wall time.
+
+    <h3>Expert parallelism</h3>
+
+    <p>How much time do the dispatch and combine communications take in the expert parallel
+    region?  This is a bit more annoying to do in the Hopper era, because our EP spans
+    across nodes, rather than being in a single NVL72 domain as would be the case in
+    Blackwell.  But it is not too complicated. Let's assemble our assumptions for the
+    approximation:</p>
+
+    <ul>
+        <li>We'll assume uniform routing.  Furthermore, we'll assume that any given
+        token is equally likely to be dispatched to any expert rank (including our
+        own).</li>
+        <li>We will assume use of deduplication.  The idea is that if multiple GPUs
+        on the same node require the same token, we don't have to broadcast it multiple
+        times on IB; instead, we can dispatch it once and then use NVLink to locally distribute
+        it to the correct GPU.  Additionally, DSv3 has a routing constraint that a maximum
+        of four nodes can be routed to, so we're guaranteed to get at least a 2x bandwidth
+        reduction from deduplication.</li>
+    </ul>
+
+    <p></p>
+
+    - Account for deduplication / node-coalesce
+    - Routing statistics (uniform routing)
+    - Duplex bandwidth?
+
+    <h3>ZeRO/FSDP</h3>
+
+    <p>In the memory post, we said that ZeRO-3 would make DSv3 comms bound.  Let's work
+    this out.</p>
+
+    <p>In FSDP, we need to all-gather the parameters for forwards, all-gather for backwards
+    and then reduce-scatter the final gradients.  Each of these requires doing communication
+    on order of the size of our parameters.</p>
+
+    <p>Low precision has some influence on the cost here.</p>
+
+
+
+    ----
+
+    <p>I was having trouble putting this into a coherent narrative, so for now, you get a series
+    of vignettes.</p>
+
+    ----
+
+    We could do a basic facts section?
+
+
+    How many FLOPs in a matrix multiply?
+
+    ----
+
+
+
+
+
+
+    Splitting into regimes:
+    - single batch vs many
+    - short vs long context training
+
+
+    <h2>Counting matrix multiply FLOPs</h2>
+
+    <p><strong>Matrix multiply FLOPs are proportional to parameter count.</strong>
+    Concretely, each parameter contributes two FLOPs (a multiply and an add.)
+    Because as you scale a model, the weights of your matmuls dominate 
+    </p>
+
+
+
+
+
+
+
+
+
+
+
+    ----
+
+    <p>When working complicated systems, we often look for simple reasoning mechanisms which
+    are able to explain a (disproportionately) large amount of the system's behavior.  In
+    LLM training, I notice these three concepts are applied pervasively:</p>
+
+    <ol>
+        <li><strong>Speed of light:</strong> When we know that no matter what we do, we
+        cannot exceed some physical limitation, e.g., the number of FLOPs that the silicon
+        on our GPU can support, or the bandwidth that our Infiniband network supports.
+        Importantly, when we see that, even if we were at speed of light, some performance
+        pathology exists, it shows us that we must take a different approach: no amount
+        of incremental performance engineering will solve the problem.  A related
+        concept is <strong>roofline analysis</strong>.</li>
+
+        <li><strong>Conservation:</strong> We often need to reason about a large possibility
+        space of how we configure our training run, e.g., parallelisms.
+        However, for example, we know that no matter how we slice the pie of
+        compute, at the end of the day we must still do that amount of compute.
+        Given some assumed compute utilization, we can then tell how much communication
+        we can afford: the amount of compute will never change, but we can choose different
+        parallelization changes to adjust how much comms we do. (This is why we're always
+        trying to make sure comms can be completely overlapped with compute, but not
+        the other way around! The amount of compute can't be changed in an arch neutral
+        way!)</li>
+
+        <li><strong>Asymptotics:</strong> The vocabulary LM head is a big deal at small scale,
+        because your vocabulary is quite large.  However, vocabulary size doesn't change
+        as we scale up, whereas parameter count does.  If we are planning on scaling, we should
+        focus on the parts of our system that also scale, as constant costs asymptote to
+        zero as you scale.  (That's not to say constant costs cannot give material performance
+        improvements! But Amdahl's law tells us the amount of improvement we can get via these
+        optimizations diminishes.)</li>
+    </ol>
+
+    Example: the parameter scaling (matrix diagram)
+
+
+
+    Example analysis: A2A overlap critical dim on FC2 -- given bandwidth and flops, how big does your
+    hidden dim have to be so that compute = comms.  Reason out flops per hidden dim versus data sent.
+    What happens when you make the model sparser (narrower experts, more experts)
+    - FC2 is harder to overlap because it is less compute
+    - Conservation: it doesn't matter if you're doing it with overlapping or
+      by pipelining
+
+    Dimensional analysis
+
+
+
+
+    params translate into flops
+
+
+    compute is immutable, 1:2 fwd-bwd from matrix multiply
+
+    max(math, comms) -- comms is not immutable!
+
+
+
+    intensity
+
+    how long does it take - walltime
+
+
+
+
+
+    Example analysis: Local batch size impact on matmul efficiency
+    Microbatch size impact on kernel perf
+
+    Trading LBS versus PP bubble
+
+
+
+
+    what does "speed of light" mean. a one sided calculation, the speed limit, you cannot get past this
+
+    what does estimate mean. conservation of work. it MUST happen one way or another
+
+    the speed of light / roofline model is very simple: 6ND
+    the matrix diagram
+
+
+    actually look at the dsv3 profile
+
+
+
+
+
+
+
+  </main>
+  <script type="module">
+    import '../src/viewer.js';
+    import '../src/gemm.js';
+    import '../src/sol.js';
+    import './series.js';
+  </script>
+</body>
+
+</html>

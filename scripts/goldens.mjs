@@ -52,7 +52,7 @@ for (const [name, cfg] of [['dsv3-z3', {}], ['dsv3-z1', { zero: 1 }], ['dense-z3
     rows: Object.fromEntries(S.rows.map((r) => [r.G, { mem: r.memTotal, sync: r.sync, rs: r.rs, ar: r.ar, ag: r.ag }])) };
 }
 
-// the summed step (studies/03-sol.html): per pass × op group seconds at the story configs
+// the summed step (studies/03-roofline.html): per pass × op group seconds at the story configs
 G.sol = {};
 for (const [name, cfg] of [['h800-dsv3', {}], ['h800-none', { recompute: 'none' }],
   ['h800-attn-replay', { recompute: 'attn-replay' }], ['h800-full', { recompute: 'full' }]]) {
@@ -61,7 +61,7 @@ for (const [name, cfg] of [['h800-dsv3', {}], ['h800-none', { recompute: 'none' 
     cells: Object.fromEntries(S.cells.map((c) => [`${c.pass}·${c.group}`, c.s])) };
 }
 
-// the first picture (studies/03-sol.html): one GEMM on both meters, every shape × dtype at the story sizes
+// the first picture (studies/03-roofline.html): one GEMM on both meters, every shape × dtype at the story sizes
 G.gemm = {};
 for (const shape of Object.keys(SHAPES)) for (const dtype of ['bf16', 'fp8']) for (const tokens of [128, 4096]) {
   const g = gemm({ shape, dtype, tokens });

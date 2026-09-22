@@ -9,7 +9,7 @@
 // placeholders, the stamps are generated values pasted into the HTML; the
 // battery's `stamp` job pins their freshness.
 //
-//   node scripts/stamp.mjs           # restamp index.html + studies/NN-*.html
+//   node scripts/stamp.mjs           # restamp index.html + the published SERIES posts
 //   node scripts/stamp.mjs --check   # exit 1 if any stamp is stale
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync, readdirSync } from 'node:fs';
@@ -23,8 +23,10 @@ const hash = (path) => createHash('sha1').update(readFileSync(join(root, path)))
 
 const modules = ['src', 'studies'].flatMap((dir) =>
   readdirSync(join(root, dir)).filter((f) => f.endsWith('.js')).map((f) => dir + '/' + f));
-const pages = ['index.html',
-  ...readdirSync(join(root, 'studies')).filter((f) => /^\d\d-.*\.html$/.test(f)).map((f) => 'studies/' + f)];
+// only PUBLISHED pages: index.html + the live SERIES entries (commented-out
+// drafts don't match), so shipping a post turns its stamps on
+const pages = ['index.html', ...[...readFileSync(join(root, 'studies/series.js'), 'utf8')
+  .matchAll(/^\s*\{ href: '([^']+)'/gm)].map((m) => 'studies/' + m[1])];
 
 const stale = [];
 
