@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script data-theme>document.documentElement.classList.toggle('dark', (localStorage.getItem('dsv3-theme') ?? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')) === 'dark');</script>
+  <title>03 (draft)</title>
+  <link rel="stylesheet" href="./study.css">
+  <style>
+    dsv3-gemm, dsv3-sol, dsv3-anchors { display: block; margin: 14px 0 26px; }
+  </style>
+</head>
+
+<body>
+  <main>
+    <h1>03 (draft)</h1>
+
+    <dsv3-gemm id="gemm" style="min-height:334px"></dsv3-gemm>
+
+    <dsv3-sol id="sum" style="min-height:336px"></dsv3-sol>
+
+    <dsv3-anchors for="sum" style="min-height:302px"></dsv3-anchors>
+
+  </main>
+  <script type="module">
+    import '../src/viewer.js';
+    import '../src/gemm.js';
+    import '../src/sol.js';
+    import './series.js';
+  </script>
+</body>
+
+</html>
