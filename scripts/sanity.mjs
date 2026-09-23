@@ -75,9 +75,9 @@ console.log('\nper-GPU busy by category at level 4 (per step):');
 console.table(Object.fromEntries(Object.entries(sum.byCat).map(([k, v]) => [k, fmtUs(v)])));
 
 // Calibration anchors (sim should land BELOW both: no DualPipe / no interleaved-VP overlap yet).
-// DeepSeek-V3: ~2.788M H800-hours for 14.8T tokens ≈ 1475 tok/s/GPU (2048 GPUs, FP8, DualPipe).
+// DeepSeek-V3: 180K H800-hours per 1T pretraining tokens ≈ 1543 tok/s/GPU (2048 GPUs, FP8, DualPipe).
 const real = simulate({ level: 6, dtype: 'mxfp8', microbatches: 120, gpus: 2048, ep: 64 }).stats;
-console.log(`anchor DSv3/H800 (mxfp8 m=120 pp16 ep64): ${Math.round(real.tokPerSecPerGpu)} tok/s/GPU (real ≈ 1475)`);
+console.log(`anchor DSv3/H800 (mxfp8 m=120 pp16 ep64): ${Math.round(real.tokPerSecPerGpu)} tok/s/GPU (real ≈ 1543)`);
 // NVIDIA NeMo/Megatron-Bridge on 256x GB300: TP1/PP2/VP8/EP32, mbs1, GBS 4096
 // -> 6338 tok/s/GPU = 1648 model TFLOP/s/GPU = 10.30 s/step (scaling-puzzles SOURCES.md).
 const nemo = simulate({ level: 5, hardware: 'gb300', dtype: 'mxfp8', gpus: 256, pp: 2, ep: 32, microbatches: 32 }).stats;

@@ -68,7 +68,7 @@
     back.<sup><a id="fnref3" href="#fn3">3</a></sup> The solid line is the
     compute at the fp8 tensor-core peak that the sync would have to hide
     behind; the dashed line is the step implied by DeepSeek's reported
-    GPU-hours, 1,475 tokens per second per GPU. Both scale with tokens per
+    GPU-hours, 1,543 tokens per second per GPU. Both scale with tokens per
     GPU, so the cluster and batch knobs move them together. Hover a row for
     the exact terms.</p>
 
@@ -185,8 +185,8 @@
       gathered weights could be held for the whole step, which is exactly what
       cannot be done, so the real ZeRO-3 cost re-gathers per microbatch and is
       several times larger. Compute is at the fp8 tensor-core peak; the
-      "implied step" divides the paper's 2.788M GPU-hours for 14.8T tokens
-      into a per-step time at this batch; it is an aggregate, not a measured
+      "implied step" converts the paper's 180K GPU-hours per trillion
+      pretraining tokens into a per-step time at this batch; it is an aggregate, not a measured
       profiler step. Summed collective time is a floor on traffic, not a
       claim about how much of it ends up exposed.
       <a href="#fnref3">↩</a></p>

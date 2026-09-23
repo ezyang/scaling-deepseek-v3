@@ -364,8 +364,8 @@ bandwidth with HIERARCHICAL collectives (in-node phase on NVLink over the
 full bytes, cross-node phase on the NIC over 1/8 of them): gradient
 reduce-scatter + cross-replica all-reduce (violet) and ONE bf16 weight
 all-gather (comm-box style), against two reference lines: compute at the
-fp8 peak (solid) and the step implied by DeepSeek's GPU-hours, 1,475
-tok/s/GPU (dashed). Node boundary drawn between G = 8 and 16 (the shard
+fp8 peak (solid) and the step implied by DeepSeek's pretraining GPU-hours,
+1,543 tok/s/GPU (dashed). Node boundary drawn between G = 8 and 16 (the shard
 group fits one node above it).
 
 | attr | kind | values | meaning |
@@ -433,7 +433,7 @@ norms/RoPE/SwiGLU · lm head/loss); a linear seconds axis that autoscales to
 the longest thing on it (labels snap, positions tween); on the total row a
 dashed tick where the step would end with nothing recomputed; and a dashed
 "reported step" line = tokens/GPU ÷ the throughput implied by DeepSeek's
-GPU-hours (1,475 tok/s/GPU; H800 only).
+pretraining GPU-hours (1,543 tok/s/GPU; H800 only).
 
 | attr | kind | values | meaning |
 |---|---|---|---|

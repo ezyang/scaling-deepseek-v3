@@ -30,10 +30,11 @@ export const PASSES = [
   { id: 'fwd', label: 'forward' }, { id: 'bwd', label: 'backward' }, { id: 'replay', label: 'recompute' },
 ];
 // vendor-reported throughput, tok/s/GPU, that the "reported step" line
-// divides the batch by: H800 = implied by DeepSeek's 2.788M GPU-hours for
-// 14.8T tokens. Nothing published for H100.
+// divides the batch by: H800 = DeepSeek's "180K H800 GPU-hours per trillion
+// tokens" (pretraining only: 2.664M of the 2.788M total, the rest being
+// context extension + post-training). Nothing published for H100.
 export const REPORTED = {
-  h800: { rate: 14.8e12 / (2.788e6 * 3600), src: 'implied by DeepSeek’s GPU-hours' },
+  h800: { rate: 1e12 / (180e3 * 3600), src: 'implied by DeepSeek’s GPU-hours' },
 };
 // the tech sheet: what the GPU knob shows (per GPU, per direction, data-sheet peaks)
 export const SHEET = (hw) => [

@@ -95,7 +95,7 @@ still wins for back-compat.
   efficiency assumptions; they are inputs, not claims. H800 = H100 compute
   with NVLink cut to 400 GB/s; MXFP8 on Hopper pays a recipe tax, on
   Blackwell it is native.
-- Calibration anchor: DeepSeek reported 2.788M H800-hours for 14.8T tokens
-  ≈ 1475 tok/s/GPU; this sim at full refinement (mxfp8, m=120, no DualPipe
+- Calibration anchor: DeepSeek reported 180K H800-hours per trillion
+  pretraining tokens ≈ 1543 tok/s/GPU; this sim at full refinement (mxfp8, m=120, no DualPipe
   overlap) lands ~1235 tok/s/GPU — appropriately *below* the real number,
   since the real run overlaps a2a and we deliberately don't (yet).

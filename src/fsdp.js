@@ -16,8 +16,8 @@ export const STATE_BYTES = { weights: 2, grads: 4, optim: 8 };
 const COMPS = ['weights', 'grads', 'optim'];
 const COMP_C = { weights: '#2a78d6', grads: '#eb6834', optim: '#1baf7a' };   // the byte-component family
 const SHARDED = { 1: ['optim'], 2: ['optim', 'grads'], 3: ['optim', 'grads', 'weights'] };
-// DeepSeek-V3 paper §1: 2.788M H800 GPU-hours for 14.8T tokens
-export const REALIZED_TOK_S = 14.8e12 / (2.788e6 * 3600);
+// DeepSeek-V3 paper §1: 180K H800 GPU-hours per trillion pretraining tokens
+export const REALIZED_TOK_S = 1e12 / (180e3 * 3600);
 
 export const FSDP_DEFAULTS = { hw: 'h800', gpus: 2048, gbs: 15360, seq: 4096, zero: 3, model: 'dsv3' };
 
