@@ -15,7 +15,7 @@
   <main>
     <h1>Working the roofline for DeepSeek-V3 on Hopper</h1>
 
-    <p>In part 2, we worked through how memory constraints force us into certain
+    <p>In part two, we worked through how memory constraints force us into certain
     parallelism choices simply to get the model to fit into memory.  However, I
     cheated slightly in the memory exercise: for example, we simply assumed
     that full FSDP (ZeRO-3) wouldn't be a good idea for DeepSeek-V3 on Hopper.
@@ -70,6 +70,9 @@
         <li>ZeRO/FSDP (1 or 3?)</li>
         <li>Pipeline parallelism</li>
     </ol>
+
+    <p>Tensor and context parallelism don't appear: DeepSeek-V3 trains with
+    TP1, and at a 4K sequence length there's no need to split sequences.</p>
 
     <p>We use the roofline to see how much compute we have to cover up these communications,
     and then we can compare to see if we are likely to be comms
@@ -158,35 +161,172 @@
 
     <p>So what does the 6ND roofline say for DSv3</p>
 
-    LLM TODO: calculation here, equation in big letters, and then putting together the
-    numbers to figure out the FLOPs.  And then show the division by accelerator FLOPs
-    to compute the wall time.
+    <p>[[AI:</p>
+
+    <p style="text-align: center; font-size: 1.6em">FLOPs = 6 · N · D</p>
+
+    <p>For an MoE, N is the <em>activated</em> parameter count, since only the
+    experts a token is routed to do work on it.  Following DeepSeek's own
+    accounting (the input embedding is a lookup, so it isn't counted; the
+    output head is), N = 36,625,618,432, the "37B" in the technical report.
+    D is the tokens in one step: 15,360 sequences × 4,096 tokens = 62,914,560.</p>
+
+    <p>6 × 36,625,618,432 × 62,914,560 ≈ 1.38 × 10<sup>19</sup> FLOPs per step</p>
+
+    <p>Spread over 2,048 GPUs that's 6.75 × 10<sup>15</sup> FLOPs each.  An
+    H800 peaks at 1,979 TFLOP/s in FP8, so:</p>
+
+    <p style="text-align: center; font-size: 1.6em">6.75 × 10<sup>15</sup> ÷ 1.979 × 10<sup>15</sup> FLOP/s ≈ 3.4 s</p>
+
+    <p>Notice what we didn't need to know: how the model is parallelized.
+    This is <strong>conservation</strong>.  Those 1.38 × 10<sup>19</sup> FLOPs
+    have to happen somewhere, and parallelism only decides where, so however
+    we slice the model, the cluster as a whole takes the same time.  (The one
+    way to change the total is to do extra work, like recompute.)</p>
+
+    <p>That assumes every FLOP runs at the FP8 peak.  At the BF16 peak (989
+    TFLOP/s) it would be 6.8 s; the real recipe does most, but not all, of its
+    matmuls in FP8, so the true roofline lands in between.  The reported step
+    is about 19.9 s.</p>
+
+    <p>2N agrees with the GEMM FLOPs in the part 2 diagram to within 0.003%
+    (the gap is the RMSNorm weights and router bias, parameters that never
+    enter a matmul).  What 6ND leaves out is the attention core: at 4,096
+    tokens it adds 10.2 GFLOP per token forward, 14% on top of 2N, which
+    would move the FP8 wall time from 3.4 s to 3.9 s.]]</p>
 
     <h3>Expert parallelism</h3>
 
-    <p>How much time do the dispatch and combine communications take in the expert parallel
-    region?  This is a bit more annoying to do in the Hopper era, because our EP spans
-    across nodes, rather than being in a single NVL72 domain as would be the case in
-    Blackwell.  But it is not too complicated. Let's assemble our assumptions for the
-    approximation:</p>
+    <p>How much time do the dispatch and combine communications take in the
+    expert parallel region?  This is a bit more annoying to do in the Hopper
+    era, because our EP spans across nodes, rather than being in a single
+    NVL72 domain as would be the case in GB200/GB300.  But it is not too
+    complicated, and we know directionally what the roofline should look like,
+    as the DeepSeek-V3 technical report specifies that they have roughly a 1:1
+    computation-to-communication ratio (e.g., as seen in their published
+    profile traces) due to the cross-node EP communication. Let's assemble
+    our assumptions for our roofline:</p>
 
     <ul>
-        <li>We'll assume uniform routing.  Furthermore, we'll assume that any given
-        token is equally likely to be dispatched to any expert rank (including our
-        own).</li>
+        <li>We'll assume uniform routing: the nodes a token is routed to are
+        a uniform pick among the nodes of the EP group (including our own).</li>
         <li>We will assume use of deduplication.  The idea is that if multiple GPUs
         on the same node require the same token, we don't have to broadcast it multiple
         times on IB; instead, we can dispatch it once and then use NVLink to locally distribute
         it to the correct GPU.  Additionally, DSv3 has a routing constraint that a maximum
         of four nodes can be routed to, so we're guaranteed to get at least a 2x bandwidth
         reduction from deduplication.</li>
+        <li>Infiniband is full-duplex, meaning that we can simultaneously
+        transmit data at the link rate in both directions simultaneously. Thus
+        we will analyze the overall communication needed simply by looking at
+        how much data any given node gets on the receive side.</li>
+        <li>We will assume that the local NVLink is fast enough relative to Infiniband that we
+        can neglect its bandwidth for the purpose of this calculation.  It's only about
+        3.2x faster on H800 (160 GB/s vs 50 GB/s), but the technical report notes that
+        this lets a token reach up to 3.2 experts per node before NVLink binds, and
+        eight experts over four nodes is only two per node.</li>
     </ul>
 
-    <p></p>
+    <p>Let's work out dispatch by hand.
+    </p>
 
-    - Account for deduplication / node-coalesce
-    - Routing statistics (uniform routing)
-    - Duplex bandwidth?
+    <ol>
+        <li>Hidden size is 7168.</li>
+        <li>Routed MoE layers are 61 − 3 = 58.</li>
+        <li>EP64 with eight GPUs per node means the EP group spans eight nodes.</li>
+        <li>Every token goes to eight experts, but node-limited routing puts
+        those experts on at most four nodes, and dedupe means each node gets
+        the token once.  We'll take four (a slight overcount).</li>
+        <li>If the four nodes are a uniform pick out of eight, our own node is
+        one of them half the time, and that copy stays on NVLink.  So on average
+        a token crosses IB to 3.5 remote nodes.  By symmetry, that's also what
+        each node receives per token it owns.</li>
+        <li>The dispatch activations are FP8 (1 byte).</li>
+    </ol>
+
+    <p><strong>[[AI TODO: the dispatch payload is more than the FP8
+    hidden vector.</strong>  DeepEP's wire format per token is 7,168 B of FP8
+    + 224 B of scales (56 fp32, one per 128 channels) + 64 B of top-k
+    indices (8 × int64) + 32 B of top-k weights (8 × fp32) = 7,488 B for the
+    forward dispatch; the backward (cached) dispatch drops the top-k fields,
+    7,392 B.  Combine is plain BF16, 14,336 B, as below.  Counting it all
+    raises EP bytes by 1.3% (8,841,056 vs 8,730,624 B per token), 5.36 s →
+    5.43 s theoretical.  Decide whether to count it (exactness convention says
+    yes) or disclose it as a simplification, then propagate through the EP
+    paragraph, asymptotics, and the round-up table.  Source: the byte formula
+    in the roofline sheet (row 49/51) matches DeepEP's layout.]]</p>
+
+    <p>[[AI: So one MoE layer's dispatch moves 3.5 × 7168 × 1 B = 25,088 B
+    across IB per token.  Combine is the same traffic pattern in reverse
+    (experts on a node sum their outputs over NVLink first, then send one
+    vector back per node), but in BF16, so 50,176 B.  The backward pass
+    repeats the pair: the gradient of combine is a dispatch (FP8), and the
+    gradient of dispatch is a combine (BF16).  Per token, over all 58 MoE
+    layers:</p>
+
+    <p>2 × (25,088 + 50,176) B × 58 = 8,730,624 B ≈ 8.3 MiB</p>
+
+    <p>Each GPU has its own 50 GB/s IB NIC, so that's 175 µs of IB time per
+    token.  At the published batch (15,360 sequences × 4,096 tokens over 2,048
+    GPUs = 30,720 tokens per GPU), a step spends 5.4 s on EP communication.
+    That's 1.6× the 3.4 s compute roofline above: at speed of light, EP
+    communication is actually <em>worse</em> than the roughly 1:1
+    computation-to-communication ratio the technical report describes.  Like
+    the FLOPs, this is conserved: the answer doesn't depend on how we split
+    PP or DP, because the per-token bytes and the per-GPU bandwidth are both
+    fixed once EP64 spans eight nodes.  Unlike the FLOPs, it isn't
+    <em>immutable</em>: a smaller EP group that fits in one node, a tighter
+    node limit, or a narrower dtype would all change it.]]</p>
+
+    <h4>Checking the NVLink assumption</h4>
+
+    <p>[[AI: We waved NVLink away above; let's check it.  When a token arrives
+    over IB at a node, it lands on one GPU (the one with the same local index
+    as the sender), which forwards it over NVLink to whichever GPUs on that
+    node host the chosen experts.  With eight experts over four nodes, each
+    node gets two experts on average.  A node has 32 experts, four per GPU, so
+    two experts land on the same GPU 3/31 of the time: on average they need
+    2 − 3/31 ≈ 1.9 distinct GPUs.  The landing GPU is one of them 1/8 of the
+    time, so about 1.67 NVLink copies per node.  The same holds for our own
+    node, where the token starts on our GPU instead of arriving over IB.</p>
+
+    <p>So per token, per MoE layer, per pass, a GPU moves 4 × 1.67 × 7,168 ≈
+    47.7 KB over NVLink against 25.1 KB over IB.  NVLink carries almost twice
+    the bytes, but at 160 GB/s (the rate the technical report says is
+    achievable on H800) that takes 0.30 µs, against 0.50 µs for IB at 50 GB/s.
+    NVLink runs at about 60% of IB's time, so it's not the bottleneck.  This is
+    the technical report's "3.2 experts per node" budget from the other
+    direction: we use about 1.7 NVLink copies per IB copy, and could afford
+    3.2.]]</p>
+
+    <h4>How EP scales</h4>
+
+    <p>[[AI: Let's apply asymptotics to EP.  Per token, per MoE layer, the
+    routed experts do 3 matmuls (gate, up, down) of h × I each, for each of
+    k experts, at 6 FLOPs per parameter forward and backward: 18·h·I·k
+    FLOPs.  EP moves h elements to n remote nodes, twice (dispatch and
+    combine) in each of two passes, at 1 byte (FP8) plus 2 bytes (BF16): 6·h·n
+    bytes.  With peak FLOP rate F and IB bandwidth B, the ratio of
+    communication time to routed-expert compute time is:</p>
+
+    <p style="text-align: center; font-size: 1.6em">(6·h·n / B) ÷ (18·h·I·k / F) = n·F / (3·I·k·B)</p>
+
+    <p>The hidden size cancels.  Making the model wider does nothing for EP
+    unless the experts get wider too.  (In the scaling family from earlier,
+    they do: I grows with h, so EP gets relatively cheaper as models grow,
+    just like PP.)  What matters is expert width I, the number of experts
+    per token k, how many nodes a token touches n, and the hardware's ratio
+    F/B, which is 39,580 FLOPs per IB byte on H800.</p>
+
+    <p>For DSv3 (n = 3.5, I = 2,048, k = 8), EP takes 2.8× as long as the
+    routed-expert matmuls it feeds: 5.4 s against 1.9 s.  To break even,
+    experts would need I ≈ 5,800, nearly three times wider.  This is the
+    tension in fine-grained MoE: splitting a fixed budget of active
+    parameters into more, narrower experts keeps I·k constant, so compute
+    doesn't change, but each token fans out to more nodes.  Node-limited
+    routing is DeepSeek's answer: it caps n at 4 no matter how many experts
+    a token picks.  And F/B is the reason GB200 changes the picture: inside
+    an NVL72 domain, B is NVLink's 900 GB/s rather than IB's 50 GB/s.]]</p>
 
     <h3>ZeRO/FSDP</h3>
 
@@ -198,6 +338,257 @@
     on order of the size of our parameters.</p>
 
     <p>Low precision has some influence on the cost here.</p>
+
+    <p>[[AI: The key fact about these collectives is that a ring
+    all-gather or reduce-scatter pushes almost the full size of the
+    parameters through every GPU, no matter how many ways they're sharded.
+    Sharding more ways saves memory, not bandwidth: conservation again, this
+    time of bytes.  With a hierarchical
+    collective (reduce inside the node over NVLink first, then only 1/8 of
+    the bytes cross IB) we can at least keep most of it off Infiniband.</p>
+
+    <p>We don't have to price the pure-FSDP world again: the fsdp side study
+    found that sharding everything with ZeRO-3 (no EP, no PP) first fits at
+    128-way sharding and costs 27.8 s of sync per step, even when we're
+    generous and gather the weights only once per step.  So DeepSeek kept EP64
+    and PP16.  Could they have layered ZeRO-3 on top of that?  After PP and EP,
+    one pipeline stage is roughly 1.07B non-expert parameters and 0.64B
+    routed-expert parameters per GPU.  DualPipe keeps <em>two</em> stages on
+    every GPU (one for each direction the pipeline runs), so each stage is
+    replicated 2 × 128 = 256 ways for the non-expert part and 2 × 2 = 4 ways
+    for the experts (2,048 / (16 × 64) = 2).  ZeRO-3 would gather the stage in
+    use in BF16 for forward, again for backward, and reduce-scatter FP32
+    gradients, on <em>every microbatch</em>.  PP is the problem here: it
+    wants lots of microbatches, and at one 4,096-token sequence per microbatch
+    each replica runs 15,360 / 128 = 120 of them per step.  That's 4.9 GB of
+    IB traffic per microbatch, 588 GB per step: <strong>11.8 s</strong> of IB
+    time, more than twice the 5.4 s EP already needs.  Gathering in FP8
+    instead of BF16 only gets this down to 8.8 s.</p>
+
+    <p>But at speed of light, we already saw that EP alone makes Infiniband
+    the binding resource: 5.4 s of IB against 3.4 s of compute.  Every extra
+    byte on IB goes straight onto the critical path, so ZeRO-3's 11.8 s would
+    simply add to the step.  It's a non-starter before we even get to
+    overlap.</p>
+
+    <p>That raises the opposite question: DeepSeek does use ZeRO-1, so why do
+    we tolerate <em>its</em> traffic?  Because ZeRO-1 is free relative to
+    plain data parallelism.  A data-parallel all-reduce is a reduce-scatter
+    followed by an all-gather; ZeRO-1 does exactly that, except the
+    optimizer step runs on the shard in between.  Same bytes, rearranged.  So the question is really
+    why we tolerate data parallelism, and the answer is that we have no
+    choice (2,048 GPUs have to be doing something) and it's cheap, because
+    it happens once per step instead of once per microbatch.  Reduce-scattering
+    FP32 gradients and all-gathering BF16 parameters for both of a GPU's
+    stages is 7.3 GB of IB traffic per GPU: <strong>0.15 s</strong>, 3% of
+    EP.  That's the difference between
+    traffic proportional to parameters (paid once per step) and traffic
+    proportional to tokens or microbatches (paid over and over).]]</p>
+
+    <h3>Pipeline parallelism</h3>
+
+    <p>[[AI: Between pipeline stages, all that moves is the residual stream:
+    one BF16 hidden vector per token forward (7,168 × 2 = 14,336 B), and its
+    gradient backward.  In DeepSeek's layout the eight GPUs of a node all
+    belong to the same stage, so this crosses IB.  Each GPU processes its
+    replica's share of the batch, 15,360 × 4,096 / 128 = 491,520 tokens per
+    step, and sends 28,672 B per token, which comes to 14.1 GB and
+    <strong>0.28 s</strong>.</p>
+
+    <p>The important part is how this scales.  PP traffic per token grows
+    linearly with the hidden size, but compute per token per layer grows
+    quadratically with width, and a stage holds several layers (about four
+    for DSv3).  So as the model gets bigger, PP communication becomes
+    relatively cheaper, both as width grows and as each stage gets more
+    layers.  (EP's bytes are also linear in the hidden size.  What makes EP
+    twenty times more expensive today is that it's paid at every MoE layer
+    rather than every stage boundary, to 3.5 nodes instead of one, and
+    twice in each pass: dispatch and combine.)]]</p>
+
+    <h4>The pipeline bubble</h4>
+
+    <p>[[AI: PP's bytes are cheap; its real cost is idle time.  At the start
+    of a step, later stages wait for the first microbatch to reach them, and
+    at the end, earlier stages wait for the last backward to drain.  With
+    classic 1F1B scheduling that bubble is (PP − 1)(F + B), where F and B are
+    one stage's forward and backward time for one microbatch.  Each GPU does
+    120 microbatches of F + B work per step, and B ≈ 2F, so the bubble is
+    15 × 3F out of 120 × 3F: 15/120 = <strong>12.5%</strong> of compute.</p>
+
+    <p>DualPipe feeds microbatches from both ends of the pipeline at once,
+    which is why it keeps two stages per GPU.  Its bubble is (PP/2 − 1)(F&amp;B + B −
+    3W), where W is the weight-gradient half of the backward (W ≈ F) and F&amp;B
+    is a forward and a backward run overlapped.  If that pair is
+    compute-bound, F&amp;B ≈ F + B = 3F, and the bubble is 7 × (3F + 2F − 3F) =
+    14F out of 360F: <strong>3.9%</strong>.  Notice this depends only on
+    the number of stages and microbatches, not on the model's size: the
+    bubble is a scheduling tax, and the fixed global batch is what bounds it.
+    More microbatches would shrink it, but at one sequence per microbatch we
+    already have as many as the batch allows.]]</p>
+
+    <h3>Putting it together</h3>
+
+    <p>[[AI: Every GPU has two resources that matter here: its tensor cores
+    and its Infiniband NIC.  (We checked NVLink isn't binding.)  The compute
+    side is one number.  The IB side is shared, so its loads <em>add</em>.</p>
+
+    <p>So far every number has been <em>theoretical</em>: data-sheet peaks.
+    Rooflines are meant to be optimistic, but they're not equally optimistic
+    about every resource, and that matters once we start comparing
+    resources against each other.  So alongside the theoretical numbers we'll
+    carry <em>effective</em> ones, taken from published benchmarks of the
+    kernels DeepSeek actually uses, rather than tuned to match anything:</p>
+
+    <ul>
+        <li>GEMMs: DeepGEMM's H800 benchmarks at the exact DSv3 shapes
+        (751 to 1,426 TFLOP/s for the attention projections; 1,346 and
+        1,214 for the routed experts' gate/up and down, at four experts of
+        8,192 tokens each, which is precisely the per-GPU training shape).
+        That's 38% to 72% of the FP8 peak.  These are forward-pass shapes; we
+        assume the backward GEMMs do as well.</li>
+        <li>Attention: FlashAttention-3's best BF16 forward, 75% of peak.
+        DeepSeek runs attention in BF16, not FP8, so it gets half the
+        theoretical rate to begin with.  The backward is slower still, so
+        this is generous.</li>
+        <li>The output head and router, also kept in BF16: 80% of peak, the
+        bottom of FlashAttention-3's "80–90%" for optimized GEMMs.</li>
+        <li>IB: DeepEP's measured 46 GB/s dispatch and 45 GB/s combine at EP64
+        on H800, in the DSv3 pretraining setting, out of 50 GB/s.  We reuse
+        45 GB/s for the PP and ZeRO-1 traffic.</li>
+    </ul>
+
+    <table>
+        <tr><th>resource</th><th>what</th><th>theoretical (s)</th><th>effective (s)</th></tr>
+        <tr><td>tensor cores</td><td>6ND plus the attention core</td><td>3.89</td><td>6.69</td></tr>
+        <tr><td>tensor cores</td><td>recompute (MLA up-projections)</td><td>0.10</td><td>0.21</td></tr>
+        <tr><td>tensor cores</td><td>total</td><td>4.0</td><td>6.9</td></tr>
+        <tr><td>IB</td><td>EP dispatch + combine, forward and backward</td><td>5.36</td><td>5.92</td></tr>
+        <tr><td>IB</td><td>PP activations and gradients</td><td>0.28</td><td>0.31</td></tr>
+        <tr><td>IB</td><td>ZeRO-1 gradient reduce-scatter + parameter all-gather</td><td>0.15</td><td>0.16</td></tr>
+        <tr><td>IB</td><td>total</td><td>5.8</td><td>6.4</td></tr>
+    </table>
+
+    <div>
+    <p><strong>[[AI TODO: the theoretical compute column prices everything at
+    the FP8 peak, including the parts DeepSeek runs in BF16.</strong></p>
+
+    <p><em>The bug.</em>  The 3.89 s row divides <em>every</em> FLOP by
+    1,979 TFLOP/s, including the attention core, output head and router.
+    The effective column (and the source list above) prices those at BF16
+    rates, because that's the recipe.  So the "compute loses 42%" comparison
+    mixes two different things: a recipe fact (which ops run in which
+    dtype, knowable before any benchmark) and kernel inefficiency (which
+    only benchmarks tell you).  DeepSeek's own profile trace confirms the
+    dtypes: the FlashAttention forward kernel is instantiated on
+    <code>cutlass::bfloat16_t</code> (1,199 µs per 4,096-token microbatch,
+    vs 695 µs at the BF16 peak and 347 µs at the FP8 peak), and the router is
+    a BF16 cuBLAS GEMM.</p>
+
+    <p><em>Dtype-aware theoretical numbers</em> (FP8 peak for the FP8 GEMMs,
+    BF16 peak for attention core, head, router):</p>
+    <ul>
+        <li>attention core 0.48 s → 0.95 s; head 0.09 → 0.17 s; router
+        0.01 → 0.02 s.  6ND + attention: 3.89 s → 4.46 s.  With recompute:
+        4.0 s → 4.56 s.</li>
+        <li>Theoretical is still IB-bound (5.8 s vs 4.56 s), so the story's
+        shape survives, but the margin shrinks from 1.45× to 1.27×.</li>
+        <li>"Compute loses 42%" becomes about 34%; "IB loses 10%" is
+        unchanged.  The asymmetry is still the point, just smaller.</li>
+        <li>Overlap table: 1F1B theoretical 10.3 s → 11.7 s; DualPipe
+        theoretical still ≈ 6.0 s (4.56 × 1.18 = 5.4 s, under IB's 5.8 s, so
+        the "20 SMs are free in theory" argument still holds, barely).</li>
+        <li>The 6ND headline (3.4 s at the FP8 peak, 6.8 s at the BF16 peak)
+        is fine as written: it says it assumes every FLOP runs at the FP8
+        peak.</li>
+    </ul>
+
+    <p><em>The larger question: what does "theoretical" mean for a
+    mixed-precision recipe?</em>  Three options:</p>
+    <ol>
+        <li>Everything at the FP8 peak (current).  A bound for <em>any</em>
+        recipe on this chip, but it hides the recipe's own dtype choices.</li>
+        <li>Per-op dtype peaks.  This is 02's convention (FP8 FLOPs drawn as
+        "half"), the roofline sheet's (SDPA at B29 = BF16), and the
+        trace-analysis report's "precision-aware" utilization.  Probably
+        the right one for consistency with 02.</li>
+        <li>BF16 peak for everything: the MFU convention.  The
+        trace-analysis report says DeepSeek/Megatron MFU divides by the BF16
+        peak regardless of kernel precision (not verified here).  Worth
+        a sentence if 03 ever quotes an MFU.</li>
+    </ol>
+
+    <p><em>Why this suggests more low-precision text.</em>  The effective
+    GEMM rates say FP8 on Hopper buys much less than 2×.  DeepGEMM's DSv3
+    shapes run at 751–1,426 TFLOP/s, which is 0.76–1.44× the BF16
+    <em>peak</em>, or roughly 0.95–1.8× a good BF16 GEMM at 80% of peak.
+    02 already says the 2× is optimistic on Hopper (fine-grained scaling
+    spends some of it outside the MMA, plus quantization).  03 is where
+    that gets a number.  Separating "dtype" from "efficiency" in the table
+    would make it visible: theoretical (dtype-aware) → effective is the
+    kernel tax, and FP8-everywhere → dtype-aware is the precision choice.</p>
+
+    <p><em>Related, same table: backward rates.</em>  The source list assumes
+    backward GEMMs run at forward rates.  In DeepSeek's trace, the forward
+    ops match our effective rates to within about 10% (with the 20-SM tax),
+    but backward is 1.4× slower than that assumption.  Weight-gradient GEMMs
+    run about 1.5× slower than forward (MoE 4.3 vs 2.8 ms, attention
+    projections 2.51 vs 1.65 ms per microbatch), and FlashAttention backward
+    is 1.44× its 2×-forward share.  Net: effective compute is about 27%
+    optimistic, so the effective DualPipe step moves from ≈ 8.4 s toward
+    10 s.  Using the trace as the input would be fitting to the answer; the
+    fix is a third-party backward/wgrad benchmark (DeepGEMM has since added
+    k-grouped wgrad kernels — check whether they publish rates), or at
+    minimum a prominent caveat with this size on it.]]</p>
+    </div>
+
+    <p>The effective numbers move the two sides by very different amounts:
+    IB loses 10%, but compute loses 42%.  In theory the step is IB-bound
+    (5.8 s against 4.0 s); in practice it's roughly balanced, and slightly
+    compute-bound (6.4 s against 6.9 s).  That's much closer to the 1:1 the
+    technical report describes, and we got there without tuning anything to
+    hit it.</p>
+
+    <h4>What overlap buys</h4>
+
+    <p>Now we can use the roofline to make a decision.  DualPipe overlaps
+    communication with compute, but not for free: DeepSeek dedicates 20 of the
+    H800's 132 SMs to communication, so compute runs 132/112 = 1.18× slower
+    while it's overlapped.  It also keeps two copies of the parameters.  Is
+    it worth it?</p>
+
+    <table>
+        <tr><th></th><th>no overlap, 1F1B</th><th>DualPipe</th></tr>
+        <tr><td>theoretical</td><td>4.0 + 5.8 + 12.5% bubble = 10.3 s</td><td>max(4.0 × 1.18, 5.8) + 3.9% bubble ≈ 6.0 s</td></tr>
+        <tr><td>effective</td><td>6.9 + 6.4 + 12.5% bubble = 14.2 s</td><td>max(6.9 × 1.18, 6.4) + 3.9% bubble ≈ 8.4 s</td></tr>
+    </table>
+
+    <p>Both versions say overlap wins by a wide margin.  But they disagree
+    about what to do next.  In the theoretical version the step is IB-bound,
+    so the 20 SMs cost nothing (compute has slack to spare), and the only
+    thing worth optimizing is IB bytes.  In the effective version compute is
+    the binding side, so those 20 SMs cost about 1.2 s per step, IB has
+    about 1.7 s of slack, and a communication kernel that used fewer SMs would
+    be worth more than one that moved fewer bytes.  Same roofline, opposite
+    advice: this is why the effective numbers are worth carrying.</p>
+
+    <p>Looking back, each of the three tools did one job.  <strong>Speed of
+    light</strong> ruled out ZeRO-3 without any engineering: even at peak, IB
+    is already the bottleneck, so no amount of clever overlap could pay for
+    another 11.8 s on it.  <strong>Conservation</strong> let us price each
+    piece without committing to a full parallel layout, and it also tells us
+    which side we can negotiate with.  The compute is fixed; the IB time is
+    the product of our choices, and those choices swing it enormously (0.15 s
+    for ZeRO-1 against 11.8 s for ZeRO-3).  That's why we always try to hide
+    communication under compute and never the other way round.
+    <strong>Asymptotics</strong> told us which costs matter as models grow:
+    matmul FLOPs grow quadratically with width while PP and EP traffic grow
+    linearly, so a bigger model of the same shape gets relatively
+    <em>cheaper</em> to communicate.  (For EP, only if the experts grow
+    too.)</p>
+
+    <p>Even the effective roofline, 8.4 s, is well short of DeepSeek's
+    reported 19.9 s step.
+    [TODO: the profile comparison, and where the rest goes.]]]</p>
 
 
 
