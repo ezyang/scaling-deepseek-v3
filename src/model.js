@@ -4,10 +4,11 @@
 export const HARDWARE = {
   h800: {
     label: 'H800 (Hopper, export NVLink)',
-    // fp32 = CUDA cores (67 TFLOP/s): a TRUE-fp32 GEMM (the pinned router —
-    // TF32 would truncate the mantissa the pin exists to keep) runs ~15×
-    // slower per FLOP than bf16 tensor cores
-    flops: { bf16: 989e12, fp8: 1979e12, fp32: 67e12 },
+    // tf32 = the rate an fp32 GEMM actually runs at: cuBLAS takes fp32
+    // matmuls onto the tensor cores as TF32 (the notes.txt run's fp32 router
+    // dgrad/wgrad are sm90_xmma_gemm_f32f32_tf32f32_f32 kernels) at half the
+    // bf16 rate — not the 67 TFLOP/s CUDA cores
+    flops: { bf16: 989e12, fp8: 1979e12, tf32: 494.5e12 },
     // Fraction of peak a well-tuned GEMM achieves. Hopper has no native MX
     // block scaling, so the DeepSeek-style fine-grained FP8 recipe pays for
     // scale handling / higher-precision accumulation out of its 2x.
@@ -19,7 +20,7 @@ export const HARDWARE = {
   },
   h100: {
     label: 'H100 SXM',
-    flops: { bf16: 989e12, fp8: 1979e12, fp32: 67e12 },   // fp32 = CUDA cores (see h800)
+    flops: { bf16: 989e12, fp8: 1979e12, tf32: 494.5e12 },   // tf32 = fp32 GEMMs (see h800)
     gemmEff: { bf16: 0.80, mxfp8: 0.70 },
     attnEff: 0.60,
     hbm: 3.35e12, hbmEff: 0.78, memGB: 80,
@@ -28,7 +29,7 @@ export const HARDWARE = {
   },
   gb200: {
     label: 'GB200 NVL72',
-    flops: { bf16: 2.5e15, fp8: 5.0e15, fp32: 80e12 },   // fp32 = CUDA cores (B200 datasheet: 80 TFLOP/s)
+    flops: { bf16: 2.5e15, fp8: 5.0e15, tf32: 1.25e15 },   // tf32 = fp32 GEMMs (see h800)
     gemmEff: { bf16: 0.80, mxfp8: 0.85 }, // Blackwell has native MX support
     attnEff: 0.65,
     // memGB is the capacity YARDSTICK in GiB (the fit charts' red line): what
@@ -40,7 +41,7 @@ export const HARDWARE = {
   },
   gb300: {
     label: 'GB300 NVL72',
-    flops: { bf16: 2.5e15, fp8: 5.0e15, fp32: 80e12 }, // dense FP8 ~B200; GB300 mostly adds FP4 + HBM capacity; fp32 taken as B200's
+    flops: { bf16: 2.5e15, fp8: 5.0e15, tf32: 1.25e15 }, // dense FP8 ~B200; GB300 mostly adds FP4 + HBM capacity
     gemmEff: { bf16: 0.80, mxfp8: 0.85 },
     attnEff: 0.65,
     // 297,020,948,480 B = 276.6 GiB as PyTorch sees it (spec sheets say "288 GB")

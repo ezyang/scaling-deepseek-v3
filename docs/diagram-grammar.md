@@ -60,7 +60,7 @@ the rest are conventions to uphold when editing the renderer.
     never double-counted; chip runs never wrap). PICKETS (2×5 thin rects)
     count compute as TIME quanta at H100 peak — the 1D shape for the 1D
     quantity (one picket ≈ 41 µs/mb = 10 MFLOP/token at the bf16 rate;
-    e4m3 packs 20, CUDA-core fp32 0.68 — dtype flips change the COUNT,
+    e4m3 packs 20, fp32-as-TF32 5 — dtype flips change the COUNT,
     never the scale; the compute ruler ticks in ms per mb·layer; hollow
     trace = sub-unit). Linear memory
     COMPARISON bars are SOLID over a unit-graduated RULER (countability on

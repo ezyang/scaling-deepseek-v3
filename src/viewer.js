@@ -1937,7 +1937,7 @@ export class Dsv3Layer extends HTMLElement {
       !this._ctl.quant ? '' :
       `The picket run inside each op is its compute TIME at ${HW_SHORT[JSON.parse(this.getAttribute('ctx') ?? '{}').hw ?? this.hw ?? 'h100']} peak \u2014 one picket \u2248 ${Math.round(10e6 * 4096 / HARDWARE[JSON.parse(this.getAttribute('ctx') ?? '{}').hw ?? this.hw ?? 'h100'].flops.bf16 * 1e6)} \u00b5s per 4096-token microbatch. ` +
       'A picket packs 10 MFLOP/token at bf16\u2019s 989 TFLOP/s; e4m3/mxfp8 run 2\u00d7 (1979), so theirs pack 20; ' +
-      'the fp32 router runs on CUDA cores at 67 TFLOP/s (TF32 would truncate the mantissa the pin exists to keep) \u2014 \u224815\u00d7 bf16 time per FLOP. ' +
+      'an fp32 GEMM (the all-fp8 router) runs as TF32 at half the bf16 rate (494 TFLOP/s), so its pickets pack 5. ' +
       'Dtype colors here and on the saved-tensor tags: pink e4m3, purple e5m6, dark bf16, brick fp32. ' +
       'The lm head uses the same unit \u2014 per-token vocab work, independent of depth. Norms/SwiGLU ' +
       'get a hollow dashed fig-leaf (bandwidth-bound, compute precision unspecified).',
@@ -2296,21 +2296,21 @@ export class Dsv3Layer extends HTMLElement {
       return b >= 2 ** 30 ? (b / 2 ** 30).toFixed(1) + ' GiB' : b >= 2 ** 20 ? (b / 2 ** 20).toFixed(0) + ' MiB' : (b / 1024).toFixed(0) + ' KiB';
     };
     // FLOP cost strip inside each op box, MFU-style: TIME at peak
-    // (fp8 flavors counted half — 2× peak; fp32 at the CUDA-core rate). Scaled so the
+    // (fp8 flavors counted half — 2× peak; fp32 at the TF32 rate, counted double). Scaled so the
     // largest op in the transformer block fills exactly one row of 30 blocks;
     // the lm head takes however many rows it needs at the same scale.
     // Colored by the op's precision; vector ops get a muted fig-leaf block.
     // e5m6 names a STASH format (the attn-out linear) — its GEMM runs fp8
     // time relative to the bf16 rate, calibrated to the H100 roofline: the
-    // fp8 flavors run at 2× tensor peak (half width); fp32 runs on CUDA
-    // cores (989/67 ≈ 14.8× bf16 time per FLOP — TF32 would defeat the
-    // router pin's purpose, so it gets the true-fp32 rate)
+    // fp8 flavors run at 2× tensor peak (half width); an fp32 GEMM runs as
+    // TF32 on the tensor cores (cuBLAS's choice in the notes.txt run's
+    // trace) at half the bf16 rate
     // the pickets' TIME base is the section's hardware (ctx.hw / hw attr; 02 = H100):
     // one picket = 10 MFLOP/token × 4096 tokens at that GPU's bf16 peak
     const HWP = HARDWARE[JSON.parse(this.getAttribute('ctx') ?? '{}').hw ?? this.hw ?? 'h100'];
     const HWPn = HW_SHORT[JSON.parse(this.getAttribute('ctx') ?? '{}').hw ?? this.hw ?? 'h100'];
     const PICKET_US = Math.round(10e6 * 4096 / HWP.flops.bf16 * 1e6);
-    const RF32 = HWP.flops.bf16 / HWP.flops.fp32;
+    const RF32 = HWP.flops.bf16 / HWP.flops.tf32;
     const flopEq = (flopsTok, d) => flopsTok * (d === 'e4m3' || d === 'mxfp8' || d === 'e5m6' ? 0.5 : d === 'fp32' ? RF32 : 1);
     const opDt = (id) => {
       const n = ana.byId[id];
@@ -2424,7 +2424,7 @@ export class Dsv3Layer extends HTMLElement {
     // FLOP cost as a BAR: length = TIME at H100 peak (squares count bytes;
     // length measures time — the pipeline strip's language). ONE fixed
     // unit: a picket ≈ 41 µs per 4096-token microbatch (= 10 MFLOP/token
-    // at the bf16 rate; e4m3 packs 20, CUDA-core fp32 only 0.68), so dtype
+    // at the bf16 rate; e4m3 packs 20, fp32-as-TF32 only 5), so dtype
     // flips visibly stretch/shrink the runs instead of renormalizing the
     // scale. (bwd ≈ 280 pickets fills most of the tally runway)
     const TB_X = 62, TB_AVAIL = 852;   // tally ribbons: label gutter ('recompute' needs ~55px) + runway (sum keeps the svg at 1080)
