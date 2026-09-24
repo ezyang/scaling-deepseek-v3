@@ -64,7 +64,7 @@ double-counted anywhere in the figure); supports `highlightOps`.
 
 | attribute | meaning |
 |---|---|
-| `layer` | the diagram whose cells rows/terms highlight (hover previews, click pins; hidden-kind pins flip the diagram; hidden-kind hovers show only kind-shared cells) |
+| `layer` | the diagram whose cells rows/terms highlight (hover previews, click pins; hidden-kind pins flip the diagram; hidden-kind hovers show only kind-shared cells); a count's exact value is the shared tooltip, and clicking a count pins both it and its row) |
 | `compact` | narrow two-column margin form with the fixed equation slot |
 | `mode` | `total` (default) · `active` — initial toggle position |
 | `units` | absent · `bytes` — bf16 memory framing: values in binary bytes, the total/active toggle hidden (activation doesn't change resident bytes). `<dsv3-anatomy lens="param-bytes" tally>` sets this automatically |
@@ -227,7 +227,8 @@ labels carry `data-cell`; hovering shows that cell's entry (name · label,
 `= formula = value (exact B)`), clicking PINS it, and clicking a coordinate
 inside a pinned tip pushes that cell's entry below — a STACK growing
 downward, one path through the graph at a time (clicking a name higher up
-truncates the path there first). Clicking elsewhere unpins. Op-box tooltips
+truncates the path there first). Pin/close behavior is the shared tooltip's
+(§ Tooltips). Op-box tooltips
 no longer carry hand-written FLOP expression strings (the divergence-prone
 pattern the cells replace) — just the FLOP count, dims note and exact
 parameter count.
@@ -463,7 +464,7 @@ expert dispatch+combine traffic it needs, undeduplicated); objects (a
 hidden vector over each link, one layer's forward for a 4,096-token
 microbatch, one expert and the whole model through a NIC, one pass over
 HBM). `for=<id>` follows that `<dsv3-sol>`'s GPU knob (its `dsv3-sol`
-change event); `hw=` stands alone. Rows carry their formula as a title.
+change event); `hw=` stands alone. Rows carry their formula as a `data-tip` (the shared tooltip).
 `anchors(hwKey)` is node-importable (goldens `anchors.*`); cells are
 `td[data-anchor=<label>]`.
 
@@ -506,6 +507,31 @@ node-importable (goldens `ladder.*`); test affordances:
 ## Other elements (unchanged conventions)
 - `<dsv3-trace level height title config>` — the canvas trace viewer over the
   simulator (not yet on a published page; the timing posts' widget).
+
+## Tooltips (src/tip.js)
+
+One interaction language for every data tooltip on the site:
+`attachTip(host, content, { parent, cls, pinnable })`. Hover a tipped element
+→ a light card follows the pointer (placed from the pointer, clamped to the
+viewport, whatever its containing block). Click → it PINS: amber border,
+pointer-events on so its text is selectable (the way to copy an exact value);
+clicks inside it never close it. The next click anywhere, or Escape, closes
+it — and only closes: while ANY tip on the page is pinned, a click never also
+pins another. Clicks that already mean something don't pin: buttons, links,
+form controls, and whatever the widget's `pinnable` refuses (the formula
+sheet's refs jump to their row, so they hover but never pin; a drag-pan on
+the trace canvas pins nothing). Widgets supply content only — `content(ev,
+pinning)` returns null, a string (pre-line) or a Node; it is called again with
+`pinning = true` (tip already `.pinned`) on the pinning click, so pin-only
+affordances (the cell drill's live refs) render. Keep `parent` outside
+anything the widget re-renders. Users: the layer diagram (`.lv-tip`: cells
+drill, raw-bytes lens, `data-tip` prose), the formula sheet, the param
+tallies (exact counts; a click pins the row too), `<dsv3-anchors>` rows, the
+trace viewer (`.tv-tip`: a plain click selects the slice and pins its card; a
+wheel closes it) and 03's reference table. Rounded numbers carry their exact
+value as `data-raw` wherever they can (the cross-check lens). Native `title=`
+stays only for CONTROL hints (buttons, checkboxes). Tests: tests/tip.js,
+tests/tip02.js, tests/cells.js, tests/reftable.js.
 
 ## Mobile framing (studies/mobile.js, ≤860px)
 

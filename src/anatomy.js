@@ -10,6 +10,7 @@
 import { DSV3 } from './model.js';
 import { fmtP, fmtBytes, tokensCss, applyHighlight } from './viewer.js';
 import { C } from './theme.js';
+import { attachTip } from './tip.js';
 import { BYTE_COMPS, INACTIVE, LOCAL_PAR, ppStage, inflightOf } from './localmodel.js';
 import { PARAMS } from './params.js';
 
@@ -407,9 +408,6 @@ const TALLY_CSS = `
 dsv3-param-tally { display: block; margin: 14px 0; }
 .ptal { font: 13.5px system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--c-0b0b0b); position: relative; }
 .ptal .pnum { cursor: pointer; }
-.ptal .ptip { display: none; position: absolute; z-index: 6; background: var(--c-ffffff);
-  border: 1px solid var(--c-c3c2b7); border-radius: 4px; padding: 2px 8px; font: 11px ui-monospace, Menlo, monospace;
-  box-shadow: 0 2px 8px rgba(11,11,11,0.12); pointer-events: none; white-space: nowrap; }
 .ptal table { border-collapse: collapse; width: 100%; max-width: 760px; }
 .ptal th, .ptal td { text-align: left; padding: 5px 12px 5px 7px; border-bottom: 1px solid var(--c-e1e0d9);
   font-variant-numeric: tabular-nums; vertical-align: top; }
@@ -449,6 +447,11 @@ export class Dsv3ParamTally extends HTMLElement {
     this._root = document.createElement('div');
     this._root.className = 'ptal' + (this.hasAttribute('compact') ? ' compact' : '');
     this.append(style, this._root);
+    // the shared tooltip: a count's exact value (outside _root, which build() rewrites)
+    attachTip(this._root, (ev) => {
+      const sp = ev.target.closest?.('.pnum');
+      return sp ? Number(sp.dataset.v).toLocaleString('en-US') : null;
+    }, { parent: this });
     this.build();
   }
   build() {
@@ -544,34 +547,15 @@ export class Dsv3ParamTally extends HTMLElement {
       };
       wireTerms(tr, ri);   // full-table formula terms
     }
-    const tip = document.createElement('div'); tip.className = 'ptip';
-    root.append(tip);
-    let tipPin = false;
-    // cursor-anchored (offsetLeft/Top of inline spans in table cells lands
-    // far from the pointer): position from the mouse event, following it
-    // while unpinned
-    const showTip = (sp, ev) => {
-      tip.textContent = Number(sp.dataset.v).toLocaleString('en-US');
-      const r = root.getBoundingClientRect();
-      tip.style.left = Math.max(0, ev.clientX - r.left + 12) + 'px';
-      tip.style.top = (ev.clientY - r.top + 14) + 'px';
-      tip.style.display = 'block';
-    };
+    // clicking a count also pins its row (the tooltip pins via src/tip.js)
     for (const sp of root.querySelectorAll('.pnum')) {
-      sp.onmouseenter = (ev) => { if (!tipPin) showTip(sp, ev); };
-      sp.onmousemove = (ev) => { if (!tipPin) showTip(sp, ev); };
-      sp.onmouseleave = () => { if (!tipPin) tip.style.display = 'none'; };
       sp.onclick = (ev) => {
         ev.stopPropagation();
-        tipPin = true; showTip(sp, ev);
         const tr = sp.closest('tbody tr');
-        if (tr) pinTo(+tr.dataset.row, null);   // pin the highlights too
+        if (tr) pinTo(+tr.dataset.row, null);
         apply();
       };
     }
-    if (this._dismiss) document.removeEventListener('click', this._dismiss);
-    this._dismiss = () => { tipPin = false; tip.style.display = 'none'; };
-    document.addEventListener('click', this._dismiss);
     // the heading is the total/active toggle; switching rebuilds and clears
     for (const b of root.querySelectorAll('.mbtn')) {
       b.onclick = () => {

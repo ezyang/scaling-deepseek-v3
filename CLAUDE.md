@@ -104,6 +104,9 @@ generality.
 - Animations are quick (~200 ms), deterministic frame-stepped (no
   rAF-timestamp math), and every co-located element participates — fades and
   dependent overlays tween together, nothing pops.
+- Data tooltips all go through src/tip.js (hover shows, click pins, any
+  click or Esc closes; docs/widgets.md § Tooltips) — never a hand-rolled
+  card or a native `title=` on data (title= is for control hints only).
 - Widget state persists in the URL hash (shareable, refresh-stable); presets
   recognize themselves when controls return to a preset's exact state.
 - Night mode: src/theme.js is the single color source (light literals ↔ the

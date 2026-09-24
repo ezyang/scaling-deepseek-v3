@@ -6,6 +6,7 @@
 // (sheet after layer) is unchanged.
 import { fmtBytes, fmtP } from './viewer.js';   // runtime-only (no eval-time cycle)
 import { mmSig, markSig, HAZIZA_CFG } from './localmodel.js';
+import { attachTip } from './tip.js';
 
 const el = (tag, cls) => { const e = document.createElement(tag); if (cls) e.className = cls; return e; };
 const esc = (s) => String(s).replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
@@ -131,27 +132,19 @@ export class Dsv3Sheet extends HTMLElement {
         stage: HAZIZA_CFG.stage, sched: HAZIZA_CFG.sched, vpp: 2, fold: 'reflect',
       }));
     });
-    // formula variables get the same hover card as the chart's numbers
-    // (.lv-tip styling rides the layer's stylesheet); clicking one jumps to
-    // its row
-    this._tip = el('div', 'lv-tip');
-    this.append(this._tip);   // outside _root: sync() rewrites _root.innerHTML
+    // formula variables get the shared hover card (src/tip.js), like the
+    // chart's numbers; clicking one jumps to its row instead of pinning.
+    // The card lives outside _root: sync() rewrites _root.innerHTML
     const fmtC = (c) => {
       const rawv = c.unit === 'B/e' ? `${c.value} B/elem`
         : c.value.toLocaleString('en-US', { maximumFractionDigits: 2 }) + (c.unit === 'B' ? ' B' : c.unit === 'B/tok' ? ' B/tok' : '');
       return c.unit === 'B' ? `${fmtBytes(c.value)} (${rawv})` : rawv;
     };
-    this._root.addEventListener('mousemove', (ev) => {
+    attachTip(this._root, (ev) => {
       const ref = ev.target.closest?.('.cellref');
       const c = ref && this._layer?._cells?.().byId.get(ref.textContent);
-      if (!c) { this._tip.style.display = 'none'; return; }
-      this._tip.textContent = `${c.id} · ${c.label}\n${c.expr ? `= ${c.expr} ` : ''}= ${fmtC(c)}`;
-      const r = this.getBoundingClientRect();
-      this._tip.style.left = Math.min(ev.clientX - r.left + 14, r.width - 300) + 'px';
-      this._tip.style.top = (ev.clientY - r.top + 14) + 'px';
-      this._tip.style.display = 'block';
-    });
-    this._root.addEventListener('mouseleave', () => { this._tip.style.display = 'none'; });
+      return c ? `${c.id} · ${c.label}\n${c.expr ? `= ${c.expr} ` : ''}= ${fmtC(c)}` : null;
+    }, { parent: this, cls: 'lv-tip', pinnable: (ev) => !ev.target.closest('.cellref') });
     this._root.addEventListener('mousedown', (ev) => {
       if (ev.button !== 0) return;
       const sb = ev.target.closest?.('.sb');

@@ -223,10 +223,7 @@ export const fmtP = (n) => n >= 1e9 ? (n / 1e9).toFixed(1) + 'B'
   : n >= 9.95e6 ? Math.round(n / 1e6) + 'M' : n >= 1e6 ? (n / 1e6).toFixed(1) + 'M'
   : n >= 1e3 ? (n / 1e3).toFixed(1).replace(/\.0$/, '') + 'K' : String(n);
 import { downloadTrace, openInPerfetto } from './trace.js';
-
-// shared light-card tooltip style (trace, memory bars, schematic)
-const TIP_CARD = 'position: absolute; pointer-events: none; background: var(--c-ffffff); color: var(--c-1c1c1a); padding: 6px 9px;' +
-  ' border: 1px solid var(--c-c3c2b7); border-radius: 5px; display: none; box-shadow: 0 2px 10px rgba(11,11,11,0.12);';
+import { attachTip as sharedTip } from './tip.js';
 
 // Validated categorical palette (dataviz skill, light surface var(--c-fcfcfb)).
 export const CATS = {
@@ -258,7 +255,6 @@ const CSS = `
 .tv-legend i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
 .tv-wrap { position: relative; }
 .tv canvas { display: block; outline: none; }
-.tv-tip { ${TIP_CARD} font-size: 11px; max-width: 340px; z-index: 5; line-height: 1.45; }
 .tv-tip b { color: var(--c-0b0b0b); }
 .tv-foot { padding: 3px 8px; border-top: 1px solid var(--c-e1e0d9); color: var(--c-52514e); font-size: 11px;
   min-height: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -297,12 +293,11 @@ export class TraceViewer {
     this.wrap = el('div', 'tv-wrap');
     this.canvas = document.createElement('canvas');
     this.canvas.tabIndex = 0;
-    this.tip = el('div', 'tv-tip');
     this.helpEl = el('div', 'tv-help');
     this.helpEl.innerHTML = '<b>navigation</b><br>W/S zoom · A/D pan · wheel scroll · ⌘/ctrl-wheel zoom<br>' +
       'shift-wheel pan · drag pan · click select · ←/→ walk slices<br>F focus selection · M mark · 0 fit · esc clear';
     this.foot = el('div', 'tv-foot');
-    this.wrap.append(this.canvas, this.tip, this.helpEl);
+    this.wrap.append(this.canvas, this.helpEl);
     this.root.append(this.bar, this.legendEl, this.wrap, this.foot);
 
     this.height = opts.height ?? 300;
@@ -548,14 +543,18 @@ export class TraceViewer {
   bindEvents() {
     const cv = this.canvas;
     this.wrap.addEventListener('mouseenter', () => { hoveredViewer = this; });
-    this.wrap.addEventListener('mouseleave', () => { if (hoveredViewer === this) hoveredViewer = null; this.tip.style.display = 'none'; this.mouse = null; });
+    this.wrap.addEventListener('mouseleave', () => { if (hoveredViewer === this) hoveredViewer = null; this.mouse = null; });
+    let down = null, moved = false;
+    // the shared tooltip: a plain click selects the slice AND pins its card;
+    // a drag-pan pins nothing, and a wheel pan/zoom closes a pinned card
+    this.tip = sharedTip(cv, (e) => down ? null : this.tipFor(e), { parent: this.wrap, cls: 'tv-tip', pinnable: () => !moved });
     cv.addEventListener('wheel', (e) => {
       e.preventDefault();
+      this.tip.unpin();
       if (e.ctrlKey || e.metaKey) this.zoomAt(e.offsetX, Math.exp(e.deltaY * 0.01));
       else if (e.shiftKey) { this.tl += e.deltaY * this.tpp; this.dirty(); }
       else { this.tl += e.deltaX * this.tpp; this.yOff += e.deltaY; this.dirty(); }
     }, { passive: false });
-    let down = null, moved = false;
     cv.addEventListener('mousedown', (e) => { down = { x: e.offsetX, y: e.offsetY, tl: this.tl, yOff: this.yOff }; moved = false; cv.focus({ preventScroll: true }); });
     cv.addEventListener('mousemove', (e) => {
       this.mouse = { x: e.offsetX, y: e.offsetY };
@@ -564,7 +563,7 @@ export class TraceViewer {
         this.tl = down.tl - (e.offsetX - down.x) * this.tpp;
         this.yOff = down.yOff - (e.offsetY - down.y);
         this.dirty();
-      } else this.hover(e);
+      }
     });
     window.addEventListener('mouseup', () => { down = null; });
     cv.addEventListener('click', (e) => { if (!moved) this.select(this.hitTest(e.offsetX, e.offsetY)); });
@@ -574,17 +573,15 @@ export class TraceViewer {
     });
   }
 
-  hover(e) {
+  tipFor(e) {
     const hit = this.hitTest(e.offsetX, e.offsetY);
-    if (!hit) { this.tip.style.display = 'none'; return; }
+    if (!hit) return null;
     const s = hit.slice;
     const args = s.args ? Object.entries(s.args).filter(([, v]) => v != null && v !== '')
       .map(([k, v]) => `${k}: ${v}`).join('<br>') : '';
-    this.tip.innerHTML = `<b>${esc(s.name)}</b><br>${CATS[s.cat]?.label ?? s.cat} · ${fmtUs(s.dur)}` + (args ? '<br>' + args : '');
-    this.tip.style.display = 'block';
-    const bw = this.wrap.clientWidth;
-    this.tip.style.left = Math.min(e.offsetX + 14, bw - this.tip.offsetWidth - 4) + 'px';
-    this.tip.style.top = (e.offsetY + 16) + 'px';
+    const d = el('div');
+    d.innerHTML = `<b>${esc(s.name)}</b><br>${CATS[s.cat]?.label ?? s.cat} · ${fmtUs(s.dur)}` + (args ? '<br>' + args : '');
+    return d;
   }
 
   focusSlice(s) {
@@ -732,8 +729,6 @@ const LAYER_CSS = `
 dsv3-layer { display: block; margin: 14px 0 26px; }
 .lv { font: 12px system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--c-0b0b0b);
   border: 1px solid var(--c-e1e0d9); border-radius: 6px; background: var(--c-fcfcfb); padding: 10px 12px; position: relative; }
-.lv-tip { ${TIP_CARD} font-size: 11.5px; max-width: 360px; z-index: 7; line-height: 1.5; white-space: pre-line; }
-.lv-tip.pinned { border-color: var(--c-eda100); box-shadow: 0 2px 10px rgba(237,161,0,0.3); }
 /* cell (formula) tooltips: entries stack downward as the pinned drill deepens */
 .lv-cellent + .lv-cellent { border-top: 1px dashed var(--c-e1e0d9); margin-top: 5px; padding-top: 5px; }
 .lv-cellfx { font: 11px ui-monospace, monospace; color: var(--c-52514e); margin-top: 1px; }
@@ -3883,20 +3878,11 @@ export class Dsv3Layer extends HTMLElement {
     }
     return svgEl;
   }
-  // instant tooltips; click a tipped element (not a button) to pin.
-  // Besides [data-tip] prose, a raw-bytes cross-check lens rides along:
-  // hovering a rounded byte label (data-raw tspan, or a fit-chart value's
-  // data-true) shows the unrounded count.
+  // the shared tooltip (src/tip.js) over [data-tip] prose, plus a raw-bytes
+  // cross-check lens: hovering a rounded byte label (data-raw tspan, or a
+  // fit-chart value's data-true) shows the unrounded count.
   attachTip(root) {
-    const tip = el('div', 'lv-tip');
-    root.append(tip);
-    let pinned = false;
     let stack = [];   // pinned CELL drill-down: one path through the formula graph, growing downward
-    const place = (ev) => {
-      const r = root.getBoundingClientRect();
-      tip.style.left = Math.min(ev.clientX - r.left + 14, r.width - 280) + 'px';
-      tip.style.top = (ev.clientY - r.top + 14) + 'px';
-    };
     const rawOf = (ev) => {
       const t = ev.target.closest?.('[data-raw], text[data-true]');
       const v = t && +(t.dataset.raw ?? t.dataset.true);
@@ -3934,57 +3920,38 @@ export class Dsv3Layer extends HTMLElement {
     };
     const renderStack = () => {
       const cells = this._cells?.();
-      if (!cells) return false;
-      tip.replaceChildren(...stack.map((id, k) => entry(cells.byId.get(id), k)));
-      if (pinned) {
+      if (!cells) return null;
+      const f = document.createDocumentFragment();
+      f.append(...stack.map((id, k) => entry(cells.byId.get(id), k)));
+      if (tp.pinned) {
         const hint = el('div', 'lv-cellhint');
         hint.textContent = 'click a name to expand it below · click elsewhere to close';
-        tip.append(hint);
+        f.append(hint);
       }
-      return true;
+      return f;
     };
-    root.addEventListener('mousemove', (ev) => {
-      if (pinned) return;
+    // a formula cell outranks the raw lens and prose; clicking a cell inside
+    // a diagram part (whose click toggles the part) pins the part's own tip
+    const tp = sharedTip(root, (ev, pinning) => {
       const cellEl = ev.target.closest?.('[data-cell]');
-      if (cellEl && this._cells) {
+      if (cellEl && this._cells && !(pinning && ev.target.closest('[data-prop], [data-part]'))) {
         stack = [cellEl.dataset.cell];
-        if (renderStack()) { tip.style.display = 'block'; place(ev); return; }
+        const f = renderStack();
+        if (f) return f;
       }
-      const raw = rawOf(ev);
-      const t = ev.target.closest?.('[data-tip]');
-      if (raw) { tip.textContent = raw; tip.style.display = 'block'; place(ev); }
-      else if (t) { tip.textContent = t.dataset.tip; tip.style.display = 'block'; place(ev); }
-      else tip.style.display = 'none';
-    });
-    // clicks INSIDE the pinned tip drill (and never close it): a formula
-    // name truncates the stack to its own entry and pushes its cell below
-    tip.addEventListener('click', (ev) => {
-      if (!pinned) return;
-      ev.stopPropagation();
+      return rawOf(ev) ?? ev.target.closest?.('[data-tip]')?.dataset.tip ?? null;
+    }, { cls: 'lv-tip' });
+    // clicks INSIDE the pinned tip drill: a formula name truncates the stack
+    // to its own entry and pushes its cell below
+    tp.tip.addEventListener('click', (ev) => {
+      if (!tp.pinned) return;
       const j = ev.target.closest?.('b[data-jump]');
       if (j) { document.querySelector(`dsv3-sheet[layer="${this.id}"]`)?.reveal(j.dataset.jump); return; }
       const ref = ev.target.closest?.('.cellref');
       if (!ref) return;
       stack = stack.slice(0, +ref.closest('.lv-cellent').dataset.k + 1).concat(ref.dataset.cell);
-      renderStack();
+      tp.set(renderStack());
     });
-    const unpin = () => { pinned = false; stack = []; tip.classList.remove('pinned'); tip.style.pointerEvents = 'none'; tip.style.display = 'none'; };
-    root.addEventListener('click', (ev) => {
-      if (pinned) { unpin(); return; }
-      const cellEl = ev.target.closest?.('[data-cell]');
-      if (cellEl && this._cells && !ev.target.closest('button, select, [data-prop], [data-part]')) {
-        pinned = true; tip.classList.add('pinned'); tip.style.pointerEvents = 'auto';
-        stack = [cellEl.dataset.cell];
-        renderStack(); tip.style.display = 'block'; place(ev);
-        return;
-      }
-      const t = ev.target.closest?.('[data-tip]');
-      if (t && !ev.target.closest('button, select')) {
-        pinned = true; tip.classList.add('pinned');
-        tip.textContent = t.dataset.tip; tip.style.display = 'block'; place(ev);
-      }
-    });
-    root.addEventListener('mouseleave', () => { if (!pinned) tip.style.display = 'none'; });
   }
 }
 if (typeof customElements !== 'undefined' && !customElements.get('dsv3-layer')) {
