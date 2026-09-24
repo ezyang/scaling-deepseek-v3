@@ -31,20 +31,22 @@ export const MATMULS = [
 // Presets. Unlisted matmuls stay bf16 (attention core, router, head — the
 // things every recipe keeps in high precision).
 export const RECIPES = {
-  // even the all-bf16 baseline pins the router fp32: gating is never a
-  // precision choice in the Hopper story (the paper keeps it high-precision,
-  // production runs it fp32), so the label must not flip between sections.
-  // (nv-mxfp8 keeps router bf16 — that IS NVIDIA's choice, a Blackwell-post fact.)
-  'bf16': { router: 'fp32' },
+  // the router GEMM stays bf16 in DeepSeek's recipe: their released H800
+  // profile trace runs it as a bf16 cuBLAS kernel with fp32 logits out
+  // (sm90_xmma_gemm_bf16f32_bf16f32_f32; 44 µs for 15 GFLOP, 5× faster than
+  // fp32 CUDA cores could). The paper's "high precision" gating is the fp32
+  // logits/scores (router state), not an fp32 GEMM. The router tag is
+  // pinned, never a lever: bf16 here, fp32 only in all-fp8 (its source run).
+  'bf16': {},
   // DeepSeek-V3 paper recipe: linears in tile-scaled fp8 (the Hopper flavor —
-  // same bytes as MX, its own key so labels carry provenance); attention core and head high-precision; the router runs
-  // fp32 in production; the attn-out linear's stash is the paper's customized
+  // same bytes as MX, its own key so labels carry provenance); attention core, head and router GEMM bf16; the attn-out linear's stash is the paper's customized
   // E5M6 (§3.3.3) — the GEMM itself runs fp8 (flopEq prices e5m6 at fp8 rate);
   // swiglu_in = the SwiGLU input's SAVE format (free-floating — §3.3.3 caches it fp8).
-  'dsv3-fp8': { qkv_down: 'e4m3', q_up: 'e4m3', kv_up: 'e4m3', o_proj: 'e5m6', router: 'fp32', ffn_gate_up: 'e4m3', ffn_down: 'e4m3', swiglu_in: 'e4m3' },
+  'dsv3-fp8': { qkv_down: 'e4m3', q_up: 'e4m3', kv_up: 'e4m3', o_proj: 'e5m6', ffn_gate_up: 'e4m3', ffn_down: 'e4m3', swiglu_in: 'e4m3' },
   // dsv3-fp8 without the wide exception: EVERY linear runs (and stashes) fp8,
   // the attn-out included — a production H100 variant (notes.txt: MM5 is
-  // fp8_linear). Attention core and head stay bf16, router fp32. Under
+  // fp8_linear). Attention core and head stay bf16; that run's router is
+  // an fp32_linear (notes.txt MM6), unlike DeepSeek's bf16 router. Under
   // attention-replay recompute the attn-out stash never materializes, so this
   // recipe's BYTES equal dsv3-fp8's there (sanity pins that) — the difference
   // is the o_proj GEMM's compute pricing.

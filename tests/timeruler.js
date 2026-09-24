@@ -12,16 +12,16 @@ T.check('tail fits inside the svg', bb.x + bb.width <= vbW, `${(bb.x + bb.width)
 const near = texts.filter(t => Math.abs(t.getBBox().y - bb.y) < 8 && t !== tail).map(t => t.textContent);
 T.log('tick labels', near.join(','));
 T.check('tick labels count in ms (1,2,3…)', near.length > 4 && near.every(t => +t <= 20 && +t > 0), near.join(','));
-// fp32 router pickets: brick-colored height-5 rects present in its box
+// the router is a BF16 tensor-core GEMM (DeepSeek's trace: a bf16 cuBLAS
+// kernel, fp32 logits out) — 3.7 MFLOP/token, well under one picket, so its
+// box carries only the sub-picket trace, no solid pickets
 const g = ac.querySelector('g[data-op="router"]');
 const box = g.querySelector('rect.box').getBBox();
-const brick = [...ac.querySelectorAll('.lv-scroll rect[height="5"]')].filter(r => {
-  const b = r.getBBox();
-  return b.x > box.x && b.x < box.x + box.width && b.y > box.y && b.y < box.y + box.height
-    && r.getAttribute('fill') !== 'none';
-});
-T.log('router pickets', `${brick.length} fill=${brick[0]?.getAttribute('fill')}`);
-T.check('router shows ~5 fp32 pickets at the CUDA-core rate', brick.length >= 5 && brick.length <= 7, brick.length);
+const inBox = (r) => { const b = r.getBBox(); return b.x > box.x && b.x < box.x + box.width && b.y > box.y && b.y < box.y + box.height; };
+const solid = [...ac.querySelectorAll('.lv-scroll rect[height="5"]')].filter(r => inBox(r) && r.getAttribute('fill') !== 'none');
+const trace = [...ac.querySelectorAll('.lv-scroll rect[width="1.4"]')].filter(inBox);
+T.log('router pickets', `${solid.length} solid, ${trace.length} trace`);
+T.check('router is sub-picket (bf16 GEMM): trace only, no solid pickets', solid.length === 0 && trace.length === 1, `${solid.length}/${trace.length}`);
 // the group label leads with TIME
 T.check('group label says time at H100 peak', texts.some(t => t.textContent.includes('per-layer compute as TIME at H100 peak')), '');
 T.done();

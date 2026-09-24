@@ -92,27 +92,26 @@ T.check('back to dsv3', gib() === 66.6, gib());
 // ---- FLOP pickets: one FIXED unit (≈41 µs/mb at H100 peak = 10 MFLOP/token
 // at the bf16 rate) — an fp8 flip halves the COUNT, not the scale. Counting
 // via the fwd ribbon (= the boxes' pickets laid end to end): bf16 fwd ≈
-// 1.34 GFLOP/tok + the fp32 router repriced at CUDA-core rate (≈15× bf16
-// per FLOP) = 139 pickets.
+// 1.34 GFLOP/tok = 134 pickets (the router is a bf16 GEMM, sub-picket).
 const fwdN = (l) => {
   const lab = [...tally(l).querySelectorAll('text')].find(t => t.textContent === 'fwd');
   const y0 = +lab.getAttribute('y') - 6;
   return [...tally(l).querySelectorAll('rect[height="5"]')]
     .filter(r => Math.abs(+r.getAttribute('y') - y0) < 3).length;
 };
-T.check('AC widget (bf16): fwd = 139 pickets at the fixed unit', fwdN(ac) === 139, fwdN(ac));
+T.check('AC widget (bf16): fwd = 134 pickets at the fixed unit', fwdN(ac) === 134, fwdN(ac));
 // the router label never flips between sections: the AC (marks) tier wears
-// the same pinned fp32 tag as the dtype tier — bf16 recipe pins router fp32
-T.check('AC widget: router wears the pinned fp32 🔒 tag (no bf16 flip between sections)', (() => {
+// the same pinned bf16 tag as the dtype tier (DeepSeek's trace: bf16 GEMM)
+T.check('AC widget: router wears the pinned bf16 🔒 tag (no flip between sections)', (() => {
   const b = ac.querySelector('button[data-dt="router"]');
-  return b && b.disabled && /fp32 🔒/.test(b.textContent);
+  return b && b.disabled && /bf16 🔒/.test(b.textContent);
 })(), '');
 T.check('AC widget: no OTHER dtype buttons below the dtype tier',
   ac.querySelectorAll('button[data-dt]').length === 1, ac.querySelectorAll('button[data-dt]').length);
-T.check('fp8 widget: the fp8 recipe shrinks the tally (81 pickets — o_proj runs fp8 too, e5m6 names its stash)', fwdN(f8) === 81, fwdN(f8));
+T.check('fp8 widget: the fp8 recipe shrinks the tally (76 pickets — o_proj runs fp8 too, e5m6 names its stash)', fwdN(f8) === 76, fwdN(f8));
 { // recipe flip to bf16 restores the count — the unit never renormalizes
   btn(f8, 'recipe', 'bf16').click(); await T.tick(400);
-  T.check('recipe→bf16 restores the full count', fwdN(f8) === 139, fwdN(f8));
+  T.check('recipe→bf16 restores the full count', fwdN(f8) === 134, fwdN(f8));
   // the fp8 widget is PINNED to the dsv3 recompute policy, so its bf16
   // readout equals the AC widget's dsv3 number — the two sections agree
   T.check('fp8 readout follows the recipe (bf16 = the AC dsv3 66.6 GiB)', /= 66\.6 GiB/.test(tHead(f8)), tHead(f8));
@@ -190,8 +189,7 @@ T.check('fp8 widget: the fp8 recipe shrinks the tally (81 pickets — o_proj run
     btn(f8, 'recipe', 'dsv3-fp8').classList.contains('on'), '');
 }
 // vector ops keep the unpriced fig-leaf (hollow dashed); sub-picket GEMMs
-// (the kv down-proj half — the router graduated to ~5 fp32 pickets at the
-// CUDA-core rate) wear the hollow trace
+// (the kv down-proj half, the router) wear the hollow trace
 T.check('norms/swiglu wear the hollow dashed fig-leaf',
   ac.querySelectorAll('.lv-scroll rect[height="4"][stroke-dasharray]').length >= 3, '');
 T.check('sub-picket GEMMs wear the hollow trace',
@@ -391,15 +389,15 @@ T.check('sub-picket GEMMs wear the hollow trace',
   const mid = fwdN(f8);
   await T.tick(400);
   T.check('picket count lerps through the dtype flip', mid > 92 && mid < 130, mid);
-  T.check('and lands on the full count', fwdN(f8) === 139, fwdN(f8));
+  T.check('and lands on the full count', fwdN(f8) === 134, fwdN(f8));
   btn(f8, 'recipe', 'dsv3-fp8').click(); await T.tick(400);
 }
 // per-op dtype buttons: bf16 ⇄ fp8 only (the article anchors on bf16 — no
-// fp32 stop), and the ROUTER is pinned (production fp32, not a lever)
+// fp32 stop), and the ROUTER is pinned (bf16 per DeepSeek's trace, not a lever)
 {
   const dbtn = (id) => f8.querySelector(`button[data-dt="${id}"]`);
-  T.check('router dtype button is pinned (disabled, fp32 🔒 under dsv3-fp8)',
-    dbtn('router').disabled && /fp32 🔒/.test(dbtn('router').textContent), dbtn('router').textContent);
+  T.check('router dtype button is pinned (disabled, bf16 🔒 under dsv3-fp8)',
+    dbtn('router').disabled && /bf16 🔒/.test(dbtn('router').textContent), dbtn('router').textContent);
   // o_proj: box tag = pinned COMPUTE dtype (e4m3 — the one GEMM whose stash
   // and compute formats differ); the stash lever is the E5M6 CHECKBOX
   T.check('o_proj tag is pinned COMPUTE e4m3 🔒 (stash format is the checkbox)',
