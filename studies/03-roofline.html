@@ -9,6 +9,21 @@
   <link rel="stylesheet" href="./study.css">
   <style>
     dsv3-ladder { display: block; margin: 14px 0 26px; }
+    table.ref { border-collapse: collapse; font-size: 14px; margin: 14px 0 22px; font-variant-numeric: tabular-nums; }
+    .ref th { text-align: left; font-size: 12.5px; font-weight: 600; color: var(--c-52514e); padding: 4px 14px 5px 0; border-bottom: 1.5px solid var(--c-c3c2b7); }
+    .ref td { padding: 4px 14px 4px 0; vertical-align: baseline; }
+    .ref td:first-child, .ref th:first-child { padding-left: 8px; white-space: nowrap; }
+    .ref sup { line-height: 0; font-size: 0.72em; }
+    .ref th.c { text-align: center; }
+    .ref .m { text-align: right; white-space: nowrap; padding-right: 0.3em; }
+    .ref .e { white-space: nowrap; padding-right: 24px; }
+    .ref .gh { visibility: hidden; }
+    .ref tr.hero td { font-weight: 600; }
+    .ref .t { text-align: right; white-space: nowrap; padding-left: 16px; }
+    .ref tr.grp td { background: var(--c-f3f2ee); font-size: 13px; font-weight: 600; color: var(--c-1c1c1a); border-top: 1.5px solid var(--c-c3c2b7); padding-top: 9px; }
+    .ref tr.grp .t { color: var(--c-52514e); font-weight: 500; }
+    .ref-tip { position: absolute; pointer-events: none; background: var(--c-ffffff); color: var(--c-1c1c1a); padding: 6px 9px; border: 1px solid var(--c-c3c2b7); border-radius: 5px; display: none; box-shadow: 0 2px 10px rgba(11,11,11,0.12); font-size: 11.5px; line-height: 1.5; white-space: pre-line; z-index: 7; font-variant-numeric: tabular-nums; }
+    .ref-tip.pinned { pointer-events: auto; border-color: var(--c-eda100); box-shadow: 0 2px 10px rgba(237,161,0,0.3); }
   </style>
 </head>
 
@@ -197,6 +212,82 @@
     enter a matmul).  What 6ND leaves out is the attention core: at 4,096
     tokens it adds 10.2 GFLOP per token forward, 14% on top of 2N, which
     would move the FP8 wall time from 3.4 s to 3.9 s.]]</p>
+
+    <p>[[AI: Numbers like 10<sup>19</sup> are hard to feel, so here is a
+    ladder of reference points, each priced two ways: at the hardware's FP8
+    peak, and at a throughput someone actually measured on it.</p>
+
+    <table class="ref" id="reftable">
+        <tr><th></th><th colspan="2" class="c">FLOPs</th><th class="t">at FP8 peak</th><th class="t">sustained</th></tr>
+        <tr class="grp" data-r="h800"><td>on one H800</td><td></td><td></td><td class="t">1,979 TFLOP/s</td><td class="t">339 TFLOP/s</td></tr>
+        <tr data-f="token"><td>one token, trained (6N)</td><td class="m">2.2</td><td class="e">× 10<sup>11</sup></td><td class="t">111 µs</td><td class="t">648 µs</td></tr>
+        <tr data-f="seq"><td>one 4,096-token sequence, trained</td><td class="m">9.0</td><td class="e">× 10<sup>14</sup></td><td class="t">0.45 s</td><td class="t">2.65 s</td></tr>
+        <tr data-f="gpu"><td>one step's share, per GPU</td><td class="m">6.75</td><td class="e">× 10<sup>15</sup></td><td class="t">3.4 s</td><td class="t">19.9 s</td></tr>
+        <tr class="grp" data-r="dsc"><td>on DeepSeek's cluster: 2,048 H800s</td><td></td><td></td><td class="t">4.05 EFLOP/s</td><td class="t">0.69 EFLOP/s</td></tr>
+        <tr class="hero" data-f="step"><td>one step</td><td class="m">1.38</td><td class="e">× 10<sup>19</sup></td><td class="t">3.4 s</td><td class="t">19.9 s</td></tr>
+        <tr data-f="gpt3"><td>GPT-3's training run</td><td class="m">3.14</td><td class="e">× 10<sup>23</sup></td><td class="t">0.9 days</td><td class="t">5.2 days</td></tr>
+        <tr data-f="dsv3"><td>DeepSeek-V3's pretraining run (14.8T tokens)</td><td class="m">3.25</td><td class="e">× 10<sup>24</sup></td><td class="t">9.3 days</td><td class="t">54 days</td></tr>
+        <tr data-f="gpt4"><td>GPT-4's training run (estimated)</td><td class="m">2.1</td><td class="e">× 10<sup>25</sup></td><td class="t">60 days</td><td class="t">350 days</td></tr>
+        <tr class="grp" data-r="cw"><td>on CoreWeave's MLPerf cluster: 8,192 GB300s</td><td></td><td></td><td class="t">41 EFLOP/s</td><td class="t">8.2 EFLOP/s</td></tr>
+        <tr data-f="step"><td>one step</td><td class="m">1.38</td><td class="e">× 10<sup>19</sup></td><td class="t">0.34 s</td><td class="t">1.7 s</td></tr>
+        <tr data-f="dsv3"><td>DeepSeek-V3's pretraining run</td><td class="m">3.25</td><td class="e">× 10<sup>24</sup></td><td class="t">22 hours</td><td class="t">4.6 days</td></tr>
+    </table>
+
+    <p>The peak column is a unit, not a prediction: it's how long the work
+    would take if every tensor core ran flat out, which no real training run
+    comes close to.  The sustained column is measured throughput, with
+    downtime left out.  On the H800s it is DeepSeek's own: the report prices
+    pretraining at 180K H800-hours per trillion tokens (2.664M for all
+    14.8T), and 6ND over that is 339 TFLOP/s per GPU, 17% of FP8 peak (34%
+    of BF16 peak).  This is the MFU convention: anything that isn't one
+    of the 6ND FLOPs (the attention core, pipeline bubbles, communication that
+    wasn't hidden) counts as lost time.  Within a group the two columns
+    differ by the same ratio on every row: ×5.8 for DeepSeek.</p>
+
+    <p>OpenAI doesn't publish GPT-4's training compute, so that row is Epoch
+    AI's estimate,<span class="mn-ref"></span><span class="mn">Epoch AI,
+    <a href="https://epoch.ai/data/ai-models">AI Models database</a>, entry
+    "GPT-4 (Mar 2023)": 2.1 × 10<sup>25</sup> FLOP, 90% interval
+    8.2 × 10<sup>24</sup> to 4.4 × 10<sup>25</sup>, marked a rough estimate
+    built from much less public information than most entries.  GPT-3's
+    3.14 × 10<sup>23</sup>, by contrast, is published (Brown et al. 2020,
+    Table D.1).</span> uncertain by 2–3× either way.  The last group is a
+    reminder that 2,048 H800s is no longer a big cluster.  Its rate comes
+    from MLPerf Training 6.0, whose DeepSeek-V3 benchmark is DeepSeek-V3
+    itself (MTP included, MXFP8) continuing from the released checkpoint at
+    a batch of 16,384 sequences until the validation loss reaches a target,
+    about 45 steps.  CoreWeave's record run on 8,192 GB300s took a median
+    1.80 s per step, about 1,000 TFLOP/s per GPU in 6ND terms, 20% of FP8
+    peak.  The pretraining row imputes that rate over all 14.8T tokens, on
+    the same footing as DeepSeek's own figure: both are throughput, and
+    neither counts failures, checkpoint stalls, or the early batch-size
+    ramp.  How much a real run loses on top of that is rarely published;
+    Microsoft's MAI-Base-1 (a 35B-active MoE, 30T tokens on 8,192 GB200s)
+    is an exception.  It sustained about 465 TFLOP/s per GPU in 6ND terms
+    (Microsoft reports about 20% MFU against the BF16 peak, counting
+    attention at its 16K context), and lost another 10% of wall time to
+    failures and restarts, 21 days in all.</p>
+
+    <p>So one step is three and a half seconds of the whole cluster at peak
+    and twenty sustained, and a whole pretraining run is about 235,000 of them
+    (fewer in practice, since DeepSeek ramps the batch size up early on).  At
+    DeepSeek's own rental price of $2 per GPU-hour, a step costs about $23 at
+    the sustained rate, or $4 at peak.</p>
+
+    <p>We'll soon be pricing bytes as well as FLOPs, so it helps to have the
+    exchange rate.  In one microsecond, one H800 can do 2.0 × 10<sup>9</sup> FP8 FLOPs, or move:</p>
+
+    <table class="ref">
+        <tr><th></th><th colspan="2" class="c">bytes in 1 µs</th><th class="m">FP8 FLOPs per byte</th></tr>
+        <tr><td>HBM (3.35 TB/s)</td><td class="m">3,350</td><td class="e">KB</td><td class="m">591</td></tr>
+        <tr><td>NVLink (160 GB/s)</td><td class="m">160</td><td class="e">KB</td><td class="m">12,400</td></tr>
+        <tr><td>InfiniBand (50 GB/s)</td><td class="m">50</td><td class="e">KB</td><td class="m">39,600</td></tr>
+    </table>
+
+    <p>A byte sent over Infiniband costs as much time as forty thousand
+    FLOPs.  A token needs 2.2 × 10<sup>11</sup> FLOPs to train, so it can
+    afford about 5.6 MB of IB traffic (5.3 MiB) before the network, not the
+    tensor cores, sets the step time.]]</p>
 
     <h3>Expert parallelism</h3>
 
@@ -836,6 +927,86 @@
     import '../src/sol.js';
     import '../src/ladder.js';
     import './series.js';
+  </script>
+  <script type="module">
+    // reference ladder (#reftable): every printed number gets its unrounded
+    // value as data-raw (FLOPs exact where they derive from 6N; times in
+    // seconds; band rates in FLOP/s). Hover shows it with its derivation,
+    // click pins it (selectable; any click outside closes, as in 02);
+    // copying a multi-cell selection yields TSV of the raw numbers.
+    import { PARAMS } from '../src/params.js';
+    import { HARDWARE } from '../src/model.js';
+    const N6 = 6n * BigInt(PARAMS.activeTotal), STEP = 15360n * 4096n;
+    const FLOPS = {
+      token: [N6, '6N (N = activated params)'],
+      seq: [N6 * 4096n, '6N × 4,096 tokens'],
+      gpu: [N6 * STEP / 2048n, '6N × 15,360 × 4,096 tokens ÷ 2,048 GPUs'],
+      step: [N6 * STEP, '6N × 15,360 × 4,096 tokens'],
+      gpt3: [314n * 10n ** 21n, 'as published (Brown et al. 2020)'],
+      dsv3: [N6 * 14_800_000_000_000n, '6N × 14.8T tokens'],
+      gpt4: [21n * 10n ** 24n, "Epoch AI's estimate"],
+    };
+    const ds = Number(FLOPS.dsv3[0]) / (2.664e6 * 3600), H = HARDWARE.h800.flops.fp8, B = HARDWARE.gb300.flops.fp8;
+    const cw = Number(N6 * 16384n * 4096n) / 1.80;
+    const RATE = {   // [peak, sustained] FLOP/s, with derivations
+      h800: [H, ds, 'H800 FP8 dense peak', '6N × 14.8T tokens ÷ 2.664M GPU-hours'],
+      dsc: [2048 * H, 2048 * ds, '2,048 × H800 FP8 peak', '2,048 × the per-GPU sustained rate'],
+      cw: [8192 * B, cw, '8,192 × GB300 FP8 dense peak', '6N × 16,384 × 4,096 tokens ÷ 1.80 s median step (MLPerf v6.0)'],
+    };
+    const UNIT = { 'µs': 1e-6, s: 1, hours: 3600, days: 86400 };
+    const big = (x) => x.toLocaleString('en-US', { maximumFractionDigits: 0 });
+    const sig = (x) => x.toLocaleString('en-US', { maximumSignificantDigits: 6 });
+    const sci = (x) => { const e = Math.floor(Math.log10(x)); return `${+(x / 10 ** e).toPrecision(7)} × 10${[...String(e)].map((d) => '⁰¹²³⁴⁵⁶⁷⁸⁹'[d]).join('')}`; };
+    const table = document.getElementById('reftable');
+    let rate;
+    for (const tr of table.rows) {
+      const [m, e, p, s] = [...tr.cells].slice(1);
+      if (tr.dataset.r) {
+        rate = RATE[tr.dataset.r];
+        p.dataset.raw = rate[0]; p.dataset.tip = `${sci(rate[0])} FLOP/s\n${rate[2]}`;
+        s.dataset.raw = rate[1]; s.dataset.tip = `${sci(rate[1])} FLOP/s\n${rate[3]}`;
+      } else if (tr.dataset.f) {
+        const [f, how] = FLOPS[tr.dataset.f];
+        m.dataset.raw = f; m.dataset.tip = e.dataset.tip = `${big(f)} FLOPs\n${how}`;
+        [p, s].forEach((c, i) => {
+          const sec = Number(f) / rate[i], u = c.textContent.split(' ')[1];
+          c.dataset.raw = +sec.toPrecision(8);
+          c.dataset.tip = `${sig(sec)} s` + (u === 's' ? '' : ` = ${sig(sec / UNIT[u])} ${u}`) +
+            `\nFLOPs ÷ ${i ? 'sustained' : 'peak'} ${sci(rate[i])} FLOP/s`;
+        });
+      }
+    }
+    const tip = document.body.appendChild(Object.assign(document.createElement('div'), { className: 'ref-tip' }));
+    let pinned = false;
+    const show = (c, ev) => {
+      tip.style.display = c ? 'block' : 'none';
+      if (!c) return;
+      tip.textContent = c.dataset.tip;
+      tip.style.left = Math.min(ev.pageX + 14, scrollX + innerWidth - tip.offsetWidth - 8) + 'px';
+      tip.style.top = ev.pageY + 14 + 'px';
+    };
+    table.addEventListener('mousemove', (ev) => { if (!pinned) show(ev.target.closest('td[data-tip]'), ev); });
+    table.addEventListener('mouseleave', () => { if (!pinned) tip.style.display = 'none'; });
+    document.addEventListener('click', (ev) => {
+      if (tip.contains(ev.target)) return;
+      const c = !pinned && getSelection().isCollapsed && ev.target.closest?.('#reftable td[data-tip]');
+      pinned = !!c; tip.classList.toggle('pinned', pinned);
+      show(c, ev);
+    });
+    document.addEventListener('copy', (ev) => {
+      const sel = getSelection();
+      if (!sel.rangeCount || !table.contains(sel.anchorNode) || !table.contains(sel.focusNode)) return;
+      const cellOf = (n) => (n.nodeType === 1 ? n : n.parentElement).closest('td, th');
+      if (cellOf(sel.anchorNode) === cellOf(sel.focusNode)) return;
+      const rows = [...table.rows].filter((tr) => sel.containsNode(tr, true)).map((tr) => {
+        const [l, ...rest] = [...tr.cells];
+        if (tr.dataset.r) return [`${l.textContent} (FLOP/s)`, '', rest[2].dataset.raw, rest[3].dataset.raw];
+        if (tr.dataset.f) return [l.textContent, rest[0].dataset.raw, rest[2].dataset.raw, rest[3].dataset.raw];
+        return ['', 'FLOPs', 'at FP8 peak (s)', 'sustained (s)'];
+      });
+      ev.clipboardData.setData('text/plain', rows.map((r) => r.join('\t')).join('\n') + '\n');
+      ev.preventDefault();
+    });
   </script>
 </body>
 
