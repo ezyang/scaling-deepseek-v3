@@ -22,8 +22,6 @@
     .ref .t { text-align: right; white-space: nowrap; padding-left: 16px; }
     .ref tr.grp td { background: var(--c-f3f2ee); font-size: 13px; font-weight: 600; color: var(--c-1c1c1a); border-top: 1.5px solid var(--c-c3c2b7); padding-top: 9px; }
     .ref tr.grp .t { color: var(--c-52514e); font-weight: 500; }
-    .ref-tip { position: absolute; pointer-events: none; background: var(--c-ffffff); color: var(--c-1c1c1a); padding: 6px 9px; border: 1px solid var(--c-c3c2b7); border-radius: 5px; display: none; box-shadow: 0 2px 10px rgba(11,11,11,0.12); font-size: 11.5px; line-height: 1.5; white-space: pre-line; z-index: 7; font-variant-numeric: tabular-nums; }
-    .ref-tip.pinned { pointer-events: auto; border-color: var(--c-eda100); box-shadow: 0 2px 10px rgba(237,161,0,0.3); }
   </style>
 </head>
 
@@ -931,11 +929,12 @@
   <script type="module">
     // reference ladder (#reftable): every printed number gets its unrounded
     // value as data-raw (FLOPs exact where they derive from 6N; times in
-    // seconds; band rates in FLOP/s). Hover shows it with its derivation,
-    // click pins it (selectable; any click outside closes, as in 02);
-    // copying a multi-cell selection yields TSV of the raw numbers.
+    // seconds; band rates in FLOP/s). The shared tooltip (src/tip.js) shows
+    // it with its derivation; copying a multi-cell selection yields TSV of
+    // the raw numbers.
     import { PARAMS } from '../src/params.js';
     import { HARDWARE } from '../src/model.js';
+    import { attachTip } from '../src/tip.js';
     const N6 = 6n * BigInt(PARAMS.activeTotal), STEP = 15360n * 4096n;
     const FLOPS = {
       token: [N6, '6N (N = activated params)'],
@@ -976,23 +975,7 @@
         });
       }
     }
-    const tip = document.body.appendChild(Object.assign(document.createElement('div'), { className: 'ref-tip' }));
-    let pinned = false;
-    const show = (c, ev) => {
-      tip.style.display = c ? 'block' : 'none';
-      if (!c) return;
-      tip.textContent = c.dataset.tip;
-      tip.style.left = Math.min(ev.pageX + 14, scrollX + innerWidth - tip.offsetWidth - 8) + 'px';
-      tip.style.top = ev.pageY + 14 + 'px';
-    };
-    table.addEventListener('mousemove', (ev) => { if (!pinned) show(ev.target.closest('td[data-tip]'), ev); });
-    table.addEventListener('mouseleave', () => { if (!pinned) tip.style.display = 'none'; });
-    document.addEventListener('click', (ev) => {
-      if (tip.contains(ev.target)) return;
-      const c = !pinned && getSelection().isCollapsed && ev.target.closest?.('#reftable td[data-tip]');
-      pinned = !!c; tip.classList.toggle('pinned', pinned);
-      show(c, ev);
-    });
+    attachTip(table, (ev) => ev.target.closest('td[data-tip]')?.dataset.tip ?? null, { parent: table.parentElement });
     document.addEventListener('copy', (ev) => {
       const sel = getSelection();
       if (!sel.rangeCount || !table.contains(sel.anchorNode) || !table.contains(sel.focusNode)) return;

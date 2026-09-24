@@ -12,6 +12,7 @@ import { PARAMS } from './params.js';
 import { blockGraph, analyze, RECOMPUTE_PRESETS } from './blockgraph.js';
 import { C } from './theme.js';
 import { knobCss } from './ui.js';
+import { attachTip } from './tip.js';
 
 export const SOL_DEFAULTS = { hw: 'h800', recompute: 'dsv3', gpus: 2048, gbs: 15360, seq: 4096 };
 
@@ -106,6 +107,7 @@ class Dsv3Anchors extends (typeof HTMLElement === 'undefined' ? class {} : HTMLE
     const style = document.createElement('style'); style.textContent = ANCHOR_CSS;
     this._root = el('div', 'an');
     this.append(style, this._root);
+    attachTip(this._root, (ev) => ev.target.closest?.('tr[data-tip]')?.dataset.tip ?? null, { parent: this });
     const src = this.getAttribute('for') ? document.getElementById(this.getAttribute('for')) : null;
     this.hw = src?.cfg?.hw ?? this.getAttribute('hw') ?? 'h800';
     this.render();
@@ -116,7 +118,7 @@ class Dsv3Anchors extends (typeof HTMLElement === 'undefined' ? class {} : HTMLE
     let last = null;
     this._root.innerHTML = `<div class="hw">${HARDWARE[this.hw].label} · at speed of light</div><table>` + rows.map((r) => {
       const first = r.section !== last; last = r.section;
-      return `<tr${first ? ' data-first' : ''} title="${r.tip.replace(/"/g, '&quot;')}"><td class="sec">${first ? r.section : ''}</td><td class="lab">${r.label}</td><td data-anchor="${r.label}">${r.value}</td></tr>`;
+      return `<tr${first ? ' data-first' : ''} data-tip="${r.tip.replace(/"/g, '&quot;')}"><td class="sec">${first ? r.section : ''}</td><td class="lab">${r.label}</td><td data-anchor="${r.label}">${r.value}</td></tr>`;
     }).join('') + '</table>';
   }
 }

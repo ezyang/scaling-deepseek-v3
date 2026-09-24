@@ -26,7 +26,7 @@ T.check('step FLOPs exact: 6N × 62,914,560', t.querySelector('tr.hero td.m').da
 const cell = t.querySelector('tr.hero td.t');
 const r = cell.getBoundingClientRect();
 cell.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: r.left + 5, clientY: r.top + 5 }));
-const tip = document.querySelector('.ref-tip');
+const tip = t.parentElement.querySelector(':scope > .dsv3-tip');
 T.check('hover: tooltip shows unrounded seconds', tip.style.display === 'block' && /^3\.41\d* s/.test(tip.textContent), tip.textContent);
 t.dispatchEvent(new MouseEvent('mouseleave'));
 T.check('mouseleave hides it', tip.style.display === 'none', '');
