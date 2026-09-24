@@ -40,11 +40,11 @@
     <h2>The overall plan</h2>
 
     <p>Unlike HBM rooflines, where the memory transfer you have to do into each GEMM is usually
-    inviolable (the reason you can't "fuse" two GEMMs together, or even
+    inviolable,<span class="mn-ref"></span><span class="mn">The reason you can't "fuse" two GEMMs together, or even
     usefully fuse into a GEMM prologue, is because input tiles are used multiple times when
     computing the GEMM: to avoid repeatedly recomputing an input tile, you need to store
     it somewhere that all of your SMs can access, and has enough space to
-    store everything you need.. usually HBM is the most convenient thing that actually fits),
+    store everything you need.  Usually HBM is the most convenient thing that actually fits.</span>
     we have a large degree of control over what distributed communication we do, because we
     have to pick our parallelism.  However, as we saw in the previous post, we desire to
     make our model bigger and we wish to do strong scaling over a bigger GPU cluster, and
