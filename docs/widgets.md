@@ -467,6 +467,42 @@ change event); `hw=` stands alone. Rows carry their formula as a title.
 `anchors(hwKey)` is node-importable (goldens `anchors.*`); cells are
 `td[data-anchor=<label>]`.
 
+## `<dsv3-ladder seq=…>` — the scaling ladder vs 6ND (src/ladder.js, post 03 draft)
+
+DeepSeek-V3 as one rung of a family, each rung spending its compute budget
+C the way DSv3 does. Held fixed: tokens per ACTIVATED parameter (14.8T ÷
+36.6B = 404), aspect ratio (layers ∝ width, d/L = 117.5), the attention:FFN
+split (hidden, heads, both latent ranks and both FFN widths scale by one
+factor s; per-head dims don't), the MoE shape (256 experts, top-8, 1
+shared) and the vocabulary. Dims scale CONTINUOUSLY (61·s layers, 128·s
+heads, no rounding), so DSv3 is exactly s = 1. C = 6·N·D with D = 404·N →
+N = √(C/2424), solved for s by bisection on the family's activated-param
+polynomial (DeepSeek's accounting: no input embedding, head in full).
+
+The plot is a 100%-stacked area over C = 10¹⁹ … 10²⁷ (a second tick row
+gives N): each op class's share of the counted forward + backward FLOPs
+(blockGraph's per-op FLOP/token, 3× forward, loss forward-only, no
+recompute) — learned projections ∝ L·d² · router ∝ L·d · lm head ∝ d·V
+(the three whose weights are in N) · attention core ∝ L·d·S · non-matmul
+(blockGraph's rough per-element counts; ≈0%). The dashed line is the share
+6ND covers (6N ÷ the count): it sits a norm-weight sliver above the in-N
+matmuls. With V fixed, the head dominates the smallest rungs, so 6ND's miss
+is non-monotone: it peaks near 10²⁰ and shrinks from there (12.3% at DSv3,
+5.2% at 10²⁷, S = 4K). The legend doubles as the cursor's breakdown.
+
+| attr | kind | values | meaning |
+|---|---|---|---|
+| `seq` | state | 512 … 131072 | sequence length S (the attention core's only knob) |
+| — | state | log₁₀ C ∈ [19, 27] | the cursor: slider (step 0.01, snaps onto DSv3 within 0.03 decades), press/drag on the plot, or the DeepSeek-V3 preset (lit when exactly there) |
+| state | | `#l:<id>={c,seq}` | URL hash, when the element has an id |
+
+S flips and the preset tween (~200 ms); slider/drag moves are direct.
+`ladderPoint(logC, seq)` / `classFlops(a, seq)` / `ladderArch(s)` are
+node-importable (goldens `ladder.*`); test affordances:
+`polygon[data-band=<class>]`, `polyline[data-six]`, `line[data-cursor]`,
+`[data-share=<class>|six]` with `data-true`, `input[data-knob=c]`,
+`[data-knob=seq]`, `[data-knob=preset]`, `rect[data-hit]`.
+
 ## Other elements (unchanged conventions)
 - `<dsv3-trace level height title config>` — the canvas trace viewer over the
   simulator (not yet on a published page; the timing posts' widget).

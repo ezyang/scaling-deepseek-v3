@@ -22,6 +22,7 @@ import { buildCells, cellsEnv } from '../src/cells.js';
 import { fsdpSweep } from '../src/fsdp.js';
 import { solStep, anchors } from '../src/sol.js';
 import { gemm, SHAPES } from '../src/gemm.js';
+import { ladderPoint, LOG_C_DSV3 } from '../src/ladder.js';
 
 const FILE = fileURLToPath(new URL('../tests/goldens.json', import.meta.url));
 const G = {};
@@ -59,6 +60,14 @@ for (const [name, cfg] of [['h800-dsv3', {}], ['h800-none', { recompute: 'none' 
   const S = solStep(cfg);
   G.sol[name] = { total: S.total, reported: S.reported, flopsTok: S.flopsTok, rows: S.rows,
     cells: Object.fromEntries(S.cells.map((c) => [`${c.pass}·${c.group}`, c.s])) };
+}
+
+// the scaling ladder (studies/03-roofline.html): FLOP/token by op class up the DSv3 family
+G.ladder = {};
+for (const [name, lc, seq] of [['dsv3-4k', LOG_C_DSV3, 4096], ['dsv3-32k', LOG_C_DSV3, 32768], ['dsv3-128k', LOG_C_DSV3, 131072],
+  ...[19, 21, 23, 25, 27].map((e) => [`1e${e}-4k`, e, 4096])]) {
+  const P = ladderPoint(lc, seq);
+  G.ladder[name] = { s: P.s, N: P.N, total: P.total, sixN: P.sixN, f: P.f };
 }
 
 // the first picture (studies/03-roofline.html): one GEMM on both meters, every shape × dtype at the story sizes

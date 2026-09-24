@@ -8,6 +8,7 @@
   <title>03 (draft)</title>
   <link rel="stylesheet" href="./study.css">
   <style>
+    dsv3-ladder { display: block; margin: 14px 0 26px; }
   </style>
 </head>
 
@@ -158,6 +159,8 @@
     non matmul things too, but this would be a quick and dirty estimate, I can't think of
     a clean approximation here.  (We eventually want to do this for understanding all the
     kernels in the profile, but definitely not here in this article.)
+
+    <dsv3-ladder id="ladder" style="min-height: 366px"></dsv3-ladder>
 
     <p>So what does the 6ND roofline say for DSv3</p>
 
@@ -831,6 +834,7 @@
     import '../src/viewer.js';
     import '../src/gemm.js';
     import '../src/sol.js';
+    import '../src/ladder.js';
     import './series.js';
   </script>
 </body>
