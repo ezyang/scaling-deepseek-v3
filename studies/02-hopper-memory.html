@@ -495,6 +495,13 @@
       <a href="https://x.com/TheVladSavinov/status/2095090838002880574">Vlad Savinov</a>
       for reporting.
       </li>
+      <li><a href="https://github.com/ezyang/scaling-deepseek-v3/commit/ca6a1e2">2026-09-24</a>:
+      the diagrams previously labeled the router GEMM as FP32.  DeepSeek's released
+      H800 profile trace shows it actually runs as a BF16 GEMM with FP32 logits out;
+      the "high precision" gating in the paper refers to the FP32 router state, not
+      an FP32 matmul.  The router is now labeled BF16, which also shrinks its FLOP
+      pickets to below one picket.  This doesn't change any byte totals.
+      </li>
     </ul>
 
   </main>
