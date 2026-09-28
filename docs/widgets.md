@@ -569,6 +569,21 @@ the bars (~200 ms). `route(t, mode)` / `copies(experts)` / `simulate(n, mode)` a
 `path[data-nv=<node>:<gpu>]`, `rect[data-bar=<k>]` with `data-share`,
 `[data-mean=ib|nv]` with `data-true` (tests/epsim.js).
 
+## `<dsv3-epscale>caption</dsv3-epscale>` — EP ÷ compute up the ladder (src/epscale.js, studies/scratch-04.html)
+
+A static log-log line: EP's speed-of-light time ÷ 6ND's at BF16 peak per
+step on H800s, across `<dsv3-ladder>`'s family and x axis (C with N under
+it). The EP group stays DSv3's (EP64 = 8 nodes, R = 3.5 remote nodes per
+token; FP8 dispatch with its 1×128 scales, BF16 combine), so the ratio
+falls as 1/s ∝ C^(−1/6), with a hump at the small end where the
+fixed-vocabulary lm head pads 6N. Marks: the break-even line at 1× (EP-bound
+above, compute-bound below), its crossing on the falling side, DSv3's point
+(exactly the sheets' T_EP′ ÷ T). No attributes; text content becomes the
+caption; the page declares `dsv3-epscale { display: block; … }`.
+`epRatio(ladderPoint(…))` is node-importable; test affordances
+`circle[data-dsv3]` / `circle[data-cross]` with `data-true` (the ratio; the
+crossing's log10 C), `polyline[data-curve]` (tests/epscale.js).
+
 ## Other elements (unchanged conventions)
 - `<dsv3-trace level height title config>` — the canvas trace viewer over the
   simulator (not yet on a published page; the timing posts' widget).

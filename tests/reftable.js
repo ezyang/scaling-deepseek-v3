@@ -1,4 +1,4 @@
-// @page studies/03-roofline.html
+// @page studies/scratch-refs.html
 // the reference-scale ladder (#reftable): every printed number rounds from its
 // data-raw; hover shows the raw value; a multi-cell copy yields raw-number TSV
 const t = document.getElementById('reftable');

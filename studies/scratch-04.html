@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script data-theme>document.documentElement.classList.toggle('dark', (localStorage.getItem('dsv3-theme') ?? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')) === 'dark');</script>
+  <title>scratch: 04</title>
+  <link rel="stylesheet" href="./study.css">
+  <style>
+    dsv3-epscale { display: block; margin: 14px 0 22px; }
+  </style>
+</head>
+
+<body>
+  <main>
+    <h1>scratch: 04</h1>
+    <p class="note">Material saved for 04 (see 04-outline.md). Not part of the series.</p>
+
+    <h2>How EP scales</h2>
+
+    <p>[[AI: Let's apply asymptotics to EP.  Per token, per MoE layer, the
+    routed experts do 3 matmuls (gate, up, down) of h × I each, for each of
+    k experts, at 6 FLOPs per parameter forward and backward: 18·h·I·k
+    FLOPs.  EP moves h elements to n remote nodes, twice (dispatch and
+    combine) in each of two passes, at 1 byte (FP8) plus 2 bytes (BF16): 6·h·n
+    bytes.  With peak FLOP rate F and IB bandwidth B, the ratio of
+    communication time to routed-expert compute time is:</p>
+
+    <p style="text-align: center; font-size: 1.6em">(6·h·n / B) ÷ (18·h·I·k / F) = n·F / (3·I·k·B)</p>
+
+    <p>The hidden size cancels.  Making the model wider does nothing for EP
+    unless the experts get wider too.  (In the scaling family from earlier,
+    they do: I grows with h, so EP gets relatively cheaper as models grow,
+    just like PP.)  What matters is expert width I, the number of experts
+    per token k, how many nodes a token touches n, and the hardware's ratio
+    F/B, which is 19,780 BF16 FLOPs per IB byte on H800.</p>
+
+    <dsv3-epscale id="epscale" style="min-height: 236px">EP time ÷ compute time (6ND at BF16 peak) per step on H800s, across the scaling ladder: EP64 over 8 nodes, 3.5 remote nodes per token, FP8 dispatch with its scales, BF16 combine.  At the small end, the fixed-vocabulary lm head pads compute.</dsv3-epscale>
+
+    <p>For DSv3 (n = 3.5, I = 2,048, k = 8), EP takes 1.4× as long as the
+    routed-expert matmuls it feeds: 5.4 s against 3.8 s.  To break even,
+    experts would need I ≈ 2,900, 40% wider.  This is the
+    tension in fine-grained MoE: splitting a fixed budget of active
+    parameters into more, narrower experts keeps I·k constant, so compute
+    doesn't change, but each token fans out to more nodes.  Node-limited
+    routing is DeepSeek's answer: it caps n at 4 no matter how many experts
+    a token picks.  And F/B is the reason GB200 changes the picture: inside
+    an NVL72 domain, B is NVLink's 900 GB/s rather than IB's 50 GB/s.]]</p>
+
+    <h4>Without node-limited routing</h4>
+
+    <p>[[AI: Node-limited routing constrains the model, not just the system:
+    the router may not pick a token's eight best experts if they span more
+    than four nodes.  What would dropping it cost?  Suppose each token takes
+    its top 8 of the 256 routed experts with no restriction, still uniformly
+    at random, and we keep deduplication.  A node receives no copy of a
+    token only if none of its 32 experts is among the token's eight:</p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">E</td><td>routed experts per layer</td><td class="vl">256</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(architecture)</i></td></tr>
+    <tr><td class="nm">k</td><td>routed experts per token</td><td class="vl">8</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(architecture)</i></td></tr>
+    <tr><td class="nm">E<sub>n</sub></td><td>experts per node</td><td class="vl">32</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><b>E</b> ÷ <b>K</b></td></tr>
+    <tr><td class="nm">p<sub>0</sub></td><td>P(a node holds none of a token's experts)</td><td class="vl">0.3381685000</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx">C(<b>E</b> − <b>E<sub>n</sub></b>, <b>k</b>) ÷ C(<b>E</b>, <b>k</b>)</td></tr>
+    <tr><td class="nm">R<sub>∞</sub></td><td>remote nodes per token, no node limit</td><td class="vl">4.632820500</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx">(<b>K</b> − 1) × (1 − <b>p<sub>0</sub></b>)</td></tr>
+    <tr><td class="nm">V<sub>∞</sub></td><td>EP IB bytes per token</td><td class="vl">11,676,783.16</td><td class="vl sc ap">1.17 × 10<sup>7</sup></td><td class="vl si ap">11<span class="d">.7</span><span class="u"> MB</span></td><td class="fx"><b>V′</b> × <b>R<sub>∞</sub></b> ÷ <b>R</b></td></tr>
+    <tr class="hl"><td class="nm">T<sub>EP∞</sub></td><td>EP time per step (s)</td><td class="vl">7.174215576</td><td class="vl sc ap">7.17 × 10<sup>0</sup></td><td class="vl si ap">7<span class="d">.17</span><span class="u"> s</span></td><td class="fx"><b>V<sub>∞</sub></b> × <b>D<sub>G</sub></b> ÷ <b>W</b></td></tr>
+    </table></div>
+
+    <p>A token now reaches 5.3 of the 8 nodes on average instead of 4, 4.6
+    of them remote.  EP traffic grows by a third, and at speed of light it
+    takes 7.17 s against 6.83 s of compute: 105%.  EP communication alone
+    would outlast the entire step's compute, so no amount of overlap could
+    hide it.</p>
+
+    <p>At EP64 the cap does less than you might expect, because eight
+    experts spread over only eight nodes already tend to collide.  It earns
+    its keep as the EP group grows.  Keeping 8 GPUs per node, the same
+    tokens per GPU, and the 256 experts spread evenly:</p>
+
+    <table class="ref">
+        <tr><th></th><th></th><th colspan="3" class="c">node-limited (at most 4 nodes)</th><th colspan="3" class="c">no node limit</th></tr>
+        <tr><th>EP</th><th class="t">nodes</th><th class="t">remote copies</th><th class="t">T<sub>EP</sub></th><th class="t">of compute</th><th class="t">remote copies</th><th class="t">T<sub>EP</sub></th><th class="t">of compute</th></tr>
+        <tr><td>64</td><td class="t">8</td><td class="t">3.50</td><td class="t">5.42 s</td><td class="t">79%</td><td class="t">4.63</td><td class="t">7.17 s</td><td class="t">105%</td></tr>
+        <tr><td>128</td><td class="t">16</td><td class="t">3.75</td><td class="t">5.81 s</td><td class="t">85%</td><td class="t">6.12</td><td class="t">9.47 s</td><td class="t">139%</td></tr>
+        <tr><td>256</td><td class="t">32</td><td class="t">3.88</td><td class="t">6.00 s</td><td class="t">88%</td><td class="t">7.04</td><td class="t">10.90 s</td><td class="t">160%</td></tr>
+    </table>
+
+    <p>With the cap, a token never costs more than four IB copies; only the
+    remote fraction creeps from 7/8 toward 1.  Without it, copies climb
+    toward k − 1 = 7, one per expert: at EP256 a token's eight
+    experts land on 7.3 different nodes on average, so deduplication has
+    almost nothing left to merge.  This is the n in n·F/(3·I·k·B) above:
+    node-limited routing is what keeps n from growing with the EP
+    group.]]</p>
+  </main>
+  <script type="module">
+    import '../src/epscale.js';
+  </script>
+</body>
+
+</html>

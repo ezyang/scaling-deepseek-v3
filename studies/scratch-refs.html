@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script data-theme>document.documentElement.classList.toggle('dark', (localStorage.getItem('dsv3-theme') ?? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')) === 'dark');</script>
+  <title>scratch: reference scales</title>
+  <link rel="stylesheet" href="./study.css">
+  <style>
+    table.ref { border-collapse: collapse; font-size: 14px; margin: 14px 0 22px; font-variant-numeric: tabular-nums; }
+    .ref th { text-align: left; font-size: 12.5px; font-weight: 600; color: var(--c-52514e); padding: 4px 14px 5px 0; border-bottom: 1.5px solid var(--c-c3c2b7); }
+    .ref td { padding: 4px 14px 4px 0; vertical-align: baseline; }
+    .ref td:first-child, .ref th:first-child { padding-left: 8px; white-space: nowrap; }
+    .ref sup { line-height: 0; font-size: 0.72em; }
+    .ref th.c { text-align: center; }
+    .ref .m { text-align: right; white-space: nowrap; padding-right: 0.3em; }
+    .ref .e { white-space: nowrap; padding-right: 24px; }
+    .ref .gh { visibility: hidden; }
+    .ref tr.hero td { font-weight: 600; }
+    .ref .t { text-align: right; white-space: nowrap; padding-left: 16px; }
+    .ref tr.grp td { background: var(--c-f3f2ee); font-size: 13px; font-weight: 600; color: var(--c-1c1c1a); border-top: 1.5px solid var(--c-c3c2b7); padding-top: 9px; }
+    .ref tr.grp .t { color: var(--c-52514e); font-weight: 500; }
+  </style>
+</head>
+
+<body>
+  <main>
+    <h1>scratch: reference scales</h1>
+    <p class="note">AI-drafted reference tables (FLOP ladder, FLOPs-per-byte
+      exchange rate, per-chip step times), cut from 03's slop appendix. Home
+      undecided. Not part of the series.</p>
+
+
+    <p>[[AI: Numbers like 10<sup>19</sup> are hard to feel, so here is a
+    ladder of reference points, each priced two ways: at the hardware's BF16
+    peak, and at a throughput someone actually measured on it.</p>
+
+    <table class="ref" id="reftable">
+        <tr><th></th><th colspan="2" class="c">FLOPs</th><th class="t">at BF16 peak</th><th class="t">sustained</th></tr>
+        <tr class="grp" data-r="h800"><td>on one H800</td><td></td><td></td><td class="t">989 TFLOP/s</td><td class="t">339 TFLOP/s</td></tr>
+        <tr data-f="token"><td>one token, trained (6N)</td><td class="m">2.2</td><td class="e">× 10<sup>11</sup></td><td class="t">222 µs</td><td class="t">648 µs</td></tr>
+        <tr data-f="seq"><td>one 4,096-token sequence, trained</td><td class="m">9.0</td><td class="e">× 10<sup>14</sup></td><td class="t">0.91 s</td><td class="t">2.65 s</td></tr>
+        <tr data-f="gpu"><td>one step's share, per GPU</td><td class="m">6.75</td><td class="e">× 10<sup>15</sup></td><td class="t">6.8 s</td><td class="t">19.9 s</td></tr>
+        <tr class="grp" data-r="dsc"><td>on DeepSeek's cluster: 2,048 H800s</td><td></td><td></td><td class="t">2.03 EFLOP/s</td><td class="t">0.69 EFLOP/s</td></tr>
+        <tr class="hero" data-f="step"><td>one step</td><td class="m">1.38</td><td class="e">× 10<sup>19</sup></td><td class="t">6.8 s</td><td class="t">19.9 s</td></tr>
+        <tr data-f="gpt3"><td>GPT-3's training run</td><td class="m">3.14</td><td class="e">× 10<sup>23</sup></td><td class="t">1.8 days</td><td class="t">5.2 days</td></tr>
+        <tr data-f="dsv3"><td>DeepSeek-V3's pretraining run (14.8T tokens)</td><td class="m">3.25</td><td class="e">× 10<sup>24</sup></td><td class="t">19 days</td><td class="t">54 days</td></tr>
+        <tr data-f="gpt4"><td>GPT-4's training run (estimated)</td><td class="m">2.1</td><td class="e">× 10<sup>25</sup></td><td class="t">120 days</td><td class="t">350 days</td></tr>
+        <tr class="grp" data-r="cw"><td>on CoreWeave's MLPerf cluster: 8,192 GB300s</td><td></td><td></td><td class="t">20 EFLOP/s</td><td class="t">8.2 EFLOP/s</td></tr>
+        <tr data-f="step"><td>one step</td><td class="m">1.38</td><td class="e">× 10<sup>19</sup></td><td class="t">0.68 s</td><td class="t">1.7 s</td></tr>
+        <tr data-f="dsv3"><td>DeepSeek-V3's pretraining run</td><td class="m">3.25</td><td class="e">× 10<sup>24</sup></td><td class="t">44 hours</td><td class="t">4.6 days</td></tr>
+    </table>
+
+    <p>The peak column is a unit, not a prediction: it's how long the work
+    would take if every tensor core ran flat out, which no real training run
+    comes close to.  The sustained column is measured throughput, with
+    downtime left out.  On the H800s it is DeepSeek's own: the report prices
+    pretraining at 180K H800-hours per trillion tokens (2.664M for all
+    14.8T), and 6ND over that is 339 TFLOP/s per GPU, 34% of the BF16 peak.
+    This is the MFU convention: anything that isn't one of the 6ND FLOPs
+    (the attention core, pipeline bubbles, communication that wasn't hidden)
+    counts as lost time.  DeepSeek's own MFU counts the attention core as
+    useful work too: it reports 385 TFLOP/s, 38.9% of the BF16 peak, and our
+    339 becomes 386 once the causal attention core is added.  Within a group
+    the two columns differ by the same ratio on every row: ×2.9 for
+    DeepSeek.</p>
+
+    <p>OpenAI doesn't publish GPT-4's training compute, so that row is Epoch
+    AI's estimate,<span class="mn-ref"></span><span class="mn">Epoch AI,
+    <a href="https://epoch.ai/data/ai-models">AI Models database</a>, entry
+    "GPT-4 (Mar 2023)": 2.1 × 10<sup>25</sup> FLOP, 90% interval
+    8.2 × 10<sup>24</sup> to 4.4 × 10<sup>25</sup>, marked a rough estimate
+    built from much less public information than most entries.  GPT-3's
+    3.14 × 10<sup>23</sup>, by contrast, is published (Brown et al. 2020,
+    Table D.1).</span> uncertain by 2–3× either way.  The last group is a
+    reminder that 2,048 H800s is no longer a big cluster.  Its rate comes
+    from MLPerf Training 6.0, whose DeepSeek-V3 benchmark is DeepSeek-V3
+    itself (MTP included, MXFP8) continuing from the released checkpoint at
+    a batch of 16,384 sequences until the validation loss reaches a target,
+    about 45 steps.  CoreWeave's record run on 8,192 GB300s took a median
+    1.80 s per step, about 1,000 TFLOP/s per GPU in 6ND terms, 40% of the
+    BF16 peak.  The pretraining row imputes that rate over all 14.8T tokens, on
+    the same footing as DeepSeek's own figure: both are throughput, and
+    neither counts failures, checkpoint stalls, or the early batch-size
+    ramp.  How much a real run loses on top of that is rarely published;
+    Microsoft's MAI-Base-1 (a 35B-active MoE, 30T tokens on 8,192 GB200s)
+    is an exception.  It sustained about 465 TFLOP/s per GPU in 6ND terms
+    (Microsoft reports about 20% MFU against the BF16 peak, counting
+    attention at its 16K context), and lost another 10% of wall time to
+    failures and restarts, 21 days in all.</p>
+
+    <p>So one step is seven seconds of the whole cluster at peak
+    and twenty sustained, and a whole pretraining run is about 235,000 of them
+    (fewer in practice, since DeepSeek ramps the batch size up early on).  At
+    DeepSeek's own rental price of $2 per GPU-hour, a step costs about $23 at
+    the sustained rate, or $8 at peak.</p>
+
+    <p>We'll soon be pricing bytes as well as FLOPs, so it helps to have the
+    exchange rate.  In one microsecond, one H800 can do 9.9 × 10<sup>8</sup> BF16 FLOPs, or move:</p>
+
+    <table class="ref">
+        <tr><th></th><th colspan="2" class="c">bytes in 1 µs</th><th class="m">BF16 FLOPs per byte</th></tr>
+        <tr><td>HBM (3.35 TB/s)</td><td class="m">3,350</td><td class="e">KB</td><td class="m">295</td></tr>
+        <tr><td>NVLink (160 GB/s)</td><td class="m">160</td><td class="e">KB</td><td class="m">6,180</td></tr>
+        <tr><td>InfiniBand (50 GB/s)</td><td class="m">50</td><td class="e">KB</td><td class="m">19,800</td></tr>
+    </table>
+
+    <p>A byte sent over Infiniband costs as much time as twenty thousand
+    FLOPs.  A token needs 2.2 × 10<sup>11</sup> FLOPs to train, so it can
+    afford about 11.1 MB of IB traffic (10.6 MiB) before the network, not the
+    tensor cores, sets the step time.]]</p>
+
+    <p>[[AI: Everything so far has been priced on an H800. Here is the same
+    step on the other chips you could train DeepSeek-V3 on, priced the same
+    two ways.</p>
+
+    <table class="ref">
+        <tr><th></th><th colspan="2" class="c">per GPU</th><th colspan="2" class="c">one step on 2,048</th></tr>
+        <tr><th></th><th class="t">BF16 peak</th><th class="t">sustained</th><th class="t">at peak</th><th class="t">sustained</th></tr>
+        <tr><td>H800</td><td class="t">989 TFLOP/s</td><td class="t">339 TFLOP/s</td><td class="t">6.8 s</td><td class="t">19.9 s</td></tr>
+        <tr><td>H100</td><td class="t">989 TFLOP/s</td><td class="t">285 TFLOP/s</td><td class="t">6.8 s</td><td class="t">23.7 s</td></tr>
+        <tr><td>B200</td><td class="t">2,250 TFLOP/s</td><td class="t">731 TFLOP/s</td><td class="t">3.0 s</td><td class="t">9.2 s</td></tr>
+        <tr><td>B300</td><td class="t">2,250 TFLOP/s</td><td class="t">778 TFLOP/s</td><td class="t">3.0 s</td><td class="t">8.7 s</td></tr>
+        <tr><td>GB200</td><td class="t">2,500 TFLOP/s</td><td class="t">1,092 TFLOP/s</td><td class="t">2.7 s</td><td class="t">6.2 s</td></tr>
+        <tr><td>GB300</td><td class="t">2,500 TFLOP/s</td><td class="t">1,393 TFLOP/s</td><td class="t">2.7 s</td><td class="t">4.9 s</td></tr>
+        <tr><td>AMD MI355X</td><td class="t">2,517 TFLOP/s</td><td class="t"></td><td class="t">2.68 s</td><td class="t"></td></tr>
+        <tr><td>Google TPU7x</td><td class="t">2,307 TFLOP/s</td><td class="t"></td><td class="t">2.93 s</td><td class="t"></td></tr>
+    </table>
+
+    <p>Peaks are dense, from each vendor's datasheet (NVIDIA's headline
+    numbers assume 2:4 sparsity, which training doesn't use, so they are
+    halved), and FP8 is twice the BF16 figure on every chip here. The H800's
+    sustained rate is DeepSeek's own, from the ladder. The rest are NVIDIA's
+    published Megatron-Bridge benchmarks,<span class="mn-ref"></span><span
+    class="mn">NVIDIA NeMo Megatron-Bridge, docs/performance-summary.md and
+    its archive: containers 26.06 (GB300, GB200, B300; MXFP8), 26.04.01 (B200;
+    MXFP8), 25.09 (H100; FP8, 1,024 GPUs). The 6N rates are recomputed from
+    tokens/s; NVIDIA's own "model TFLOP/s" counts MTP and attention and runs
+    ~18% higher. AMD skipped MLPerf 6.0's MoE benchmarks; no TPU result for
+    DeepSeek-V3 has been published.</span> converted to 6N the same way:
+    256 GPUs at a batch of 4,096 with routing forced to balance, so the
+    2,048-GPU column imputes each rate at DeepSeek's scale rather than
+    measuring it (at 8,192 GPUs, CoreWeave's GB300s sustained 1,000 TFLOP/s). AMD and
+    Google have published no DeepSeek-V3 training numbers.</p>
+
+    <p>From H800 to GB300, peak grows 2.5× but sustained grows 4.1×, and the
+    table's pairs show the peak isn't what moved it. GB200 and GB300 have
+    identical peaks, yet GB300 sustains 28% more (NVIDIA's recipe for it
+    uses two pipeline stages instead of four, presumably room its 1.5× memory
+    makes). B300 is the same
+    chip as GB300 but sustains 56% as much: its NVLink domain is 8 GPUs, not
+    72, so expert parallelism has to cross the slower network. Precision moves
+    it less than you'd think: in one earlier NVIDIA release, switching the same
+    GB300 recipe from BF16 to MXFP8 doubled every GEMM's peak and gained 13%.
+    And software moves it more: the GB300 figure rose 45% between two releases
+    seven months apart. HBM bandwidth has grown in step with peak (3.35 → 8
+    TB/s), so the FLOPs-per-byte exchange rate is about 300 on all of them.]]</p>
+  </main>
+  <script type="module">
+    // reference ladder (#reftable): every printed number gets its unrounded
+    // value as data-raw (FLOPs exact where they derive from 6N; times in
+    // seconds; band rates in FLOP/s). The shared tooltip (src/tip.js) shows
+    // it with its derivation; copying a multi-cell selection yields TSV of
+    // the raw numbers.
+    import { PARAMS } from '../src/params.js';
+    import { HARDWARE } from '../src/model.js';
+    import { attachTip } from '../src/tip.js';
+    const N6 = 6n * BigInt(PARAMS.activeTotal), STEP = 15360n * 4096n;
+    const FLOPS = {
+      token: [N6, '6N (N = activated params)'],
+      seq: [N6 * 4096n, '6N × 4,096 tokens'],
+      gpu: [N6 * STEP / 2048n, '6N × 15,360 × 4,096 tokens ÷ 2,048 GPUs'],
+      step: [N6 * STEP, '6N × 15,360 × 4,096 tokens'],
+      gpt3: [314n * 10n ** 21n, 'as published (Brown et al. 2020)'],
+      dsv3: [N6 * 14_800_000_000_000n, '6N × 14.8T tokens'],
+      gpt4: [21n * 10n ** 24n, "Epoch AI's estimate"],
+    };
+    const ds = Number(FLOPS.dsv3[0]) / (2.664e6 * 3600), H = HARDWARE.h800.flops.bf16, B = HARDWARE.gb300.flops.bf16;
+    const cw = Number(N6 * 16384n * 4096n) / 1.80;
+    const RATE = {   // [peak, sustained] FLOP/s, with derivations
+      h800: [H, ds, 'H800 BF16 dense peak', '6N × 14.8T tokens ÷ 2.664M GPU-hours'],
+      dsc: [2048 * H, 2048 * ds, '2,048 × H800 BF16 peak', '2,048 × the per-GPU sustained rate'],
+      cw: [8192 * B, cw, '8,192 × GB300 BF16 dense peak', '6N × 16,384 × 4,096 tokens ÷ 1.80 s median step (MLPerf v6.0)'],
+    };
+    const UNIT = { 'µs': 1e-6, s: 1, hours: 3600, days: 86400 };
+    const big = (x) => x.toLocaleString('en-US', { maximumFractionDigits: 0 });
+    const sig = (x) => x.toLocaleString('en-US', { maximumSignificantDigits: 6 });
+    const sci = (x) => { const e = Math.floor(Math.log10(x)); return `${+(x / 10 ** e).toPrecision(7)} × 10${[...String(e)].map((d) => '⁰¹²³⁴⁵⁶⁷⁸⁹'[d]).join('')}`; };
+    const table = document.getElementById('reftable');
+    let rate;
+    for (const tr of table.rows) {
+      const [m, e, p, s] = [...tr.cells].slice(1);
+      if (tr.dataset.r) {
+        rate = RATE[tr.dataset.r];
+        p.dataset.raw = rate[0]; p.dataset.tip = `${sci(rate[0])} FLOP/s\n${rate[2]}`;
+        s.dataset.raw = rate[1]; s.dataset.tip = `${sci(rate[1])} FLOP/s\n${rate[3]}`;
+      } else if (tr.dataset.f) {
+        const [f, how] = FLOPS[tr.dataset.f];
+        m.dataset.raw = f; m.dataset.tip = e.dataset.tip = `${big(f)} FLOPs\n${how}`;
+        [p, s].forEach((c, i) => {
+          const sec = Number(f) / rate[i], u = c.textContent.split(' ')[1];
+          c.dataset.raw = +sec.toPrecision(8);
+          c.dataset.tip = `${sig(sec)} s` + (u === 's' ? '' : ` = ${sig(sec / UNIT[u])} ${u}`) +
+            `\nFLOPs ÷ ${i ? 'sustained' : 'peak'} ${sci(rate[i])} FLOP/s`;
+        });
+      }
+    }
+    attachTip(table, (ev) => ev.target.closest('td[data-tip]')?.dataset.tip ?? null, { parent: table.parentElement });
+    document.addEventListener('copy', (ev) => {
+      const sel = getSelection();
+      if (!sel.rangeCount || !table.contains(sel.anchorNode) || !table.contains(sel.focusNode)) return;
+      const cellOf = (n) => (n.nodeType === 1 ? n : n.parentElement).closest('td, th');
+      if (cellOf(sel.anchorNode) === cellOf(sel.focusNode)) return;
+      const rows = [...table.rows].filter((tr) => sel.containsNode(tr, true)).map((tr) => {
+        const [l, ...rest] = [...tr.cells];
+        if (tr.dataset.r) return [`${l.textContent} (FLOP/s)`, '', rest[2].dataset.raw, rest[3].dataset.raw];
+        if (tr.dataset.f) return [l.textContent, rest[0].dataset.raw, rest[2].dataset.raw, rest[3].dataset.raw];
+        return ['', 'FLOPs', 'at BF16 peak (s)', 'sustained (s)'];
+      });
+      ev.clipboardData.setData('text/plain', rows.map((r) => r.join('\t')).join('\n') + '\n');
+      ev.preventDefault();
+    });
+  </script>
+</body>
+
+</html>
