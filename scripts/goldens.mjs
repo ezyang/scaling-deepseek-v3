@@ -23,6 +23,7 @@ import { fsdpSweep } from '../src/fsdp.js';
 import { solStep, anchors } from '../src/sol.js';
 import { gemm, SHAPES } from '../src/gemm.js';
 import { ladderPoint, LOG_C_DSV3 } from '../src/ladder.js';
+import { simulate as epSimulate, EXACT as EP_EXACT } from '../src/epsim.js';
 
 const FILE = fileURLToPath(new URL('../tests/goldens.json', import.meta.url));
 const G = {};
@@ -69,6 +70,10 @@ for (const [name, lc, seq] of [['dsv3-4k', LOG_C_DSV3, 4096], ['dsv3-32k', LOG_C
   const P = ladderPoint(lc, seq);
   G.ladder[name] = { s: P.s, N: P.N, total: P.total, sixN: P.sixN, f: P.f };
 }
+
+// the EP routing sim (studies/03-roofline.html): IB/NVLink copies per token after 10,000 seeded tokens, both routings
+G.epsim = { exact: EP_EXACT };
+for (const mode of ['sheet', 'dsv3']) { const T = epSimulate(10000, mode); G.epsim[mode + '-10k'] = { ib: T.ib, nv: T.nv, hist: T.hist }; }
 
 // the first picture (studies/03-roofline.html): one GEMM on both meters, every shape × dtype at the story sizes
 G.gemm = {};

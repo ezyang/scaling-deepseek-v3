@@ -490,7 +490,10 @@ recompute) — learned projections ∝ L·d² · router ∝ L·d · lm head ∝ 
 6ND covers (6N ÷ the count): it sits a norm-weight sliver above the in-N
 matmuls. With V fixed, the head dominates the smallest rungs, so 6ND's miss
 is non-monotone: it peaks near 10²⁰ and shrinks from there (12.3% at DSv3,
-5.2% at 10²⁷, S = 4K). The legend doubles as the cursor's breakdown.
+5.2% at 10²⁷, S = 4K). The legend, below the plot in two columns (the
+classes outside N, then the 6ND line · the in-N classes), doubles as the
+cursor's breakdown. The widget is exactly the 760px prose column wide (the
+knob row wraps "held fixed" onto a second line), so margin notes sit beside it.
 The y-axis toggle (% · log · linear) swaps the stack for absolute
 FLOP/token, legend values in FLOP. Log (10⁶ … 10¹³) draws one line per
 class plus 6N dashed — stacked areas on a log axis would lie (a 12% band is
@@ -511,6 +514,60 @@ node-importable (goldens `ladder.*`); test affordances:
 `polyline[data-line=<class>]`, `polyline[data-six-abs]`, `polygon[data-area=<class>]`, `polyline[data-six-lin]`, `[data-abs=<class>|six]`, `line[data-cursor]`,
 `[data-share=<class>|six]` with `data-true`, `input[data-knob=c]`,
 `[data-knob=seq]`, `[data-knob=preset]`, `[data-knob=y]`, `rect[data-hit]`.
+
+## `<dsv3-mmfig>caption</dsv3-mmfig>` — one token through W, 2 FLOPs per weight (src/mmfig.js, post 03 draft)
+
+A static 5 × 5 figure: x, W on top, y under it, then the expansion of y = xW
+(one term per weight cell). No attributes; the element's text content becomes
+the caption (none if empty), so moving the figure is moving one line. Hover
+lights dependencies across both halves (a weight: its term, the x it reads,
+the y it adds into, the rest of that sum; an x: its row and every y; a y: its
+column and every x). The page declares `dsv3-mmfig { display: block; … }`
+(pre-upgrade reservation). Test affordances: `.w[data-i][data-j]`,
+`.v[data-i]` (x), `.v[data-j]` (y), `.ar path[data-j]`, `.mmeq` (the
+expansion), classes `src`/`dep`/`sib` while hovered (tests/matmul.js).
+
+## `<dsv3-epsim>` — the EP routing sim (src/epsim.js, post 03 draft)
+
+Routes tokens through DSv3's EP64 group (8 nodes × 8 GPUs × 4 experts;
+expert e on node e >> 5, GPU (e >> 2) & 7) from our GPU (node 0, GPU 0) and
+counts each token's copies: one IB copy per remote node hosting any of its
+8 experts (deduped), landing on the GPU with our local index; one NVLink
+copy from there to each other GPU on that node holding an expert (our own
+node likewise, from our GPU). Left: a row per node, the token's experts
+blue, reached GPUs tinted, IB copies down a right-angled trunk in the left
+gutter, NVLink copies along a bus in the gap above the row (junction dots
+where they fork). Right: this token's tally, a histogram of IB copies per
+token (fixed 0 … 100% scale; this token's bin blue, `text[data-cur]`,
+crossfading from the last token's; each column, blank space included, is a
+click target: route tokens until one lands in that bin, up to the cap, and
+say how many it took, `[data-seek=<k>]` / `[data-seek-msg]`), the running
+mean on log
+tokens against the sheet's R = 3.5, and both means against the exact ones
+of the sheet's routing (3.5 IB; 61477381/9417862 = 6.528 NVLink, by
+inclusion–exclusion). Two routings: `sheet` (the sheet's M = 4: 4 of the 8
+nodes uniformly, the 8 experts uniform over those nodes' 128, redrawn until
+every node holds one, so IB is always 3 or 4 copies) and `dsv3`
+(DeepSeek-V3's node-limited top-8: top 4 nodes by each node's two best
+affinities, then the top 8 experts among them; affinities iid uniform,
+load-balancing bias ignored), which can touch fewer than 4 nodes and
+settles near 3.46. Each token has its own seeded generator, so a run
+replays exactly from its token count; a routing flip replays the same
+count.
+
+| attr | kind | values | meaning |
+|---|---|---|---|
+| — | state | 1 … 100,000 | tokens routed: +1 · +10 · +100 · +1,000 · +10,000, reset → 1 |
+| — | state | `sheet` · `dsv3` | the routing |
+| state | | `#e:<id>={n,m}` | URL hash, when the element has an id |
+
+Every step crossfades the old token's copies into the new one's and slides
+the bars (~200 ms). `route(t, mode)` / `copies(experts)` / `simulate(n, mode)` and
+`EXACT` are node-importable (goldens `epsim.*`); test affordances:
+`[data-knob=step|mode] [data-v]`, `[data-token]`,
+`[data-cur-ib]`, `[data-cur-nv]`, `rect[data-expert]`, `path[data-ib=<node>]`,
+`path[data-nv=<node>:<gpu>]`, `rect[data-bar=<k>]` with `data-share`,
+`[data-mean=ib|nv]` with `data-true` (tests/epsim.js).
 
 ## Other elements (unchanged conventions)
 - `<dsv3-trace level height title config>` — the canvas trace viewer over the

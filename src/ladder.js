@@ -71,8 +71,8 @@ export function ladderPoint(logC, seq) {
 // ---- the widget ------------------------------------------------------------
 const LO = 19, HI = 27, K = 161;                    // x domain (log10 FLOP) and samples
 const SEQS = [512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072];
-const W = 900, X0 = 60, PW = 546, Y0 = 18, PH = 200, AX = Y0 + PH;
-const LX = X0 + PW + 30, H = AX + 40;
+const W = 738, X0 = 60, PW = 570, Y0 = 18, PH = 200, AX = Y0 + PH;   // W: the prose column, so margin notes sit beside it
+const LY = AX + 48, LW = (PW + 30) / 2, H = LY + 3 * 20 + 6;           // legend below the plot, spanning it: 2 columns × 3 rows
 const px = (lc) => X0 + (lc - LO) / (HI - LO) * PW;
 const lcOf = (x) => Math.max(LO, Math.min(HI, LO + (x - X0) / PW * (HI - LO)));
 const py = (u) => Y0 + (1 - u) * PH;
@@ -87,7 +87,6 @@ const fmtC = (lc) => { const e = Math.floor(lc + 1e-9); return `${(10 ** (lc - e
 const fmtN = (n) => n >= 1e12 ? +(n / 1e12).toPrecision(3) + 'T' : n >= 1e9 ? +(n / 1e9).toPrecision(3) + 'B' : +(n / 1e6).toPrecision(3) + 'M';
 const fmtF = (f) => f >= 1e12 ? `${+(f / 1e12).toPrecision(3)} TFLOP` : f >= 1e9 ? `${+(f / 1e9).toPrecision(3)} GFLOP` : `${+(f / 1e6).toPrecision(3)} MFLOP`;
 const fmtP = (u) => (u * 100).toFixed(u < 0.001 && u > 0 ? 2 : 1) + '%';
-const fmt1 = (x) => Math.abs(x - Math.round(x)) < 0.05 ? Math.round(x).toLocaleString('en-US') : x.toFixed(1);
 const lerp = (a, b, t) => a + (b - a) * t;
 const ease = (p) => 1 - (1 - p) ** 3;
 const SNAP = 0.03;                                  // decades: the slider snaps onto DSv3
@@ -96,8 +95,8 @@ const CSS = `
 dsv3-ladder { display: block; margin: 14px 0 26px; }
 .ld { font: 12px system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--c-0b0b0b);
   border: 1px solid var(--c-e1e0d9); border-radius: 6px; background: var(--c-fcfcfb); padding: 8px 10px;
-  width: max-content; max-width: 100%; box-sizing: border-box; }
-.ld .top { display: flex; align-items: stretch; gap: 10px; padding-bottom: 8px; }
+  width: ${W + 22}px; max-width: 100%; box-sizing: border-box; }   /* svg + padding + border = the 760px prose column */
+.ld .top { display: flex; flex-wrap: wrap; align-items: stretch; gap: 8px 10px; padding-bottom: 8px; }
 ${knobCss('.ld .top')}
 .ld .stp button { white-space: nowrap; }
 .ld input[type=range] { width: 156px; margin: 0; accent-color: var(--c-52514e); }
@@ -108,8 +107,6 @@ ${knobCss('.ld .top')}
 .ld .lg { font: 11px system-ui; fill: var(--c-52514e); }
 .ld .sc { font: 10.5px system-ui; fill: var(--c-898781); }
 .ld .lgv { font: 11px ui-monospace, Menlo, monospace; fill: var(--c-0b0b0b); }
-.ld .ro { font-size: 11.5px; color: var(--c-52514e); min-height: 34px; margin-top: 4px; max-width: ${W}px; line-height: 1.45; }
-.ld .ro b { color: var(--c-0b0b0b); font-weight: 600; }
 `;
 
 class Dsv3Ladder extends (typeof HTMLElement === 'undefined' ? class {} : HTMLElement) {
@@ -124,8 +121,7 @@ class Dsv3Ladder extends (typeof HTMLElement === 'undefined' ? class {} : HTMLEl
     this._root = el('div', 'ld');
     this._top = el('div', 'top');
     this._chart = el('div');
-    this._ro = el('div', 'ro');
-    this._root.append(this._top, this._chart, this._ro);
+    this._root.append(this._top, this._chart);
     this.append(style, this._root);
     this._buildKnobs();
     // drag on the plot sets C (handlers on the persistent container: the svg re-renders under the pointer)
@@ -289,8 +285,7 @@ class Dsv3Ladder extends (typeof HTMLElement === 'undefined' ? class {} : HTMLEl
       B.push(`<text ${dims} x="${x}" y="${AX + 13}" text-anchor="middle">10${sup(e)}</text>`);
       B.push(`<text ${dims} x="${x}" y="${AX + 25}" text-anchor="middle">${fmtN(L.Ns[e - LO])}</text>`);
     }
-    B.push(`<text ${dims} x="${X0 - 18}" y="${AX + 13}" text-anchor="end">C</text><text ${dims} x="${X0 - 18}" y="${AX + 25}" text-anchor="end">N</text>`);
-    B.push(`<text ${dims} x="${X0 + PW + 18}" y="${AX + 13}">FLOP, log scale</text>`);
+    B.push(`<text ${dims} x="${X0 + PW + 24}" y="${AX + 13}">C, FLOP</text><text ${dims} x="${X0 + PW + 24}" y="${AX + 25}">N, params</text>`);
     // DSv3 marker + cursor
     const dx = f1(px(LOG_C_DSV3));
     B.push(`<line x1="${dx}" y1="${Y0 - 4}" x2="${dx}" y2="${AX}" stroke="${C('#0b0b0b')}" stroke-width="0.75" stroke-dasharray="2 2"/>`);
@@ -298,33 +293,21 @@ class Dsv3Ladder extends (typeof HTMLElement === 'undefined' ? class {} : HTMLEl
     B.push(`<line data-cursor="${this.cfg.c}" x1="${f1(L.cx)}" y1="${Y0}" x2="${f1(L.cx)}" y2="${AX}" stroke="${C('#0b0b0b')}" stroke-width="1.5"/>`);
     B.push(`<circle cx="${f1(L.cx)}" cy="${AX}" r="3.5" fill="${C('#0b0b0b')}"/>`);
     B.push(`<rect data-hit x="${X0}" y="${Y0}" width="${PW}" height="${PH + 6}" fill="transparent" style="cursor:ew-resize"/>`);
-    // legend = the cursor's breakdown, stacked top to bottom like the bands
+    // legend = the cursor's breakdown, below the plot: the bands' top-to-bottom order down column 1 (outside N, then 6ND), then column 2 (in N)
     const P = L.P, rows = [...CLASSES].reverse().map((k) => ({ k, v: P.f[k.id] / P.total, f: P.f[k.id] }));
     rows.splice(2, 0, { six: true, v: P.sixN / P.total, f: P.sixN });
+    if (w.share > 0) B.push(`<text ${dims} ${op(w.share)} x="${X0}" y="${LY}">share of forward + backward FLOPs at the cursor</text>`);
+    if (ab > 0) B.push(`<text ${dims} ${op(ab)} x="${X0}" y="${LY}">forward + backward FLOPs per token at the cursor</text>`);
     rows.forEach((r, i) => {
-      const y = Y0 + 16 + i * 22;
-      if (r.six) B.push(`<line x1="${LX}" y1="${y - 4}" x2="${LX + 10}" y2="${y - 4}" stroke="${C('#0b0b0b')}" stroke-width="1.25" stroke-dasharray="3 2"/>` +
-        `<text class="lg" x="${LX + 16}" y="${y}">6ND counts</text>`);
-      else B.push(`<rect x="${LX}" y="${y - 9}" width="10" height="10" fill="${C(r.k.c)}"/>` +
-        `<text class="lg" x="${LX + 16}" y="${y}">${r.k.label}</text><text class="sc" x="${LX + 136}" y="${y}"><tspan font-size="13">∝</tspan> ${r.k.scale}</text>`);
-      if (w.share > 0) B.push(`<text class="lgv" ${op(w.share)} data-share="${r.six ? 'six' : r.k.id}" data-true="${r.v}" x="${W - 12}" y="${y}" text-anchor="end">${fmtP(r.v)}</text>`);
-      if (ab > 0) B.push(`<text class="lgv" ${op(ab)} data-abs="${r.six ? 'six' : r.k.id}" data-true="${r.f}" x="${W - 12}" y="${y}" text-anchor="end">${fmtF(r.f)}</text>`);
-      if (i === 2) B.push(`<line x1="${LX}" y1="${y + 8}" x2="${W - 12}" y2="${y + 8}" stroke="${C('#e1e0d9')}"/>`);
+      const x = X0 + (i / 3 | 0) * LW, y = LY + 18 + (i % 3) * 20, xr = x + LW - 36;
+      if (r.six) B.push(`<line x1="${x}" y1="${y - 4}" x2="${x + 10}" y2="${y - 4}" stroke="${C('#0b0b0b')}" stroke-width="1.25" stroke-dasharray="3 2"/>` +
+        `<text class="lg" x="${x + 16}" y="${y}">6ND counts</text>`);
+      else B.push(`<rect x="${x}" y="${y - 9}" width="10" height="10" fill="${C(r.k.c)}"/>` +
+        `<text class="lg" x="${x + 16}" y="${y}">${r.k.label}</text><text class="sc" x="${x + 128}" y="${y}"><tspan font-size="13">∝</tspan> ${r.k.scale}</text>`);
+      if (w.share > 0) B.push(`<text class="lgv" ${op(w.share)} data-share="${r.six ? 'six' : r.k.id}" data-true="${r.v}" x="${xr}" y="${y}" text-anchor="end">${fmtP(r.v)}</text>`);
+      if (ab > 0) B.push(`<text class="lgv" ${op(ab)} data-abs="${r.six ? 'six' : r.k.id}" data-true="${r.f}" x="${xr}" y="${y}" text-anchor="end">${fmtF(r.f)}</text>`);
     });
-    const fy = Y0 + 16 + rows.length * 22 + 2;
-    if (w.share > 0) B.push(`<text ${dims} ${op(w.share)} x="${LX}" y="${fy}">share of forward + backward FLOPs at the cursor</text>`);
-    if (ab > 0) B.push(`<text ${dims} ${op(ab)} x="${LX}" y="${fy}">forward + backward FLOPs per token at the cursor</text>`);
     this._chart.innerHTML = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${B.join('')}</svg>`;
-    this._readout(P);
-  }
-  _readout(P) {
-    const a = P.a, n = (x, d = 1) => x.toLocaleString('en-US', { maximumFractionDigits: d });
-    const who = this.cfg.c === LOG_C_DSV3 ? ' — DeepSeek-V3 itself' : '';
-    const miss = 1 - P.sixN / P.total;
-    this._ro.innerHTML = `<b>C = ${fmtC(this.cfg.c)} FLOP</b> buys N = <b>${fmtN(P.N)}</b> activated params on D = ${fmtN(P.D)} tokens: ` +
-      `L = ${fmt1(a.layers)} layers × d = ${n(a.hidden, 0)}, ${fmt1(a.heads)} heads${who}. ` +
-      `Per token, forward + backward: 6N = ${n(P.sixN / 1e9)} GFLOP; op by op, <b>${n(P.total / 1e9)} GFLOP</b> (×${(P.total / P.sixN).toFixed(2)}), ` +
-      `so 6ND misses ${fmtP(miss)} of the FLOPs at S = ${this.cfg.seq.toLocaleString('en-US')}.`;
   }
 }
 function blend(A, B, t) {

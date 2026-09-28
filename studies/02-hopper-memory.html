@@ -29,14 +29,14 @@
     <p>GPU memory is like oxygen: you don't really think about it
     until you run out, at which point you care about nothing else.  If your
     model is OOMing, it's good to have an expectation about how much memory
-    your model <em>should</em> be using--given a choice of parallelism,
-    activation checkpointing and low precision--so you can tell if your
+    your model <em>should</em> be using—given a choice of parallelism,
+    activation checkpointing and low precision—so you can tell if your
     implementation is buggy and using more memory than it should be.  It's
     also helpful to know what levers you have for reducing memory
     usage: you will often be in a regime where your hero run just barely doesn't
     fit in memory, and you're trying to make it fit without
     sacrificing too much MFU.  For example, the original DeepSeek-V3 pretrain
-    was done on 2048 H800 GPUs (same amount of memory as H100 SXM)--as we'll
+    was done on 2048 H800 GPUs (same amount of memory as H100 SXM)—as we'll
     see, memory is pretty tight in this setting!</p>
 
     <p><em>Credit: This roofline analysis was heavily inspired by an analysis
@@ -91,13 +91,13 @@
     assume that the memory for gradients stays live for the entirety of the optimizer step;
     while you can avoid this in non-PP settings (since you can try to all-reduce
     the gradient as soon as possible and then update the weights ASAP so you can
-    reuse the gradient memory for something else), with PP--or really any
-    microbatching--you will need to keep the gradients separate as you accumulate
+    reuse the gradient memory for something else), with PP—or really any
+    microbatching—you will need to keep the gradients separate as you accumulate
     microbatches into it before you do a parameter update.</p>
 
     <p>Separately, in the DeepSeek-V3 paper, it was described that they used
     FP32 gradients for training stability reasons, so we preserve this choice
-    here--thereby doubling the memory usage of gradients relative to parameters.
+    here—thereby doubling the memory usage of gradients relative to parameters.
     (In log scale, this uniformly shifts all of these bars to the right one tick.)</p>
 
     <dsv3-layer style="min-height:145px" snapshot nototal solo="grads"
@@ -108,7 +108,7 @@
 
     <p><strong>Optimizer states.</strong>  DeepSeek-V3 was trained with AdamW
     with BF16 first and second moment and FP32 master weights.  This means
-    we additionally need another eight bytes for every parameter--double the
+    we additionally need another eight bytes for every parameter—double the
     size of the gradients.</p>
 
     <dsv3-layer style="min-height:145px" snapshot nototal solo="optim"
@@ -156,7 +156,7 @@
     DP) and expert parallelism (reducing expert weights by a factor of EP).
     However, we cannot do full ZeRO-3, as it turns out a communication
     roofline shows we will either OOM or be communication bound (we leave this analysis to a
-    future post).  And with only ZeRO-1 (optimizer state only--including the
+    future post).  And with only ZeRO-1 (optimizer state only—including the
     FP32 master parameters) and EP, we
     still cannot fit, so we need to bring out the big guns.</p>
 
@@ -189,7 +189,7 @@
     <p>OK, so how does pipeline parallelism affect the memory usage of our model?
     First, we split parameters/gradients/optimizer state across PP ranks.  Because
     we're looking at a V schedule, we assign two model chunks to each physical
-    PP rank, with roughly four transformer blocks per chunk--click
+    PP rank, with roughly four transformer blocks per chunk—click
     "fold onto the 8 ranks" to see the mapping:</p>
 
     <dsv3-pp-fold style="min-height:453px"></dsv3-pp-fold>
@@ -211,7 +211,7 @@
     rank is responsible for multiple chunks, we furthermore must be careful to
     talk about the saved activation memory for a specific microbatch and chunk
     (because the PP rank is responsible for computing two disjoint chunks of
-    transformer blocks on a single microbatch--the V!)</p>
+    transformer blocks on a single microbatch—the V!)</p>
 
     <p>Below, we've reproduced the classic DualPipeV schedule diagram, but by
     selecting a specific PP rank there is a second visualization of the lifetime of saved activations
@@ -258,12 +258,12 @@
     <a href="https://github.com/meta-pytorch/remat">torch_remat's</a>
     programming model.  For every operation, we can decide whether to recompute
     it or not.  If we recompute it, it's not necessary to save any of the tensors
-    it needs for backwards--however, the inputs to the operation must be available
+    it needs for backwards—however, the inputs to the operation must be available
     somehow during recompute, either because: (1) it was independently saved for
     backwards by another operation, (2) the producer is being recomputed, or (3) we
     manually saved it (potentially increasing your memory usage!)</p>
 
-    <p>You can play around with this below<span class="mn-ref"></span><span class="mn">AI disclosure: the tooltips on the diagram are AI authored and I haven't hand edited them (yet).</span>--every GEMM is also annotated with
+    <p>You can play around with this below<span class="mn-ref"></span><span class="mn">AI disclosure: the tooltips on the diagram are AI authored and I haven't hand edited them (yet).</span>—every GEMM is also annotated with
     tall black/gray rectangles indicating how many FLOPs we are spending on
     forward/recompute (respectively). The chart is preset to the DeepSeek-V3
     published recompute strategy, but you should also try setting full
@@ -345,7 +345,7 @@
     transpose and maintain another copy of the parameter in FP8&#7488;.  So if
     you decide to store your compute weights in FP8 rather than BF16, you
     don't actually end up saving any compute weight memory in the end (two FP8 = one
-    BF16)--in fact, it's slightly worse because you also have to store the
+    BF16)—in fact, it's slightly worse because you also have to store the
     scales for FP8.  A more common recipe is to maintain the compute weights
     in BF16 and quantize the weights on the fly right before they're used.</p>
 
@@ -399,7 +399,7 @@
         to save on memory bandwidth.  For pedagogical reasons, the diagram keeps them unfused, so
         that (1) it is clear that this "fake" quantization happens before the SwiGLU
         <em>even</em> in forwards (ensuring your forward and your recompute
-        give bitwise identical results reduces bias--it's a "fake" quantization because
+        give bitwise identical results reduces bias—it's a "fake" quantization because
         SwiGLU will immediately dequantize it to compute SwiGLU in higher precision
         internally), and (2) to make it clear that the activation is being
         saved for recompute (it would be pretty confusing for an output of
@@ -470,7 +470,7 @@
     I have one  parting thought: it is comparatively simpler to debug OOMs in LLM pretraining,
     because the memory usage of your trainer doesn't depend on doing distributed
     communications at scale (assuming your memory allocations and deallocations are
-    deterministic--a very good idea!)  In modern PyTorch, you can use <strong>fake
+    deterministic—a very good idea!)  In modern PyTorch, you can use <strong>fake
     ProcessGroup (fake PG)</strong> to do a very high fidelity simulation of
     the memory usage of any given rank in an arbitrarily large training config
     on a single GPU (NB: with pipeline parallelism, you do have to check
@@ -517,11 +517,13 @@
       "../src/compare.js": "../src/compare.js?v=d3cae233",
       "../src/dsv41.js": "../src/dsv41.js?v=a67ac394",
       "../src/dsv41model.js": "../src/dsv41model.js?v=db63a9e2",
+      "../src/epsim.js": "../src/epsim.js?v=34de37a0",
       "../src/fsdp.js": "../src/fsdp.js?v=d80bd2c9",
       "../src/gemm.js": "../src/gemm.js?v=20821ad5",
-      "../src/ladder.js": "../src/ladder.js?v=0b0604b0",
+      "../src/ladder.js": "../src/ladder.js?v=8bb35cbe",
       "../src/localmodel.js": "../src/localmodel.js?v=79ceec86",
       "../src/memory.js": "../src/memory.js?v=abe7690c",
+      "../src/mmfig.js": "../src/mmfig.js?v=6a25c447",
       "../src/model.js": "../src/model.js?v=94fa90eb",
       "../src/params.js": "../src/params.js?v=13936278",
       "../src/recipes.js": "../src/recipes.js?v=f851e5cf",

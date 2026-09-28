@@ -4,11 +4,11 @@ const L = await import('/src/ladder.js');
 const { PARAMS } = await import('/src/params.js');
 const w = document.querySelector('dsv3-ladder');
 await T.tick(300);
-const ro = () => w.querySelector('.ro').textContent;
 const share = (k) => +w.querySelector(`[data-share="${k}"]`).dataset.true;
 T.check('family formula reproduces DeepSeek’s 36.6B activated exactly', L.N_DSV3 === PARAMS.activeTotal, L.N_DSV3);
 T.check('DSv3 is exactly s = 1', L.ladderPoint(L.LOG_C_DSV3, 4096).s === 1, '');
-T.check('resting: DSv3 itself, ×1.14, 6ND misses 12.3%', /DeepSeek-V3 itself/.test(ro()) && /×1\.14/.test(ro()) && /misses 12\.3%/.test(ro()), ro());
+const pct = (k) => w.querySelector(`[data-share="${k}"]`).textContent;
+T.check('resting: 6ND counts 87.7% (misses 12.3%)', pct('six') === '87.7%', pct('six'));
 T.check('DSv3 preset lit', w.querySelector('[data-knob="preset"] button').classList.contains('on'), '');
 const sum = L.CLASSES.reduce((t, k) => t + share(k.id), 0);
 T.check('class shares sum to 1', Math.abs(sum - 1) < 1e-12, sum);
@@ -23,7 +23,7 @@ T.check('small rungs: the fixed-vocab head dominates (6ND accurate again at 1e19
 // sequence length: + → 8K grows attention; height reserved through the tween
 const h0 = w.getBoundingClientRect().height, a0 = share('attn');
 w.querySelector('[data-knob="seq"] button[data-dir="1"]').click(); await T.tick(350);
-T.check('S = 8,192: attention share grows', share('attn') > a0 && /S = 8,192/.test(ro()), share('attn'));
+T.check('S = 8,192: attention share grows', share('attn') > a0 && w.querySelector('[data-knob="seq"] select').value === '8192', share('attn'));
 T.check('knob flip: height reserved', Math.abs(w.getBoundingClientRect().height - h0) < 1, w.getBoundingClientRect().height);
 w.querySelector('[data-knob="seq"] select').value = '131072'; w.querySelector('[data-knob="seq"] select').dispatchEvent(new Event('change')); await T.tick(350);
 T.check('S = 131,072: + disabled, attention the majority at DSv3', w.querySelector('[data-knob="seq"] button[data-dir="1"]').disabled && share('attn') > 0.75, share('attn'));
@@ -31,9 +31,9 @@ w.querySelector('[data-knob="seq"] select').value = '4096'; w.querySelector('[da
 // compute slider: 1e27 → smaller miss, preset unlit; near DSv3 it snaps back on
 const r = w.querySelector('input[data-knob="c"]');
 r.value = '27'; r.dispatchEvent(new Event('input')); await T.tick(50);
-T.check('C = 1e27: preset unlit, 6ND closer', !w.querySelector('[data-knob="preset"] button').classList.contains('on') && share('attn') < a0 && /1\.00×10²⁷/.test(ro()), ro());
+T.check('C = 1e27: preset unlit, 6ND closer', !w.querySelector('[data-knob="preset"] button').classList.contains('on') && share('attn') < a0 && w.querySelector('.cv').textContent === '1.00×10²⁷', w.querySelector('.cv').textContent);
 r.value = (L.LOG_C_DSV3 + 0.02).toFixed(2); r.dispatchEvent(new Event('input')); await T.tick(50);
-T.check('slider snaps onto DSv3', w.querySelector('[data-knob="preset"] button').classList.contains('on') && /DeepSeek-V3 itself/.test(ro()), ro());
+T.check('slider snaps onto DSv3', w.querySelector('[data-knob="preset"] button').classList.contains('on') && +w.querySelector('line[data-cursor]').dataset.cursor === L.LOG_C_DSV3, '');
 // drag on the plot: press at the 1e20 tick
 const hit = w.querySelector('rect[data-hit]'), b = hit.getBoundingClientRect();
 const x20 = b.left + b.width / 8;
@@ -42,7 +42,7 @@ w.querySelector('.ld > div:nth-child(2)').dispatchEvent(new PointerEvent('pointe
 T.check('press on the plot moves the cursor (1e20)', Math.abs(+w.querySelector('line[data-cursor]').dataset.cursor - 20) < 0.02, w.querySelector('line[data-cursor]').dataset.cursor);
 T.check('URL hash carries the state', /l:ladder=/.test(decodeURIComponent(location.hash)), location.hash);
 w.querySelector('[data-knob="preset"] button').click(); await T.tick(350);
-T.check('preset returns to DSv3', /DeepSeek-V3 itself/.test(ro()), ro());
+T.check('preset returns to DSv3', +w.querySelector('line[data-cursor]').dataset.cursor === L.LOG_C_DSV3 && pct('six') === '87.7%', pct('six'));
 // y axis: share ↔ log FLOP/token crossfades; lines + legend in absolute FLOP/token; height held
 const yb = (v) => w.querySelector(`[data-knob="y"] button[data-y="${v}"]`);
 T.check('resting y axis: share', yb('share').classList.contains('on') && !w.querySelector('[data-view="log"]'), '');
