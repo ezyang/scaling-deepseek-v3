@@ -47,6 +47,8 @@ export const DARK = {
   '#4a3aa7': '#948ee8', '#4636a3': '#8f88e4', '#6b5bd2': '#9a8df0',
   // odd tints (a2a violet bg, alert bg, green bg) + status greens
   '#f3f1fb': '#272438', '#fdf1f1': '#322323', '#f0faf4': '#1e2a23', '#1a7a43': '#3dae6e',
+  // recompute teal (redotint boxes, the AC study's schematics): accent · mid · tint
+  '#0a98a0': '#2bb6bf', '#9fd8d9': '#23595a', '#e0f3f3': '#18302f',
 };
 
 let dark = false;

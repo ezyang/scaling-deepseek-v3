@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script data-theme>document.documentElement.classList.toggle('dark', (localStorage.getItem('dsv3-theme') ?? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')) === 'dark');</script>
+  <title>The activation checkpointing Pareto frontier</title>
+  <link rel="stylesheet" href="./study.css">
+  <style>
+    dsv3-acpareto { display: block; margin: 14px 0 26px; }
+    .ap { font: 12px system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--c-0b0b0b);
+      border: 1px solid var(--c-e1e0d9); border-radius: 6px; background: var(--c-fcfcfb); padding: 8px 10px;
+      width: max-content; max-width: 100%; box-sizing: border-box; }
+    .ap svg.plot { display: block; cursor: crosshair; }
+    .ap .dims { font: 9.5px system-ui; fill: var(--c-898781); }
+    .ap .lab { font: 10.5px system-ui; paint-order: stroke; stroke: var(--c-fcfcfb); stroke-width: 3px; stroke-linejoin: round; }
+    .ap .film { display: grid; width: 900px; gap: 2px; margin-top: 2px; }
+    .ap .film-h { font-size: 11px; color: var(--c-52514e); margin: 6px 0 2px 2px; }
+    .ap .fr { padding: 3px 3px 4px; border-radius: 4px; border: 1.5px solid transparent; cursor: pointer;
+      font-size: 10px; line-height: 1.25; color: var(--c-1c1c1a); }
+    .ap .fr svg { display: block; margin: 2px auto 3px; }
+    .ap .fr.hot { background: var(--c-f3f2ee); }
+    .ap .fr.cur { border-color: var(--c-eda100); }
+    .ap .fr b { font-size: 10.5px; }
+    .ap .fr .q { color: var(--c-898781); }
+    .ap .ro { font-size: 11.5px; color: var(--c-52514e); min-height: 34px; margin-top: 6px; max-width: 900px; line-height: 1.45; }
+    .ap .ro b { color: var(--c-0b0b0b); font-weight: 600; }
+    .dsv3-tip .apt svg { display: block; margin: 5px 0 3px; }
+    .ap .sw, .dsv3-tip .sw { display: inline-block; width: 9px; height: 9px; border-radius: 2px; vertical-align: -1px; margin: 0 3px 0 0; }
+  </style>
+</head>
+
+<body>
+  <main>
+    <h1>The activation checkpointing Pareto frontier</h1>
+
+    <p class="note">DRAFT (unlisted one-off study). Prose below is AI-drafted and awaits a human
+    edit pass.<sup><a id="fnref1" href="#fn1">1</a></sup></p>
+
+    <p>Post 02 models activation checkpointing torch_remat-style: every op in the
+    DeepSeek-V3 MoE block is either saved (its output is stashed for backward, if
+    backward reads it) or recomputed (replayed once in backward). With 19 markable
+    ops that is 2<sup>19</sup> policies; the chart keeps the two all-to-all outputs
+    saved and plots the other 2<sup>17</sup>. Each one lands at a point: forward FLOPs
+    replayed, against bytes stashed. The chart plots all of them (grey), the ones no other
+    policy beats on both axes (the Pareto frontier), and the frontier's lower convex
+    hull. The hull points are the policies that are optimal for <em>some</em> exchange
+    rate between FLOPs and memory.</p>
+
+    <p>The hull turns out to be nested: each step recomputes exactly what the
+    previous one did, plus one more op (or a pair of ops that only pays off together).
+    The chart numbers the steps, and the strip under it draws each one as a miniature
+    of the layer diagram: the step's new recompute solid, the earlier ones pale. Hover
+    any point for its policy; click it (or a frame) to load it into 02's diagram
+    below, where recomputed ops are tinted. Toggling ops in the diagram moves the
+    amber ring.</p>
+
+    <dsv3-acpareto for="ac-layer" style="min-height:644px"></dsv3-acpareto>
+
+    <dsv3-anatomy style="min-height:991px" layer="ac-layer" ctx='{"world":2048,"pp":8,"ep":64,"zero":1}' controls="marks" recipe="bf16" recompute="dsv3" redotint
+      xlayers="8" xinflight="8.5" xtag="an interior rank of PP8 · DualPipeV steady state"></dsv3-anatomy>
+
+    <div class="fnotes">
+      <p id="fn1"><sup>1</sup> AI disclosure: the prose and the widget on this page
+      were drafted by Claude and have not been edited by the author. Modeling notes:
+      the costs are 02's. Recompute is counted in FLOPs, so vector ops (norms, RoPE,
+      SwiGLU, adds) come out nearly free. In reality they are bandwidth-bound, so the
+      vertical drop at the left edge is optimistic. The y axis uses the diagram's
+      scaling: one MoE layer's bf16 stash × 8 layers × 8.5 microbatches in flight ×
+      4,096 tokens. Replaying the a2a dispatch buys a second frontier parallel to
+      this one, 112 KiB/token·layer lower, at the price of one more all-to-all per
+      layer (a cost the x axis doesn't count). Replaying the a2a combine is never
+      Pareto-optimal (both checked over all 2<sup>19</sup> markings). So the chart
+      keeps both a2a outputs saved and leaves out the presets that replay them
+      (Megatron's moe, and full). When several markings tie exactly, the one with
+      the fewest recompute marks stands in for them.
+      <a href="#fnref1">↩</a></p>
+    </div>
+  </main>
+  <script type="module">
+    import '../src/viewer.js';
+    import '../src/anatomy.js';
+    import './series.js';
+    import { blockGraph, analyze, MARKABLE, RECOMPUTE_PRESETS } from '../src/blockgraph.js';
+    import { DSV3 } from '../src/model.js';
+    import { resolveMatmuls } from '../src/recipes.js';
+    import { C } from '../src/theme.js';
+    import { attachTip } from '../src/tip.js';
+
+    // the layer 02's AC diagram draws: an MoE block, bf16 stashes, 4,096-token sequences
+    const NODES = blockGraph('moe', DSV3, resolveMatmuls({ recipe: 'bf16' }), 4096);
+    // both a2a outputs stay saved (footnote): the chart enumerates the other 17 marks
+    const FREE = MARKABLE.filter((id) => id !== 'dispatch' && id !== 'combine');
+    const N = 1 << FREE.length;
+    const SHORT = { norm1: 'RMSNorm', qkv_down: 'q/kv down-proj', q_norm: 'q-latent norm', kv_norm: 'kv-latent norm',
+      q_up: 'q up-proj', kv_up: 'kv up-proj', rope_q: 'RoPE', rope_kv: 'RoPE', attn: 'attention', o_proj: 'out-proj',
+      x1: 'residual add', norm2: 'RMSNorm', router: 'router', dispatch: 'a2a dispatch', gate_up: 'gate/up',
+      swiglu: 'SwiGLU', ffn_down: 'down-proj', combine: 'a2a combine', moe_add: 'routed + shared add' };
+    const MEGATRON = ['moe_act', 'mla_up_proj', 'layernorm', 'core_attn', 'moe'];
+    // the mini schematic: 02's layer diagram in miniature — attention (the MLA
+    // q | kv fork) left, MoE (routed | shared expert) right. [mark, col, row, span, label]
+    const SCHEM = [
+      ['norm1', 0, 0, 2, 'RMSNorm'], ['qkv_down', 0, 1, 1, 'q down'], ['qkv_down', 1, 1, 1, 'kv down'],
+      ['q_norm', 0, 2, 1, 'q norm'], ['kv_norm', 1, 2, 1, 'kv norm'], ['q_up', 0, 3, 1, 'q up'], ['kv_up', 1, 3, 1, 'kv up'],
+      ['rope_q', 0, 4, 1, 'RoPE'], ['rope_kv', 1, 4, 1, 'RoPE'], ['attn', 0, 5, 2, 'attention'],
+      ['o_proj', 0, 6, 2, 'out-proj'], ['x1', 0, 7, 2, 'residual add'],
+      ['norm2', 2, 0, 2, 'RMSNorm'], ['router', 2, 1, 1, 'router'], ['dispatch', 2, 2, 1, 'dispatch'],
+      ['gate_up', 2, 3, 1, 'gate/up'], ['gate_up', 3, 3, 1, 'sh gate/up'], ['swiglu', 2, 4, 1, 'SwiGLU'], ['swiglu', 3, 4, 1, 'sh SwiGLU'],
+      ['ffn_down', 2, 5, 1, 'down'], ['ffn_down', 3, 5, 1, 'sh down'], ['combine', 2, 6, 1, 'combine'],
+      ['moe_add', 2, 7, 2, 'routed + shared'],
+    ];
+    const FILL = { new: '#0a98a0', redo: '#9fd8d9', save: '#ffffff' };
+    // st(id) → 'new' (solid teal) | 'redo' (mid teal) | 'save' (hollow)
+    const schem = (st, { cw, ch, g, lab = false }) => {
+      const cx = (c) => c * (cw + g) + (c >= 2 ? 2 * g : 0);   // a wider gutter between attention and MoE
+      const w = cx(4) - g, h = 8 * (ch + g) - g;
+      const cells = SCHEM.map(([id, c, r, span, label]) => {
+        const k = st(id), x = cx(c), y = r * (ch + g), cwS = span * cw + (span - 1) * g;
+        const stroke = k !== 'save' ? '#0a98a0' : id === 'dispatch' || id === 'combine' ? '#6b5bd2' : '#aba89f';
+        return `<rect x="${x + 0.5}" y="${y + 0.5}" width="${cwS - 1}" height="${ch - 1}" rx="1.5" fill="${C(FILL[k])}" stroke="${C(stroke)}" stroke-width="${lab ? 1 : 0.8}"/>` +
+          (lab ? `<text x="${x + cwS / 2}" y="${y + ch / 2 + 3}" text-anchor="middle" font-size="8.5" fill="${C(k === 'new' ? '#ffffff' : '#52514e')}">${label}</text>` : '');
+      });
+      return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">${cells.join('')}</svg>`;
+    };
+    const BIG = { cw: 54, ch: 14, g: 2, lab: true }, SMALL = { cw: 14, ch: 4.5, g: 1.2 };
+    const sw = (k) => `<span class="sw" style="background:${C(FILL[k])};border:1px solid ${C(k === 'save' ? '#aba89f' : '#0a98a0')}"></span>`;
+
+    const marksOf = (m) => {
+      const k = { dispatch: true, combine: true };
+      FREE.forEach((id, i) => { if (m >> i & 1) k[id] = true; });
+      return k;
+    };
+    const redoOf = (marks) => MARKABLE.filter((id) => marks[id] !== true);   // ↻ ops, graph order
+    // "q up-proj, RoPE" · "RMSNorm ×2": short names, repeats counted
+    const names = (ids) => {
+      const n = new Map();
+      for (const id of ids) n.set(SHORT[id], (n.get(SHORT[id]) ?? 0) + 1);
+      return [...n].map(([s, k]) => k > 1 ? `${s} ×${k}` : s).join(', ');
+    };
+    const point = (marks) => { const a = analyze(NODES, marks); return { f: a.replayFrac, b: a.savedBytes, disp: a.replayComm.length > 0, marks }; };
+
+    // every marking → one point per distinct (FLOPs, bytes) outcome; the
+    // representative is the tied marking with the fewest ↻. Sliced so the page
+    // paints, reporting progress after each slice.
+    async function enumerate(progress) {
+      const best = new Map();
+      for (let m = 0; m < N; m++) {
+        const a = analyze(NODES, marksOf(m));
+        const key = `${a.replayFlopsTok}|${a.savedBytes}`;
+        let redo = FREE.length; for (let x = m; x; x &= x - 1) redo--;
+        const p = best.get(key);
+        if (!p) best.set(key, { f: a.replayFrac, b: a.savedBytes, m, redo, n: 1 });
+        else { p.n++; if (redo < p.redo) { p.m = m; p.redo = redo; } }
+        if ((m & 2047) === 2047) { progress((m + 1) / N); await new Promise((r) => setTimeout(r)); }
+      }
+      return [...best.values()].map((p) => ({ ...p, marks: marksOf(p.m) }));
+    }
+    // points no other point beats on both axes, by recompute ascending
+    const frontier = (pts) => {
+      const out = []; let minB = Infinity;
+      for (const p of [...pts].sort((a, b) => a.f - b.f || a.b - b.b)) if (p.b < minB) { out.push(p); minB = p.b; }
+      return out;
+    };
+    const lowerHull = (front) => {
+      const h = [];
+      for (const p of front) {
+        while (h.length >= 2) {
+          const [a, b] = h.slice(-2);
+          if ((b.f - a.f) * (p.b - a.b) - (b.b - a.b) * (p.f - a.f) <= 0) h.pop(); else break;
+        }
+        h.push(p);
+      }
+      return h;
+    };
+    const same = (p, q) => Math.abs(p.f - q.f) < 1e-12 && Math.abs(p.b - q.b) < 1e-6 && !!p.disp === !!q.disp;
+    const pct = (f) => { const v = f * 100; return (v >= 10 ? v.toFixed(1) : v >= 1 ? v.toFixed(2) : v.toFixed(3)) + '%'; };
+
+    const W = 900, GL = 52, GR = 16, T = 34, PH = 380, PW = W - GL - GR, H = T + PH + 42;
+
+    class Dsv3AcPareto extends HTMLElement {
+      async connectedCallback() {
+        this._root = document.createElement('div'); this._root.className = 'ap';
+        this._chart = document.createElement('div');
+        this._film = document.createElement('div');
+        this._ro = document.createElement('div'); this._ro.className = 'ro';
+        this._root.append(this._chart, this._film, this._ro);
+        this.append(this._root);
+        const BW = 300, bx = (W - BW) / 2, by = T + PH / 2;
+        this._chart.innerHTML = `<svg class="plot" width="${W}" height="${H}">` +
+          `<text class="dims" x="${W / 2}" y="${by - 10}" text-anchor="middle">enumerating ${N.toLocaleString('en-US')} policies…</text>` +
+          `<rect x="${bx}" y="${by}" width="${BW}" height="6" rx="3" fill="${C('#eeede7')}"/>` +
+          `<rect data-load x="${bx}" y="${by}" width="0" height="6" rx="3" fill="${C('#0a98a0')}"/></svg>`;
+        const bar = this._chart.querySelector('[data-load]');
+        attachTip(this._root, (ev) => this._tip(ev), { parent: this, pinnable: () => false });
+        this._root.addEventListener('mouseleave', () => this._hot(-1));
+        const pts = await enumerate((q) => bar.setAttribute('width', (BW * q).toFixed(1)));
+        this.pts = pts;
+        this.front = frontier(pts); this.hull = lowerHull(this.front);
+        // comm-replaying presets (moe, full) live outside the charted space
+        this.presets = Object.entries(RECOMPUTE_PRESETS).map(([key, marks]) => ({ key, ...point(marks) })).filter((q) => !q.disp);
+        // the hull is nested: step i recomputes everything step i−1 did, plus `add`
+        this.steps = this.hull.map((p, i) => {
+          const prev = i ? redoOf(this.hull[i - 1].marks) : [];
+          return { p, add: redoOf(p.marks).filter((id) => !prev.includes(id)), presets: this.presets.filter((q) => same(p, q)).map((q) => q.key) };
+        });
+        this._layer = document.getElementById(this.getAttribute('for'));
+        const readLayer = () => { this.cur = this._layer ? point(this._layer.marks) : null; };
+        readLayer();
+        this._layer?.addEventListener('recipe', () => { readLayer(); this.render(); });
+        addEventListener('dsv3-theme', () => this.render());
+        this.render();
+        this.dataset.ready = '';
+      }
+      _load(marks) {   // drive the diagram's own mark tween (what its ↻ buttons do)
+        const L = this._layer; if (!L) return;
+        const set = () => { L.marks = { ...marks }; };
+        if (L._ctl?.quant) L._tweenQuant(set); else { set(); L.render(); L.changed(); }
+      }
+      _stepOf(p) { return p && !p.disp ? this.hull.findIndex((q) => same(p, q)) : -1; }
+      render() {
+        const L = this._layer;
+        const scale = (L?.dispLayers ?? 8) * (L?.dispInflight ?? 8.5) * 4096 / 2 ** 30;   // bytes/token·layer → GiB
+        const gib = (b) => b * scale;
+        const ymax = Math.ceil(gib(Math.max(...this.pts.map((p) => p.b))) / 20) * 20;
+        const sx = (f) => GL + f * PW, sy = (b) => T + PH - gib(b) / ymax * PH;
+        const f1 = (v) => v.toFixed(1);
+        const B = [], hits = [];
+        const hit = (p, kind, extra = {}) => hits.push({ x: sx(p.f), y: sy(p.b), kind, p, ...extra });
+        // grid + axes
+        for (let v = 0; v <= 100; v += 10) {
+          const x = sx(v / 100);
+          B.push(`<line x1="${f1(x)}" y1="${T}" x2="${f1(x)}" y2="${T + PH}" stroke="${C('#eeede7')}"/>`);
+          B.push(`<text class="dims" x="${f1(x)}" y="${T + PH + 13}" text-anchor="middle">${v}%</text>`);
+        }
+        for (let v = 0; v <= ymax; v += 20) {
+          const y = sy(v / scale);
+          B.push(`<line x1="${GL}" y1="${f1(y)}" x2="${W - GR}" y2="${f1(y)}" stroke="${C('#eeede7')}"/>`);
+          B.push(`<text class="dims" x="${GL - 6}" y="${f1(y + 3)}" text-anchor="end">${v} GiB</text>`);
+        }
+        B.push(`<text class="dims" x="${GL + PW / 2}" y="${T + PH + 30}" text-anchor="middle">recompute: forward FLOPs replayed in backward, % of one forward</text>`);
+        B.push(`<text class="dims" x="${GL}" y="${T - 6}">stashed for backward (${L?.dispLayers ?? 8} layers × ${L?.dispInflight ?? 8.5} in flight × 4,096 tokens)</text>`);
+        // legend
+        let lx = W - GR - 420;
+        const leg = (mark, text) => { B.push(mark(lx)); B.push(`<text class="dims" x="${lx + 12}" y="12">${text}</text>`); lx += 16 + text.length * 4.9 + 12; };
+        leg((x) => `<rect x="${x + 2}" y="7" width="3" height="3" fill="${C('#d5d4cb')}"/>`, 'every policy');
+        leg((x) => `<circle cx="${x + 4}" cy="8.5" r="2" fill="${C('#898781')}"/>`, 'Pareto frontier');
+        leg((x) => `<line x1="${x}" y1="8.5" x2="${x + 9}" y2="8.5" stroke="${C('#0b0b0b')}" stroke-width="1.5"/>`, 'its convex hull');
+        leg((x) => `<circle cx="${x + 4}" cy="8.5" r="3.5" fill="none" stroke="${C('#52514e')}"/>`, 'preset');
+        leg((x) => `<circle cx="${x + 4}" cy="8.5" r="4" fill="none" stroke="${C('#eda100')}" stroke-width="2"/>`, 'in the diagram');
+        // the cloud: one 1.5px cell per occupied pixel
+        const cells = new Map();
+        for (const p of this.pts) {
+          const k = Math.round(sx(p.f)) + ',' + Math.round(sy(p.b));
+          const c = cells.get(k);
+          if (!c) cells.set(k, { p, n: p.n }); else { c.n += p.n; if (p.redo < c.p.redo) c.p = p; }
+        }
+        let d = '';
+        for (const [k, c] of cells) {
+          const [x, y] = k.split(',').map(Number);
+          d += `M${x - 0.75} ${y - 0.75}h1.5v1.5h-1.5z`;
+          hit(c.p, 'cloud', { n: c.n });
+        }
+        B.push(`<path data-cloud="${cells.size}" d="${d}" fill="${C('#d5d4cb')}"/>`);
+        // the frontier and its hull; hull vertices are numbered steps (the film below)
+        B.push(`<polyline data-hull points="${this.hull.map((p) => `${f1(sx(p.f))},${f1(sy(p.b))}`).join(' ')}" fill="none" stroke="${C('#0b0b0b')}" stroke-width="1.5"/>`);
+        for (const p of this.front) if (!this.hull.includes(p)) {
+          B.push(`<circle data-front cx="${f1(sx(p.f))}" cy="${f1(sy(p.b))}" r="2" fill="${C('#898781')}"/>`); hit(p, 'front');
+        }
+        this.hull.forEach((p, i) => {
+          B.push(`<circle data-hullpt="${i}" cx="${f1(sx(p.f))}" cy="${f1(sy(p.b))}" r="3.5" fill="${C('#0b0b0b')}" stroke="${C('#fcfcfb')}" stroke-width="1.5"/>`);
+          hit(p, 'hull', { i });
+        });
+        for (const q of this.presets) {
+          B.push(`<circle data-preset="${q.key}" cx="${f1(sx(q.f))}" cy="${f1(sy(q.b))}" r="5.5" fill="none" stroke="${C('#52514e')}" stroke-width="1.2"/>`);
+          hit(q, 'preset');
+        }
+        // labels: step numbers (vertices closer than 12px share one), and the
+        // presets that sit off the hull
+        const labels = [];
+        for (let i = 0; i < this.hull.length;) {
+          let j = i + 1;
+          while (j < this.hull.length && Math.hypot(sx(this.hull[j].f) - sx(this.hull[i].f), sy(this.hull[j].b) - sy(this.hull[i].b)) < 12) j++;
+          labels.push({ px: sx(this.hull[i].f), py: sy(this.hull[i].b), text: Array.from({ length: j - i }, (_, k) => i + k).join(','), fill: '#0b0b0b', weight: 700, hull: i });
+          i = j;
+        }
+        for (const q of this.presets) if (!this.hull.some((p) => same(p, q)))
+          labels.push({ px: sx(q.f), py: sy(q.b), text: q.key, fill: '#898781', preset: q.key });
+        // place above-right (flip left at the right edge), then push overlapping labels down
+        const placed = [];
+        for (const l of labels.sort((a, b) => a.py - b.py)) {
+          const w = l.text.length * 5.6;
+          l.anchor = l.px + 8 + w > W - GR ? 'end' : 'start';
+          l.x0 = l.anchor === 'end' ? l.px - 8 - w : l.px + 8; l.x1 = l.x0 + w;
+          l.ty = l.py - 5;
+          for (let moved = true; moved;) {
+            moved = false;
+            for (const o of placed) if (l.x0 < o.x1 && o.x0 < l.x1 && Math.abs(l.ty - o.ty) < 11) { l.ty = o.ty + 11; moved = true; }
+          }
+          placed.push(l);
+        }
+        for (const l of placed) {
+          const x = l.anchor === 'end' ? l.x1 : l.x0;
+          if (l.ty - (l.py - 5) > 4) B.push(`<line x1="${f1(l.px)}" y1="${f1(l.py)}" x2="${f1(x + (l.anchor === 'end' ? 2 : -2))}" y2="${f1(l.ty - 3)}" stroke="${C('#c3c2b7')}"/>`);
+          B.push(`<text class="lab"${l.hull != null ? ` data-hulllab="${l.hull}"` : ''}${l.preset ? ` data-presetlab="${l.preset}"` : ''} x="${f1(x)}" y="${f1(l.ty)}" text-anchor="${l.anchor}" fill="${C(l.fill)}"${l.weight ? ` font-weight="${l.weight}"` : ''}>${l.text}</text>`);
+        }
+        // the diagram's current policy (a comm-replaying one is off this chart)
+        if (this.cur && !this.cur.disp) {
+          const x = sx(this.cur.f), y = sy(this.cur.b);
+          B.push(`<circle data-cur cx="${f1(x)}" cy="${f1(y)}" r="7.5" fill="none" stroke="${C('#eda100')}" stroke-width="2.2"/>`);
+          hits.push({ x, y, kind: 'cur', p: this.cur });
+        }
+        this._hits = hits; this._scale = scale;
+        this._chart.innerHTML = `<svg class="plot" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${B.join('')}</svg>`;
+        this._chart.firstChild.onclick = (ev) => { const h = this._nearest(ev); if (h) this._load(h.p.marks); };
+        // the film: one frame per hull step — its recompute set in miniature,
+        // what this step adds solid, what earlier steps already recompute mid-tone
+        const cs = this._stepOf(this.cur);
+        this._film.innerHTML = `<div class="film-h">The hull, step by step: each step recomputes ${sw('redo')}everything the step before it did, plus ${sw('new')}what it adds.</div>` +
+          `<div class="film" style="grid-template-columns:repeat(${this.steps.length},1fr)">` +
+          this.steps.map(({ p, add, presets }, i) => {
+            const redo = redoOf(p.marks);
+            return `<div class="fr${i === cs ? ' cur' : ''}" data-step="${i}"><b>${i}</b>` +
+              schem((id) => add.includes(id) ? 'new' : redo.includes(id) ? 'redo' : 'save', SMALL) +
+              `<div>${i ? `+ ${names(add)}` : 'save everything'}</div>${presets.length ? `<div class="q">= ${presets.join(' = ')}</div>` : ''}</div>`;
+          }).join('') + '</div>';
+        this._film.onclick = (ev) => { const fr = ev.target.closest('.fr'); if (fr) this._load(this.hull[+fr.dataset.step].marks); };
+        this._readout();
+      }
+      _hot(i) {   // one hull step lit in both views: its frame and its vertex
+        for (const fr of this._film.querySelectorAll('.fr')) fr.classList.toggle('hot', +fr.dataset.step === i);
+        for (const c of this._chart.querySelectorAll('[data-hullpt]')) c.setAttribute('r', +c.dataset.hullpt === i ? 5.5 : 3.5);
+      }
+      _nearest(ev) {
+        const r = this._chart.firstChild.getBoundingClientRect(), k = W / r.width;
+        const x = (ev.clientX - r.left) * k, y = (ev.clientY - r.top) * k;
+        const PRIO = { cur: 0, hull: 1, preset: 2, front: 3, cloud: 4 };
+        let best = null, bs = Infinity;
+        for (const h of this._hits) {
+          const dd = Math.hypot(h.x - x, h.y - y);
+          if (dd > 8) continue;
+          const s = PRIO[h.kind] * 8 + dd;
+          if (s < bs) { bs = s; best = h; }
+        }
+        return best;
+      }
+      _nums(p) { return `${pct(p.f)} of a forward replayed · ${(p.b * this._scale).toFixed(1)} GiB stashed (${(p.b / 1024).toFixed(1)} KiB/token·layer)`; }
+      // where a policy stands against the frontier
+      _verdict(p) {
+        const i = this._stepOf(p);
+        if (i >= 0) return `hull step ${i} of ${this.hull.length - 1}`;
+        if (this.front.some((q) => same(p, q))) return 'on the Pareto frontier, inside the hull';
+        const better = this.front.filter((q) => q.f <= p.f + 1e-12).reduce((a, q) => (q.b < a.b ? q : a), { b: Infinity });
+        return `dominated: a frontier policy recomputing ${pct(better.f)} stashes ${((p.b - better.b) * this._scale).toFixed(1)} GiB less`;
+      }
+      // the tip card: numbers, the policy as a labeled schematic, the verdict
+      _card(p, head) {
+        const i = this._stepOf(p), redo = redoOf(p.marks), add = i > 0 ? this.steps[i].add : redo;
+        const el = document.createElement('div'); el.className = 'apt';
+        el.innerHTML = `<b>${head}</b>\n${this._nums(p)}` +
+          schem((id) => add.includes(id) ? 'new' : redo.includes(id) ? 'redo' : 'save', BIG) +
+          (i > 0 ? `${sw('new')}added at step ${i} &nbsp; ${sw('redo')}recomputed since earlier steps &nbsp; ${sw('save')}saved`
+            : redo.length ? `${sw('new')}recomputed &nbsp; ${sw('save')}saved` : `${sw('save')}saved: nothing is recomputed`) +
+          (i >= 0 ? '' : `\n${this._verdict(p)}`);
+        return el;
+      }
+      _tip(ev) {
+        if (!this._hits) return null;
+        const fr = ev.target.closest?.('.fr');
+        if (fr) { const i = +fr.dataset.step; this._hot(i); return this._card(this.hull[i], `hull step ${i}${i ? ` — adds ${names(this.steps[i].add)}` : ''}`); }
+        const h = ev.target.closest?.('svg.plot') ? this._nearest(ev) : null;
+        this._hot(h?.kind === 'hull' ? h.i : -1);
+        if (!h) return null;
+        const cs = this._stepOf(h.p);
+        const head = { cur: `in the diagram below${cs >= 0 ? ` = hull step ${cs}` : ''}`, hull: `hull step ${h.i}${h.i ? ` — adds ${names(this.steps[h.i].add)}` : ''}`,
+          preset: `preset ${h.p.key}${MEGATRON.includes(h.p.key) ? ' (Megatron-Core --recompute-modules)' : ''}`,
+          front: 'Pareto frontier', cloud: `${(h.n ?? 0).toLocaleString('en-US')} marking${h.n > 1 ? 's' : ''} land on this pixel` }[h.kind];
+        return this._card(h.p, head);
+      }
+      _readout() {
+        const p = this.cur;
+        this._ro.innerHTML = !p ? '' : p.disp
+          ? '<b>In the diagram:</b> a policy that replays an all-to-all, which this chart leaves out (it keeps both a2a outputs saved).'
+          : `<b>In the diagram:</b> ${this._nums(p)} · ${this._verdict(p)}.`;
+      }
+    }
+    customElements.define('dsv3-acpareto', Dsv3AcPareto);
+  </script>
+</body>
+
+</html>

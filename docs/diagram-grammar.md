@@ -102,6 +102,7 @@ the rest are conventions to uphold when editing the renderer.
 | `.comm` | communication (violet) |
 | *traffic pill* (bronze `#8c5a19`) | HBM traffic — bytes on the move (quantization round trips); rides a tally ribbon, named + quantified (a bandwidth floor exists), never metered by the ruler |
 | `.res` | residual add (dashed) |
+| `.redo` | recompute tint (teal `#0a98a0` over `#e0f3f3`): an overlay on a ↻ op's box, `redotint` instances only. Teal = replayed WORK, the counterpart of save-amber = stashed BYTES; checked clear of amber and a2a violet (not of optim green, which never shares the diagram) |
 | `.micro` | elided kernel (detail-only, italic) |
 | `.grp` | grouping enclosure (thin, `grplabel` inside top) |
 | `.tsave/.tredo/.tidle` | tensor chip states (saved amber / replayed italic / idle grey) |

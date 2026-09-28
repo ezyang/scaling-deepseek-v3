@@ -309,7 +309,7 @@ dsv3-anatomy dsv3-anatomy-plan { margin-top: 46px; }
 `;
 const FWD = ['controls', 'recipe', 'recipes', 'recompute', 'detail', 'transposed', 'for',
   'world', 'pp', 'vpp', 'ep', 'tp', 'tps', 'sched', 'fold', 'layout', 'a2a', 'grads', 'fp8params', 'hw', 'hws', 'facs', 'recomputes',   // the local lens's page-set parallelism + capacity + chip curation
-  'nocaption', 'kind', 'xlayers', 'xinflight', 'xtag', 'ctx', 'lens', 'squares', 'strips', 'nostrips', 'optim', 'consolidated', 'local', 'cumulative'];
+  'nocaption', 'kind', 'xlayers', 'xinflight', 'xtag', 'ctx', 'lens', 'squares', 'strips', 'nostrips', 'optim', 'consolidated', 'local', 'cumulative', 'redotint'];
 export class Dsv3Anatomy extends HTMLElement {
   connectedCallback() {
     const lid = this.getAttribute('layer') ?? ((this.id || 'anatomy') + '-layer');

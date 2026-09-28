@@ -717,6 +717,7 @@ ${s} .box { fill: var(--c-ffffff); stroke: var(--c-c3c2b7); }
 ${s} .op { fill: var(--c-f3f2ee); stroke: var(--c-e1e0d9); }
 ${s} .comm { fill: var(--c-f3f1fb); stroke: var(--c-6b5bd2); }
 ${s} .res { fill: var(--c-fcfcfb); stroke: var(--c-c3c2b7); stroke-dasharray: 3 2; }
+${s} .redo { fill: var(--c-e0f3f3); stroke: var(--c-0a98a0); stroke-width: 1.5; }
 ${s} .grp { fill: none; stroke: var(--c-e1e0d9); }
 ${s} .name { font: 600 11px system-ui; fill: var(--c-0b0b0b); }
 ${s} .dims { font: 9px system-ui; fill: var(--c-898781); }
@@ -2797,10 +2798,21 @@ export class Dsv3Layer extends HTMLElement {
     // display-only elided kernel (detail view): cheap, no marks, not in the graph
     const DET = this.detail;
     let MLAGW = 0;   // MLA group width — attention's lse label starts past its right edge
+    // redotint (opt-in): a ↻ op's box wears the recompute tint — ops are what
+    // replay (the chips under them already say what's stashed). An overlay on
+    // the box, eased through the stash tween like every mark-dependent element.
+    const TINT = this._ctl.marks && this.hasAttribute('redotint');
+    const tint = (id, x, y, w, h, rx) => {
+      const k = id == null ? null : markKey(id);
+      if (!TINT || !MARKABLE.includes(k)) return '';
+      const on = (mk) => +(mk[k] !== true);
+      const a = lerpQ(on(VQ?.prev?.marks ?? marks), on(marks));
+      return a > 0.001 ? `<rect class="redo" x="${x}" y="${y}" width="${w}" height="${h}" rx="${rx}" opacity="${a.toFixed(3)}"/>` : '';
+    };
     const micro = (label, x, y, w = W, tip, pc = '', opId = null) => {
       const pcTip = opId == null || tip?.includes('parameters:') ? null : exactParam(opId);
       const tip2 = [tip, pcTip == null ? '' : `parameters: ${pcTip.toLocaleString('en-US')}`].filter(Boolean).join('\n');
-      const body = `<rect class="micro" x="${x}" y="${y}" width="${w}" height="18" rx="9"/>` +
+      const body = `<rect class="micro" x="${x}" y="${y}" width="${w}" height="18" rx="9"/>` + tint(opId, x, y, w, 18, 9) +
         `<text class="microlabel" x="${x + 9}" y="${y + 13}">${label}${pc ? `<tspan class="dims"> ${pc}</tspan>` : ''}</text>`;
       P.push(tip2 || opId ? `<g${opId ? ` data-op="${opId}"` : ''}${tip2 ? ` data-tip="${escAttr(tip2)}"` : ''}>${body}</g>` : body);
       // real graph nodes drawn as micros (the MLA latent RMSNorms) carry the
@@ -2811,8 +2823,8 @@ export class Dsv3Layer extends HTMLElement {
     const plus = (cx, y) => P.push(`<circle cx="${cx}" cy="${y}" r="9" class="box"/>` +
       `<text class="plus" x="${cx}" y="${y + 4}" text-anchor="middle">+</text>`);
     // the dashed add box beside a + junction (residual adds, routed+shared add)
-    const addBox = (x, yMid, label, tip, w = 126) => P.push(`<g data-tip="${escAttr(tip)}">` +
-      `<rect class="res" x="${x}" y="${yMid - 11}" width="${w}" height="22" rx="4"/>` +
+    const addBox = (x, yMid, label, tip, w = 126, id = null) => P.push(`<g data-tip="${escAttr(tip)}">` +
+      `<rect class="res" x="${x}" y="${yMid - 11}" width="${w}" height="22" rx="4"/>` + tint(id, x, yMid - 11, w, 22, 4) +
       `<text class="oplabel" x="${x + 8}" y="${yMid + 4}">${label}</text></g>`);
     const grp = (x, y0, y1, label, w = W + 20) => P.push(
       `<rect class="grp" x="${x - 10}" y="${y0}" width="${w}" height="${y1 - y0}" rx="6"/>` +
@@ -2850,7 +2862,7 @@ export class Dsv3Layer extends HTMLElement {
       const extra = stripExtra(liveParam(ids[0]), clsOf(ids[0]), FLOP_ROW, ghostParam(ids[0]))
         + barExtra(ana.byId[(markIds ?? ids)[0]]?.flopsTok, dt(ids[0]), W - 16, dtPm(ids[0]));
       P.push(`<g data-op="${ids[0]}"${boxTip((markIds ?? ids)[0], dims ? undefined : spec.dimsNote, ids[0])}>` +
-        `<rect class="box" x="${x}" y="${y}" width="${W}" height="${BH + extra}" rx="4"/>` +
+        `<rect class="box" x="${x}" y="${y}" width="${W}" height="${BH + extra}" rx="4"/>` + tint((markIds ?? ids)[0], x, y, W, BH + extra, 4) +
         (PBYTES && !this._ctl.dtype && exactParam(ids[0]) != null ? `<text class="dims" x="${x + W - 8}" y="${y + 13}" text-anchor="end">bf16</text>` : '') +
         `<text class="name" x="${x + 8}" y="${y + 13}">${label ?? spec.label}</text>` +
         `<text class="dims" x="${x + 8}" y="${y + 26}">${PONLY ? pstr(ids[0]).trim() : flatten(dims ?? spec.dims) + pstr(ids[0])}</text></g>`);
@@ -2879,7 +2891,7 @@ export class Dsv3Layer extends HTMLElement {
           `so no GEMM forces its precision. The paper CHOOSES fp8 (§3.3.3: 'cache the inputs of the SwiGLU operator in FP8'); bf16 = no quantize. Toggle bf16 ⇄ ${FP8K}.">${this.matmuls.swiglu_in ?? 'bf16'}</button></foreignObject>`
         : '';
       P.push(`<g data-op="${id}"${id === 'quant' ? ` data-tip="${escAttr(QUANT_TIP)}"` : boxTip(id)}>` +
-        `<rect class="${cls}" x="${x}" y="${y}" width="${W}" height="${h2}" rx="6"/>` +
+        `<rect class="${cls}" x="${x}" y="${y}" width="${W}" height="${h2}" rx="6"/>` + tint(id, x, y, W, h2, 6) +
         `<text class="oplabel" x="${x + 10}" y="${y + 15}">${label}${pc ? `<tspan class="dims"> ${pc}</tspan>` : ''}</text></g>` +
         quantBtn + modeBtn([id], x + W - 30, y + 1));
       auxOut(id, x, y + Math.round(h2 / 2));
@@ -2914,7 +2926,7 @@ export class Dsv3Layer extends HTMLElement {
         const ex = stripExtra(nP, 'd', HALF_ROW)   // strip rows can outgrow the box (×N)
           + barExtra(ana.byId.qkv_down.flopsTok * frac, dt('qkv_down'), 128, dtPm('qkv_down'));
         P.push(`<g data-op="qkv_down" data-tip="${escAttr(tip)}">` +
-          `<rect class="box" x="${x}" y="${y}" width="140" height="${HBH + ex}" rx="4"/>` +
+          `<rect class="box" x="${x}" y="${y}" width="140" height="${HBH + ex}" rx="4"/>` + tint('qkv_down', x, y, 140, HBH + ex, 4) +
           (PBYTES && !this._ctl.dtype ? `<text class="dims" x="${x + 134}" y="${y + 13}" text-anchor="end">bf16</text>` : '') +
           `<text class="name" x="${x + 6}" y="${y + 13}">${name}</text>` +
           `<text class="dims" x="${x + 6}" y="${y + 25}">${PONLY ? pc.trim() : flatten(dims) + pc}</text></g>` +
@@ -2993,7 +3005,7 @@ export class Dsv3Layer extends HTMLElement {
         const ex = stripExtra(sqParam(id), 'd', 21)   // strip rows can outgrow the box (×N; 140px box row)
           + barExtra(ana.byId[id]?.flopsTok, dt(id), 128, dtPm(id));
         P.push(`<g data-op="${id}"${boxTip(id, m.dimsNote)}>` +
-          `<rect class="box" x="${x}" y="${y}" width="140" height="${HBH + ex}" rx="4"/>` +
+          `<rect class="box" x="${x}" y="${y}" width="140" height="${HBH + ex}" rx="4"/>` + tint(id, x, y, 140, HBH + ex, 4) +
           (PBYTES && !this._ctl.dtype ? `<text class="dims" x="${x + 134}" y="${y + 13}" text-anchor="end">bf16</text>` : '') +
           `<text class="name" x="${x + 6}" y="${y + 13}">${m.label}</text>` +
           `<text class="dims" x="${x + 6}" y="${y + 25}">${PONLY ? pstr(id).trim() : flatten(m.dims) + pstr(id)}</text></g>` +
@@ -3066,7 +3078,7 @@ export class Dsv3Layer extends HTMLElement {
     plus(SX1, y);
     P.push(`<path class="wire" d="M ${SX1} ${tap1} L ${RAIL1} ${tap1} L ${RAIL1} ${y} L ${SX1 - 11} ${y}" marker-end="url(#arr)"/>`);
     // the residual add is an op like any other: dashed box beside the junction
-    addBox(SX1 + 16, y, 'residual add', "residual add — no FLOPs; its output x1 is what the second RMSNorm's backward reads");
+    addBox(SX1 + 16, y, 'residual add', "residual add — no FLOPs; its output x1 is what the second RMSNorm's backward reads", 126, 'x1');
     P.push(modeBtn(['x1'], SX1 + 16 + 126 - 30, y - 10));
     tensorChip(['x1'], SX1 + 16, y + 15);
     x1Y = y;
@@ -3180,7 +3192,7 @@ export class Dsv3Layer extends HTMLElement {
     const shBox = (name, dims, tip, yy, pc = '', markId = null, dtId = null) => {
       const n = name.includes('gate/up') ? 2 * DSV3.hidden * DSV3.moeInter : DSV3.hidden * DSV3.moeInter;
       P.push(`<g data-op="shared" data-tip="${escAttr(`${tip}\nparameters: ${n.toLocaleString('en-US')}`)}">` +
-      `<rect class="box" x="${SHX}" y="${yy}" width="140" height="${SHH}" rx="4"/>` +
+      `<rect class="box" x="${SHX}" y="${yy}" width="140" height="${SHH}" rx="4"/>` + tint(markId, SHX, yy, 140, SHH, 4) +
       `<text class="name" x="${SHX + 6}" y="${yy + 14}">${name}</text>` +
       `<text class="dims" x="${SHX + 6}" y="${yy + 27}">${PONLY ? pc.trim()
         : flatten(dims) + (dtId && this._ctl.dtype && !this._ctl.marks ? '' : pc)}</text></g>`);   // the dtype mirror takes the params' spot (the count stays in the tooltip + grouped box)
@@ -3354,7 +3366,7 @@ export class Dsv3Layer extends HTMLElement {
       plus(SX2, zA);
       P.push(`<path class="wire" d="M ${shMid} ${shBot} L ${shMid} ${zA} L ${SX2 + 11} ${zA}" marker-end="url(#arr)"/>`);
       addBox(SX2 + 26, zA - 24, 'add — routed + shared',
-        'routed + shared expert outputs — its backward needs nothing; a ↻ mark replays it (and must pull its inputs into the stash: honestly wasteful). Megatron fuses this with the residual add (add_shared_and_residual)', 178);
+        'routed + shared expert outputs — its backward needs nothing; a ↻ mark replays it (and must pull its inputs into the stash: honestly wasteful). Megatron fuses this with the residual add (add_shared_and_residual)', 178, 'moe_add');
       P.push(modeBtn(['moe_add'], SX2 + 26 + 178 - 30, zA - 34));
       encBot = zA + 14;   // the routed+shared add is MoE-internal — inside the box
       if (ONLY === 'ffn') {
