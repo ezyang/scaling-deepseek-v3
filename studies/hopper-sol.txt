@@ -1,0 +1,12 @@
+putting together the sol:
+- flops, nvlink bw, ib bw
+
+
+
+the pieces
+- relaxations to allow illegal states ok, you can change "parameters" even if
+  it imbalances things (the local batch size example)
+- it's important to understand every part of the model, it needs to be all
+  laid out in front of you, like a disassembled swiss watch.  you need to be
+  not wrong, because there's no ground truth to call you out
+- when do you need a timeline? overlap, critical path analysis

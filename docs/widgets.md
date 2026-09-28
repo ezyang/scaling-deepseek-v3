@@ -490,19 +490,26 @@ recompute) — learned projections ∝ L·d² · router ∝ L·d · lm head ∝ 
 matmuls. With V fixed, the head dominates the smallest rungs, so 6ND's miss
 is non-monotone: it peaks near 10²⁰ and shrinks from there (12.3% at DSv3,
 5.2% at 10²⁷, S = 4K). The legend doubles as the cursor's breakdown.
+The y-axis toggle (% · log · linear) swaps the stack for absolute
+FLOP/token, legend values in FLOP. Log (10⁶ … 10¹³) draws one line per
+class plus 6N dashed — stacked areas on a log axis would lie (a 12% band is
+0.05 decades). Linear stacks the classes up to a round ceiling over the
+whole C range (5 TFLOP at S = 4K); every rung below ~10²³ lies flat on it.
 
 | attr | kind | values | meaning |
 |---|---|---|---|
 | `seq` | state | 512 … 131072 | sequence length S (the attention core's only knob) |
 | — | state | log₁₀ C ∈ [19, 27] | the cursor: slider (step 0.01, snaps onto DSv3 within 0.03 decades), press/drag on the plot, or the DeepSeek-V3 preset (lit when exactly there) |
-| state | | `#l:<id>={c,seq}` | URL hash, when the element has an id |
+| — | state | `share` · `log` · `lin` | the y axis: 100%-stacked shares, per-class FLOP/token lines on log, or stacked FLOP/token on linear (crossfade) |
+| state | | `#l:<id>={c,seq,y}` | URL hash, when the element has an id |
 
-S flips and the preset tween (~200 ms); slider/drag moves are direct.
+S flips, y flips and the preset tween (~200 ms); slider/drag moves are direct.
 `ladderPoint(logC, seq)` / `classFlops(a, seq)` / `ladderArch(s)` are
 node-importable (goldens `ladder.*`); test affordances:
-`polygon[data-band=<class>]`, `polyline[data-six]`, `line[data-cursor]`,
+`polygon[data-band=<class>]`, `polyline[data-six]`, `g[data-view=share|log|lin]`,
+`polyline[data-line=<class>]`, `polyline[data-six-abs]`, `polygon[data-area=<class>]`, `polyline[data-six-lin]`, `[data-abs=<class>|six]`, `line[data-cursor]`,
 `[data-share=<class>|six]` with `data-true`, `input[data-knob=c]`,
-`[data-knob=seq]`, `[data-knob=preset]`, `rect[data-hit]`.
+`[data-knob=seq]`, `[data-knob=preset]`, `[data-knob=y]`, `rect[data-hit]`.
 
 ## Other elements (unchanged conventions)
 - `<dsv3-trace level height title config>` — the canvas trace viewer over the
@@ -562,7 +569,7 @@ DOM: `connectedCallback` does not tolerate a re-mount.
 Margin notes become real end-of-post footnotes (`.mnotes` before the series
 nav): refs turn into numbered links, notes get ↩ backlinks, and the inline
 negative `margin-top` shunts that position notes in the desktop gutter are
-cleared (study.css also neutralizes them for the 861–1040px note-boxes).
+cleared (study.css also neutralizes them for the 861–1120px note-boxes).
 tests/mobile.js (01) and tests/mobile02.js (02) pin all of this at 430px.
 
 ## Night mode (src/theme.js)

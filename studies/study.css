@@ -53,7 +53,9 @@ sup a { text-decoration: none; }
 /* margin notes (Tufte-style, CSS-only). Usage, inside a <p>:
      ... claim<span class="mn-ref"></span><span class="mn">the note text</span> ...
    The ref renders a superscript number; the note floats into the right
-   gutter (main 980px − prose 760px) beside it. On narrow viewports the
+   gutter beside it: 42px past the prose column (760px), 240px wide — past
+   main's 980px into the page margin, which the 1366 minimum viewport has
+   room for. On narrow viewports the
    note becomes an inset footnote box in the flow. Numbering is automatic
    (CSS counter, per page). Keep notes short — a very tall note next to a
    full-width figure/widget is cleared below it. */
@@ -61,12 +63,12 @@ main { counter-reset: mn; }
 .mn-ref { counter-increment: mn; }
 .mn-ref::after { content: counter(mn); font-size: 11px; vertical-align: super;
   line-height: 0; color: var(--c-b05f00); font-weight: 600; padding-left: 1px; }
-.mn { float: right; clear: right; width: 178px; margin-right: -220px;
+.mn { float: right; clear: right; width: 240px; margin-right: -282px;
   margin-top: 4px; margin-bottom: 8px; font-size: 12.5px; line-height: 1.5;
   color: var(--c-52514e); }
 .mn::before { content: counter(mn) ". "; color: var(--c-b05f00); font-weight: 600; }
 dsv3-layer, dsv3-trace, dsv3-anatomy, dsv3-beat-deck, dsv3-pp-schedule, dsv3-pp-fold, figure, table.xcheck { clear: right; }
-@media (max-width: 1040px) {
+@media (max-width: 1120px) {
   /* !important: authors shunt gutter notes past tall figures with inline
      negative margin-tops (style="margin-top:-9em") — those offsets are
      meaningless once the note sits in the flow */

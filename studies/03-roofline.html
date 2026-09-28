@@ -9,6 +9,9 @@
   <link rel="stylesheet" href="./study.css">
   <style>
     dsv3-ladder { display: block; margin: 14px 0 26px; }
+    svg.roof { display: block; margin: 14px 0 22px; max-width: 100%; height: auto; font: 11px system-ui, -apple-system, "Segoe UI", sans-serif; }
+    .roof text { fill: var(--c-52514e); }
+    .roof .dims { font-size: 10px; fill: var(--c-898781); }
     table.ref { border-collapse: collapse; font-size: 14px; margin: 14px 0 22px; font-variant-numeric: tabular-nums; }
     .ref th { text-align: left; font-size: 12.5px; font-weight: 600; color: var(--c-52514e); padding: 4px 14px 5px 0; border-bottom: 1.5px solid var(--c-c3c2b7); }
     .ref td { padding: 4px 14px 4px 0; vertical-align: baseline; }
@@ -22,6 +25,20 @@
     .ref .t { text-align: right; white-space: nowrap; padding-left: 16px; }
     .ref tr.grp td { background: var(--c-f3f2ee); font-size: 13px; font-weight: 600; color: var(--c-1c1c1a); border-top: 1.5px solid var(--c-c3c2b7); padding-top: 9px; }
     .ref tr.grp .t { color: var(--c-52514e); font-weight: 500; }
+    /* static formula sheet in <dsv3-sheet>'s look (02's closing sheet) */
+    .cellsheet { max-width: 760px; box-sizing: border-box; margin: 14px 0; font: 12px system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--c-0b0b0b);
+      border: 1px solid var(--c-e1e0d9); border-radius: 6px; background: var(--c-fcfcfb); padding: 8px 12px; }
+    .cellsheet table { border-collapse: collapse; width: 100%; }
+    .cellsheet th { text-align: left; font-size: 10.5px; color: var(--c-898781); font-weight: 600; padding: 1px 10px 3px 2px; }
+    .cellsheet td { padding: 1.5px 10px 1.5px 2px; border-top: 1px solid var(--c-f0efe9); font-size: 11.5px; vertical-align: baseline; white-space: nowrap; }
+    .cellsheet th.vl, .cellsheet td.vl { text-align: right; font-variant-numeric: tabular-nums; }
+    .cellsheet td.nm { font: 600 11px ui-monospace, monospace; color: var(--c-2a78d6); }
+    .cellsheet td.fx { font: 11px ui-monospace, monospace; color: var(--c-52514e); white-space: normal; }
+    .cellsheet td.fx b { color: var(--c-2a78d6); font-weight: 600; }
+    .cellsheet td.fx i { font: 11.5px system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--c-898781); font-style: normal; }
+    .cellsheet td.ap { color: var(--c-898781); }
+    .cellsheet sup, .cellsheet sub { line-height: 0; font-size: 0.8em; }
+    .cellsheet tr.hl td { background: var(--c-fff8ea); font-weight: 600; }
   </style>
 </head>
 
@@ -29,93 +46,186 @@
   <main>
     <h1>Working the roofline for DeepSeek-V3 on Hopper</h1>
 
-    <p>In part two, we worked through how memory constraints force us into certain
-    parallelism choices simply to get the model to fit into memory.  However, I
-    cheated slightly in the memory exercise: for example, we simply assumed
-    that full FSDP (ZeRO-3) wouldn't be a good idea for DeepSeek-V3 on Hopper.
-    How did we know this? A roofline analysis for FLOPs and distributed communications
-    can easily tell us that we would be communication bound.  So in this part,
-    we are going to work out the DeepSeek-V3 roofline in more detail than you
-    ever wanted to know.  (A future promise: we could also consider a harder problem,
-    where we the infra team are codesigning a model architecture with the research
-    team.  Why does DSv3 make the choices it does?  That will be another post!)</p>
+    <p>In <a href="./02-hopper-memory.html">part two</a>, we looked at how our
+    choices of parallelism, activation checkpointing and low precision
+    influence how much memory we need to train DeepSeek-V3, and found<span
+    class="mn-ref"></span><span class="mn">"Found" is perhaps too strong a
+    word: it is not a coincidence that if you keep the architecture fixed and
+    look for a configuration that works well for it on the hardware DeepSeek
+    trained on, you end up with the configuration DeepSeek picked.  An interesting
+    and important operating mode is codesign, where we (infra) can have input
+    into aspects of the architecture (e.g., expert sparsity) so that it runs better.
+    This is a discussion unto itself, which we will delay for later.</span> a
+    configuration that let us fit it on a 2048 H800 cluster.  However, you
+    often have some choice in how exactly you get the model to
+    fit, and we'd like to choose the configuration that maximizes
+    our useful FLOPs/sec.  For example, our first question was whether
+    to use FSDP (ZeRO-3) or pipeline parallelism.  It is quite painful to
+    implement pipeline parallelism, so we would really like to decide on a
+    strategy without having to build both systems and benchmark them on a full-size
+    cluster.  And <em>even</em> if we did build and run the benchmark, how
+    would we know that we hadn't made a mistake that invalidated the comparison?</p>
 
-    <p>In particular, one pedagogical objective in this essay is to explain the
-    underlying reasoning behind the common approximations that are used when we
-    do a rooflining analysis.  The 6ND compute approximation is really useful
-    because it is easy to keep in your head and cuts out the complication about having
-    to reason in detail about what the inside of your model looks like.  But at the
-    same time, if you haven't thought about why this approximation is valid, it can
-    seem like magic, and I want to explain in enough detail so that you could derive
-    this formula from first principles, and you can also intuitively understand when
-    you shouldn't use this approximation.
+    <p>The classic tool for answering questions like this is a
+    <strong>roofline analysis</strong>: at the end of the day, the number of
+    FLOPs we need to run is fixed, and so the most important factor of our
+    system's performance will be its distributed communication (much in the
+    same way the most important factor of kernel performance is if it is
+    compute or bandwidth bound).  A roofline analysis will tell us that FSDP
+    is a bad idea for DSv3, because it will be communications bound on
+    InfiniBand bandwidth.  If we consider <strong>speed of light</strong>,
+    where we assume our compute and communications go as fast as physically
+    possible (according to the hardware spec sheets), these calculations
+    are simple enough to be done with pencil and paper.</p>
+
+    <p>The goals for this part are two-fold.  First, we will walk through the
+    speed of light rooflines for DeepSeek-V3 on Hopper.  But second, and more
+    importantly, I want to explain the underlying reasoning behind the
+    approximations we will use in this analysis.  For example, the 6ND formula is really
+    useful, but it can also feel a bit like magic the first time you encounter it.
+    I want to explain it in enough detail that you could derive it from first principles
+    and also tell when you <em>shouldn't</em> use it.</p>
+
+    <h2>What's a roofline?</h2>
+
+    <p><em>This section is standard exposition, so you can skip it if you have already seen it.
+    You might also consider reading <a href="https://horace.io/brrr_intro.html">Making Deep Learning Go Brrrr From First Principles</a> or <a href="https://jax-ml.github.io/scaling-book/roofline/">All About Rooflines</a>.</em></p>
+
+    <p>The term roofline originally comes from the <a
+    href="https://people.eecs.berkeley.edu/~kubitron/cs252/handouts/papers/RooflineVyNoYellow.pdf">Williams,
+    Waterman and Patterson paper</a> in the context of understanding program
+    performance when memory bandwidth was the constraining factor.  Its name comes
+    from the classic shape of the graph you get when you plot arithmetic intensity (the
+    number of FLOPs you perform per byte you read from memory)
+    against attainable FLOP/s.
     </p>
 
-    <h2>The overall plan</h2>
+    <svg class="roof" width="520" height="270" viewBox="0 0 520 270" role="img"
+      aria-label="A roofline: attainable FLOP/s against arithmetic intensity on log axes. A slope set by memory bandwidth rises to meet the flat ceiling of peak compute at the ridge point; kernels left of it are memory-bound, right of it compute-bound.">
+      <g stroke="var(--c-898781)" fill="none">
+        <path d="M60 20 V230 H500"/>
+        <path d="M290 60 V230" stroke-dasharray="2 3"/>
+      </g>
+      <path d="M60 205 L290 60 H500" fill="none" stroke="var(--c-0b0b0b)" stroke-width="2" stroke-linejoin="round"/>
+      <text x="496" y="52" text-anchor="end">peak compute (FLOP/s)</text>
+      <text transform="translate(200 108) rotate(-32.2)" text-anchor="middle">memory bandwidth (bytes/s)</text>
+      <text x="290" y="244" text-anchor="middle">ridge point = peak ÷ bandwidth</text>
+      <text class="dims" x="282" y="222" text-anchor="end">← memory-bound</text>
+      <text class="dims" x="298" y="222">compute-bound →</text>
+      <circle cx="100" cy="179.8" r="4.5" fill="var(--c-0b0b0b)"/>
+      <text x="108" y="197">elementwise op</text>
+      <circle cx="420" cy="60" r="4.5" fill="var(--c-0b0b0b)"/>
+      <text x="420" y="78" text-anchor="middle">large matmul</text>
+      <text class="dims" x="280" y="262" text-anchor="middle">arithmetic intensity (FLOP per byte), log scale</text>
+      <text class="dims" transform="translate(46 125) rotate(-90)" text-anchor="middle">attainable FLOP/s, log scale</text>
+    </svg>
 
-    <p>Unlike HBM rooflines, where the memory transfer you have to do into each GEMM is usually
-    inviolable,<span class="mn-ref"></span><span class="mn">The reason you can't "fuse" two GEMMs together, or even
-    usefully fuse into a GEMM prologue, is because input tiles are used multiple times when
-    computing the GEMM: to avoid repeatedly recomputing an input tile, you need to store
-    it somewhere that all of your SMs can access, and has enough space to
-    store everything you need.  Usually HBM is the most convenient thing that actually fits.</span>
-    we have a large degree of control over what distributed communication we do, because we
-    have to pick our parallelism.  However, as we saw in the previous post, we desire to
-    make our model bigger and we wish to do strong scaling over a bigger GPU cluster, and
-    these lead us to want to parallelize.  But parallelization means distributed communication,
-    and distributed communication can then become a bottleneck.  This is where the roofline
-    analysis comes into play.
-    </p>
 
-    <p>So a way to think about what we're trying to do is we're trying to solve a problem
-    (our model doesn't fit; we are trying to make good use of our GPUs).  We will solve our
-    problem by adding parallelization.  But these parallelization introduce communication costs.
-    However, thanks to overlapping, it may be possible that we don't need to pay for these
-    costs (it's free because it's perfectly overlapped).  But we need to assess if it is actually
-    possible to hide these costs.  Thus we do roofline to cheaply see what we expect to happen.
-    </p>
+    <p>Roofline analysis is a natural thing to do when authoring GPU kernels.
+    The roofline tells you if a kernel is compute bound or memory bound.  When
+    a kernel is memory bound, making the compute run faster is useless, since
+    after you finish your compute you will simply idle waiting for bytes to
+    show up from HBM.  Instead, fusing multiple kernels together helps you
+    amortize the cost of HBM reads over more compute, helping push you into
+    the compute bound regime.  Conversely, we don't usually worry about fusing
+    GEMMs together (modulo attention or low batch inference), because matrix
+    multiplication naturally has a high arithmetic intensity and is compute-bound in
+    most regimes.<span class="mn-ref"></span><span
+    class="mn" style="margin-top:-20em"> It's also fairly difficult to "fuse" two GEMMs together (or
+    even usefully fuse into a GEMM prologue), because input tiles are used
+    multiple times when computing the GEMM: to avoid repeatedly recomputing an
+    input tile, you need to store it somewhere that all of your SMs can
+    access, and has enough space to store everything you need.  Usually HBM is
+    the most convenient thing that actually fits.  The fact that Flash Attention
+    can keep the score matrix on-chip without going to HBM is something of a minor miracle.</span></p>
 
-    <p>So to do the roofline, we have to think about what exact parallelization/distributed
-    communication we are considering to assess the impact.  From our DSv3 memory analysis,
-    there are already the parallelisms we were forced into in order to fit it in memory:</p>
+    <p>We can also do a roofline analysis on an entire distributed train step.
+    However, there are two big differences.  First, the HBM is no longer the
+    bottleneck: instead, the bottleneck will usually be your cross-node
+    bandwidth<span class="mn-ref"></span><span class="mn">Well, technically,
+    Blackwell's NVL72 spans across nodes, but it's usually useful to think of
+    your NVL domain as a "node" in this analysis.</span>, e.g., your InfiniBand
+    bandwidth.  Second, the amount of communication a distributed training setup performs depends
+    on your choice of parallelization--in contrast, the
+    amount of FLOPs you need to do, on a fixed architecture, is
+    fixed, no matter how you parallelize it! <span class="mn-ref"></span><span class="mn">A
+    good analogy is this: imagine you have a pizza pie representing how much work (FLOPs) you need to do.
+    No matter how you slice the pie, reducing the individual amount of work a given node needs to do,
+    all of the slices still add up to the original pie.  The analogy works less well
+    when you think about recompute conjuring more pizza to eat--a good thing in real life,
+    and a bad thing in distributed training!</span></p>
+
+    <p>In both cases, the rule of thumb is that you want to be compute bound,
+    since that usually means you are efficiently utilizing the hardware resources
+    you have available.  In distributed training, this means you want your
+    compute to take longer than your communications, since a well-implemented
+    trainer will manage to overlap the comms and make them effectively free.<span class="mn-ref"></span><span class="mn">Ha ha ha, actually, <a href="https://www.usenix.org/system/files/nsdi25-xu-guanbin.pdf">it's not free lmao</a>.</span>  If you don't have enough compute to cover up your comms,
+    you probably want to change something (your architecture, or your parallelism
+    if your architecture is fixed) to put yourself back in the good compute bound
+    regime.<span class="mn-ref"></span><span class="mn">There are also architectural
+    changes you might make which make it harder to be compute-bound, especially
+    optimizations for compute efficiency.  For example, switching your GEMMs to low
+    precision can exacerbate comms-boundedness, since it makes your GEMMs run a lot
+    faster without necessarily reducing the amount of communications you need to do.</span></p>
+
+    <p>We've promised that we would show that ZeRO-3 makes you comms bound for
+    the original DeepSeek-V3 training setup.  Here's how we will figure this out:</p>
 
     <ol>
-        <li>Expert parallelism</li>
-        <li>ZeRO/FSDP (1 or 3?)</li>
-        <li>Pipeline parallelism</li>
+        <li>We'll count the FLOPs a single training step takes.  Dividing by the speed of
+        light FLOP/s of our hardware gives the time we spend in compute.</li>
+        <li>For each parallelism, we'll count the bytes it moves per link and what
+        bandwidth it uses (NVLink inside a node, InfiniBand between nodes).
+        Dividing the per-link bytes by the speed of light
+        byte/s on that network link gives us the time we spend in comms.</li>
+        <li>By comparing these times, we can tell if we are compute bound (compute time is larger)
+        or comms bound (one of the links' comms times is larger--the bottleneck, typically InfiniBand).</li>
     </ol>
 
-    <p>Tensor and context parallelism don't appear: DeepSeek-V3 trains with
-    TP1, and at a 4K sequence length there's no need to split sequences.</p>
+    <h3>How many FLOPs do we need to do?</h3>
 
-    <p>We use the roofline to see how much compute we have to cover up these communications,
-    and then we can compare to see if we are likely to be comms
-    bound.</p>
+    <p><strong>Short answer:</strong>  The classic training FLOPs approximation is 6ND,
+    where N is the number of activated parameters in the model and D is the number of
+    tokens (either the total number of trainable tokens, giving the total amount of FLOPs
+    for the training run, or simply the number of tokens in a global batch, giving the
+    total amount of FLOPs for a single train step<span
+    class="mn-ref"></span><span class="mn">It's fairly typical to treat the
+    global batch size as a fixed quantity that can't be changed, as it is
+    typically set by science: at a critical batch size, increasing batch size
+    yields diminishing returns on optimization efficiency.</span>).  Thus, plugging the BF16<span class="mn-ref"></span><span class="mn">Why BF16?  Arguably, the hardware FLOP/s for FP8 is
+    more applicable as many matmuls in DSv3 are done in FP8.  We've chosen
+    to present the roofline relative to BF16 compute because this is how DSv3 chose
+    to do their MFU accounting, but there's a reasonable argument that we should compute
+    MFU as a ratio of latencies, which allows for a straightforward generalization into
+    a mixed dtype regime.  However, the problem of how to choose your
+    denominator will not matter too much in analysis of DSv3 only, since we
+    will consistently apply the same denominator everywhere.  This problem is worth
+    more careful consideration when trying to compare MFU numbers across different
+    architectures, cluster setups, etc.</span> speed of light numbers in:</p>
 
-    <h3>How many FLOPs do we need to do</h3>
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">≈</th><th>formula</th></tr>
+    <tr><td class="nm">N</td><td>activated params</td><td class="vl">36,625,618,432</td><td class="vl ap">37B</td><td class="fx"><i>(no input embedding, yes output head)</i></td></tr>
+    <tr><td class="nm">B</td><td>sequences per step</td><td class="vl">15,360</td><td class="vl ap"></td><td class="fx"><i>(model input)</i></td></tr>
+    <tr><td class="nm">S</td><td>tokens per sequence</td><td class="vl">4,096</td><td class="vl ap"></td><td class="fx"><i>(model input)</i></td></tr>
+    <tr><td class="nm">D</td><td>tokens per step</td><td class="vl">62,914,560</td><td class="vl ap">62.9M</td><td class="fx"><b>B</b> × <b>S</b></td></tr>
+    <tr><td class="nm">C</td><td>FLOPs per step</td><td class="vl">13,825,708,010,263,019,520</td><td class="vl ap">1.38 × 10<sup>19</sup></td><td class="fx">6 × <b>N</b> × <b>D</b></td></tr>
+    <tr><td class="nm">G</td><td>GPUs</td><td class="vl">2,048</td><td class="vl ap"></td><td class="fx"><i>(model input)</i></td></tr>
+    <tr><td class="nm">C<sub>G</sub></td><td>FLOPs per GPU</td><td class="vl">6,750,833,989,386,240</td><td class="vl ap">6.75 × 10<sup>15</sup></td><td class="fx"><b>C</b> ÷ <b>G</b></td></tr>
+    <tr><td class="nm">P</td><td>H800 BF16 peak (FLOP/s)</td><td class="vl">989,000,000,000,000</td><td class="vl ap">9.89 × 10<sup>14</sup></td><td class="fx"><i>(hardware spec)</i></td></tr>
+    <tr class="hl"><td class="nm">T</td><td>step time at peak (s)</td><td class="vl">6.825919099</td><td class="vl ap">6.8 s</td><td class="fx"><b>C<sub>G</sub></b> ÷ <b>P</b></td></tr>
+    </table></div>
 
-    <p>How many FLOPs does it take to train a model?  In part 1, we mentioned
-    in passing that we often approximate this by considering only matmuls, as
-    they usually end up taking the bulk of the FLOPs in this model: the
-    classic training flops approximation is 6ND
-    (where N is the number of activated parameters in the model, D is the
-    total number of training tokens, and the 6 FLOPs per parameter per token derives
-    from the multiply and add you need per parameter per token in forwards,
-    and the fact that backwards costs roughly twice the forward pass).  If we
-    are reasoning about the wall time of a single training step, we can set D
-    to the number of tokens in a global batch (global batch size x sequence length).
-    Importantly, the global batch size is typically set by science (infra cannot
-    freely adjust it the way they can adjust parallelism), because at a critical
-    batch size, increasing batch size yields diminishing returns on optimization
-    efficiency.</p>
-
-    <p>6ND is a really handy approximation since it is so simple (you don't
-    need to know anything about the inside of the model! Just count up the
-    parameters!) However, I want to more carefully explain why
-    this approximation makes sense.  When we say that
-    non-matmul compute is negligible, we are making an argument about asymptotics
-    while we scale compute.  This might seem like a funny thing to do for
-    DeepSeek-V3: you can have any size you like, as long as it's 671B.  What
+    <p><strong>Long answer:</strong>  Where the heck does the 6ND approximation
+    come from?  At its heart, it is an approximation based off of the idea
+    that your non-attention matmuls take the bulk of the FLOPs in your model
+    (in <a href="./01-deepseek-diagram.html">part 1</a>, we used this idea to
+    justify treating the matmuls specially in our architecture diagram).
+    Why is this an appropriate approximation to make?
+    We are making an argument about <em>asymptotic</em> behavior
+    when we scale compute.  However, upon close reflection, you
+    might think it a bit strange to reason about the asymptotic
+    behavior of DeepSeek-V3: after all, there's only one size for this model--671B!  What
     exactly are you scaling?</p>
 
     <p>In pretraining research, it is natural to think of an architecture as
@@ -125,8 +235,8 @@
     expensive hero run.  What happens to the FLOPs of a model as we increase
     compute, trying to keep the architecture otherwise the same?  Given some
     compute budget C, here is a standard recipe for defining this family
-    (for example, this matches this scaling ladder design in the MAI-Thinking
-    tech report):</p>
+    (for example, this matches this scaling ladder design in the <a href="https://microsoft.ai/wp-content/uploads/2026/06/main_20260602_2.pdf">MAI-Thinking
+    tech report</a>):</p>
 
     <ul>
         <li>Per Chinchilla, we will choose to keep tokens-per-parameter (TPP)
@@ -148,7 +258,7 @@
     <p>When we increase depth, all of the transformer block FLOPs increase
     uniformly linearly with depth.  However, when we increase width,
     while non-matmul compute increases linearly, the learned linear
-    transformations (matmuls that are activation x weight) increase
+    transformations (matmuls that are activation × weight) increase
     quadratically, since both the input and output spaces get bigger.  This
     means that, in the limit, learned linear transformation FLOPs dominate everything else.</p>
 
@@ -160,18 +270,6 @@
     is good for pretraining (sequence length not too long) but bad for midtraining (long sequence
     length means attention is now a bottleneck).  We'll delay addressing this until we
     move on from rooflines to try to build a more accurate model.</p>
-
-    LLM TODO: Diagram: have sliders for compute budget with the ratios fixed to the DSv3 setting.  Could
-    also have a slider for sequence length
-    Show the 6ND prediction.  You can see as you increase compute the more accurate model matches
-    more closely, but it gets worse as seq len increases. What is the more
-    accurate model? There are a few obvious approximations.  We can do matmuls
-    only, which means it's the learnable linear transformations versus not (plus some
-    other weirdos like the routing matmul).  We should have a graph that color codes these
-    so you can easily see the asymptotics.  We could also try to model the FLOPs for all the
-    non matmul things too, but this would be a quick and dirty estimate, I can't think of
-    a clean approximation here.  (We eventually want to do this for understanding all the
-    kernels in the profile, but definitely not here in this article.)
 
     <dsv3-ladder id="ladder" style="min-height: 366px"></dsv3-ladder>
 
@@ -190,9 +288,9 @@
     <p>6 × 36,625,618,432 × 62,914,560 ≈ 1.38 × 10<sup>19</sup> FLOPs per step</p>
 
     <p>Spread over 2,048 GPUs that's 6.75 × 10<sup>15</sup> FLOPs each.  An
-    H800 peaks at 1,979 TFLOP/s in FP8, so:</p>
+    H800 peaks at 989 TFLOP/s in BF16, so:</p>
 
-    <p style="text-align: center; font-size: 1.6em">6.75 × 10<sup>15</sup> ÷ 1.979 × 10<sup>15</sup> FLOP/s ≈ 3.4 s</p>
+    <p style="text-align: center; font-size: 1.6em">6.75 × 10<sup>15</sup> ÷ 9.89 × 10<sup>14</sup> FLOP/s ≈ 6.8 s</p>
 
     <p>Notice what we didn't need to know: how the model is parallelized.
     This is <strong>conservation</strong>.  Those 1.38 × 10<sup>19</sup> FLOPs
@@ -200,35 +298,41 @@
     we slice the model, the cluster as a whole takes the same time.  (The one
     way to change the total is to do extra work, like recompute.)</p>
 
-    <p>That assumes every FLOP runs at the FP8 peak.  At the BF16 peak (989
-    TFLOP/s) it would be 6.8 s; the real recipe does most, but not all, of its
-    matmuls in FP8, so the true roofline lands in between.  The reported step
-    is about 19.9 s.</p>
+    <p>That prices every FLOP at the BF16 peak, which is the convention
+    DeepSeek itself uses for MFU.<span class="mn-ref"></span><span
+    class="mn">"MFU (Model Flops Utilization) is calculated based on BF16 peak
+    performance": Zhao et al.,
+    <a href="https://arxiv.org/abs/2505.09343">Insights into DeepSeek-V3</a>
+    (ISCA 2025), Table 4.</span>  It isn't a hard floor: the real recipe does
+    most, but not all, of its matmuls in FP8, whose peak is twice as high
+    (1,979 TFLOP/s).  With every FLOP at the FP8 peak the step would take
+    3.4 s, so the true roofline lands in between.  The reported step is about
+    19.9 s.</p>
 
     <p>2N agrees with the GEMM FLOPs in the part 2 diagram to within 0.003%
     (the gap is the RMSNorm weights and router bias, parameters that never
     enter a matmul).  What 6ND leaves out is the attention core: at 4,096
     tokens it adds 10.2 GFLOP per token forward, 14% on top of 2N, which
-    would move the FP8 wall time from 3.4 s to 3.9 s.]]</p>
+    would move the BF16 wall time from 6.8 s to 7.8 s.]]</p>
 
     <p>[[AI: Numbers like 10<sup>19</sup> are hard to feel, so here is a
-    ladder of reference points, each priced two ways: at the hardware's FP8
+    ladder of reference points, each priced two ways: at the hardware's BF16
     peak, and at a throughput someone actually measured on it.</p>
 
     <table class="ref" id="reftable">
-        <tr><th></th><th colspan="2" class="c">FLOPs</th><th class="t">at FP8 peak</th><th class="t">sustained</th></tr>
-        <tr class="grp" data-r="h800"><td>on one H800</td><td></td><td></td><td class="t">1,979 TFLOP/s</td><td class="t">339 TFLOP/s</td></tr>
-        <tr data-f="token"><td>one token, trained (6N)</td><td class="m">2.2</td><td class="e">× 10<sup>11</sup></td><td class="t">111 µs</td><td class="t">648 µs</td></tr>
-        <tr data-f="seq"><td>one 4,096-token sequence, trained</td><td class="m">9.0</td><td class="e">× 10<sup>14</sup></td><td class="t">0.45 s</td><td class="t">2.65 s</td></tr>
-        <tr data-f="gpu"><td>one step's share, per GPU</td><td class="m">6.75</td><td class="e">× 10<sup>15</sup></td><td class="t">3.4 s</td><td class="t">19.9 s</td></tr>
-        <tr class="grp" data-r="dsc"><td>on DeepSeek's cluster: 2,048 H800s</td><td></td><td></td><td class="t">4.05 EFLOP/s</td><td class="t">0.69 EFLOP/s</td></tr>
-        <tr class="hero" data-f="step"><td>one step</td><td class="m">1.38</td><td class="e">× 10<sup>19</sup></td><td class="t">3.4 s</td><td class="t">19.9 s</td></tr>
-        <tr data-f="gpt3"><td>GPT-3's training run</td><td class="m">3.14</td><td class="e">× 10<sup>23</sup></td><td class="t">0.9 days</td><td class="t">5.2 days</td></tr>
-        <tr data-f="dsv3"><td>DeepSeek-V3's pretraining run (14.8T tokens)</td><td class="m">3.25</td><td class="e">× 10<sup>24</sup></td><td class="t">9.3 days</td><td class="t">54 days</td></tr>
-        <tr data-f="gpt4"><td>GPT-4's training run (estimated)</td><td class="m">2.1</td><td class="e">× 10<sup>25</sup></td><td class="t">60 days</td><td class="t">350 days</td></tr>
-        <tr class="grp" data-r="cw"><td>on CoreWeave's MLPerf cluster: 8,192 GB300s</td><td></td><td></td><td class="t">41 EFLOP/s</td><td class="t">8.2 EFLOP/s</td></tr>
-        <tr data-f="step"><td>one step</td><td class="m">1.38</td><td class="e">× 10<sup>19</sup></td><td class="t">0.34 s</td><td class="t">1.7 s</td></tr>
-        <tr data-f="dsv3"><td>DeepSeek-V3's pretraining run</td><td class="m">3.25</td><td class="e">× 10<sup>24</sup></td><td class="t">22 hours</td><td class="t">4.6 days</td></tr>
+        <tr><th></th><th colspan="2" class="c">FLOPs</th><th class="t">at BF16 peak</th><th class="t">sustained</th></tr>
+        <tr class="grp" data-r="h800"><td>on one H800</td><td></td><td></td><td class="t">989 TFLOP/s</td><td class="t">339 TFLOP/s</td></tr>
+        <tr data-f="token"><td>one token, trained (6N)</td><td class="m">2.2</td><td class="e">× 10<sup>11</sup></td><td class="t">222 µs</td><td class="t">648 µs</td></tr>
+        <tr data-f="seq"><td>one 4,096-token sequence, trained</td><td class="m">9.0</td><td class="e">× 10<sup>14</sup></td><td class="t">0.91 s</td><td class="t">2.65 s</td></tr>
+        <tr data-f="gpu"><td>one step's share, per GPU</td><td class="m">6.75</td><td class="e">× 10<sup>15</sup></td><td class="t">6.8 s</td><td class="t">19.9 s</td></tr>
+        <tr class="grp" data-r="dsc"><td>on DeepSeek's cluster: 2,048 H800s</td><td></td><td></td><td class="t">2.03 EFLOP/s</td><td class="t">0.69 EFLOP/s</td></tr>
+        <tr class="hero" data-f="step"><td>one step</td><td class="m">1.38</td><td class="e">× 10<sup>19</sup></td><td class="t">6.8 s</td><td class="t">19.9 s</td></tr>
+        <tr data-f="gpt3"><td>GPT-3's training run</td><td class="m">3.14</td><td class="e">× 10<sup>23</sup></td><td class="t">1.8 days</td><td class="t">5.2 days</td></tr>
+        <tr data-f="dsv3"><td>DeepSeek-V3's pretraining run (14.8T tokens)</td><td class="m">3.25</td><td class="e">× 10<sup>24</sup></td><td class="t">19 days</td><td class="t">54 days</td></tr>
+        <tr data-f="gpt4"><td>GPT-4's training run (estimated)</td><td class="m">2.1</td><td class="e">× 10<sup>25</sup></td><td class="t">120 days</td><td class="t">350 days</td></tr>
+        <tr class="grp" data-r="cw"><td>on CoreWeave's MLPerf cluster: 8,192 GB300s</td><td></td><td></td><td class="t">20 EFLOP/s</td><td class="t">8.2 EFLOP/s</td></tr>
+        <tr data-f="step"><td>one step</td><td class="m">1.38</td><td class="e">× 10<sup>19</sup></td><td class="t">0.68 s</td><td class="t">1.7 s</td></tr>
+        <tr data-f="dsv3"><td>DeepSeek-V3's pretraining run</td><td class="m">3.25</td><td class="e">× 10<sup>24</sup></td><td class="t">44 hours</td><td class="t">4.6 days</td></tr>
     </table>
 
     <p>The peak column is a unit, not a prediction: it's how long the work
@@ -236,11 +340,14 @@
     comes close to.  The sustained column is measured throughput, with
     downtime left out.  On the H800s it is DeepSeek's own: the report prices
     pretraining at 180K H800-hours per trillion tokens (2.664M for all
-    14.8T), and 6ND over that is 339 TFLOP/s per GPU, 17% of FP8 peak (34%
-    of BF16 peak).  This is the MFU convention: anything that isn't one
-    of the 6ND FLOPs (the attention core, pipeline bubbles, communication that
-    wasn't hidden) counts as lost time.  Within a group the two columns
-    differ by the same ratio on every row: ×5.8 for DeepSeek.</p>
+    14.8T), and 6ND over that is 339 TFLOP/s per GPU, 34% of the BF16 peak.
+    This is the MFU convention: anything that isn't one of the 6ND FLOPs
+    (the attention core, pipeline bubbles, communication that wasn't hidden)
+    counts as lost time.  DeepSeek's own MFU counts the attention core as
+    useful work too: it reports 385 TFLOP/s, 38.9% of the BF16 peak, and our
+    339 becomes 386 once the causal attention core is added.  Within a group
+    the two columns differ by the same ratio on every row: ×2.9 for
+    DeepSeek.</p>
 
     <p>OpenAI doesn't publish GPT-4's training compute, so that row is Epoch
     AI's estimate,<span class="mn-ref"></span><span class="mn">Epoch AI,
@@ -255,8 +362,8 @@
     itself (MTP included, MXFP8) continuing from the released checkpoint at
     a batch of 16,384 sequences until the validation loss reaches a target,
     about 45 steps.  CoreWeave's record run on 8,192 GB300s took a median
-    1.80 s per step, about 1,000 TFLOP/s per GPU in 6ND terms, 20% of FP8
-    peak.  The pretraining row imputes that rate over all 14.8T tokens, on
+    1.80 s per step, about 1,000 TFLOP/s per GPU in 6ND terms, 40% of the
+    BF16 peak.  The pretraining row imputes that rate over all 14.8T tokens, on
     the same footing as DeepSeek's own figure: both are throughput, and
     neither counts failures, checkpoint stalls, or the early batch-size
     ramp.  How much a real run loses on top of that is rarely published;
@@ -266,26 +373,72 @@
     attention at its 16K context), and lost another 10% of wall time to
     failures and restarts, 21 days in all.</p>
 
-    <p>So one step is three and a half seconds of the whole cluster at peak
+    <p>So one step is seven seconds of the whole cluster at peak
     and twenty sustained, and a whole pretraining run is about 235,000 of them
     (fewer in practice, since DeepSeek ramps the batch size up early on).  At
     DeepSeek's own rental price of $2 per GPU-hour, a step costs about $23 at
-    the sustained rate, or $4 at peak.</p>
+    the sustained rate, or $8 at peak.</p>
 
     <p>We'll soon be pricing bytes as well as FLOPs, so it helps to have the
-    exchange rate.  In one microsecond, one H800 can do 2.0 × 10<sup>9</sup> FP8 FLOPs, or move:</p>
+    exchange rate.  In one microsecond, one H800 can do 9.9 × 10<sup>8</sup> BF16 FLOPs, or move:</p>
 
     <table class="ref">
-        <tr><th></th><th colspan="2" class="c">bytes in 1 µs</th><th class="m">FP8 FLOPs per byte</th></tr>
-        <tr><td>HBM (3.35 TB/s)</td><td class="m">3,350</td><td class="e">KB</td><td class="m">591</td></tr>
-        <tr><td>NVLink (160 GB/s)</td><td class="m">160</td><td class="e">KB</td><td class="m">12,400</td></tr>
-        <tr><td>InfiniBand (50 GB/s)</td><td class="m">50</td><td class="e">KB</td><td class="m">39,600</td></tr>
+        <tr><th></th><th colspan="2" class="c">bytes in 1 µs</th><th class="m">BF16 FLOPs per byte</th></tr>
+        <tr><td>HBM (3.35 TB/s)</td><td class="m">3,350</td><td class="e">KB</td><td class="m">295</td></tr>
+        <tr><td>NVLink (160 GB/s)</td><td class="m">160</td><td class="e">KB</td><td class="m">6,180</td></tr>
+        <tr><td>InfiniBand (50 GB/s)</td><td class="m">50</td><td class="e">KB</td><td class="m">19,800</td></tr>
     </table>
 
-    <p>A byte sent over Infiniband costs as much time as forty thousand
+    <p>A byte sent over Infiniband costs as much time as twenty thousand
     FLOPs.  A token needs 2.2 × 10<sup>11</sup> FLOPs to train, so it can
-    afford about 5.6 MB of IB traffic (5.3 MiB) before the network, not the
+    afford about 11.1 MB of IB traffic (10.6 MiB) before the network, not the
     tensor cores, sets the step time.]]</p>
+
+    <p>[[AI: Everything so far has been priced on an H800. Here is the same
+    step on the other chips you could train DeepSeek-V3 on, priced the same
+    two ways.</p>
+
+    <table class="ref">
+        <tr><th></th><th colspan="2" class="c">per GPU</th><th colspan="2" class="c">one step on 2,048</th></tr>
+        <tr><th></th><th class="t">BF16 peak</th><th class="t">sustained</th><th class="t">at peak</th><th class="t">sustained</th></tr>
+        <tr><td>H800</td><td class="t">989 TFLOP/s</td><td class="t">339 TFLOP/s</td><td class="t">6.8 s</td><td class="t">19.9 s</td></tr>
+        <tr><td>H100</td><td class="t">989 TFLOP/s</td><td class="t">285 TFLOP/s</td><td class="t">6.8 s</td><td class="t">23.7 s</td></tr>
+        <tr><td>B200</td><td class="t">2,250 TFLOP/s</td><td class="t">731 TFLOP/s</td><td class="t">3.0 s</td><td class="t">9.2 s</td></tr>
+        <tr><td>B300</td><td class="t">2,250 TFLOP/s</td><td class="t">778 TFLOP/s</td><td class="t">3.0 s</td><td class="t">8.7 s</td></tr>
+        <tr><td>GB200</td><td class="t">2,500 TFLOP/s</td><td class="t">1,092 TFLOP/s</td><td class="t">2.7 s</td><td class="t">6.2 s</td></tr>
+        <tr><td>GB300</td><td class="t">2,500 TFLOP/s</td><td class="t">1,393 TFLOP/s</td><td class="t">2.7 s</td><td class="t">4.9 s</td></tr>
+        <tr><td>AMD MI355X</td><td class="t">2,517 TFLOP/s</td><td class="t"></td><td class="t">2.68 s</td><td class="t"></td></tr>
+        <tr><td>Google TPU7x</td><td class="t">2,307 TFLOP/s</td><td class="t"></td><td class="t">2.93 s</td><td class="t"></td></tr>
+    </table>
+
+    <p>Peaks are dense, from each vendor's datasheet (NVIDIA's headline
+    numbers assume 2:4 sparsity, which training doesn't use, so they are
+    halved), and FP8 is twice the BF16 figure on every chip here. The H800's
+    sustained rate is DeepSeek's own, from the ladder. The rest are NVIDIA's
+    published Megatron-Bridge benchmarks,<span class="mn-ref"></span><span
+    class="mn">NVIDIA NeMo Megatron-Bridge, docs/performance-summary.md and
+    its archive: containers 26.06 (GB300, GB200, B300; MXFP8), 26.04.01 (B200;
+    MXFP8), 25.09 (H100; FP8, 1,024 GPUs). The 6N rates are recomputed from
+    tokens/s; NVIDIA's own "model TFLOP/s" counts MTP and attention and runs
+    ~18% higher. AMD skipped MLPerf 6.0's MoE benchmarks; no TPU result for
+    DeepSeek-V3 has been published.</span> converted to 6N the same way:
+    256 GPUs at a batch of 4,096 with routing forced to balance, so the
+    2,048-GPU column imputes each rate at DeepSeek's scale rather than
+    measuring it (at 8,192 GPUs, CoreWeave's GB300s sustained 1,000 TFLOP/s). AMD and
+    Google have published no DeepSeek-V3 training numbers.</p>
+
+    <p>From H800 to GB300, peak grows 2.5× but sustained grows 4.1×, and the
+    table's pairs show the peak isn't what moved it. GB200 and GB300 have
+    identical peaks, yet GB300 sustains 28% more (NVIDIA's recipe for it
+    uses two pipeline stages instead of four, presumably room its 1.5× memory
+    makes). B300 is the same
+    chip as GB300 but sustains 56% as much: its NVLink domain is 8 GPUs, not
+    72, so expert parallelism has to cross the slower network. Precision moves
+    it less than you'd think: in one earlier NVIDIA release, switching the same
+    GB300 recipe from BF16 to MXFP8 doubled every GEMM's peak and gained 13%.
+    And software moves it more: the GB300 figure rose 45% between two releases
+    seven months apart. HBM bandwidth has grown in step with peak (3.35 → 8
+    TB/s), so the FLOPs-per-byte exchange rate is about 300 on all of them.]]</p>
 
     <h3>Expert parallelism</h3>
 
@@ -306,7 +459,7 @@
         on the same node require the same token, we don't have to broadcast it multiple
         times on IB; instead, we can dispatch it once and then use NVLink to locally distribute
         it to the correct GPU.  Additionally, DSv3 has a routing constraint that a maximum
-        of four nodes can be routed to, so we're guaranteed to get at least a 2x bandwidth
+        of four nodes can be routed to, so we're guaranteed to get at least a 2× bandwidth
         reduction from deduplication.</li>
         <li>Infiniband is full-duplex, meaning that we can simultaneously
         transmit data at the link rate in both directions simultaneously. Thus
@@ -314,7 +467,7 @@
         how much data any given node gets on the receive side.</li>
         <li>We will assume that the local NVLink is fast enough relative to Infiniband that we
         can neglect its bandwidth for the purpose of this calculation.  It's only about
-        3.2x faster on H800 (160 GB/s vs 50 GB/s), but the technical report notes that
+        3.2× faster on H800 (160 GB/s vs 50 GB/s), but the technical report notes that
         this lets a token reach up to 3.2 experts per node before NVLink binds, and
         eight experts over four nodes is only two per node.</li>
     </ul>
@@ -361,8 +514,8 @@
     <p>Each GPU has its own 50 GB/s IB NIC, so that's 175 µs of IB time per
     token.  At the published batch (15,360 sequences × 4,096 tokens over 2,048
     GPUs = 30,720 tokens per GPU), a step spends 5.4 s on EP communication.
-    That's 1.6× the 3.4 s compute roofline above: at speed of light, EP
-    communication is actually <em>worse</em> than the roughly 1:1
+    That's 79% of the 6.8 s compute roofline above: at speed of light, EP
+    communication alone already comes close to the roughly 1:1
     computation-to-communication ratio the technical report describes.  Like
     the FLOPs, this is conserved: the answer doesn't depend on how we split
     PP or DP, because the per-token bytes and the per-GPU bandwidth are both
@@ -408,11 +561,11 @@
     they do: I grows with h, so EP gets relatively cheaper as models grow,
     just like PP.)  What matters is expert width I, the number of experts
     per token k, how many nodes a token touches n, and the hardware's ratio
-    F/B, which is 39,580 FLOPs per IB byte on H800.</p>
+    F/B, which is 19,780 BF16 FLOPs per IB byte on H800.</p>
 
-    <p>For DSv3 (n = 3.5, I = 2,048, k = 8), EP takes 2.8× as long as the
-    routed-expert matmuls it feeds: 5.4 s against 1.9 s.  To break even,
-    experts would need I ≈ 5,800, nearly three times wider.  This is the
+    <p>For DSv3 (n = 3.5, I = 2,048, k = 8), EP takes 1.4× as long as the
+    routed-expert matmuls it feeds: 5.4 s against 3.8 s.  To break even,
+    experts would need I ≈ 2,900, 40% wider.  This is the
     tension in fine-grained MoE: splitting a fixed budget of active
     parameters into more, narrower experts keeps I·k constant, so compute
     doesn't change, but each token fans out to more nodes.  Node-limited
@@ -457,11 +610,13 @@
     time, more than twice the 5.4 s EP already needs.  Gathering in FP8
     instead of BF16 only gets this down to 8.8 s.</p>
 
-    <p>But at speed of light, we already saw that EP alone makes Infiniband
-    the binding resource: 5.4 s of IB against 3.4 s of compute.  Every extra
-    byte on IB goes straight onto the critical path, so ZeRO-3's 11.8 s would
-    simply add to the step.  It's a non-starter before we even get to
-    overlap.</p>
+    <p>Compare that with the compute it would have to hide under.  At the
+    BF16 peak, 6ND is 6.8 s per step, and EP already fills 5.4 s of IB,
+    leaving 1.4 s of slack.  ZeRO-3's 11.8 s is more than the whole compute
+    on its own; on top of EP it's 17.2 s of IB against 6.8 s of compute,
+    2.5× over (14.2 s and 2.1× gathering in FP8).  And the BF16 peak is the
+    generous price here: FP8 GEMMs only make compute faster and the gap
+    wider.  It's a non-starter before we even get to overlap.</p>
 
     <p>That raises the opposite question: DeepSeek does use ZeRO-1, so why do
     we tolerate <em>its</em> traffic?  Because ZeRO-1 is free relative to
@@ -563,18 +718,21 @@
         <tr><td>8</td><td>9.4</td><td>12.6</td></tr>
     </table>
 
-    <p>Against 4.0 s of compute and 5.8 s of IB, TP4 and TP8 make NVLink the
-    new bottleneck; TP across the whole node would roughly double the step.
+    <p>Against 8.0 s of compute at the BF16 peak (6.9 s effective, as we'll
+    see) and 5.8 s of IB, TP8 makes NVLink the new bottleneck, stretching the
+    step by about 60%, and TP4 leaves no room: its 7.2 s is more than the
+    effective compute.
     The H800's cut-down NVLink (400 GB/s, against the H100's 900) is a big
     part of this, and it's the cost DeepSeek means when its report says its
     memory savings let it train "without using costly Tensor Parallelism
-    (TP)."  TP2 fits under IB, at least in theory.</p>
+    (TP)."  TP2 fits comfortably, even under IB.</p>
 
     <p>What would TP2 buy?  At the memory post's configuration it takes the
     fullest GPU from 61.7 GiB to 36.5 GiB, mostly activations, since each GPU
     now holds half of every microbatch's tokens.  That's enough to turn
-    recompute off entirely (58.2 GiB), which saves 0.10 s of compute (0.21 s
-    effective).  So we'd pay 1.3 s of NVLink to save 0.1 to 0.2 s of compute.
+    recompute off entirely (58.2 GiB), which saves 0.21 s of compute (the
+    same at effective rates).  So we'd pay 1.3 s of NVLink to save 0.2 s of
+    compute.
     And the NVLink time isn't free even when there's slack: each all-gather
     has to land before the GEMM that consumes it, so hiding it takes overlap
     kernels with SMs of their own, and in the effective roofline SMs are the
@@ -599,7 +757,7 @@
     the latents forward and reduce-scattering their gradients backward is
     2 × (c − 1) × 1,152 B per token per layer: at CP2, 4.3 GB per GPU per step,
     0.09 s even over IB.  The catch is that every GPU then up-projects the
-    whole sequence's latents rather than just its own, about 0.1 s of extra
+    whole sequence's latents rather than just its own, about 0.2 s of extra
     compute at CP2.</p>
 
     <p>A generic ring-attention implementation only sees attention's inputs,
@@ -612,7 +770,7 @@
     <p>Either way, what CP buys is memory, and only activation memory: a CP
     group holds full copies of the weights, just like DP.  CP2 halves
     activations just as TP2 does, which again is enough to turn recompute
-    off (63.0 GiB), and again that's worth 0.10 s.  CP earns its keep on long
+    off (63.0 GiB), and again that's worth 0.2 s.  CP earns its keep on long
     sequences, where one sequence's activations stop fitting on one GPU.
     Its asymptotics point the same way: the bytes per token are fixed by
     the KV width, but attention compute per token grows with sequence length,
@@ -625,10 +783,12 @@
     and its Infiniband NIC.  (We checked NVLink isn't binding.)  The compute
     side is one number.  The IB side is shared, so its loads <em>add</em>.</p>
 
-    <p>So far every number has been <em>theoretical</em>: data-sheet peaks.
-    Rooflines are meant to be optimistic, but they're not equally optimistic
-    about every resource, and that matters once we start comparing
-    resources against each other.  So alongside the theoretical numbers we'll
+    <p>So far every number has been <em>theoretical</em>: data-sheet peaks,
+    with every FLOP at the BF16 peak.  Rooflines are meant to be optimistic,
+    but these aren't even consistently optimistic: IB's number is a line rate
+    nothing can beat, while the BF16 peak is a yardstick DeepSeek's FP8 GEMMs
+    run past.  That matters once we start comparing resources against each
+    other.  So alongside the theoretical numbers we'll
     carry <em>effective</em> ones, taken from published benchmarks of the
     kernels DeepSeek actually uses, rather than tuned to match anything:</p>
 
@@ -637,12 +797,11 @@
         (751 to 1,426 TFLOP/s for the attention projections; 1,346 and
         1,214 for the routed experts' gate/up and down, at four experts of
         8,192 tokens each, which is precisely the per-GPU training shape).
-        That's 38% to 72% of the FP8 peak.  These are forward-pass shapes; we
+        That's 0.76 to 1.44× the BF16 peak.  These are forward-pass shapes; we
         assume the backward GEMMs do as well.</li>
         <li>Attention: FlashAttention-3's best BF16 forward, 75% of peak.
-        DeepSeek runs attention in BF16, not FP8, so it gets half the
-        theoretical rate to begin with.  The backward is slower still, so
-        this is generous.</li>
+        DeepSeek runs attention in BF16, not FP8.  The backward is slower
+        still, so this is generous.</li>
         <li>The output head and router, also kept in BF16: 80% of peak, the
         bottom of FlashAttention-3's "80–90%" for optimized GEMMs.</li>
         <li>IB: DeepEP's measured 46 GB/s dispatch and 45 GB/s combine at EP64
@@ -652,9 +811,9 @@
 
     <table>
         <tr><th>resource</th><th>what</th><th>theoretical (s)</th><th>effective (s)</th></tr>
-        <tr><td>tensor cores</td><td>6ND plus the attention core</td><td>3.89</td><td>6.69</td></tr>
-        <tr><td>tensor cores</td><td>recompute (MLA up-projections)</td><td>0.10</td><td>0.21</td></tr>
-        <tr><td>tensor cores</td><td>total</td><td>4.0</td><td>6.9</td></tr>
+        <tr><td>tensor cores</td><td>6ND plus the attention core</td><td>7.78</td><td>6.69</td></tr>
+        <tr><td>tensor cores</td><td>recompute (MLA up-projections)</td><td>0.21</td><td>0.21</td></tr>
+        <tr><td>tensor cores</td><td>total</td><td>8.0</td><td>6.9</td></tr>
         <tr><td>IB</td><td>EP dispatch + combine, forward and backward</td><td>5.36</td><td>5.92</td></tr>
         <tr><td>IB</td><td>PP activations and gradients</td><td>0.28</td><td>0.31</td></tr>
         <tr><td>IB</td><td>ZeRO-1 gradient reduce-scatter + parameter all-gather</td><td>0.15</td><td>0.16</td></tr>
@@ -662,53 +821,13 @@
     </table>
 
     <div>
-    <p><strong>[[AI TODO: the theoretical compute column prices everything at
-    the FP8 peak, including the parts DeepSeek runs in BF16.</strong></p>
-
-    <p><em>The bug.</em>  The 3.89 s row divides <em>every</em> FLOP by
-    1,979 TFLOP/s, including the attention core, output head and router.
-    The effective column (and the source list above) prices those at BF16
-    rates, because that's the recipe.  So the "compute loses 42%" comparison
-    mixes two different things: a recipe fact (which ops run in which
-    dtype, knowable before any benchmark) and kernel inefficiency (which
-    only benchmarks tell you).  DeepSeek's own profile trace confirms the
-    dtypes: the FlashAttention forward kernel is instantiated on
-    <code>cutlass::bfloat16_t</code> (1,199 µs per 4,096-token microbatch,
-    vs 695 µs at the BF16 peak and 347 µs at the FP8 peak), and the router is
-    a BF16 cuBLAS GEMM.</p>
-
-    <p><em>Dtype-aware theoretical numbers</em> (FP8 peak for the FP8 GEMMs,
-    BF16 peak for attention core, head, router):</p>
-    <ul>
-        <li>attention core 0.48 s → 0.95 s; head 0.09 → 0.17 s; router
-        0.01 → 0.02 s.  6ND + attention: 3.89 s → 4.46 s.  With recompute:
-        4.0 s → 4.56 s.</li>
-        <li>Theoretical is still IB-bound (5.8 s vs 4.56 s), so the story's
-        shape survives, but the margin shrinks from 1.45× to 1.27×.</li>
-        <li>"Compute loses 42%" becomes about 34%; "IB loses 10%" is
-        unchanged.  The asymmetry is still the point, just smaller.</li>
-        <li>Overlap table: 1F1B theoretical 10.3 s → 11.7 s; DualPipe
-        theoretical still ≈ 6.0 s (4.56 × 1.18 = 5.4 s, under IB's 5.8 s, so
-        the "20 SMs are free in theory" argument still holds, barely).</li>
-        <li>The 6ND headline (3.4 s at the FP8 peak, 6.8 s at the BF16 peak)
-        is fine as written: it says it assumes every FLOP runs at the FP8
-        peak.</li>
-    </ul>
-
-    <p><em>The larger question: what does "theoretical" mean for a
-    mixed-precision recipe?</em>  Three options:</p>
-    <ol>
-        <li>Everything at the FP8 peak (current).  A bound for <em>any</em>
-        recipe on this chip, but it hides the recipe's own dtype choices.</li>
-        <li>Per-op dtype peaks.  This is 02's convention (FP8 FLOPs drawn as
-        "half"), the roofline sheet's (SDPA at B29 = BF16), and the
-        trace-analysis report's "precision-aware" utilization.  Probably
-        the right one for consistency with 02.</li>
-        <li>BF16 peak for everything: the MFU convention.  The
-        trace-analysis report says DeepSeek/Megatron MFU divides by the BF16
-        peak regardless of kernel precision (not verified here).  Worth
-        a sentence if 03 ever quotes an MFU.</li>
-    </ol>
+    <p><strong>[[AI TODO: theoretical compute is priced at the BF16 peak
+    (DeepSeek's MFU convention), which is not a bound.</strong>  The
+    dtype-aware bound (FP8 peak for the FP8 GEMMs, BF16 for the attention
+    core, head and router, as in 02 and the roofline sheet) is 4.46 s for
+    6ND + attention, 4.56 s with recompute: IB-bound against 5.8 s.  Worth
+    a sentence or a toggle wherever the text leans on "speed of light" for
+    compute.</p>
 
     <p><em>Why this suggests more low-precision text.</em>  The effective
     GEMM rates say FP8 on Hopper buys much less than 2×.  DeepGEMM's DSv3
@@ -716,9 +835,10 @@
     <em>peak</em>, or roughly 0.95–1.8× a good BF16 GEMM at 80% of peak.
     02 already says the 2× is optimistic on Hopper (fine-grained scaling
     spends some of it outside the MMA, plus quantization).  03 is where
-    that gets a number.  Separating "dtype" from "efficiency" in the table
-    would make it visible: theoretical (dtype-aware) → effective is the
-    kernel tax, and FP8-everywhere → dtype-aware is the precision choice.</p>
+    that gets a number.  The BF16 theoretical → effective step folds
+    FP8's gain and the kernel tax together; a dtype-aware middle column
+    would separate them: BF16 → dtype-aware is the precision choice, and
+    dtype-aware → effective is the kernel tax.</p>
 
     <p><em>Related, same table: backward rates.</em>  The source list assumes
     backward GEMMs run at forward rates.  In DeepSeek's trace, the forward
@@ -734,12 +854,13 @@
     minimum a prominent caveat with this size on it.]]</p>
     </div>
 
-    <p>The effective numbers move the two sides by very different amounts:
-    IB loses 10%, but compute loses 42%.  In theory the step is IB-bound
-    (5.8 s against 4.0 s); in practice it's roughly balanced, and slightly
-    compute-bound (6.4 s against 6.9 s).  That's much closer to the 1:1 the
-    technical report describes, and we got there without tuning anything to
-    hit it.</p>
+    <p>The effective numbers move the two sides in opposite directions: IB
+    loses 10%, but compute <em>gains</em> 14%, because the FP8 GEMMs beat the
+    BF16 peak by more than attention and the head fall short of it.  At the
+    BF16 peak the step is compute-bound (8.0 s against 5.8 s); in practice
+    it's roughly balanced, and still slightly compute-bound (6.9 s against
+    6.4 s).  That's close to the 1:1 the technical report describes, and we
+    got there without tuning anything to hit it.</p>
 
     <h4>What overlap buys</h4>
 
@@ -751,23 +872,23 @@
 
     <table>
         <tr><th></th><th>no overlap, 1F1B</th><th>DualPipe</th></tr>
-        <tr><td>theoretical</td><td>4.0 + 5.8 + 12.5% bubble = 10.3 s</td><td>max(4.0 × 1.18, 5.8) + 3.9% bubble ≈ 6.0 s</td></tr>
+        <tr><td>theoretical</td><td>8.0 + 5.8 + 12.5% bubble = 14.8 s</td><td>max(8.0 × 1.18, 5.8) + 3.9% bubble ≈ 9.8 s</td></tr>
         <tr><td>effective</td><td>6.9 + 6.4 + 12.5% bubble = 14.2 s</td><td>max(6.9 × 1.18, 6.4) + 3.9% bubble ≈ 8.4 s</td></tr>
     </table>
 
-    <p>Both versions say overlap wins by a wide margin.  But they disagree
-    about what to do next.  In the theoretical version the step is IB-bound,
-    so the 20 SMs cost nothing (compute has slack to spare), and the only
-    thing worth optimizing is IB bytes.  In the effective version compute is
-    the binding side, so those 20 SMs cost about 1.2 s per step, IB has
-    about 1.7 s of slack, and a communication kernel that used fewer SMs would
-    be worth more than one that moved fewer bytes.  Same roofline, opposite
-    advice: this is why the effective numbers are worth carrying.</p>
+    <p>Both versions say overlap wins by a wide margin, and they agree about
+    what to do next.  Compute is the binding side, so the 20 SMs cost real
+    time (1.4 s per step at the BF16 peak, 1.2 s effective) while IB sits
+    idle part of the time, and a communication kernel that used fewer SMs
+    would be worth more than one that moved fewer bytes.  What the effective
+    numbers change is how much room there is: IB's slack is 3.6 s at the
+    peaks but only 1.7 s in practice, so the bytes can't grow much before
+    the advice flips.</p>
 
     <p>Looking back, each of the three tools did one job.  <strong>Speed of
-    light</strong> ruled out ZeRO-3 without any engineering: even at peak, IB
-    is already the bottleneck, so no amount of clever overlap could pay for
-    another 11.8 s on it.  <strong>Conservation</strong> let us price each
+    light</strong> ruled out ZeRO-3 without any engineering: even at IB's full
+    line rate it needs 17.2 s per step with EP, more than twice the step's
+    compute at the BF16 peak, so no amount of clever overlap could hide it.  <strong>Conservation</strong> let us price each
     piece without committing to a full parallel layout, and it also tells us
     which side we can negotiate with.  The compute is fixed; the IB time is
     the product of our choices, and those choices swing it enormously (0.15 s
@@ -945,12 +1066,12 @@
       dsv3: [N6 * 14_800_000_000_000n, '6N × 14.8T tokens'],
       gpt4: [21n * 10n ** 24n, "Epoch AI's estimate"],
     };
-    const ds = Number(FLOPS.dsv3[0]) / (2.664e6 * 3600), H = HARDWARE.h800.flops.fp8, B = HARDWARE.gb300.flops.fp8;
+    const ds = Number(FLOPS.dsv3[0]) / (2.664e6 * 3600), H = HARDWARE.h800.flops.bf16, B = HARDWARE.gb300.flops.bf16;
     const cw = Number(N6 * 16384n * 4096n) / 1.80;
     const RATE = {   // [peak, sustained] FLOP/s, with derivations
-      h800: [H, ds, 'H800 FP8 dense peak', '6N × 14.8T tokens ÷ 2.664M GPU-hours'],
-      dsc: [2048 * H, 2048 * ds, '2,048 × H800 FP8 peak', '2,048 × the per-GPU sustained rate'],
-      cw: [8192 * B, cw, '8,192 × GB300 FP8 dense peak', '6N × 16,384 × 4,096 tokens ÷ 1.80 s median step (MLPerf v6.0)'],
+      h800: [H, ds, 'H800 BF16 dense peak', '6N × 14.8T tokens ÷ 2.664M GPU-hours'],
+      dsc: [2048 * H, 2048 * ds, '2,048 × H800 BF16 peak', '2,048 × the per-GPU sustained rate'],
+      cw: [8192 * B, cw, '8,192 × GB300 BF16 dense peak', '6N × 16,384 × 4,096 tokens ÷ 1.80 s median step (MLPerf v6.0)'],
     };
     const UNIT = { 'µs': 1e-6, s: 1, hours: 3600, days: 86400 };
     const big = (x) => x.toLocaleString('en-US', { maximumFractionDigits: 0 });
@@ -985,7 +1106,7 @@
         const [l, ...rest] = [...tr.cells];
         if (tr.dataset.r) return [`${l.textContent} (FLOP/s)`, '', rest[2].dataset.raw, rest[3].dataset.raw];
         if (tr.dataset.f) return [l.textContent, rest[0].dataset.raw, rest[2].dataset.raw, rest[3].dataset.raw];
-        return ['', 'FLOPs', 'at FP8 peak (s)', 'sustained (s)'];
+        return ['', 'FLOPs', 'at BF16 peak (s)', 'sustained (s)'];
       });
       ev.clipboardData.setData('text/plain', rows.map((r) => r.join('\t')).join('\n') + '\n');
       ev.preventDefault();

@@ -76,10 +76,16 @@ const LX = X0 + PW + 30, H = AX + 40;
 const px = (lc) => X0 + (lc - LO) / (HI - LO) * PW;
 const lcOf = (x) => Math.max(LO, Math.min(HI, LO + (x - X0) / PW * (HI - LO)));
 const py = (u) => Y0 + (1 - u) * PH;
+const YLO = 6, YHI = 13;                            // log mode: y domain (log10 FLOP/token)
+const pyl = (lf) => Y0 + (1 - (Math.max(YLO, lf) - YLO) / (YHI - YLO)) * PH;
+const YS = ['share', 'log', 'lin'];                 // y-axis modes
+const oneHot = (y) => Object.fromEntries(YS.map((k) => [k, +(k === y)]));
+const niceTop = (v) => { const e = 10 ** Math.floor(Math.log10(v)); const m = [1, 2, 2.5, 5, 10].find((x) => x * e >= v); return { top: m * e, nt: m === 2 ? 4 : 5 }; };
 const SUP = '⁰¹²³⁴⁵⁶⁷⁸⁹';
 const sup = (n) => String(n).split('').map((d) => SUP[d]).join('');
 const fmtC = (lc) => { const e = Math.floor(lc + 1e-9); return `${(10 ** (lc - e)).toFixed(2)}×10${sup(e)}`; };
 const fmtN = (n) => n >= 1e12 ? +(n / 1e12).toPrecision(3) + 'T' : n >= 1e9 ? +(n / 1e9).toPrecision(3) + 'B' : +(n / 1e6).toPrecision(3) + 'M';
+const fmtF = (f) => f >= 1e12 ? `${+(f / 1e12).toPrecision(3)} TFLOP` : f >= 1e9 ? `${+(f / 1e9).toPrecision(3)} GFLOP` : `${+(f / 1e6).toPrecision(3)} MFLOP`;
 const fmtP = (u) => (u * 100).toFixed(u < 0.001 && u > 0 ? 2 : 1) + '%';
 const fmt1 = (x) => Math.abs(x - Math.round(x)) < 0.05 ? Math.round(x).toLocaleString('en-US') : x.toFixed(1);
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -94,8 +100,8 @@ dsv3-ladder { display: block; margin: 14px 0 26px; }
 .ld .top { display: flex; align-items: stretch; gap: 10px; padding-bottom: 8px; }
 ${knobCss('.ld .top')}
 .ld .stp button { white-space: nowrap; }
-.ld input[type=range] { width: 200px; margin: 0; accent-color: var(--c-52514e); }
-.ld .cv { font: 11px ui-monospace, Menlo, monospace; min-width: 13ch; }
+.ld input[type=range] { width: 156px; margin: 0; accent-color: var(--c-52514e); }
+.ld .cv { font: 11px ui-monospace, Menlo, monospace; min-width: 10ch; }
 .ld .fix { font-size: 11px; color: var(--c-52514e); white-space: nowrap; }
 .ld svg { display: block; touch-action: none; }
 .ld .dims { font: 9px system-ui; fill: var(--c-898781); }
@@ -112,6 +118,8 @@ class Dsv3Ladder extends (typeof HTMLElement === 'undefined' ? class {} : HTMLEl
     this.cfg = { c: LOG_C_DSV3, seq: +(this.getAttribute('seq') ?? 4096) };
     if (st?.c != null) this.cfg.c = +st.c;
     if (st?.seq != null && SEQS.includes(+st.seq)) this.cfg.seq = +st.seq;
+    this.cfg.y = YS.includes(st?.y) ? st.y : 'share';
+    this._w = oneHot(this.cfg.y);                   // each view's opacity; a y flip tweens between
     const style = document.createElement('style'); style.textContent = CSS;
     this._root = el('div', 'ld');
     this._top = el('div', 'top');
@@ -153,9 +161,16 @@ class Dsv3Ladder extends (typeof HTMLElement === 'undefined' ? class {} : HTMLEl
     eg.append(b('−', -1), sel, b('+', +1));
     const g2 = grp('sequence length S'); g2.append(row(eg));
     const fix = el('span', 'fix');
-    fix.textContent = `D/N = ${TPP.toFixed(0)} · d/L = ${(DSV3.hidden / DSV3.layers).toFixed(1)} · top-${DSV3.topk} of ${DSV3.routedExperts} experts · V = ${DSV3.vocab.toLocaleString('en-US')}`;
+    fix.textContent = `D/N = ${TPP.toFixed(0)} · d/L = ${(DSV3.hidden / DSV3.layers).toFixed(1)} · top-${DSV3.topk} of ${DSV3.routedExperts} · V = ${DSV3.vocab.toLocaleString('en-US')}`;
     const g3 = grp('held fixed'); g3.append(row(fix));
-    this._top.append(g1, g2, g3);
+    // y axis: 100%-stacked shares, each class's FLOP/token as a line on a log axis, or stacked FLOP/token on a linear one
+    const yb = el('span', 'stp'); yb.dataset.knob = 'y';
+    for (const [v, t] of [['share', '%'], ['log', 'log'], ['lin', 'linear']]) {
+      const x = document.createElement('button'); x.type = 'button'; x.textContent = t; x.dataset.y = v;
+      x.onclick = () => this._set({ y: v }, true); yb.append(x);
+    }
+    const g4 = grp('y axis'); g4.append(row(yb));
+    this._top.append(g1, g2, g4, g3);
     this._sync();
   }
   _sync() {
@@ -163,27 +178,49 @@ class Dsv3Ladder extends (typeof HTMLElement === 'undefined' ? class {} : HTMLEl
     this._cv.textContent = fmtC(this.cfg.c);
     this._pre.classList.toggle('on', this.cfg.c === LOG_C_DSV3);
     this._sel.value = this.cfg.seq;
+    for (const x of this._top.querySelectorAll('[data-knob="y"] button')) x.classList.toggle('on', x.dataset.y === this.cfg.y);
     for (const x of this._top.querySelectorAll('[data-knob="seq"] button')) x.disabled = !SEQS[SEQS.indexOf(this.cfg.seq) + +x.dataset.dir];
   }
   _set(patch, animate) {
     const next = { ...this.cfg, ...patch };
-    if (next.c === this.cfg.c && next.seq === this.cfg.seq) return;
+    if (next.c === this.cfg.c && next.seq === this.cfg.seq && next.y === this.cfg.y) return;
+    const flip = next.y !== this.cfg.y;
     this.cfg = next;
     this._sync();
     if (this.id) writeState('l:' + this.id, this.cfg);
+    if (flip) return this._animateMix(oneHot(next.y));
+    this._w = oneHot(next.y);                       // a C/S change lands any crossfade in flight
     if (animate) this._animateTo(this._layout()); else { this._gen = (this._gen ?? 0) + 1; this.render(); }
   }
   // cumulative share boundaries per class at every sample, the 6N share, the cursor
   _layout() {
     const cum = CLASSES.map(() => new Float64Array(K)), six = new Float64Array(K), Ns = [];
+    const lf = CLASSES.map(() => new Float64Array(K)), l6 = new Float64Array(K);   // log10 FLOP/token
+    const ca = CLASSES.map(() => new Float64Array(K)), a6 = new Float64Array(K);   // cumulative FLOP/token
+    let mx = 0;
     for (let i = 0; i < K; i++) {
       const p = ladderPoint(LO + (HI - LO) * i / (K - 1), this.cfg.seq);
-      let u = 0;
-      CLASSES.forEach((k, j) => { u += p.f[k.id] / p.total; cum[j][i] = u; });
-      six[i] = p.sixN / p.total;
+      let u = 0, a = 0;
+      CLASSES.forEach((k, j) => { u += p.f[k.id] / p.total; cum[j][i] = u; lf[j][i] = Math.log10(p.f[k.id]); ca[j][i] = a += p.f[k.id]; });
+      six[i] = p.sixN / p.total; l6[i] = Math.log10(p.sixN); a6[i] = p.sixN; mx = Math.max(mx, p.total);
     }
     for (let e = LO; e <= HI; e++) Ns.push(ladderPoint(e, 4096).N);
-    return { cum, six, Ns, cx: px(this.cfg.c), P: ladderPoint(this.cfg.c, this.cfg.seq) };
+    const { top, nt } = niceTop(mx);
+    return { cum, six, lf, l6, ca, a6, top, nt, Ns, cx: px(this.cfg.c), P: ladderPoint(this.cfg.c, this.cfg.seq) };
+  }
+  // y-axis flip: crossfade the two views over the same frames as the S tween
+  _animateMix(to) {
+    const from = this._w, N = 12; let f = 0;
+    const gen = this._gen = (this._gen ?? 0) + 1;
+    this._L = this._layout();
+    const step = () => {
+      if (this._gen !== gen) return;
+      f++; const t = ease(Math.min(1, f / N));
+      this._w = Object.fromEntries(YS.map((k) => [k, lerp(from[k], to[k], t)]));
+      this._draw(this._L);
+      if (f < N) setTimeout(step, 16);
+    };
+    setTimeout(step, 16);
   }
   _animateTo(B) {
     const A = this._L, N = 12; let f = 0;
@@ -200,10 +237,51 @@ class Dsv3Ladder extends (typeof HTMLElement === 'undefined' ? class {} : HTMLEl
   _draw(L) {
     const f1 = (v) => v.toFixed(1), B = [], dims = 'class="dims"';
     const xs = Array.from({ length: K }, (_, i) => f1(X0 + PW * i / (K - 1)));
-    // grid + axes
-    for (const u of [0, 0.25, 0.5, 0.75, 1]) {
-      B.push(`<line x1="${X0}" y1="${f1(py(u))}" x2="${X0 + PW}" y2="${f1(py(u))}" stroke="${C('#e1e0d9')}"/>`);
-      B.push(`<text ${dims} x="${X0 - 5}" y="${f1(py(u) + 3)}" text-anchor="end">${u * 100}%</text>`);
+    const w = this._w, ab = w.log + w.lin, op = (o) => `opacity="${+o.toFixed(3)}"`;
+    // share view: % grid, 100%-stacked bands, the share 6ND covers
+    if (w.share > 0) {
+      B.push(`<g data-view="share" ${op(w.share)}>`);
+      for (const u of [0, 0.25, 0.5, 0.75, 1]) {
+        B.push(`<line x1="${X0}" y1="${f1(py(u))}" x2="${X0 + PW}" y2="${f1(py(u))}" stroke="${C('#e1e0d9')}"/>`);
+        B.push(`<text ${dims} x="${X0 - 5}" y="${f1(py(u) + 3)}" text-anchor="end">${u * 100}%</text>`);
+      }
+      CLASSES.forEach((k, j) => {
+        const top = xs.map((x, i) => `${x},${f1(py(L.cum[j][i]))}`);
+        const bot = xs.map((x, i) => `${x},${f1(py(j ? L.cum[j - 1][i] : 0))}`).reverse();
+        B.push(`<polygon data-band="${k.id}" points="${top.join(' ')} ${bot.join(' ')}" fill="${C(k.c)}"/>`);
+      });
+      B.push(`<polyline data-six points="${xs.map((x, i) => `${x},${f1(py(Math.min(1, L.six[i])))}`).join(' ')}" fill="none" stroke="${C('#0b0b0b')}" stroke-width="1.25" stroke-dasharray="5 3"/>`);
+      B.push('</g>');
+    }
+    // log view: decade grid, each class's FLOP/token as a line, 6N dashed
+    if (w.log > 0) {
+      B.push(`<g data-view="log" ${op(w.log)}>`);
+      for (let e = YLO; e <= YHI; e++) {
+        B.push(`<line x1="${X0}" y1="${f1(pyl(e))}" x2="${X0 + PW}" y2="${f1(pyl(e))}" stroke="${C('#e1e0d9')}"/>`);
+        B.push(`<text ${dims} x="${X0 - 5}" y="${f1(pyl(e) + 3)}" text-anchor="end">10${sup(e)}</text>`);
+      }
+      B.push(`<text ${dims} x="${X0}" y="${Y0 - 7}">FLOP per token, log scale</text>`);
+      CLASSES.forEach((k, j) => B.push(`<polyline data-line="${k.id}" points="${xs.map((x, i) => `${x},${f1(pyl(L.lf[j][i]))}`).join(' ')}" fill="none" stroke="${C(k.c)}" stroke-width="2"/>`));
+      B.push(`<polyline data-six-abs points="${xs.map((x, i) => `${x},${f1(pyl(L.l6[i]))}`).join(' ')}" fill="none" stroke="${C('#0b0b0b')}" stroke-width="1.25" stroke-dasharray="5 3"/>`);
+      B.push('</g>');
+    }
+    // linear view: stacked FLOP/token up to a round ceiling over the whole range, 6N dashed
+    if (w.lin > 0) {
+      const pa = (v) => Y0 + (1 - v / L.top) * PH;
+      B.push(`<g data-view="lin" ${op(w.lin)}>`);
+      for (let t = 0; t <= L.nt; t++) {
+        const v = L.top * t / L.nt;
+        B.push(`<line x1="${X0}" y1="${f1(pa(v))}" x2="${X0 + PW}" y2="${f1(pa(v))}" stroke="${C('#e1e0d9')}"/>`);
+        B.push(`<text ${dims} x="${X0 - 5}" y="${f1(pa(v) + 3)}" text-anchor="end">${t ? fmtF(v) : 0}</text>`);
+      }
+      B.push(`<text ${dims} x="${X0}" y="${Y0 - 7}">FLOP per token, linear scale</text>`);
+      CLASSES.forEach((k, j) => {
+        const top = xs.map((x, i) => `${x},${f1(pa(L.ca[j][i]))}`);
+        const bot = xs.map((x, i) => `${x},${f1(pa(j ? L.ca[j - 1][i] : 0))}`).reverse();
+        B.push(`<polygon data-area="${k.id}" points="${top.join(' ')} ${bot.join(' ')}" fill="${C(k.c)}"/>`);
+      });
+      B.push(`<polyline data-six-lin points="${xs.map((x, i) => `${x},${f1(pa(L.a6[i]))}`).join(' ')}" fill="none" stroke="${C('#0b0b0b')}" stroke-width="1.25" stroke-dasharray="5 3"/>`);
+      B.push('</g>');
     }
     for (let e = LO; e <= HI; e++) {
       const x = f1(px(e));
@@ -212,14 +290,7 @@ class Dsv3Ladder extends (typeof HTMLElement === 'undefined' ? class {} : HTMLEl
       B.push(`<text ${dims} x="${x}" y="${AX + 25}" text-anchor="middle">${fmtN(L.Ns[e - LO])}</text>`);
     }
     B.push(`<text ${dims} x="${X0 - 18}" y="${AX + 13}" text-anchor="end">C</text><text ${dims} x="${X0 - 18}" y="${AX + 25}" text-anchor="end">N</text>`);
-    // stacked shares
-    CLASSES.forEach((k, j) => {
-      const top = xs.map((x, i) => `${x},${f1(py(L.cum[j][i]))}`);
-      const bot = xs.map((x, i) => `${x},${f1(py(j ? L.cum[j - 1][i] : 0))}`).reverse();
-      B.push(`<polygon data-band="${k.id}" points="${top.join(' ')} ${bot.join(' ')}" fill="${C(k.c)}"/>`);
-    });
-    // what 6ND covers: the share of the count that 6N accounts for
-    B.push(`<polyline data-six points="${xs.map((x, i) => `${x},${f1(py(Math.min(1, L.six[i])))}`).join(' ')}" fill="none" stroke="${C('#0b0b0b')}" stroke-width="1.25" stroke-dasharray="5 3"/>`);
+    B.push(`<text ${dims} x="${X0 + PW + 18}" y="${AX + 13}">FLOP, log scale</text>`);
     // DSv3 marker + cursor
     const dx = f1(px(LOG_C_DSV3));
     B.push(`<line x1="${dx}" y1="${Y0 - 4}" x2="${dx}" y2="${AX}" stroke="${C('#0b0b0b')}" stroke-width="0.75" stroke-dasharray="2 2"/>`);
@@ -228,18 +299,21 @@ class Dsv3Ladder extends (typeof HTMLElement === 'undefined' ? class {} : HTMLEl
     B.push(`<circle cx="${f1(L.cx)}" cy="${AX}" r="3.5" fill="${C('#0b0b0b')}"/>`);
     B.push(`<rect data-hit x="${X0}" y="${Y0}" width="${PW}" height="${PH + 6}" fill="transparent" style="cursor:ew-resize"/>`);
     // legend = the cursor's breakdown, stacked top to bottom like the bands
-    const P = L.P, rows = [...CLASSES].reverse().map((k) => ({ k, v: P.f[k.id] / P.total }));
-    rows.splice(2, 0, { six: true, v: P.sixN / P.total });
+    const P = L.P, rows = [...CLASSES].reverse().map((k) => ({ k, v: P.f[k.id] / P.total, f: P.f[k.id] }));
+    rows.splice(2, 0, { six: true, v: P.sixN / P.total, f: P.sixN });
     rows.forEach((r, i) => {
       const y = Y0 + 16 + i * 22;
       if (r.six) B.push(`<line x1="${LX}" y1="${y - 4}" x2="${LX + 10}" y2="${y - 4}" stroke="${C('#0b0b0b')}" stroke-width="1.25" stroke-dasharray="3 2"/>` +
         `<text class="lg" x="${LX + 16}" y="${y}">6ND counts</text>`);
       else B.push(`<rect x="${LX}" y="${y - 9}" width="10" height="10" fill="${C(r.k.c)}"/>` +
         `<text class="lg" x="${LX + 16}" y="${y}">${r.k.label}</text><text class="sc" x="${LX + 136}" y="${y}"><tspan font-size="13">∝</tspan> ${r.k.scale}</text>`);
-      B.push(`<text class="lgv" data-share="${r.six ? 'six' : r.k.id}" data-true="${r.v}" x="${W - 12}" y="${y}" text-anchor="end">${fmtP(r.v)}</text>`);
+      if (w.share > 0) B.push(`<text class="lgv" ${op(w.share)} data-share="${r.six ? 'six' : r.k.id}" data-true="${r.v}" x="${W - 12}" y="${y}" text-anchor="end">${fmtP(r.v)}</text>`);
+      if (ab > 0) B.push(`<text class="lgv" ${op(ab)} data-abs="${r.six ? 'six' : r.k.id}" data-true="${r.f}" x="${W - 12}" y="${y}" text-anchor="end">${fmtF(r.f)}</text>`);
       if (i === 2) B.push(`<line x1="${LX}" y1="${y + 8}" x2="${W - 12}" y2="${y + 8}" stroke="${C('#e1e0d9')}"/>`);
     });
-    B.push(`<text ${dims} x="${LX}" y="${Y0 + 16 + rows.length * 22 + 2}">share of forward + backward FLOPs at the cursor</text>`);
+    const fy = Y0 + 16 + rows.length * 22 + 2;
+    if (w.share > 0) B.push(`<text ${dims} ${op(w.share)} x="${LX}" y="${fy}">share of forward + backward FLOPs at the cursor</text>`);
+    if (ab > 0) B.push(`<text ${dims} ${op(ab)} x="${LX}" y="${fy}">forward + backward FLOPs per token at the cursor</text>`);
     this._chart.innerHTML = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${B.join('')}</svg>`;
     this._readout(P);
   }
@@ -256,7 +330,9 @@ class Dsv3Ladder extends (typeof HTMLElement === 'undefined' ? class {} : HTMLEl
 function blend(A, B, t) {
   if (!A || t >= 1) return B;
   return { ...B, cum: B.cum.map((c, j) => c.map((v, i) => lerp(A.cum[j][i], v, t))),
-    six: B.six.map((v, i) => lerp(A.six[i], v, t)), cx: lerp(A.cx, B.cx, t) };
+    six: B.six.map((v, i) => lerp(A.six[i], v, t)), cx: lerp(A.cx, B.cx, t),
+    lf: B.lf.map((c, j) => c.map((v, i) => lerp(A.lf[j][i], v, t))), l6: B.l6.map((v, i) => lerp(A.l6[i], v, t)),
+    ca: B.ca.map((c, j) => c.map((v, i) => lerp(A.ca[j][i], v, t))), a6: B.a6.map((v, i) => lerp(A.a6[i], v, t)), top: lerp(A.top, B.top, t) };
 }
 function el(tag, cls) { const e = document.createElement(tag); if (cls) e.className = cls; return e; }
 function readState(key) {

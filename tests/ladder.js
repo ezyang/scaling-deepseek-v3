@@ -43,5 +43,26 @@ T.check('press on the plot moves the cursor (1e20)', Math.abs(+w.querySelector('
 T.check('URL hash carries the state', /l:ladder=/.test(decodeURIComponent(location.hash)), location.hash);
 w.querySelector('[data-knob="preset"] button').click(); await T.tick(350);
 T.check('preset returns to DSv3', /DeepSeek-V3 itself/.test(ro()), ro());
-T.log('widget height', w.getBoundingClientRect().height);
+// y axis: share ↔ log FLOP/token crossfades; lines + legend in absolute FLOP/token; height held
+const yb = (v) => w.querySelector(`[data-knob="y"] button[data-y="${v}"]`);
+T.check('resting y axis: share', yb('share').classList.contains('on') && !w.querySelector('[data-view="log"]'), '');
+yb('log').click(); await T.tick(80);
+T.check('mid-flip: both views drawn, crossfading', w.querySelector('[data-view="share"]') && w.querySelector('[data-view="log"]'), '');
+await T.tick(300);
+const P = L.ladderPoint(L.LOG_C_DSV3, 4096), abs = (k) => +w.querySelector(`[data-abs="${k}"]`).dataset.true;
+T.check('log: one line per class, share view gone', L.CLASSES.every((k) => w.querySelector(`polyline[data-line="${k.id}"]`)) && !w.querySelector('[data-view="share"]'), '');
+T.check('log legend = FLOP/token at the cursor', L.CLASSES.every((k) => abs(k.id) === P.f[k.id]) && abs('six') === P.sixN, abs('proj'));
+T.check('y flip: height reserved', Math.abs(w.getBoundingClientRect().height - h0) < 1, w.getBoundingClientRect().height);
+T.check('hash carries y', /"y":"log"/.test(decodeURIComponent(location.hash)), location.hash);
+w.querySelector('[data-knob="seq"] button[data-dir="1"]').click(); await T.tick(350);
+T.check('S flip in log mode stays in log', !w.querySelector('[data-view="share"]') && abs('attn') === L.ladderPoint(L.LOG_C_DSV3, 8192).f.attn, abs('attn'));
+w.querySelector('[data-knob="seq"] button[data-dir="-1"]').click(); await T.tick(350);
+yb('lin').click(); await T.tick(350);
+T.check('linear: stacked FLOP/token areas, 6N dashed, legend still absolute', L.CLASSES.every((k) => w.querySelector(`polygon[data-area="${k.id}"]`)) && w.querySelector('polyline[data-six-lin]') && !w.querySelector('[data-view="log"]') && abs('proj') === P.f.proj, '');
+T.check('linear ceiling: 5 TFLOP at S = 4K (1e27 rung = 4.06 TFLOP)', /5 TFLOP/.test(w.querySelector('[data-view="lin"]').textContent), '');
+T.check('linear flip: height reserved', Math.abs(w.getBoundingClientRect().height - h0) < 1, w.getBoundingClientRect().height);
+yb('share').click(); await T.tick(350);
+T.check('back to share', !w.querySelector('[data-view="log"]') && yb('share').classList.contains('on'), '');
+T.log('widget height'
+, w.getBoundingClientRect().height);
 T.done();
