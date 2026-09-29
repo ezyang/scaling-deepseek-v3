@@ -285,7 +285,17 @@ export function buildCells(env) {
     // one 4096-token sequence per microbatch; under TP every stash divides by
     // TP — sequence parallel shards the residual/MoE path by tokens, attention
     // shards heads, the head shards the vocabulary (same bytes either way)
-    { id: 'P7', label: 'tokens per microbatch, this GPU\u2019s share (seq 4096 · mbs 1, ÷ TP under sequence parallel)', expr: '4096 / P11' },
+    ...(env.gbs ? [
+      // gbs instances make the microbatch size a knob: it scales every
+      // stash (P7), and at a fixed global batch it sets how many microbatches
+      // each step runs (P14) — the count ZeRO-2/3 pay their collectives on
+      { id: 'P7', label: 'tokens per microbatch, this GPU\u2019s share (seq 4096 × mbs, ÷ TP under sequence parallel)', expr: '4096 × P12 / P11' },
+      { id: 'P12', label: 'sequences per microbatch (mbs)', value: env.mbs ?? 1, ui: { k: 'mbs' }, edit: { t: 'step', k: 'mbs' } },
+      { id: 'P13', label: 'global batch (4096-token sequences)', value: env.gbs },
+      { id: 'P14', label: 'microbatches per step (global batch ÷ DP ÷ mbs)', expr: 'P13 / (P4 × P12)', ui: { k: 'mbs' } },
+    ] : [
+      { id: 'P7', label: 'tokens per microbatch, this GPU\u2019s share (seq 4096 · mbs 1, ÷ TP under sequence parallel)', expr: '4096 / P11' },
+    ]),
     { id: 'P11', label: 'tensor parallelism (TP; sequence parallel on, expert-tensor-parallel 1)', value: env.tp ?? 1, ui: { k: 'tp' }, edit: { t: 'step', k: 'tp' } },
     { id: 'S1', label: 'ZeRO level (1 optim · 2 +grads · 3 +weights)', value: zero, ui: { k: 'zero' }, edit: { t: 'seg', k: 'zero' } },
     // the level resolves to per-component SHARD GROUPS (1 = unsharded) via
@@ -485,7 +495,8 @@ export const cellsEnv = (S, anaM, anaD, anaMF, anaDF) => ({
   sched: S.sched ?? '1f1b', fp8p: !!S.fp8p,
   vpp: S.vpp ?? 1, stage: S.stage, hw: S.hw ?? 'h100',
   g: ppStage(Math.min(S.stage, S.pp - 1), S.pp, S.vpp, S.fold, S.layout),
-  a2a: !!S.a2a, gradB: S.gradB ?? 4, mx: !!S.mx, tp: S.tp ?? 1,   // mx: the instance's fp8 flavour is MXFP8 (F1's story + formula wording)
+  a2a: !!S.a2a, gradB: S.gradB ?? 4, mx: !!S.mx, tp: S.tp ?? 1,
+  gbs: S.gbs ?? null, mbs: S.mbs ?? 1,   // gbs: the global batch (sequences) of an instance with the microbatch knob   // mx: the instance's fp8 flavour is MXFP8 (F1's story + formula wording)
   ...ilvEnv(S, anaM.savedBytes, anaD.savedBytes),
   aM: anaM.savedBytes, aD: anaD.savedBytes,
   bM: actBucketsOf(anaM), bD: actBucketsOf(anaD), bLabels: ACT_BUCKETS.map((b) => b.label),

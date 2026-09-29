@@ -311,7 +311,7 @@ dsv3-anatomy dsv3-anatomy-plan { margin-top: 46px; }
 }
 `;
 const FWD = ['controls', 'recipe', 'recipes', 'recompute', 'detail', 'transposed', 'for',
-  'world', 'pp', 'vpp', 'ep', 'tp', 'tps', 'sched', 'fold', 'layout', 'a2a', 'grads', 'fp8params', 'hw', 'hws', 'facs', 'recomputes',   // the local lens's page-set parallelism + capacity + chip curation
+  'world', 'pp', 'vpp', 'ep', 'tp', 'tps', 'sched', 'fold', 'layout', 'a2a', 'grads', 'fp8params', 'hw', 'hws', 'facs', 'recomputes', 'gbs',   // the local lens's page-set parallelism + capacity + chip curation (+ gbs: the microbatch knob)
   'nocaption', 'kind', 'xlayers', 'xinflight', 'xtag', 'ctx', 'lens', 'squares', 'strips', 'nostrips', 'optim', 'consolidated', 'local', 'cumulative', 'redotint', 'experttint'];
 export class Dsv3Anatomy extends HTMLElement {
   connectedCallback() {

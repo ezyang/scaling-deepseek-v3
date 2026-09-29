@@ -64,7 +64,7 @@ export const LOCAL_PAR = { world: 2048, pp: 8 };   // .pp = the default degree
 // unlisted knobs mean these neutral nothing-applied defaults, never
 // "whatever the widget's live defaults happen to be" — a published figure
 // must not drift when the interactive defaults do
-export const CFG_DEFAULTS = { world: 2048, pp: 1, ep: 1, tp: 1, zero: 0, sched: '1f1b', hw: 'h100', a2a: false, gradB: 4, fp8Params: false };   // vpp/fold are derived from pp (DualPipeV); sched 'interleaved' takes vpp + layout
+export const CFG_DEFAULTS = { world: 2048, pp: 1, ep: 1, tp: 1, zero: 0, sched: '1f1b', hw: 'h100', a2a: false, gradB: 4, fp8Params: false, mbs: 1 };   // vpp/fold are derived from pp (DualPipeV); sched 'interleaved' takes vpp + layout
 // virtual-stage placement: with VPP = vpp chunks per rank the chain is
 // vpp·pp virtual stages deep; 'wrap' places stage v on rank v mod pp
 // (Megatron interleaving), 'reflect' bounces each pass (ZB-V / DualPipeV:
@@ -236,6 +236,19 @@ export const inflightOf = (sched, s, pp, vpp = 1, fold = 'reflect', layout = nul
   }
   const D = vpp * pp, s2 = Math.min(s, pp - 1);
   return vstagesOf(s2, pp, vpp, fold).reduce((t, v) => t + (D - v), 0) / vpp;
+};
+
+// microbatch sizes (4096-token sequences) the knob offers at global batch
+// gbs: powers of two up to the local batch gbs ÷ DP, plus the whole local
+// batch in one pass (7.5 at DSv3's 15,360 on 2,048 GPUs without PP) when
+// the schedule allows a single microbatch. DualPipeV needs ≥ 2·PP
+// microbatches per step (its steady state), so bigger sizes drop out.
+export const mbsChoices = (gbs, dp, pp, sched = '1f1b') => {
+  const lb = gbs / dp, minM = pp > 1 && sched !== 'one' ? 2 * pp : 1;
+  const out = [];
+  for (let b = 1; b < lb && lb / b >= minM; b *= 2) out.push(b);
+  if (minM === 1) out.push(lb);
+  return out.length ? out : [Math.min(1, lb)];   // too little batch for the schedule: stay at one sequence
 };
 
 // the PP stage holding the most resident bytes under the local model (all
