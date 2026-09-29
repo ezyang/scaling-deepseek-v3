@@ -37,6 +37,10 @@ T.check('pp1 whole batch stash = 8 × one sequence', Math.abs(val('3') - 8 * 38.
 await choose('mb', 4);
 await pick('zero', '3');
 T.check('m sticks across a ZeRO flip', layer().mb === 4 && ro('mb') === 'of 2 seq', layer().mb);
+// tween frames patch the diagram svg in place: the patched result must equal a from-scratch render
+const svgTxt = () => layer().querySelector('.lv-scroll svg').outerHTML.replace(/<!---->/g, '');
+const patched = svgTxt(); layer().render();
+T.check('patched svg == full rebuild', svgTxt() === patched, `${patched.length} vs ${svgTxt().length}`);
 await choose('pp', 8);
 T.check('PP8 again: re-defaults to one sequence each', layer().mb === 60, layer().mb);
 [...host().querySelectorAll('button')].find((b) => b.textContent === 'reset all').click(); await T.tick(700);

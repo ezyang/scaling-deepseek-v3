@@ -971,7 +971,7 @@ export class Dsv3Layer extends HTMLElement {
     const prev = { anaPrev: this._anaMemo?.ana, mm: { ...this.matmuls }, marks: { ...this.marks }, transposed: this.transposed };
     mutate();
     this.changed(true);
-    this._frames((t) => { this._vtween = { t, prev }; }, () => { this._vtween = undefined; });
+    this._frames((t) => { this._vtween = { t, prev }; }, () => { this._vtween = undefined; this._svgPatchOnce = true; });
   }
   // local-knob mutations shared by the head controls and external drivers
   // (<dsv3-pp-schedule>): callers go through setLocal so every change tweens
@@ -1210,7 +1210,7 @@ export class Dsv3Layer extends HTMLElement {
     this.changed(true);
     const kindOf = (S) => ppStage(Math.min(S.stage, S.pp - 1), S.pp, S.vpp, S.fold, S.layout).moe ? 'moe' : 'dense';
     if (kindOf(prev) !== kindOf(this._snapLocal())) { this.render(); return; }
-    this._frames((t) => { this._vtween = { t, prev }; }, () => { this._vtween = undefined; });
+    this._frames((t) => { this._vtween = { t, prev }; }, () => { this._vtween = undefined; this._svgPatchOnce = true; });
   }
   render() {
     this.innerHTML = '';
@@ -1754,7 +1754,7 @@ export class Dsv3Layer extends HTMLElement {
         // how many 4096-token sequences each one carries
         const MBn = this.gbs ? this.mb : 1;
         const fmtN = (v) => String(+v.toFixed(3));
-        gPipe.append(row2(txt2('sched'), sw2, ...(this.gbs ? [txt2('microbatches'),
+        gPipe.append(row2(txt2('sched'), sw2, ...(this.gbs ? [(() => { const t = txt2('MBs'); t.title = 'microbatches per step'; return t; })(),
           knob('mb', mkStep(() => this.mb, (v) => { this.mb = v; }, String, Infinity, this._mbChoices(), 0)),
           (() => { const r = txt2(`of ${this.mbs} seq`); r.dataset.readout = 'mb'; return r; })()] : [])));
         // hws="gb200,gb300": the capacity yardstick becomes a knob (the
@@ -3883,14 +3883,40 @@ export class Dsv3Layer extends HTMLElement {
     // produced the fit chart (_barHtml) and totals; parsing thousands of
     // diagram nodes on every tween frame was the animation stutter
     if (this.hasAttribute('barsonly') || this.hasAttribute('snapshot')) return null;
-    const svgEl = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    svgEl.setAttribute('width', WIDTH); svgEl.setAttribute('height', H);
-    svgEl.setAttribute('viewBox', `0 0 ${WIDTH} ${H}`);
-    // scaling lives in the .lv svg CSS (with a narrow-viewport override that
-    // disables it in favor of horizontal scroll) — no inline style, it would win
-    // the cascade over the media rule
-    svgEl.innerHTML = `<defs><marker id="arr" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto-start-reverse">` +
-      `<path d="M 0 0 L 8 4 L 0 8 z" fill="${C('#898781')}"/></marker></defs>` + P.join('');
+    const DEFS = `<defs><marker id="arr" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto-start-reverse">` +
+      `<path d="M 0 0 L 8 4 L 0 8 z" fill="${C('#898781')}"/></marker></defs>`;
+    // tween frames PATCH the previous frame's svg: P's pieces are positional
+    // and self-contained, and a knob tween rewrites few of them — rebuilding
+    // re-parsed every square each frame (≈ 20k rects, 1.4 MB, for the whole
+    // model on one GPU: the pp1 stutter). Comment markers delimit the pieces.
+    const memo = this._svgMemo, patch = (this._vtween || this._svgPatchOnce) && memo
+      && memo.P.length === P.length && memo.W === WIDTH && memo.H === H && memo.defs === DEFS;
+    this._svgPatchOnce = false;
+    let svgEl;
+    if (patch) {
+      svgEl = memo.el;
+      for (let i = 0; i < P.length; i++) {
+        if (P[i] === memo.P[i]) continue;
+        const tmp = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        tmp.innerHTML = P[i];
+        for (const n of memo.nodes[i]) n.remove();
+        memo.nodes[i] = [...tmp.childNodes];
+        memo.marks[i].before(...memo.nodes[i]);
+      }
+      memo.P = P;
+    } else {
+      svgEl = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svgEl.setAttribute('width', WIDTH); svgEl.setAttribute('height', H);
+      svgEl.setAttribute('viewBox', `0 0 ${WIDTH} ${H}`);
+      // scaling lives in the .lv svg CSS (with a narrow-viewport override that
+      // disables it in favor of horizontal scroll) — no inline style, it would win
+      // the cascade over the media rule
+      svgEl.innerHTML = DEFS + P.join('<!---->') + '<!---->';
+      const nodes = [[]], marks = [];
+      for (const n of [...svgEl.childNodes].slice(1))
+        if (n.nodeType === 8) { marks.push(n); nodes.push([]); } else nodes[nodes.length - 1].push(n);
+      this._svgMemo = { el: svgEl, P, W: WIDTH, H, defs: DEFS, nodes, marks };
+    }
     // experttint (opt-in): every parameter-carrying box wears its sharding
     // class — routed experts (sharded over their EDP copies) vs everything
     // else (sharded over the whole world) — a class on the box's own rect
