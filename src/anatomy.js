@@ -266,6 +266,9 @@ export class Dsv3AnatomyPlan extends HTMLElement {
         `<div class="anp-unit">${sw(C('#898781'))}<span>= ${fmtBytes(UNIT * 2)} / square</span></div></div>`;
     }
     this._root.innerHTML = `<svg viewBox="0 0 ${WD} ${H}" width="${WD}" height="${H}">${S.join('')}</svg>` + lg;
+    if (l?.hasAttribute('experttint'))   // the wholly non-expert plan boxes (the MoE block is mixed)
+      for (const g of this._root.querySelectorAll('g[data-op=embed], g[data-op=final_norm], g[data-op=lm_head], g[data-kind=dense]:not(.on)'))
+        g.querySelector('rect').classList.add('nxp');
     for (const r of this._root.querySelectorAll('.anp-leg .row'))
       r.onclick = () => l.soloComp(r.dataset.prop);   // legend clicks SOLO the component
     for (const g of this._root.querySelectorAll('[data-kind]')) {
@@ -309,7 +312,7 @@ dsv3-anatomy dsv3-anatomy-plan { margin-top: 46px; }
 `;
 const FWD = ['controls', 'recipe', 'recipes', 'recompute', 'detail', 'transposed', 'for',
   'world', 'pp', 'vpp', 'ep', 'tp', 'tps', 'sched', 'fold', 'layout', 'a2a', 'grads', 'fp8params', 'hw', 'hws', 'facs', 'recomputes',   // the local lens's page-set parallelism + capacity + chip curation
-  'nocaption', 'kind', 'xlayers', 'xinflight', 'xtag', 'ctx', 'lens', 'squares', 'strips', 'nostrips', 'optim', 'consolidated', 'local', 'cumulative', 'redotint'];
+  'nocaption', 'kind', 'xlayers', 'xinflight', 'xtag', 'ctx', 'lens', 'squares', 'strips', 'nostrips', 'optim', 'consolidated', 'local', 'cumulative', 'redotint', 'experttint'];
 export class Dsv3Anatomy extends HTMLElement {
   connectedCallback() {
     const lid = this.getAttribute('layer') ?? ((this.id || 'anatomy') + '-layer');
@@ -324,6 +327,7 @@ export class Dsv3Anatomy extends HTMLElement {
       tal.setAttribute('layer', lid);
       tal.setAttribute('compact', '');
       if (this.getAttribute('lens') === 'param-bytes') tal.setAttribute('units', 'bytes');
+      if (this.hasAttribute('experttint')) tal.setAttribute('split', '');
       col1.append(tal);
     }
     const layer = document.createElement('dsv3-layer');
@@ -428,6 +432,10 @@ dsv3-param-tally { display: block; margin: 14px 0; }
 .ptal tbody tr.sel { background: var(--c-ffffff); box-shadow: inset 3px 0 0 var(--c-52514e); }
 .ptal tbody tr.sel td:first-child { font-weight: 600; }
 .ptal tfoot td { font-weight: 600; border-bottom: none; }
+.ptal tfoot tr.split td { font-weight: 400; color: var(--c-52514e); padding-top: 1px; padding-bottom: 1px; }
+.ptal .sw { display: inline-block; width: 12px; height: 9px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; border: 1.5px solid; box-sizing: border-box; }
+.ptal .sw.xpt { background: var(--c-e2eab4); border-color: var(--c-6b7d12); }
+.ptal .sw.nxp { background: var(--c-d9e4f0); border-color: var(--c-4a6a8e); }
 .ptal .note { color: var(--c-898781); font-size: 12px; margin-top: 4px; }
 .ptal.compact { font-size: 11.5px; }
 .ptal.compact .title { font: 600 11px system-ui; color: var(--c-52514e); margin: 0 0 2px; }
@@ -461,6 +469,9 @@ export class Dsv3ParamTally extends HTMLElement {
     const root = this._root;
     const rows = TALLY_ROWS.map(r => rowIn(r, mode));
     const total = rows.reduce((t, r) => t + r.per * r.count, 0);
+    // split (experttint): the sharding classes, in the diagram's box tints
+    const split = this.hasAttribute('split');
+    const routed = PARAMS.expert * (mode === 'active' ? A.topk : A.routedExperts) * (A.layers - A.denseLayers);
     const fv = (v) => bytes ? fmtBytes(v * 2) : fmtP(v);
     const num = (v) => `<span class="pnum" data-v="${bytes ? v * 2 : v}">${fv(v)}</span>`;
     const tval = (t) => bytes && t.nv != null ? fmtBytes(t.nv * 2) : t.val;
@@ -480,7 +491,10 @@ export class Dsv3ParamTally extends HTMLElement {
         : `<tr data-row="${i}"><td>${r.label}</td>` +
           `<td><span class="formula">${r.terms.map((t, j) => `<span class="fterm" data-t="${j}">${t.name} ${tval(t)}</span>`).join(' + ')} =</span> ${num(r.per)}</td>` +
           `<td>${r.mult}</td><td class="num">${num(r.per * r.count)}</td></tr>`).join('') +
-      `</tbody><tfoot><tr><td${compact ? '' : ' colspan="3"'}>total</td><td class="num">${num(total)}</td></tr></tfoot></table>` +
+      `</tbody><tfoot><tr><td${compact ? '' : ' colspan="3"'}>total</td><td class="num">${num(total)}</td></tr>` +
+      (split ? [['xpt', 'routed experts', routed], ['nxp', 'non-expert', total - routed]].map(([c, label, v]) =>
+        `<tr class="split" data-split="${c}"><td${compact ? '' : ' colspan="3"'}><span class="sw ${c}"></span>${label}</td><td class="num">${num(v)}</td></tr>`).join('') : '') +
+      `</tfoot></table>` +
       (compact ? `<div class="fxout"></div>` : '');
     const lid = this.getAttribute('layer') ?? '';
     const layer = () => document.getElementById(lid);

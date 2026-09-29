@@ -102,6 +102,7 @@ the rest are conventions to uphold when editing the renderer.
 | `.comm` | communication (violet) |
 | *traffic pill* (bronze `#8c5a19`) | HBM traffic — bytes on the move (quantization round trips); rides a tally ribbon, named + quantified (a bandwidth floor exists), never metered by the ruler |
 | `.res` | residual add (dashed) |
+| `.xpt` / `.nxp` | sharding-class tints, `experttint` instances only: routed experts olive (`#6b7d12` over `#e2eab4`), every other parameter-carrying box slate (`#4a6a8e` over `#d9e4f0`) — a class on the box rect itself (not an overlay); hues kept clear of the byte-component, save-amber, teal, a2a-violet and precision families |
 | `.redo` | recompute tint (teal `#0a98a0` over `#e0f3f3`): an overlay on a ↻ op's box, `redotint` instances only. Teal = replayed WORK, the counterpart of save-amber = stashed BYTES; checked clear of amber and a2a violet (not of optim green, which never shares the diagram) |
 | `.micro` | elided kernel (detail-only, italic) |
 | `.grp` | grouping enclosure (thin, `grplabel` inside top) |

@@ -8,23 +8,23 @@ const at = (el, type, o = {}) => { const q = el.getBoundingClientRect(); el.disp
 const sheets = [...document.querySelectorAll('.cellsheet')];
 const refs = [...document.querySelectorAll('.cellsheet td.fx b')];
 T.check('every formula name resolves to a defining row', refs.every((b) => b.classList.contains('ref')), refs.filter((b) => !b.classList.contains('ref')).map((b) => b.innerHTML).join(' '));
-// T2 = C2 ÷ G ÷ P: hover G (defined in the first sheet)
-const t2 = [...sheets[1].querySelectorAll('tr')].find((tr) => tr.cells[0]?.innerHTML === 'T<sub>2</sub>');
-const g = [...t2.querySelectorAll('td.fx b')].find((b) => b.textContent === 'G');
+// T2 = C4 ÷ P1 ÷ E1: hover P1 (defined in the first sheet)
+const t2 = [...sheets[1].querySelectorAll('tr')].find((tr) => tr.cells[0]?.innerHTML === 'T2');
+const g = [...t2.querySelectorAll('td.fx b')].find((b) => b.textContent === 'P1');
 at(g, 'mousemove');
 const tips = document.querySelectorAll('body > .cs-tip');   // one per sheet, in order
 const tip = tips[1];
-T.check('hover: the card names the cell, its quantity and value', tip.style.display === 'block' && tip.textContent === 'G · GPUs= 2,048', tip.textContent);
-const cg = [...sheets[0].querySelectorAll('td.fx b')].find((b) => b.innerHTML === 'C<sub>G</sub>');
+T.check('hover: the card names the cell, its quantity and value', tip.style.display === 'block' && tip.textContent === 'P1 · GPUs= 2,048', tip.textContent);
+const cg = [...sheets[0].querySelectorAll('td.fx b')].find((b) => b.innerHTML === 'C2');
 at(cg, 'mousemove');
 const tip0 = tips[0];
-T.check('hover: a derived cell shows formula = exact ≈ SI', tip0.textContent === 'CG · FLOPs per GPU= C ÷ G = 6,750,833,989,386,240 ≈ 6.75 PFLOP', tip0.textContent);
+T.check('hover: a derived cell shows formula = exact ≈ SI', tip0.textContent === 'C2 · FLOPs per GPU= C1 ÷ P1 = 6,750,833,989,386,240 ≈ 6.75 PFLOP', tip0.textContent);
 sheets[0].dispatchEvent(new MouseEvent('mouseleave'));
 T.check('mouseleave hides it', tip0.style.display === 'none', '');
 // click a name → the defining row (another sheet) is selected, no pin
 getSelection().removeAllRanges();
 at(g, 'click', { detail: 1 });
-const gRow = [...sheets[0].querySelectorAll('tr')].find((tr) => tr.cells[0]?.textContent === 'G');
+const gRow = [...sheets[0].querySelectorAll('tr')].find((tr) => tr.cells[0]?.textContent === 'P1');
 T.check('click a name: its defining row is selected', gRow.classList.contains('sel') && document.querySelectorAll('.cellsheet tr.sel').length === 1, '');
 T.check('click a name: the card does not pin', !tip.classList.contains('pinned'), tip.className);
 const r = gRow.getBoundingClientRect();

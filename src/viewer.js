@@ -718,6 +718,8 @@ ${s} .op { fill: var(--c-f3f2ee); stroke: var(--c-e1e0d9); }
 ${s} .comm { fill: var(--c-f3f1fb); stroke: var(--c-6b5bd2); }
 ${s} .res { fill: var(--c-fcfcfb); stroke: var(--c-c3c2b7); stroke-dasharray: 3 2; }
 ${s} .redo { fill: var(--c-e0f3f3); stroke: var(--c-0a98a0); stroke-width: 1.5; }
+${s} rect.xpt { fill: var(--c-e2eab4); stroke: var(--c-6b7d12); stroke-width: 1.5; }
+${s} rect.nxp { fill: var(--c-d9e4f0); stroke: var(--c-4a6a8e); stroke-width: 1.5; }
 ${s} .grp { fill: none; stroke: var(--c-e1e0d9); }
 ${s} .name { font: 600 11px system-ui; fill: var(--c-0b0b0b); }
 ${s} .dims { font: 9px system-ui; fill: var(--c-898781); }
@@ -1745,6 +1747,14 @@ export class Dsv3Layer extends HTMLElement {
           sw(this.activeView ? `<rect x="0.4" y="0.4" width="4.2" height="3.2" fill="none" stroke="${C(INACTIVE)}" stroke-width="0.8"/>` : `<rect width="5" height="4" fill="${C(INACTIVE)}"/>`) +
           (this.activeView ? ' inactive (not counted)' : ' inactive') +
           (this.getAttribute('squares') === 'matrix' ? ` · one square = one ${DSV3.hidden}×${DSV3.moeInter} expert matrix (${fmtP(PARAMS.expert / 3)} params)` : ` · one square = one expert (${fmtP(PARAMS.expert)} params)`);
+        mini.append(leg);
+      }
+      if (this.hasAttribute('experttint')) {   // the sharding-class key, in the boxes' own fill + stroke
+        const leg = el('span');
+        leg.dataset.xtLegend = '';
+        leg.style.cssText = 'color:var(--c-52514e);margin-left:14px;font-size:11px;white-space:nowrap;';
+        const bx = (f, s) => `<svg width="16" height="11" style="display:inline-block;margin:0 3px 0 0;vertical-align:-1px"><rect x="0.75" y="0.75" width="14.5" height="9.5" rx="2" fill="${C(f)}" stroke="${C(s)}" stroke-width="1.5"/></svg>`;
+        leg.innerHTML = `${bx('#e2eab4', '#6b7d12')}routed experts · ${bx('#d9e4f0', '#4a6a8e')}non-expert parameters`;
         mini.append(leg);
       }
       if (this.getAttribute('lens') === 'param-bytes') {
@@ -3838,6 +3848,15 @@ export class Dsv3Layer extends HTMLElement {
     // the cascade over the media rule
     svgEl.innerHTML = `<defs><marker id="arr" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto-start-reverse">` +
       `<path d="M 0 0 L 8 4 L 0 8 z" fill="${C('#898781')}"/></marker></defs>` + P.join('');
+    // experttint (opt-in): every parameter-carrying box wears its sharding
+    // class — routed experts (sharded over their EDP copies) vs everything
+    // else (sharded over the whole world) — a class on the box's own rect
+    if (this.hasAttribute('experttint'))
+      for (const g of svgEl.querySelectorAll('g[data-op]')) {
+        const id = g.dataset.op, r = g.querySelector(':scope > rect');
+        const x = this.kind === 'moe' && (id === 'ffn_gate_up' || id === 'ffn_down');
+        if (r && (x || exactParam(id) || id === 'shared')) r.classList.add(x ? 'xpt' : 'nxp');
+      }
     for (const b of svgEl.querySelectorAll('button[data-dt]')) {
       b.onclick = () => {
         const mutate = () => {

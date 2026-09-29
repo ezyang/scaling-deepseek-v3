@@ -2,7 +2,7 @@
 // and count the copies each one costs: one Infiniband copy per remote node
 // hosting any of its 8 experts (deduped), landing on the GPU with our local
 // index, then one NVLink copy per other GPU on that node that needs it. The
-// running mean of IB copies is the sheet's R (studies/03-roofline.html).
+// running mean of IB copies is the sheet's K2 (studies/03-roofline.html).
 // Two routings: the sheet's (exactly 4 of the 8 nodes, uniformly, the 8
 // experts scattered uniformly over those nodes' 128, redrawn until every node
 // holds one: IB → 3.5, NVLink → EXACT.nv) and DeepSeek-V3's node-limited
@@ -244,11 +244,11 @@ class Dsv3Epsim extends (typeof HTMLElement === 'undefined' ? class {} : HTMLEle
       B.push(`<text class="num" x="${x + 22}" y="${f1(HB - bh - 4)}" text-anchor="middle"${hi}>${(s * 100).toFixed(s > 0 && s < 0.0005 ? 3 : 1)}%</text>`);
       B.push(`<text x="${x + 22}" y="${HB + 13}" text-anchor="middle"${hi}>${k}</text></g>`);
     });
-    // the running mean, log tokens, against the sheet's R
+    // the running mean, log tokens, against the sheet's K2
     B.push(`<text class="dims" x="${RX}" y="${MY0 - 14}">running mean of IB copies per token</text>`);
     for (const v of [2, 3, 4]) B.push(`<line x1="${MX0}" y1="${my(v)}" x2="${MX1}" y2="${my(v)}" stroke="${C('#e1e0d9')}"/><text class="dims" x="${MX0 - 5}" y="${my(v) + 3}" text-anchor="end">${v}</text>`);
     B.push(`<line x1="${MX0}" y1="${my(3.5)}" x2="${MX1}" y2="${my(3.5)}" stroke="${C('#0b0b0b')}" stroke-width="1" stroke-dasharray="4 3"/>`);
-    B.push(`<text class="dims" x="${MX1}" y="${my(3.5) - 4}" text-anchor="end">the sheet's R = 3.5</text>`);
+    B.push(`<text class="dims" x="${MX1}" y="${my(3.5) - 4}" text-anchor="end">the sheet's K2 = 3.5</text>`);
     ['1', '10', '100', '1K', '10K', '100K'].forEach((l, e) => B.push(`<line x1="${f1(mx(10 ** e))}" y1="${MY1}" x2="${f1(mx(10 ** e))}" y2="${MY1 + 3}" stroke="${C('#898781')}"/><text class="dims" x="${f1(mx(10 ** e))}" y="${MY1 + 13}" text-anchor="middle">${l}</text>`));
     B.push(`<text class="dims" x="${MX1}" y="${MY1 + 25}" text-anchor="end">tokens routed</text>`);
     const pts = [...T.trace.filter(([n]) => n < T.n), [T.n, T.ib / T.n]];
@@ -258,7 +258,7 @@ class Dsv3Epsim extends (typeof HTMLElement === 'undefined' ? class {} : HTMLEle
     const yy = H - 4;
     B.push(`<text x="${RX}" y="${yy - 14}">mean per token: <tspan class="num" data-mean="ib" data-true="${T.ib / T.n}">${(T.ib / T.n).toFixed(3)}</tspan> IB · <tspan class="num" data-mean="nv" data-true="${T.nv / T.n}">${(T.nv / T.n).toFixed(3)}</tspan> NVLink</text>`);
     B.push(`<text class="dims" x="${RX}" y="${yy}">exact, the sheet's routing: ${EXACT.ib} = 4 × 7/8 IB · ${EXACT.nv.toFixed(3)} NVLink</text>`);
-    this._chart.innerHTML = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Tokens routed through an EP group of 8 nodes, 8 GPUs each, 4 experts per GPU. Each token's 8 experts are marked; one Infiniband copy goes to each remote node that hosts any of them, landing on the GPU with our local index, which forwards it over NVLink to the other GPUs that need it. Beside it, a histogram of IB copies per token and their running mean against the sheet's R = 3.5.">${B.join('')}</svg>`;
+    this._chart.innerHTML = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Tokens routed through an EP group of 8 nodes, 8 GPUs each, 4 experts per GPU. Each token's 8 experts are marked; one Infiniband copy goes to each remote node that hosts any of them, landing on the GPU with our local index, which forwards it over NVLink to the other GPUs that need it. Beside it, a histogram of IB copies per token and their running mean against the sheet's K2 = 3.5.">${B.join('')}</svg>`;
   }
   // one GPU cell and its 4 expert slots; `on` = the chosen experts, drawn as a reached cell (null = base layer)
   _cell(n, g, on) {

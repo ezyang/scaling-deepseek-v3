@@ -49,6 +49,8 @@ export const DARK = {
   '#f3f1fb': '#272438', '#fdf1f1': '#322323', '#f0faf4': '#1e2a23', '#1a7a43': '#3dae6e',
   // recompute teal (redotint boxes, the AC study's schematics): accent · mid · tint
   '#0a98a0': '#2bb6bf', '#9fd8d9': '#23595a', '#e0f3f3': '#18302f',
+  // sharding classes (experttint): routed experts olive · everything else slate — accent · tint
+  '#6b7d12': '#b0c25e', '#e2eab4': '#353c17', '#4a6a8e': '#8fb0d6', '#d9e4f0': '#243448',
 };
 
 let dark = false;

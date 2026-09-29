@@ -23,6 +23,7 @@ carry a measured `style="min-height:…px"` placeholder (scroll restoration);
 | `recipe` | state | `nv-mxfp8` · `bf16` · `dsv3-fp8` · `all-fp8` | per-matmul dtype preset. The router GEMM is bf16 in `bf16`, `dsv3-fp8` and `nv-mxfp8` (DeepSeek's H800 trace: a bf16 cuBLAS kernel, fp32 logits out — the paper's high-precision gating is the fp32 router STATE) and fp32 only in `all-fp8` (the notes.txt run's `fp32_linear`, priced at the TF32 rate); the pinned router tag renders in EVERY quant tier incl. marks. `dsv3-fp8` follows the paper exactly, including `o_proj: 'e5m6'` — the customized 12-bit stash format for the attention output (1.5 B/elem, purple; §3.3.3). e5m6 names the STASH: box tags, pickets and ribbons speak COMPUTE dtype (`COMPUTE_DT` maps e5m6 → e4m3 — o_proj's tag is a pinned e4m3 readout, its pickets pink; purple appears only on the attn-out CHIP, and the save format is the head checkbox), flopEq prices the GEMM at fp8 rate, and the fp8ᵀ dual never applies to it (the transpose problem is 1×128 tile scales; the dual threshold is < 1.2 B/elem). `all-fp8` = every linear's stash e4m3 incl. attn-out — the production H100 variant in notes.txt; byte-identical to dsv3-fp8 under attn-replay, pinned in sanity |
 | `recipes` | view | comma list of recipe keys | curates which recipe chips/options an instance offers (both the house segment and the legacy select); absent = all. The Hopper article drops nv-mxfp8 (the Blackwell post's recipe) |
 | `recompute` | state | `dsv3` · `none` · `attn-replay` · `selective` · `full` | save/recompute marks preset |
+| `experttint` | view | boolean | every parameter-carrying box wears its sharding class: the MoE tab's two routed-expert GEMMs olive (`.xpt`), everything else with parameters slate (`.nxp`; param-less boxes stay plain) — a class on the box's own rect, set after render; a box-swatch key (`[data-xt-legend]`) joins the controls-row legend. Opt-in (03's FSDP section); 01/02 don't set it |
 | `redotint` | view | boolean | marks tiers only: every ↻ op's box wears the recompute teal (`.redo` overlay, eased through the stash tween) — ops are what replay; the chips under them already say what's stashed. Opt-in (studies/ac-pareto.html); 02 doesn't set it |
 | `kind` | state | `moe` · `dense` | which FFN column variant (flip-stable layout; the MLA column is shared) |
 | `transposed` | state | boolean | Hopper e4m3ᵀ dual-orientation stashes; part of recipe recognition (canonical per recipe via `RECIPE_T`). Labeled '(expert inputs)': under realistic recompute policies the dual set is only the MoE-FFN inputs (norm2 out + dispatched tokens) — attention-side candidates are replayed or E5M6. Mechanics stay general (any fp8 stash a wgrad reads duals) |
@@ -47,7 +48,8 @@ Runtime-only properties (driven by other widgets, not attributes):
 |---|---|---|
 | `layer` | binding | id given to the inner `<dsv3-layer tabs scope="block">` (URL state and page scripts address it) |
 | `tally` | view | mount the compact parameter tally in the margin below the plan |
-| *(forwarded)* | | `controls recipe recipes recompute redotint detail transposed for nocaption kind xlayers xinflight xtag ctx lens strips nostrips optim consolidated local cumulative world pp vpp ep sched fold layout hw hws facs` pass through to the inner layer |
+| `experttint` | view | forwarded to the layer; also tints the plan's wholly non-expert boxes (embedding, unselected dense block, final norm, lm head; the MoE block is mixed) and gives the tally two split rows under the total — routed experts / non-expert (`tr[data-split=xpt\|nxp]`, N_X / N_O exactly) |
+| *(forwarded)* | | `controls recipe recipes recompute redotint experttint detail transposed for nocaption kind xlayers xinflight xtag ctx lens strips nostrips optim consolidated local cumulative world pp vpp ep sched fold layout hw hws facs` pass through to the inner layer |
 
 Narrow viewports (≤860px): the anatomy grid stacks (plan above the diagram,
 expansion cone hidden) and diagrams stop scaling down — they render at natural
@@ -568,6 +570,35 @@ the bars (~200 ms). `route(t, mode)` / `copies(experts)` / `simulate(n, mode)` a
 `[data-cur-ib]`, `[data-cur-nv]`, `rect[data-expert]`, `path[data-ib=<node>]`,
 `path[data-nv=<node>:<gpu>]`, `rect[data-bar=<k>]` with `data-share`,
 `[data-mean=ib|nv]` with `data-true` (tests/epsim.js).
+
+## `<dsv3-mesh>` — who our GPU gathers parameters from (src/mesh.js, post 03 draft)
+
+DSv3's 2,048 GPUs as 32 rows (EP groups) × 8 node boxes × 8 GPU cells — the
+expert mesh, EFSDP 32 (row index) × EP 64 (along a row); the non-expert mesh
+flattens it into one FSDP 2,048 axis. The knob groups its buttons by mesh
+(non-expert: `fsdp`; expert: `ep` · `efsdp`; one radio across both). Our
+GPU (EP group 12, node 5, local rank 3) blue and outlined, its node box
+outlined. Darkness = in the group, graded by how the bytes reach us: ink
+= direct IB peer, dark grey = direct NVLink peer, mid grey = through a peer;
+white = not in the group. `ep`: the MoE all-to-all's group, our row — 7
+node-mates, 7 IB peers (our local rank on the group's other nodes), the
+other 49 through them. `fsdp`: the non-expert parameters sharded over all
+2,048 — our 7 node-mates, the 255 GPUs with our local rank (IB peers, 1/8
+of the bytes after the NVLink stage), everyone else through them. `efsdp`: our expert
+slice's 32 copies are our column, one per EP group and none on our node —
+31 IB peers, everything else white. A readout line and a fixed legend
+(every view's swatches) sit below the grid; the tip names the GPU under the
+pointer (global index, node, local rank, EP group and rank, its role).
+
+| attr | kind | values | meaning |
+|---|---|---|---|
+| — | state | `ep` · `fsdp` (default) · `efsdp` | the mesh axis |
+| state | | `#m:<id>={v}` | URL hash, when the element has an id |
+
+A flip tweens every cell's fill (~200 ms). `role(view, row, node, rank)`,
+`OURS`, `ROWS`/`NODES`/`GPUS` are node-importable; test affordances:
+`[data-knob=view] [data-v]`, `rect[data-role=ours|ib|nv|grp|out]`,
+`rect[data-node=ours]`, `[data-readout]` (tests/mesh.js).
 
 ## `<dsv3-epscale>caption</dsv3-epscale>` — EP ÷ compute up the ladder (src/epscale.js, studies/scratch-04.html)
 
