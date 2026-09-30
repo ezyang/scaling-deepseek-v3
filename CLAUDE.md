@@ -24,8 +24,11 @@ generality.
   them after visual changes to those widgets (not battery-enforced).
 - Shipping a new post: uncomment its entry in BOTH studies/series.js
   (`SERIES` — drives the prev/next cards, the "post N of M" strip, and
-  which pages stamp.mjs stamps) and index.html's posts list. The two must stay in step; tests/seriesnav*.js
-  pin the links.
+  which pages stamp.mjs stamps) and index.html's posts list. The two must
+  stay in step; tests/seriesnav*.js pin the links. Also give the post a
+  static `<nav class="series-strip">` as the first child of `<main>` (copy
+  02's): series.js rewrites its text, but the static copy reserves the line
+  so the page doesn't shove down when modules load.
 
 ## Testing (run after any renderer change)
 

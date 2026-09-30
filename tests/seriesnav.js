@@ -13,4 +13,6 @@ const { SERIES } = await import('/studies/series.js');
 const me = SERIES.find(p => location.pathname.endsWith('/' + p.href));
 T.check('manifest title ≡ page title ≡ h1', me.title === document.title
   && me.title === document.querySelector('h1').textContent, `${me.title} vs ${document.title}`);
+const raw = await (await fetch(location.pathname)).text();
+T.check('strip ships as static markup (no load-time page shove)', /<main>\s*<nav class="series-strip">/.test(raw), '');
 T.done();
