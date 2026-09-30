@@ -41,6 +41,20 @@ T.check('m sticks across a ZeRO flip', layer().mb === 4 && ro('mb') === 'of 2 se
 const svgTxt = () => layer().querySelector('.lv-scroll svg').outerHTML.replace(/<!---->/g, '');
 const patched = svgTxt(); layer().render();
 T.check('patched svg == full rebuild', svgTxt() === patched, `${patched.length} vs ${svgTxt().length}`);
+// the chips' reserved rows reflow in their own phase: per-frame svg heights
+// move monotonically through intermediate values, and the final render
+// doesn't snap (grow = open then pour; shrink = pour then close)
+const heights = async (m) => {
+  const hs = [], o = layer().render.bind(layer());
+  layer().render = (...a) => { const r = o(...a); hs.push(+layer().querySelector('.lv-scroll svg').getAttribute('height')); return r; };
+  await choose('mb', m); layer().render = o;
+  return hs;
+};
+for (const [m, dir] of [[1, 1], [4, -1]]) {
+  const hs = await heights(m), mono = hs.every((h, i) => !i || (h - hs[i - 1]) * dir >= 0);
+  const mid = new Set(hs).size, snap = hs.at(-1) - hs.at(-2);
+  T.check(`m → ${m}: height ${dir > 0 ? 'opens' : 'closes'} smoothly, no end snap`, mono && mid >= 5 && snap === 0, hs.join(' '));
+}
 await choose('pp', 8);
 T.check('PP8 again: re-defaults to one sequence each', layer().mb === 60, layer().mb);
 [...host().querySelectorAll('button')].find((b) => b.textContent === 'reset all').click(); await T.tick(700);

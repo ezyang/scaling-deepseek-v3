@@ -1014,15 +1014,16 @@ export class Dsv3Layer extends HTMLElement {
   // deterministic 12-frame ease-out loop (~200 ms, timer-driven so it's
   // steady under headless/virtual time). onFrame(t) mutates the tween state,
   // then the widget re-renders; done() clears it.
-  _frames(onFrame, done) {
+  _frames(onFrame, done, stretch = 1) {
     // 12 frames (~200 ms) for knob twiddling; hosts that NARRATE a change
-    // (the beat deck) set _tweenFrames higher so the pour reads as a story
-    const FRAMES = this._tweenFrames ?? 12; let f = 0;
+    // (the beat deck) set _tweenFrames higher so the pour reads as a story;
+    // a two-phase tween stretches it (onFrame's 2nd arg = raw progress)
+    const FRAMES = Math.round((this._tweenFrames ?? 12) * stretch); let f = 0;
     const gen = this._frameGen = (this._frameGen ?? 0) + 1;
     // the fit chart tweens as a LAYOUT BLEND: from whatever is on screen at
     // this instant (mid-tween retargets included) to the new state's layout
     if (this._fitL) this._ftween = { L0: this._fitL, t: 0 };
-    onFrame(0);
+    onFrame(0, 0);
     // paint t=0 NOW: between starting a tween and the first timer tick the
     // DOM may hold some other synchronously-rendered state (the deck renders
     // the baseline to build its pin) — one visible beat of it is a flash
@@ -1035,7 +1036,7 @@ export class Dsv3Layer extends HTMLElement {
       if (this._frameGen !== gen) return;   // superseded by a newer tween
       f++; const p = Math.min(1, f / FRAMES);
       if (this._ftween) this._ftween.t = p;   // RAW progress: the blend eases per phase
-      onFrame(ease(p));
+      onFrame(ease(p), p);
       this.render(); this.changed(false);     // linked widgets tween along
       if (p < 1) setTimeout(step, 16);
       else { this._ftween = undefined; done(); this.render(); this.changed(true); }
@@ -1209,8 +1210,25 @@ export class Dsv3Layer extends HTMLElement {
     this._syncMb();
     this.changed(true);
     const kindOf = (S) => ppStage(Math.min(S.stage, S.pp - 1), S.pp, S.vpp, S.fold, S.layout).moe ? 'moe' : 'dense';
-    if (kindOf(prev) !== kindOf(this._snapLocal())) { this.render(); return; }
-    this._frames((t) => { this._vtween = { t, prev }; }, () => { this._vtween = undefined; this._svgPatchOnce = true; });
+    const now = this._snapLocal();
+    if (kindOf(prev) !== kindOf(now)) { this.render(); return; }
+    // the activation chips' reserved rows reflow in their OWN phase (r: the
+    // reservation's progress old → new), so the layout never snaps: growing
+    // chips open their space, then pour in; shrinking ones pour out, then
+    // close up. The pour keeps its frames; the reflow adds RS of the tween.
+    const dA = this.showActs && !this._ctl.quant ? Math.sign(this._actsOf(now) - this._actsOf(prev)) : 0;
+    const RS = 1 / 3, ph = (p, a, b) => fitEase(Math.min(1, Math.max(0, (p - a) / (b - a))));
+    this._frames((t, p) => {
+      this._vtween = !dA ? { t, prev, r: 1 }
+        : dA > 0 ? { t: ph(p, RS, 1), prev, r: ph(p, 0, RS) }
+        : { t: ph(p, 0, 1 - RS), prev, r: ph(p, 1 - RS, 1) };
+    }, () => { this._vtween = undefined; this._svgPatchOnce = true; }, dA ? 1 / (1 - RS) : 1);
+  }
+  // activations multiplier: stage blocks (cumulative) × sequences in flight ÷ TP
+  _actsOf(S) {
+    const g = ppStage(Math.min(S.stage, S.pp - 1), S.pp, S.vpp, S.fold, S.layout);
+    return (S.cum ? (this.kind === 'dense' ? g.dense : g.moe) : 1)
+      * inflightOf(S.sched ?? '1f1b', S.stage, S.pp, S.vpp, S.fold, S.layout, this.kind, { a2a: !!S.a2a }) * (S.mbs ?? 1) / (S.tp ?? 1);
   }
   render() {
     this.innerHTML = '';
@@ -2093,7 +2111,7 @@ export class Dsv3Layer extends HTMLElement {
       // the gradient buffer's bytes/param is a config fact (fp32 in 02, bf16 in Megatron's perf recipes)
       const bppOf = (c) => c.prop === 'showGrads' ? (S.gradB ?? 4) : c.bpp;
       return { mult: S.cum ? kmul : 1, eFrac: 1 / S.ep,
-        acts: (S.cum ? kmul : 1) * inflightOf(S.sched ?? '1f1b', S.stage, S.pp, S.vpp, S.fold, S.layout, this.kind, { a2a: !!S.a2a }) * (S.mbs ?? 1) / tp,
+        acts: this._actsOf(S),
         bpp: (c, cls) => tpfOf(cls, tp) * ((S.zero ?? 1) >= c.zthresh ? bppOf(c) / (cls === 'e' ? edp : dp) : bppOf(c)) };
     };
     const W8 = (S, c, cls) => c.prop === 'showWeights' && cls !== 'v' && S.fp8p ? 2.0625 / 2 : 1;
@@ -2792,17 +2810,18 @@ export class Dsv3Layer extends HTMLElement {
       if (!this._ctl.quant) {
         const mA = CONS ? cmult('showActs') : 0;
         if (!mA) return 18;                            // one text line
-        // amber chip squares below the text: reserve their rows (worst case
-        // over the knob tween: the larger of the old and new configuration),
-        // easing with the acts checkbox tween so the gap never pops
-        const chipF = LOCAL
-          ? Math.max(dLoc(Snow).acts, this._vtween ? dLoc(this._vtween.prev).acts : 0)
-          : CUM ? KMUL : 1;
+        // amber chip squares below the text: reserve their rows, easing with
+        // the acts checkbox tween so the gap never pops. Over a knob tween the
+        // rows ease old → new in the tween's reflow phase (_tweenLocal's r;
+        // without one, the larger of the two holds throughout)
         const b = ids.reduce((t, i) => {
           const n2 = anaX.byId[i];   // worst case: the ᵀ dual OR the bf16 phantom edge
           return t + Math.max(n2.outBytes * anaX.mul(i), n2.elems * 2);
-        }, 0) * TOK * chipF;
-        const rows = Math.max(1, Math.ceil(Math.round(b / (PB_UNIT * 2)) / CHIP_ROW));
+        }, 0) * TOK;
+        const rowsOf = (f) => Math.max(1, Math.ceil(Math.round(b * f / (PB_UNIT * 2)) / CHIP_ROW));
+        const V = LOCAL && this._vtween, rN = rowsOf(LOCAL ? dLoc(Snow).acts : CUM ? KMUL : 1);
+        const rP = V ? rowsOf(dLoc(V.prev).acts) : rN;
+        const rows = !V ? rN : V.r == null ? Math.max(rP, rN) : rP + (rN - rP) * V.r;
         return Math.round(18 + (rows * 6 - 2) * mA);
       }
       return 12 + 11 + 2;   // single-line byte squares: one fixed band

@@ -46,6 +46,9 @@ the rest are conventions to uphold when editing the renderer.
    render: the in-box strip band exists in dtype tiers and the bytes lens, so
    static/params boxes are compact (32px, not 38/60). A toggle that must
    change height animates the reflow instead of jumping (the ×N strips tween).
+   Local-lens knobs that resize the activation chips (m, PP, TP, ×N) reflow in
+   a separate phase of the knob tween: growing chips open their rows first,
+   then pour in; shrinking ones pour out, then close (`_tweenLocal`'s `r`).
 9. **One motion rule (fit chart).** The chart renders a pixel-space LAYOUT
    (rows keyed by stable identity); every transition, whatever caused it, is
    `blendFit(on-screen, target, t)`: geometry lerps linearly in pixel space
