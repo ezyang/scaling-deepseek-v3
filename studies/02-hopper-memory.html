@@ -504,16 +504,12 @@
       pickets to below one picket.  This doesn't change any byte totals.
       </li>
       <li><a href="https://github.com/ezyang/scaling-deepseek-v3/commit/d82f3f8">2026-09-29</a>:
-      the final diagram has a new MBs knob, the number of microbatches per step.
-      Previously, the diagram silently assumed one-sequence microbatches even
-      without pipeline parallelism, so turning off PP and going from ZeRO-1 to
-      ZeRO-3 showed the activations of a single sequence, as if you were also
-      willing to re-gather the weights for every microbatch.  Now, without PP we
-      don't assume any microbatching: the busiest GPU's whole local batch (8
-      sequences) goes through in one pass, and you can raise MBs to trade
-      activation memory for more weight gathers.  With PP, the default is still
-      one sequence per microbatch, so the published PP8 numbers don't change.
-      </li>
+      added a new microbatches (MBs) knob to the final diagram.  Previously,
+      if you turned off PP (e.g., to use ZeRO-3 instead), we assumed you would still apply microbatching
+      to reduce activation size.  We now no longer assume this by default:
+      you have to explicitly increase the number of microbatches reduce
+      activation memory usage.  This doesn't affect any of the main article text, but
+      I noticed this oversight when preparing the next post.</li>
     </ul>
 
   </main>
