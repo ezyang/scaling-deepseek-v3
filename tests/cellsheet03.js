@@ -1,13 +1,15 @@
 // @page studies/03-roofline.html
 // 03's static cell sheets behave like 02's <dsv3-sheet>: hovering a formula
 // name shows its cell card; clicking it jumps to (and selects) the row that
-// defines it, across sheets; clicking a row selects it, again clears; a
-// click on a name never pins the card
+// defines it, across sheets (the closing tally's cell column too); clicking
+// a row selects it, again clears; a click on a name never pins the card
 await T.tick(100);
 const at = (el, type, o = {}) => { const q = el.getBoundingClientRect(); el.dispatchEvent(new MouseEvent(type, { bubbles: true, clientX: q.left + 2, clientY: q.top + 2, ...o })); };
 const sheets = [...document.querySelectorAll('.cellsheet')];
 const refs = [...document.querySelectorAll('.cellsheet td.fx b')];
 T.check('every formula name resolves to a defining row', refs.every((b) => b.classList.contains('ref')), refs.filter((b) => !b.classList.contains('ref')).map((b) => b.innerHTML).join(' '));
+const tal = [...document.querySelectorAll('.tally td.fx b')];
+T.check('the closing tally cites a sheet cell on every row', tal.length === 10 && tal.every((b) => b.classList.contains('ref')), tal.filter((b) => !b.classList.contains('ref')).map((b) => b.innerHTML).join(' ') || tal.length);
 // Tc+ = C+ / (GPUs · πbf16): hover GPUs (defined in the first sheet)
 const t2 = [...sheets[1].querySelectorAll('tr')].find((tr) => tr.cells[0]?.innerHTML === 'T<sup>+</sup><sub>c</sub>');
 const g = [...t2.querySelectorAll('td.fx b')].find((b) => b.textContent === 'GPUs');

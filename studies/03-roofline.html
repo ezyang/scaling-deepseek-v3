@@ -46,6 +46,10 @@
     .tally th:last-child, .tally td:last-child { padding-right: 2px; }
     .tally td.n .d { display: inline-block; width: 1.4em; text-align: left; }   /* fixed fraction slot: 8.0 and 7.78 share a decimal point */
     .tally tr.hl td:not(.rs) { background: var(--c-fff8ea); font-weight: 600; }
+    .tally td.fx { font: 11px ui-monospace, monospace; color: var(--c-52514e); }   /* the sheet cell each number comes from */
+    .tally td.fx b { color: var(--c-2a78d6); font-weight: 600; }
+    .tally td.fx b.ref { cursor: pointer; }
+    .tally sup, .tally sub { line-height: 0; font-size: 0.8em; }
     /* static formula sheet in <dsv3-sheet>'s look (02's closing sheet) */
     .cellsheet { max-width: 760px; box-sizing: border-box; margin: 14px 0; font: 12px system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--c-0b0b0b);
       border: 1px solid var(--c-e1e0d9); border-radius: 6px; background: var(--c-fcfcfb); padding: 8px 12px; }
@@ -939,6 +943,26 @@
     reality, but the clarity of a simple model means that we can figure out
     what went wrong (either in the model, or in our implementation.)</p>
 
+    <p>[[AI: Two terms in the tally below don't have a sheet yet.  DeepSeek
+    recomputes the MLA up-projections in backward instead of saving their
+    outputs, which replays those GEMMs' forward.  And ZeRO-1's once-per-step
+    sync has to be repriced for DeepSeek's PP16 layout: each GPU holds one
+    stage, a sixteenth of the parameters, and syncs it only with the 128 GPUs
+    that hold the same stage (16 nodes for the non-experts, 2 replicas of
+    each expert slice).]]</p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">d′<sub>c</sub></td><td>query compression dim</td><td class="vl">1,536</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(architecture)</i></td></tr>
+    <tr><td class="nm">d<sub>c</sub></td><td>KV compression dim</td><td class="vl">512</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(architecture)</i></td></tr>
+    <tr><td class="nm">C<sub>rc</sub></td><td>recompute FLOPs per step</td><td class="vl">418,518,105,996,656,640</td><td class="vl sc ap">4.19 × 10<sup>17</sup></td><td class="vl si ap">419<span class="d"></span><span class="u"> PFLOP</span></td><td class="fx">2 · <b>L</b> · (<b>d′<sub>c</sub></b> · <b>n<sub>h</sub></b> · (<b>d<sub>h</sub></b> + <b>d<sup>R</sup><sub>h</sub></b>) + <b>d<sub>c</sub></b> · <b>n<sub>h</sub></b> · (<b>d<sub>h</sub></b> + <b>d<sub>h</sub></b>)) · <b>D</b> <i>(forward replay: q up to nope + rope, kv up to k + v)</i></td></tr>
+    <tr class="hl"><td class="nm">T<sub>rc</sub></td><td>recompute time per step (s)</td><td class="vl">0.2066274458</td><td class="vl sc ap">2.07 × 10<sup>−1</sup></td><td class="vl si ap">207<span class="d"></span><span class="u"> ms</span></td><td class="fx"><b>C<sub>rc</sub></b> / (<b>GPUs</b> · <b>π<sub>bf16</sub></b>)</td></tr>
+    <tr><td class="nm">V<sup>PP</sup><sub>ne</sub></td><td>IB non-expert params/GPU per move</td><td class="vl">125,373,401.25</td><td class="vl sc ap">1.25 × 10<sup>8</sup></td><td class="vl si ap">125<span class="d"></span><span class="u"> M</span></td><td class="fx"><b>Ψ<sub>ne</sub></b> / <b>PP</b> · (1 − <b>PP</b> / <b>IBDP</b>) <i>(16 nodes hold our stage)</i></td></tr>
+    <tr><td class="nm">V<sup>PP</sup><sub>exp</sub></td><td>IB expert params/GPU per move</td><td class="vl">319,291,392</td><td class="vl sc ap">3.19 × 10<sup>8</sup></td><td class="vl si ap">319<span class="d"></span><span class="u"> M</span></td><td class="fx"><b>Ψ<sub>exp</sub></b> / <b>PP</b> · (1 − <b>PP</b> / <b>EDP</b>) <i>(2 replicas of our slice)</i></td></tr>
+    <tr><td class="nm">V<sup>PP</sup><sub>sync</sub></td><td>ZeRO-1 bytes/GPU per step</td><td class="vl">2,667,988,759.5</td><td class="vl sc ap">2.67 × 10<sup>9</sup></td><td class="vl si ap">2<span class="d">.67</span><span class="u"> GB</span></td><td class="fx">(<b>V<sup>PP</sup><sub>ne</sub></b> + <b>V<sup>PP</sup><sub>exp</sub></b>) · (2 + 4) <i>(BF16 AG + FP32 RS; average stage, the rank with the embedding and head moves more)</i></td></tr>
+    <tr class="hl"><td class="nm">T<sup>PP</sup><sub>sync</sub></td><td>ZeRO-1 time per step (s)</td><td class="vl">0.05335977519</td><td class="vl sc ap">5.34 × 10<sup>−2</sup></td><td class="vl si ap">53<span class="d">.4</span><span class="u"> ms</span></td><td class="fx"><b>V<sup>PP</sup><sub>sync</sub></b> / <b>β<sub>IB</sub></b></td></tr>
+    </table></div>
+
     <p>With publicly available data, we can compare our findings with what
     DeepSeek publicly reported in both their technical report as well as
     their published profiling traces.</p>
@@ -961,16 +985,16 @@
     </ul>
 
     <div class="tally"><table>
-        <thead><tr><th>resource</th><th>what</th><th class="n">theoretical (s)</th><th class="n">effective (s)</th></tr></thead>
+        <thead><tr><th>resource</th><th>what</th><th>cell</th><th class="n">theoretical (s)</th><th class="n">effective (s)</th></tr></thead>
         <tbody>
-        <tr><td class="rs" rowspan="3">tensor cores</td><td>6ND plus the attention core</td><td class="n">7<span class="d">.78</span></td><td class="n">6<span class="d">.69</span></td></tr>
-        <tr><td>recompute (MLA up-projections)</td><td class="n">0<span class="d">.21</span></td><td class="n">0<span class="d">.21</span></td></tr>
-        <tr class="hl"><td>total</td><td class="n">8<span class="d">.0</span></td><td class="n">6<span class="d">.9</span></td></tr>
+        <tr><td class="rs" rowspan="3">tensor cores</td><td>6ND plus the attention core</td><td class="fx"><b>T<sup>+</sup><sub>c</sub></b></td><td class="n">7<span class="d">.78</span></td><td class="n">6<span class="d">.69</span></td></tr>
+        <tr><td>recompute (MLA up-projections)</td><td class="fx"><b>T<sub>rc</sub></b></td><td class="n">0<span class="d">.21</span></td><td class="n">0<span class="d">.21</span></td></tr>
+        <tr class="hl"><td>total</td><td class="fx"><b>T<sup>+</sup><sub>c</sub></b> + <b>T<sub>rc</sub></b></td><td class="n">8<span class="d">.0</span></td><td class="n">6<span class="d">.9</span></td></tr>
         </tbody><tbody>
-        <tr><td class="rs" rowspan="4">IB</td><td>EP dispatch + combine, forward and backward</td><td class="n">5<span class="d">.36</span></td><td class="n">5<span class="d">.92</span></td></tr>
-        <tr><td>PP activations and gradients</td><td class="n">0<span class="d">.28</span></td><td class="n">0<span class="d">.31</span></td></tr>
-        <tr><td>ZeRO-1 gradient reduce-scatter + parameter all-gather</td><td class="n">0<span class="d">.15</span></td><td class="n">0<span class="d">.16</span></td></tr>
-        <tr class="hl"><td>total</td><td class="n">5<span class="d">.8</span></td><td class="n">6<span class="d">.4</span></td></tr>
+        <tr><td class="rs" rowspan="4">IB</td><td>EP dispatch + combine, forward and backward</td><td class="fx"><b>T<sup>+</sup><sub>EP</sub></b></td><td class="n">5<span class="d">.42</span></td><td class="n">5<span class="d">.98</span></td></tr>
+        <tr><td>PP activations and gradients</td><td class="fx"><b>T<sub>PP</sub></b></td><td class="n">0<span class="d">.28</span></td><td class="n">0<span class="d">.31</span></td></tr>
+        <tr><td>ZeRO-1 gradient reduce-scatter + parameter all-gather</td><td class="fx"><b>T<sup>PP</sup><sub>sync</sub></b></td><td class="n">0<span class="d">.05</span></td><td class="n">0<span class="d">.06</span></td></tr>
+        <tr class="hl"><td>total</td><td class="fx"><b>T<sup>+</sup><sub>EP</sub></b> + <b>T<sub>PP</sub></b> + <b>T<sup>PP</sup><sub>sync</sub></b></td><td class="n">5<span class="d">.8</span></td><td class="n">6<span class="d">.4</span></td></tr>
         </tbody>
     </table></div>
 
@@ -1045,7 +1069,7 @@
     compute at the BF16 peak, so no amount of clever overlap could rescue it.  <strong>Conservation</strong> let us price each
     piece without committing to a full parallel layout, and it also tells us
     which side we can negotiate with.  The compute is fixed; the IB time is
-    the product of our choices, and those choices swing it enormously (0.15 s
+    the product of our choices, and those choices swing it enormously (0.05 s
     for ZeRO-1 against 15.4 s for ZeRO-3).  That's why we always try to hide
     communication under compute and never the other way round.
     <strong>Asymptotics</strong> told us which costs matter as models grow:
@@ -1095,7 +1119,7 @@
       if (nm && !def.has(nm)) def.set(nm, tr);
     }
     const rowOf = (b) => def.get(b?.innerHTML);
-    for (const b of document.querySelectorAll('.cellsheet td.fx b')) if (rowOf(b)) b.classList.add('ref');
+    for (const b of document.querySelectorAll('.cellsheet td.fx b, .tally td.fx b')) if (rowOf(b)) b.classList.add('ref');
     const card = (tr) => {
       const [nm, lb, vl, , si, fx] = tr.cells;
       const leaf = !fx.querySelector('b') && fx.children.length === 1 && fx.firstElementChild.tagName === 'I';
@@ -1107,14 +1131,15 @@
     };
     let sel = null, fuse;
     const select = (tr) => { sel?.classList.remove('sel'); sel = tr; tr?.classList.add('sel'); };
-    for (const sheet of document.querySelectorAll('.cellsheet')) {
+    // the closing tally's cell column links into the sheets the same way (its rows don't select)
+    for (const sheet of document.querySelectorAll('.cellsheet, .tally')) {
       attachTip(sheet, (ev) => { const tr = rowOf(ev.target.closest?.('b.ref')); return tr ? card(tr) : null; },
         { parent: document.body, cls: 'cs-tip', pinnable: (ev) => !ev.target.closest('b.ref') });
       sheet.addEventListener('click', (ev) => {
         const tr = rowOf(ev.target.closest?.('b.ref'));
         if (tr) { select(tr); tr.scrollIntoView({ block: 'center' }); return; }
         const row = ev.target.closest?.('tr');
-        if (!row?.querySelector('td')) return;
+        if (!row?.querySelector('td') || !sheet.matches('.cellsheet')) return;
         // a click that ends a drag-select or starts a double-click is a selection gesture, not a row click
         clearTimeout(fuse);
         if (ev.detail > 1 || !getSelection().isCollapsed) return;
