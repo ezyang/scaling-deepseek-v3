@@ -114,7 +114,7 @@ const { blockGraph, analyze, RECOMPUTE_PRESETS, layerWeights } = await import('.
 // to its own params count (the sheet's N sub-rows are written from these)
 {
   const { evalExpr } = await import('../src/cells.js');
-  const num = (d) => d.replace(/[a-zA-Z]\w*/g, (w) => DSV3[w]);
+  const num = (d) => d.replace(/[a-zA-Z]\w*/g, (w) => DSV3[w]).replace(/×/g, '·');   // diagram dims say ×, the formula language ·
   let bad = null;
   for (const kind of ['moe', 'dense']) {
     const lw = layerWeights(kind, DSV3);

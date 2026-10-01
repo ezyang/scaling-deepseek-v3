@@ -484,8 +484,11 @@ heads, no rounding), so DSv3 is exactly s = 1. C = 6·N·D with D = 404·N →
 N = √(C/2424), solved for s by bisection on the family's activated-param
 polynomial (DeepSeek's accounting: no input embedding, head in full).
 
-The plot is a 100%-stacked area over C = 10¹⁹ … 10²⁷ (a second tick row
-gives N): each op class's share of the counted forward + backward FLOPs
+Two linked panels slice the (C, S) plane through one cursor: left, across
+C = 10¹⁹ … 10²⁷ (a second tick row gives N) at the cursor's S; right, across
+S = 512 … 1M (log₂ axis) at the cursor's rung, where only the attention
+core moves. Each panel's caption names the slice it holds fixed; the right
+panel marks DSv3's 4K pretraining S. Each is a 100%-stacked area: each op class's share of the counted forward + backward FLOPs
 (blockGraph's per-op FLOP/token, 3× forward, loss forward-only, no
 recompute) — learned projections ∝ L·d² · router ∝ L·d · lm head ∝ d·V
 (the three whose weights are in N) · attention core ∝ L·d·S · non-matmul
@@ -495,18 +498,26 @@ matmuls. With V fixed, the head dominates the smallest rungs, so 6ND's miss
 is non-monotone: it peaks near 10²⁰ and shrinks from there (12.3% at DSv3,
 5.2% at 10²⁷, S = 4K). The legend, below the plot in two columns (the
 classes outside N, then the 6ND line · the in-N classes), doubles as the
-cursor's breakdown. The widget is exactly the 760px prose column wide (the
+cursor's breakdown. The legend is the crosshair's — the same (C, S) point in both panels.
+The widget is exactly the 760px prose column wide (the
 knob row wraps "held fixed" onto a second line), so margin notes sit beside it.
 The y-axis toggle (% · log · linear) swaps the stack for absolute
-FLOP/token, legend values in FLOP. Log (10⁶ … 10¹³) draws one line per
+FLOP/token, legend values in FLOP. Log (10⁶ … 10¹⁴) draws one line per
 class plus 6N dashed — stacked areas on a log axis would lie (a 12% band is
-0.05 decades). Linear stacks the classes up to a round ceiling over the
-whole C range (5 TFLOP at S = 4K); every rung below ~10²³ lies flat on it.
+0.05 decades). Linear stacks the classes under a CONTINUOUS ceiling, 1.05 × the tallest
+stack over both panels (at DSv3, S = 4K: the S panel's 1M edge, 8.08 TFLOP,
+tops the C panel's 4.06), so it tracks a drag frame by frame and tweens
+with everything else; every rung below ~10²³ lies flat on it. Gridlines are
+levels of 1·2·5 × 10ᵏ, each opaque at ≤ 5 lines under the ceiling and faded
+out by 10, and a line fades in through the 5% headroom as the ceiling rises
+past it: a rescale slides and crossfades lines, never pops one
+(`linTicks(top)` → [value, opacity] pairs, node-importable; the lin view's
+`<g>` carries `data-top`).
 
 | attr | kind | values | meaning |
 |---|---|---|---|
-| `seq` | state | 512 … 131072 | sequence length S (the attention core's only knob) |
-| — | state | log₁₀ C ∈ [19, 27] | the cursor: slider (step 0.01, snaps onto DSv3 within 0.03 decades), press/drag on the plot, or the DeepSeek-V3 preset (lit when exactly there) |
+| `seq` | state | integer 512 … 1048576 | sequence length S (the attention core's only knob): the ± stepper walks the powers of two; press/drag on the S panel is continuous (snaps onto a power of two within 0.04 octaves; an off-grid S shows in the stepper as a transient option, and ± steps to the next power of two) |
+| — | state | log₁₀ C ∈ [19, 27] | the cursor: slider (step 0.01, snaps onto DSv3 within 0.03 decades), press/drag on the C panel, or the DeepSeek-V3 preset (top right; sets C AND S = 4,096, lit only when both are exactly there) |
 | — | state | `share` · `log` · `lin` | the y axis: 100%-stacked shares, per-class FLOP/token lines on log, or stacked FLOP/token on linear (crossfade) |
 | state | | `#l:<id>={c,seq,y}` | URL hash, when the element has an id |
 
@@ -516,7 +527,9 @@ node-importable (goldens `ladder.*`); test affordances:
 `polygon[data-band=<class>]`, `polyline[data-six]`, `g[data-view=share|log|lin]`,
 `polyline[data-line=<class>]`, `polyline[data-six-abs]`, `polygon[data-area=<class>]`, `polyline[data-six-lin]`, `[data-abs=<class>|six]`, `line[data-cursor]`,
 `[data-share=<class>|six]` with `data-true`, `input[data-knob=c]`,
-`[data-knob=seq]`, `[data-knob=preset]`, `[data-knob=y]`, `rect[data-hit]`.
+`[data-knob=seq]`, `[data-knob=preset]`, `[data-knob=y]`, `rect[data-hit=c|s]`,
+`line[data-cursor-s]`; each panel's curves carry `data-x=c|s` (on the
+stack's `<g>` or the polyline itself), C panel first in document order.
 
 ## `<dsv3-mmfig>caption</dsv3-mmfig>` — one token through W, 2 FLOPs per weight (src/mmfig.js, post 03 draft)
 
@@ -560,24 +573,43 @@ count.
 
 | attr | kind | values | meaning |
 |---|---|---|---|
-| — | state | 1 … 100,000 | tokens routed: +1 · +10 · +100 · +1,000 · +10,000, reset → 1 |
+| — | state | 1 … 100,000 | tokens routed (default 1,000): +1 · +10 · +100 · +1,000 · +10,000, reset → 1, redo animation |
 | — | state | `sheet` · `dsv3` | the routing |
 | state | | `#e:<id>={n,m}` | URL hash, when the element has an id |
 
 Every step crossfades the old token's copies into the new one's and slides
-the bars (~200 ms). `route(t, mode)` / `copies(experts)` / `simulate(n, mode)` and
+the bars (~200 ms). On a fresh load (no state in the hash) the widget waits at token 1, and
+its first full view (IntersectionObserver, ≥ 99%) samples to the resting
+1,000 in ~3 s: n = 1000^(f/180), so the dot glides a decade a second along
+the log axis and the tallies move nearly every frame (the bars easing a
+fifth of the way to their shares each frame, so the first tokens' 100% →
+50% → 33% swings slide). The token's ink (blue experts, black IB arrows,
+its header and tally line, the histogram's blue bin and the blue of its
+labels) fades out first and eases back in as token 1,000's at the end, so
+nothing token-specific flickers mid-run. 1,000 tokens under the sheet's
+routing is the default, so the run leaves the hash clean and the page's ↺
+dot off; it plays once per load (reset goes to token 1 by hand), "redo
+animation" replays it from token 1, and any knob interrupts it. Under
+`prefers-reduced-motion` (or without IntersectionObserver) a fresh load
+rests at 1,000 directly. In normal steps the blue bin's labels crossfade
+with its bar too, and a bin both tokens share stays blue. `route(t, mode)` / `copies(experts)` / `simulate(n, mode)` and
 `EXACT` are node-importable (goldens `epsim.*`); test affordances:
-`[data-knob=step|mode] [data-v]`, `[data-token]`,
+`[data-knob=step|anim|mode] [data-v]`, `[data-token]`,
 `[data-cur-ib]`, `[data-cur-nv]`, `rect[data-expert]`, `path[data-ib=<node>]`,
-`path[data-nv=<node>:<gpu>]`, `rect[data-bar=<k>]` with `data-share`,
-`[data-mean=ib|nv]` with `data-true` (tests/epsim.js).
+`path[data-nv=<node>:<gpu>]`, `rect[data-bar=<k>]` with `data-share`, `[data-routed]` (the live count, which runs
+ahead of `[data-token]` during autoplay), `[data-ink]` (the header's fade group), `_view(ratio)` / `_io` (the observer's
+hook and the observer: headless Chrome under virtual time is frame-starved,
+so tests disconnect it and drive the hook),
+`[data-mean=ib|nv]` with `data-true` (tests/epsim.js, tests/epsimauto.js).
 
 ## `<dsv3-mesh>` — who our GPU gathers parameters from (src/mesh.js, post 03 draft)
 
 DSv3's 2,048 GPUs as 32 rows (EP groups) × 8 node boxes × 8 GPU cells — the
 expert mesh, EFSDP 32 (row index) × EP 64 (along a row); the non-expert mesh
 flattens it into one FSDP 2,048 axis. The knob groups its buttons by mesh
-(non-expert: `fsdp`; expert: `ep` · `efsdp`; one radio across both). Our
+(non-expert: `fsdp`; expert: `efsdp` · `ep`; one radio across both); `views`
+narrows an instance to some of them (03 shows `fsdp` and `efsdp,ep` as two
+widgets). A one-view instance keeps the group label but drops the buttons. Our
 GPU (EP group 12, node 5, local rank 3) blue and outlined, its node box
 outlined. Darkness = in the group, graded by how the bytes reach us: ink
 = direct IB peer, dark grey = direct NVLink peer, mid grey = through a peer;
@@ -585,21 +617,150 @@ white = not in the group. `ep`: the MoE all-to-all's group, our row — 7
 node-mates, 7 IB peers (our local rank on the group's other nodes), the
 other 49 through them. `fsdp`: the non-expert parameters sharded over all
 2,048 — our 7 node-mates, the 255 GPUs with our local rank (IB peers, 1/8
-of the bytes after the NVLink stage), everyone else through them. `efsdp`: our expert
+of the bytes, gathered before the NVLink stage), everyone else through them. `efsdp`: our expert
 slice's 32 copies are our column, one per EP group and none on our node —
 31 IB peers, everything else white. A readout line and a fixed legend
-(every view's swatches) sit below the grid; the tip names the GPU under the
-pointer (global index, node, local rank, EP group and rank, its role).
+(every view's swatches; the FSDP-only instance drops 'not in the group', which it never draws) sit below the grid, rows labeled `EP group N`.
+Hovering a GPU draws its route to ours (no tip card: it would cover the
+route; a key sits at the legend's right end): IB an amber curve that leaves
+and enters cells vertically (sideways down our own column), NVLink a green
+bracket hugging our row on the side the IB curve doesn't arrive from.
+`fsdp` grey cells: IB to our node-mate at their local rank, then NVLink to
+us (the hierarchical all-gather's order); `ep` grey cells: dispatch runs
+the other way, IB to our local rank on their node, then NVLink.
 
 | attr | kind | values | meaning |
 |---|---|---|---|
-| — | state | `ep` · `fsdp` (default) · `efsdp` | the mesh axis |
+| `views` | view | comma list of `fsdp` · `efsdp` · `ep` | the views this instance offers, first = default (absent = all three, `fsdp` first) |
+| — | state | one of `views` | the mesh axis |
 | state | | `#m:<id>={v}` | URL hash, when the element has an id |
 
 A flip tweens every cell's fill (~200 ms). `role(view, row, node, rank)`,
 `OURS`, `ROWS`/`NODES`/`GPUS` are node-importable; test affordances:
 `[data-knob=view] [data-v]`, `rect[data-role=ours|ib|nv|grp|out]`,
 `rect[data-node=ours]`, `[data-readout]` (tests/mesh.js).
+
+## `<dsv3-fsdpsched>` — the ZeRO-3 timeline (src/fsdpsched.js, post 03 draft)
+
+A two-layer toy model built from DSv3 MoE layers on one H800 of 2,048
+(EP64, ZeRO-3), at speed of light (BF16 peak 989 TFLOP/s, IB 50 GB/s). Two
+tracks: compute (F, B = 2× F; per token 2 × active params + the causal
+attention core, the page's (6N + C3) ÷ 3 per layer) and InfiniBand (an
+all-gather before each layer's forward and again before its backward, a
+reduce-scatter after its backward). Every gather is one BF16 move of
+the layer as 03's Vne/Vexp cells price it (the non-expert 1/8 hierarchical +
+our whole expert slice, ring factors) — 399.3 MB, 7.99 ms, independent of
+the microbatch; a reduce-scatter moves FP32 gradients, two moves' worth
+(798.7 MB, 16.0 ms). One IB queue served in ready order: a gather is ready when
+the previous compute op starts (prefetch one layer ahead), a reduce-scatter
+when its backward ends. That fixes the compute track; each gather is then
+DRAWN as late as it allows (ending where its consumer starts, or where the
+next collective begins), so the empty IB before it is the slack.
+Reduce-scatters stay as early as possible. Collectives are labelled by layer digit only (the
+fill says AG vs RS) so the card stays prose-width (760px). Idle
+compute is drawn as dashed alert-red "exposed" boxes on the compute track.
+The local batch (8 sequences, the busiest GPU's ⌈15,360 ÷ 2,048⌉) splits
+into m microbatches of 8 ÷ m sequences, each paying its own 6 collectives (8 moves' worth); ONE fixed time
+axis (`T_MAX`, the max over every knob state) so compute is visibly
+conserved while the moves multiply. Readout: step = compute + exposed, IB
+busy. Tip prices the block under the pointer. Above the tracks, a stacked
+memory panel: this GPU's transient bytes over the step. At the bottom,
+preallocated staging buffers held for the whole step (a simplification):
+gathered BF16 weights (AG blue, `LAYER_B`) and unsharded FP32 gradients (RS orange, `GRAD_B`),
+each `STAGE` = 2 whole layers (double-buffered — the schedule never has more
+than two live, and needs both; tests/fsdpsched.js derives this from the
+blocks). On top, saved activations (the bars' amber; each forward ramps its
+stash in, its backward ramps it out; dsv3-fp8 + DSv3 recompute, `ACT_SEQ` per
+sequence per layer). The persistent shards are a flat floor, left off. Its y axis is unlabeled and ONE constant
+(`MEM_MAX`, the max over every knob state = the m 1 peak) shared by every
+instance, so figures compare by eye; a knob flip morphs the curve vertically
+over both schedules' corners.
+
+| attr | kind | values | meaning |
+|---|---|---|---|
+| `m` | int | `1` · `2` · `4` · `8` | pins the microbatch count: a static figure (no knob, no URL state) |
+| — | state | MBs `1` · `2` · `4` · `8` (default) | `[data-knob=m]`, only without `m=` |
+| `bars` | flag | — | the local lens's fit chart (a snapshot `<dsv3-layer>`: ZeRO-3, PP1, EP64, dsv3-fp8, DSv3 recompute) rides below inside the same card (a hairline divider; the layer's own card chrome and margin stripped); the knob drives its `mb` too (`setLocal`, so it tweens with the timeline). The host's min-height covers it (diagramlint) |
+| state | | `#f:<id>={m}` | URL hash, when knobbed and the element has an id |
+
+A flip tweens (~200 ms): blocks keyed by op·layer·microbatch (gathers also
+by the pass they feed: `AG2B:3`) slide, the rest fade. `schedule(mbs)` (sequences per microbatch), `MOVE_B`/`MOVE_S`, `FWD_TOK`, `fwdS`, `T_MAX`, `MS`, `LOCAL`, `ACT_SEQ`, `LAYER_B`, `GRAD_B`, `STAGE`, `MEM_MAX`, `memPts(S)` are
+node-importable; test affordances: `rect[data-k]`, `rect[data-op=F|B|AG|RS|idle]`,
+`polygon[data-mem=0|1|2]` (gather staging · reduce-scatter staging · activations), `[data-readout]` (tests/fsdpsched.js).
+
+## `<dsv3-fsdpcurve>` — comms vs compute by microbatch count (src/fsdpsched.js, post 03 draft)
+
+The whole step on the average GPU (the cells' 7.5 sequences: a layout
+without PP would round the batch to divide evenly), no PP, at speed of light
+with comms fully overlapped, against microbatches per step m on a linear
+axis from 1 to 8 (interpolated; the MBs states 1 · 2 · 4 · 8 are dots, with
+the exposed share of the step above them). Three terms, all derived from the
+model and pinned to 03's cells by tests/fsdpcurve.js: compute `STEP.comp`
+(T⁺c), EP's all-to-alls `STEP.ep` (T⁺EP: they scale with tokens, so flat in
+m; `EP_TOK` = 76,048 B per token per MoE layer per pass), and ZeRO-3's
+per-microbatch collectives `STEP.mb` (Tmb: two BF16 gathers and an FP32
+reduce-scatter of every layer), paid m times — so comms is a straight line. The top panel plots what that
+costs: the exposed share of the step, (comms − compute) ÷ comms, 0 … 70%
+(the scale `<dsv3-ppcurve>` shares, so the two read side by side), a red
+curve over a pale area: 0 up to the crossover `CROSS` (m = 1.23, a hollow
+dot on the axis), then rising. The seconds (EP, Tmb, compute) are in the
+formula's label and the tips.
+Below it, on the same m axis (a separate panel, not a second y axis: the
+two curves' crossing would be an artifact of scaling), the busiest GPU's
+peak memory (8 sequences — the one that has to fit), 0 … 200 GiB, clamped
+with an off-scale label at m = 1: the page's cells at mb = 1 (`MEMB.shards`
+= W1 + G1 + O1, flat, grey; `MEMB.acts1` = A1, ÷ m, amber — so m = 8 equals
+the fit bars' T1) plus the schedule figures' staging buffers
+(`MEMB.staging` = STAGE × (LAYER_B + GRAD_B)), against the H800's 80 GiB (red).
+That line is a SOFT boundary — the CUDA context, NCCL's buffers and
+fragmentation aren't counted — so no crossing is marked: the zone above it
+is tinted (the exposed triangle's pale red, behind the curve) and the tint
+fades out just under the line ("less what isn't counted"); the claim is per
+MBs state: 4 is over (86.62 GiB, labelled), only 8 is under ("only m = 8
+fits", by the 63%). No knobs, no URL state. Tips on every dot (`at(m)` +
+`memAt(m)` breakdown, over/under 80 GiB); off the dots, anywhere in the plot
+snaps to the nearest MBs state (column boundaries at m = 1.5 · 3 · 6 — no
+in-between m is a real configuration) and shows its tip. Whatever is hovered,
+a dashed guide drops from its comms point through its memory point to the
+axis, ringing both (no memory ring at m = 1, off-scale); it starts at the
+point so it never strikes the labels above it. Node-importable: `STEP`, `at(m)`,
+`CROSS`, `EP_TOK`, `MEMB`, `memAt(m)`, `CAP`; test affordances
+`circle[data-m]`, `circle[data-mm]`, `circle[data-cross]`, `text[data-pct]`,
+`text[data-only]`, `polygon[data-area=exposed|acts]`,
+`rect[data-area=flat]`, `rect[data-over]`, `rect[data-soft]`,
+`polyline[data-idle]`, `line[data-cap]`, `g[data-guide]`
+(`display` none/inline; `circle[data-g=t|m]`).
+
+## `<dsv3-ppcurve>` — the pipeline bubble by microbatch count (src/fsdpsched.js, post 03 draft)
+
+`<dsv3-fsdpcurve>`'s pipelined sibling: a subclass, with the same two
+panels, scales, hover snapping and guide, for EP64 · ZeRO-1 · PP8 under
+DualPipeV (`PPR`, `PDP` = 256; the cells' and 02's layout, per GPU the same
+layers, stashes and bubble as DSv3's published 16-stage DualPipe). Each
+pipeline's `PLB` = 60 sequences split m ways; the axis runs from `PMIN` =
+2 × PP = 16 (DualPipeV's minimum) to 60, and the MBs states are `PMS` = 20 ·
+30 · 60 (localmodel's `mbChoices`). Comms are flat in m and under compute
+at every m (`PSTEP`: EP = T⁺EP; PP's BF16 sends across the 15 chunk
+boundaries both ways, on the average rank; ZeRO-1's once-per-step FP32 RS +
+BF16 AG over IB). So the only idle time is the bubble, `atP(m).bubble` =
+compute × (PP − 1)/(3m) (DualPipeV's 14F out of 6mF, with the page's F&B ≈
+3F and W ≈ F). The top panel plots its share of the step, (PP − 1) ÷ (3m +
+PP − 1), on the FSDP chart's 0 … 70% scale. Dashed over it (no area,
+hollow dots), plain 1F1B on the same 8 ranks: `atP(m).bubble1` = compute ×
+(PP − 1)/m, three times DualPipeV's, its share (PP − 1) ÷ (m + PP − 1) of
+`step1` (1F1B at m = 60 idles exactly DualPipeV's m = 20). Its comms stay
+hidden too, which flatters it (a real 1F1B, with no paired microbatch,
+exposes the all-to-alls); the panel says so (`[data-flatter]`). The memory
+panel is DualPipeV's (the schedules differ by PP vs PP + ½ microbatches in
+flight). Memory: the cells' T1 on the busiest rank
+(`MEMP.rank` = 1, 8 MoE layers: shards `MEMP.shards`, activations
+`MEMP.actsSeq` per sequence per microbatch × 60/m); only m = 60 is under
+80 GiB. Time uses the average GPU like its sibling, so stage imbalance is
+unmodeled. Node-importable: `PPR`, `PDP`, `PLB`, `PMIN`, `PMS`, `PSTEP`,
+`atP(m)`, `MEMP`, `memP(m)`; test affordances are as in
+`<dsv3-fsdpcurve>`, with `polygon[data-area=bubble]` for the area, and for
+1F1B `polyline[data-idle1]`, `circle[data-m1]`, `text[data-pct1]` and the
+guide's second ring `circle[data-g=t1]` (tests/ppcurve.js).
 
 ## `<dsv3-epscale>caption</dsv3-epscale>` — EP ÷ compute up the ladder (src/epscale.js, studies/scratch-04.html)
 

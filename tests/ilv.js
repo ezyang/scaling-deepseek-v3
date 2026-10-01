@@ -21,8 +21,8 @@ T.check('P6 (MoE) = 60/29 on rank 0; P6d (dense) = 4; P10 = 18 chunk-stashes (a2
   `${c.get('P6')} ${c.get('P6d')} ${c.get('P10')}`);
 T.check('Megatron conventions from the page attrs: bf16 grad buffer, MXFP8 params resident in both orientations',
   c.byId.get('G1').label.includes('bf16') && c.get('F1') === 1 && c.byId.get('W2').expr.includes('1/32') && l().a2a === true, c.byId.get('G1').label);
-T.check('activation formulas wear the per-kind factor (L1 × P6) / (L2 × P6d), never a trailing × P6',
-  c.cells.some((x) => /^A\d/.test(x.id) && /\(L1 × P6\)/.test(x.expr ?? '')) && !c.cells.some((x) => /× P7 × P6/.test(x.expr ?? '')), '');
+T.check('activation formulas wear the per-kind factor (L1 · P6) / (L2 · P6d), never a trailing · P6',
+  c.cells.some((x) => /^A\d/.test(x.id) && /\(L1 · P6\)/.test(x.expr ?? '')) && !c.cells.some((x) => /· P7 · P6/.test(x.expr ?? '')), '');
 const barTxt = () => [...l().querySelectorAll('.lv-bar text')].map((t) => t.textContent).join('|');
 T.check('fit chart: 276 GiB (GB300) cap, activations ×2.07mb, bf16 gradients, ruler ×2 (PP) ×32 (EP) ×256 (GPUs)',
   barTxt().includes('276 GiB (GB300)') && barTxt().includes('activations ×2.07mb') && barTxt().includes('gradients (bf16)')

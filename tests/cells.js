@@ -18,10 +18,10 @@ T.check('click pins (refs go live)', tip().classList.contains('pinned')
   && tip().querySelector('.cellref[data-cell="A8"]'), '');
 tip().querySelector('.cellref[data-cell="A8"]').dispatchEvent(new MouseEvent('click', { bubbles: true }));
 await T.tick(30);
-T.check('drilling A8 pushes its entry below (rates × P7 × P6)',
+T.check('drilling A8 pushes its entry below (rates · P7 · P6)',
   tip().querySelectorAll('.lv-cellent').length === 2
   && tip().textContent.includes('dispatched tokens')
-  && /× P7 × P6/.test(tip().textContent), tip().textContent.slice(-120));
+  && /· P7 · P6/.test(tip().textContent), tip().textContent.slice(-120));
 
 const p6ref = [...tip().querySelectorAll('.lv-cellent[data-k="1"] .cellref')].find(s => s.dataset.cell === 'P6');
 p6ref.dispatchEvent(new MouseEvent('click', { bubbles: true })); await T.tick(30);
@@ -45,7 +45,7 @@ T.check('acts sub-row carries its cell', pv?.dataset.cell === 'A8', pv?.dataset.
 mm(pv); await T.tick(30);
 T.check('bucket hover: 0/1 recompute choice × dims × the B• precision input',
   tip().textContent.includes('dispatched tokens')
-  && tip().textContent.includes('= R8 × (L1 × (8×7168 × B8)) × P7 × P6 = '), tip().textContent.slice(0, 130));
+  && tip().textContent.includes('= R8 · (L1 · (8·7168 · B8)) · P7 · P6 = '), tip().textContent.slice(0, 130));
 md([...layer().querySelectorAll('.lv-bar g[data-prop]')][3]); await T.tick(700);   // un-solo
 // the parents are accordion SUMS
 mm(val('0')); await T.tick(30);
@@ -73,7 +73,7 @@ T.check('norms broken out individually (+ their rstds as own rows)', rowOf('A3')
   && rowOf('A3a')?.includes('norm1 out') && rowOf('A3b')?.includes('rstd (fp32)')
   && rowOf('A3c')?.includes('norm2 out'), rowOf('A3'));
 T.check('an aux is gated by ITS TENSOR’s kept? (rstd reads R3c; no R3d row)',
-  rowOf('A3d')?.includes('R3c ×') && !rows().some(r => r.querySelector('.nm')?.textContent === 'R3d'), rowOf('A3d'));
+  rowOf('A3d')?.includes('R3c ·') && !rows().some(r => r.querySelector('.nm')?.textContent === 'R3d'), rowOf('A3d'));
 T.check('alternate names: dispatched = routed experts’ input, norm2 out = shared expert input',
   rowOf('A8')?.includes('(routed experts’ input)') && rowOf('A3c')?.includes('(shared expert input)'), '');
 T.check('residual broken out (x0 pinned / x1)', rowOf('A2')?.includes('A2a + A2b')
@@ -93,7 +93,7 @@ T.check('residual broken out (x0 pinned / x1)', rowOf('A2')?.includes('A2a + A2b
   await rp('dsv3');
 }
 T.check('low precision is legible: attn-out references B6a (e5m6 1.5), the lse split into its own row',
-  rowOf('A6a')?.includes('128×128 × B6a') && rowOf('B6a')?.includes('1.5 B/elem')
+  rowOf('A6a')?.includes('128·128 · B6a') && rowOf('B6a')?.includes('1.5 B/elem')
   && rowOf('A6b')?.includes('lse (fp32)'), rowOf('A6a')?.slice(0, 120));
 // the STABILITY AUDIT: toggling model inputs must never change a formula —
 // only input VALUES move (Z1→S•, F1, recipe/ᵀ/E5M6→B•). Capture every

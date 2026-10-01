@@ -4,7 +4,7 @@ await T.tick(400);
 const cells = sheet._layer._cells({ simplify: false, noScale: false });
 const xml = sheet._sheetXml(cells);
 T.check('formulas translate ids to C-addresses', /<f>C\d+ \+ C\d+ \+ C\d+ \+ C\d+<\/f>/.test(xml), xml.match(/<f>[^<]{0,60}/)?.[0]);
-T.check('× and ≥ translate', xml.includes('*') && xml.includes('&gt;=') === false ? xml.includes('>=') || true : true, '');
+T.check('· and ≥ translate', xml.includes('*') && xml.includes('&gt;=') === false ? xml.includes('>=') || true : true, '');
 const t1row = xml.match(/<f>C\d+\+?[^<]*C\d+ \+ C\d+ \+ C\d+<\/f>/);
 T.check('the S-group indicator becomes Excel boolean arithmetic',
   /\(C\d+ >= 3\) \* \(C\d+ - 1\) \+ 1/.test(xml.replace(/&gt;/g, '>')), xml.replace(/&gt;/g, '>').match(/\(C\d+ >=[^<]{0,30}/)?.[0]);

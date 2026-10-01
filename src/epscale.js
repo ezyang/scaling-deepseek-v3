@@ -4,7 +4,7 @@
 // token and layer EP moves R·h copies (FP8 + its 1×128 scales, then BF16
 // back) while compute grows as h²: the ratio falls as 1/s ∝ C^(−1/6), except
 // at the small end where the fixed-vocabulary lm head pads 6N. At DSv3 this is
-// exactly 03's T4 ÷ T1. The element's text content becomes the caption.
+// exactly 03's T+EP ÷ Tc. The element's text content becomes the caption.
 import { ladderPoint, LOG_C_DSV3 } from './ladder.js';
 import { HARDWARE } from './model.js';
 import { C } from './theme.js';

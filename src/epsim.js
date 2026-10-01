@@ -17,7 +17,7 @@ const EPN = GPUS * EPG;                            // experts per node (32)
 // the sheet routing's exact means: IB 4 × 7/8; NVLink 4 nodes × 7 non-landing GPUs × P(a given
 // GPU holds one of the 8 | all 4 nodes hold one), by inclusion–exclusion
 export const EXACT = { ib: 3.5, nv: 61477381 / 9417862 };
-export const MAX = 100000;
+export const MAX = 100000, REST = 1000;   // REST: the default, where autoplay lands
 const STEPS = [1, 10, 100, 1000, 10000];
 const MODES = ['sheet', 'dsv3'];
 
@@ -97,6 +97,7 @@ const my = (v) => MY1 - (Math.max(YLO, Math.min(YHI, v)) - YLO) / (YHI - YLO) * 
 const fmt = (n) => n.toLocaleString('en-US');
 const lerp = (a, b, t) => a + (b - a) * t;
 const ease = (p) => 1 - (1 - p) ** 3;
+const mix = (x, y, w) => '#' + [1, 3, 5].map((i) => Math.round(lerp(parseInt(x.slice(i, i + 2), 16), parseInt(y.slice(i, i + 2), 16), w)).toString(16).padStart(2, '0')).join('');
 
 const CSS = `
 dsv3-epsim { display: block; margin: 14px 0 22px; }
@@ -119,7 +120,11 @@ class Dsv3Epsim extends (typeof HTMLElement === 'undefined' ? class {} : HTMLEle
   connectedCallback() {
     const st = this.id ? readState('e:' + this.id) : null;
     this.mode = MODES.includes(st?.m) ? st.m : 'sheet';
-    this._replay(Math.max(1, Math.min(MAX, Math.floor(+st?.n || 1))));
+    // a fresh load (no state in the hash) samples from token 1 to the resting 1,000 on its first
+    // full view; that resting state is the default, so the run leaves the hash (and the page's ↺) clean
+    const still = typeof IntersectionObserver === 'undefined' || matchMedia('(prefers-reduced-motion: reduce)').matches;
+    this._armed = !st && !still;
+    this._replay(st ? Math.max(1, Math.min(MAX, Math.floor(+st.n || 1))) : this._armed ? 1 : REST);
     const style = document.createElement('style'); style.textContent = CSS;
     this._root = el('div', 'es');
     this._top = el('div', 'top');
@@ -129,8 +134,11 @@ class Dsv3Epsim extends (typeof HTMLElement === 'undefined' ? class {} : HTMLEle
     this.append(style, this._root);
     this._buildKnobs();
     this.render();
-    addEventListener('dsv3-theme', () => this.render());
+    addEventListener('dsv3-theme', () => this._auto || this.render());   // autoplay redraws every frame anyway
+    if (this._armed)
+      (this._io = new IntersectionObserver((es) => this._view(es.at(-1).intersectionRatio), { threshold: 0.99 })).observe(this);
   }
+  _view(ratio) { if (ratio >= 0.99 && this._armed) this.autoplay(); }   // tests drive this (headless IO is frame-starved and late)
   _replay(n) {
     this.T = { n: 0, ib: 0, nv: 0, hist: [0, 0, 0, 0, 0], trace: [] };
     for (let t = 1; t <= n; t++) this.cur = add(this.T, route(t, this.mode));
@@ -144,6 +152,7 @@ class Dsv3Epsim extends (typeof HTMLElement === 'undefined' ? class {} : HTMLEle
     };
     this._top.append(
       grp('route more tokens', 'step', [...STEPS.map((k) => [k, '+' + fmt(k), () => this.step(k)]), ['reset', 'reset', () => this._set(this.mode, 1)]]),
+      grp('\u00a0', 'anim', [['redo', 'redo animation', () => this.redo()]]),
       grp('routing', 'mode', [['sheet', 'the sheet', () => this._set('sheet')], ['dsv3', 'DeepSeek-V3', () => this._set('dsv3')]]));
     this._top.querySelector('[data-v="sheet"]').title = 'exactly 4 of the 8 nodes, uniformly; the 8 experts uniform over their 128, each node holding at least one';
     this._top.querySelector('[data-v="dsv3"]').title = 'node-limited top-8: the top 4 of 8 nodes by the sum of each node\'s two best affinities, then the top 8 experts among those nodes; affinities iid uniform (the load-balancing bias ignored)';
@@ -152,7 +161,7 @@ class Dsv3Epsim extends (typeof HTMLElement === 'undefined' ? class {} : HTMLEle
   _sync() {
     for (const b of this._top.querySelectorAll('[data-knob="step"] button')) b.disabled = b.dataset.v === 'reset' ? this.T.n === 1 : this.T.n + +b.dataset.v > MAX;
     for (const b of this._top.querySelectorAll('[data-knob="mode"] button')) b.classList.toggle('on', b.dataset.v === this.mode);
-    if (this.id) writeState('e:' + this.id, { n: this.T.n, m: this.mode });
+    if (this.id && !this._armed && !this._auto) writeState('e:' + this.id, { n: this.T.n, m: this.mode }, `{"n":${REST},"m":"sheet"}`);
   }
   step(k) {
     if (this.T.n + k > MAX) return;
@@ -187,11 +196,43 @@ class Dsv3Epsim extends (typeof HTMLElement === 'undefined' ? class {} : HTMLEle
       this._animate(from);
       return;
     }
+    if (this._auto) { this._snap(); this._sync(); }
     this.render();
   }
-  _snap() { return { cur: this.cur, share: this.T.hist.map((h) => h / this.T.n) }; }
+  // ~3 s from token 1 to 1,000, n = 1000^(f/N) so the dot glides a decade a second along the log
+  // axis. The token's ink (blue experts, black IB arrows, its header, the histogram's blue bin)
+  // fades out first and eases back in as token 1,000's at the end: nothing token-specific flickers
+  // mid-run. The bars ease toward their shares (a fifth of the way a frame) so the early tokens'
+  // big swings (100% → 50% → 33% …) slide instead of jumping. Any knob interrupts it.
+  autoplay(s = this._snap()) {
+    const N = 180, FADE = 12, gen = this._gen = (this._gen ?? 0) + 1;
+    const A = this._auto = { n: s.n, bars: s.share, op: s.a };   // the token drawn, its ink's opacity
+    let f = 0, last = null;
+    this.cur = s.cur; this._msg = null;
+    const tick = () => {
+      if (this._gen !== gen) return;
+      f++;
+      while (this.T.n < Math.min(REST, Math.round(REST ** (f / N)))) last = add(this.T, route(this.T.n + 1, this.mode));
+      if (f === N) { this.cur = last; A.n = this.T.n; }
+      A.op = f < N ? s.a * (1 - ease(Math.min(1, f / FADE))) : ease(Math.min(1, (f - N) / FADE));
+      let gap = 0;
+      this.T.hist.forEach((h, k) => { A.bars[k] += (h / this.T.n - A.bars[k]) * 0.2; gap = Math.max(gap, Math.abs(h / this.T.n - A.bars[k])); });
+      if (f >= N + FADE && gap < 5e-4) { this._auto = null; this._sync(); }   // settled: the last frame draws the exact shares
+      this._draw(null, 1, this._auto && A.bars, this._auto ? A.op : 1);
+      if (this._auto) setTimeout(tick, 16);
+    };
+    setTimeout(tick, 16);
+  }
+  redo() { const s = this._snap(); this._replay(1); this.autoplay(s); }
+  // what's drawn now, for a tween to start from; it stops an autoplay (and disarms the first-view one)
+  _snap() {
+    const A = this._auto, s = { cur: this.cur, n: A?.n ?? this.T.n, a: A?.op ?? 1, share: A?.bars.slice() ?? this.T.hist.map((h) => h / this.T.n) };
+    this._auto = null; this._armed = false;
+    return s;
+  }
   // ~200 ms: the old token's copies fade out as the new one's fade in, the bars slide
   _animate(from) {
+    this._auto = null;
     const N = 12; let f = 0;
     const gen = this._gen = (this._gen ?? 0) + 1;
     const tick = () => {
@@ -202,8 +243,9 @@ class Dsv3Epsim extends (typeof HTMLElement === 'undefined' ? class {} : HTMLEle
     };
     setTimeout(tick, 16);
   }
-  render() { this._gen = (this._gen ?? 0) + 1; this._draw(null, 1); }
-  _draw(from, t) {
+  render() { this._auto = null; this._gen = (this._gen ?? 0) + 1; this._draw(null, 1); }
+  // bars: the histogram's drawn shares, when not lerped by t; a: the token's ink opacity (autoplay)
+  _draw(from, t, bars, a = from ? t : 1) {
     const B = [], T = this.T, f1 = (v) => v.toFixed(1);
     const mk = (id, c, m) => `<marker id="${id}" viewBox="0 0 8 8" refX="8" refY="4" markerWidth="${m}" markerHeight="${m}" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="${C(c)}"/></marker>`;
     B.push(`<defs>${mk('es-ib', '#0b0b0b', 6)}${mk('es-nv', '#898781', 5)}</defs>`);
@@ -216,8 +258,9 @@ class Dsv3Epsim extends (typeof HTMLElement === 'undefined' ? class {} : HTMLEle
       for (let g = 0; g < GPUS; g++) B.push(this._cell(n, g, null));
     }
     // the routed token's copies: the old one fading out, the new one in
-    if (from?.cur && t < 1) B.push(`<g opacity="${(1 - t).toFixed(3)}">${this._copies(from.cur, false)}</g>`);
-    B.push(`<g opacity="${from ? t.toFixed(3) : 1}">${this._copies(this.cur, true)}</g>`);
+    const ow = from?.a ?? 1;   // the old token's ink, if an autoplay was interrupted mid-fade
+    if (from?.cur && t < 1 && ow > 0) B.push(`<g opacity="${((1 - t) * ow).toFixed(3)}">${this._copies(from.cur, false)}</g>`);
+    if (a > 0) B.push(`<g opacity="${a.toFixed(3)}">${this._copies(this.cur, true)}</g>`);
     // our GPU, outlined on top
     B.push(`<rect x="${cellX(0)}" y="${rowY(0)}" width="${CW}" height="${CH}" rx="2" fill="none" stroke="${C('#0b0b0b')}" stroke-width="1.5"/>`);
     const ly = H - 4;
@@ -227,22 +270,26 @@ class Dsv3Epsim extends (typeof HTMLElement === 'undefined' ? class {} : HTMLEle
     B.push(`<path d="M276 ${ly - 4} H294" stroke="${C('#898781')}" stroke-width="1.2" marker-end="url(#es-nv)"/><text class="dims" x="298" y="${ly - 1}">NVLink</text>`);
     // this token
     const c = copies(this.cur), remote = [...c.nodes.keys()].filter((n) => n).sort((a, b) => a - b);
-    B.push(`<text class="hd" data-token="${T.n}" x="${RX}" y="${TOP - 26}">token ${fmt(T.n)}</text>`);
+    if (!from && a < 1) B.push(`<g data-ink opacity="${a.toFixed(3)}">`);
+    B.push(`<text class="hd" data-token="${this._auto?.n ?? T.n}" x="${RX}" y="${TOP - 26}">token ${fmt(this._auto?.n ?? T.n)}</text>`);
     B.push(`<text x="${RX}" y="${TOP - 10}"><tspan class="num" data-cur-ib="${c.ib}">${c.ib}</tspan> IB ${c.ib === 1 ? 'copy' : 'copies'}${remote.length ? ` (node${remote.length > 1 ? 's' : ''} ${remote.join(', ')})` : ''} · <tspan class="num" data-cur-nv="${c.nv}">${c.nv}</tspan> NVLink ${c.nv === 1 ? 'copy' : 'copies'}</text>`);
+    if (!from && a < 1) B.push('</g>');
     if (this._msg) B.push(`<text data-seek-msg x="${RX}" y="${TOP + 12}" style="fill: var(--c-2a78d6)">${this._msg}</text>`);
     // histogram of IB copies per token, shares on a fixed 0 … 100% scale; this token's bin in blue
     // (crossfading from the previous token's); each column is a click target (seek)
     const kOld = from?.cur && t < 1 ? copies(from.cur).ib : -1;
-    B.push(`<text class="dims" x="${RX}" y="${HB - HH - 22}">IB copies per token, share of the ${fmt(T.n)} token${T.n > 1 ? 's' : ''} routed</text>`);
+    B.push(`<text class="dims" data-routed="${T.n}" x="${RX}" y="${HB - HH - 22}">IB copies per token, share of the ${fmt(T.n)} token${T.n > 1 ? 's' : ''} routed</text>`);
     T.hist.forEach((h, k) => {
-      const s = lerp(from ? from.share[k] : h / T.n, h / T.n, t), x = RX + 22 + k * 62, bh = s * HH;
-      const op = k === c.ib ? (from ? t : 1) : k === kOld ? 1 - t : 0, hi = k === c.ib ? ` data-cur="1" style="fill: var(--c-2a78d6); font-weight: 600"` : '';
+      const s = bars ? bars[k] : lerp(from?.share?.[k] ?? h / T.n, h / T.n, t), x = RX + 22 + k * 62, bh = s * HH;
+      // the blue bin's overlay and its labels' blue ease together; a bin both tokens share stays blue
+      const op = k === c.ib ? (k === kOld ? lerp(ow, 1, t) : a) : k === kOld ? (1 - t) * ow : 0;
+      const hi = (base) => `${k === c.ib ? ' data-cur="1"' : ''}${op > 0 ? ` style="fill: ${mix(C(base), C('#2a78d6'), op)}; font-weight: ${Math.round(400 + 200 * op)}"` : ''}`;
       B.push(`<g data-seek="${k}"><rect class="hit" x="${x - 6}" y="${HB - HH - 14}" width="56" height="${HH + 32}" rx="3" fill="transparent"/>`);
       B.push(`<rect data-bar="${k}" data-share="${h / T.n}" x="${x}" y="${f1(HB - bh)}" width="44" height="${f1(bh)}" fill="${C('#52514e')}"/>`);
       if (op > 0) B.push(`<rect x="${x}" y="${f1(HB - bh)}" width="44" height="${f1(bh)}" fill="${C('#2a78d6')}" opacity="${op.toFixed(3)}"/>`);
       B.push(`<line x1="${x - 6}" y1="${HB}" x2="${x + 50}" y2="${HB}" stroke="${C('#c3c2b7')}"/>`);
-      B.push(`<text class="num" x="${x + 22}" y="${f1(HB - bh - 4)}" text-anchor="middle"${hi}>${(s * 100).toFixed(s > 0 && s < 0.0005 ? 3 : 1)}%</text>`);
-      B.push(`<text x="${x + 22}" y="${HB + 13}" text-anchor="middle"${hi}>${k}</text></g>`);
+      B.push(`<text class="num" x="${x + 22}" y="${f1(HB - bh - 4)}" text-anchor="middle"${hi('#0b0b0b')}>${(s * 100).toFixed(s > 0 && s < 0.0005 ? 3 : 1)}%</text>`);
+      B.push(`<text x="${x + 22}" y="${HB + 13}" text-anchor="middle"${hi('#52514e')}>${k}</text></g>`);
     });
     // the running mean, log tokens, against the sheet's K2
     B.push(`<text class="dims" x="${RX}" y="${MY0 - 14}">running mean of IB copies per token</text>`);
@@ -295,9 +342,9 @@ function el(tag, cls) { const e = document.createElement(tag); if (cls) e.classN
 function readState(key) {
   try { const v = new URLSearchParams(location.hash.slice(1)).get(key); return v ? JSON.parse(v) : null; } catch { return null; }
 }
-function writeState(key, obj) {
-  const p = new URLSearchParams(location.hash.slice(1));
-  p.set(key, JSON.stringify(obj));
-  history.replaceState(null, '', '#' + p.toString());
+function writeState(key, obj, def) {
+  const p = new URLSearchParams(location.hash.slice(1)), s = JSON.stringify(obj);
+  if (s === def) p.delete(key); else p.set(key, s);   // the hash carries only departures from the defaults
+  history.replaceState(null, '', p.size ? '#' + p : location.pathname + location.search);
 }
 if (typeof customElements !== 'undefined' && !customElements.get('dsv3-epsim')) customElements.define('dsv3-epsim', Dsv3Epsim);

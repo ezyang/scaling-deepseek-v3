@@ -5,7 +5,8 @@
 // by one factor s; per-head dims don't), the MoE shape (256 experts, top-8,
 // 1 shared) and the vocabulary. Dims scale CONTINUOUSLY (61·s layers, no
 // rounding), so DSv3 is exactly s = 1. <dsv3-ladder> draws each op class's
-// share of the counted FLOPs across C, against the share 6ND covers.
+// share of the counted FLOPs, against the share 6ND covers, in two linked
+// slices of the (C, S) plane: across C at the cursor's S, and across S at its C.
 import { DSV3, HEAD_OPS } from './model.js';
 import { blockGraph } from './blockgraph.js';
 import { C } from './theme.js';
@@ -69,18 +70,38 @@ export function ladderPoint(logC, seq) {
 }
 
 // ---- the widget ------------------------------------------------------------
-const LO = 19, HI = 27, K = 161;                    // x domain (log10 FLOP) and samples
-const SEQS = [512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072];
-const W = 738, X0 = 60, PW = 570, Y0 = 18, PH = 200, AX = Y0 + PH;   // W: the prose column, so margin notes sit beside it
-const LY = AX + 48, LW = (PW + 30) / 2, H = LY + 3 * 20 + 6;           // legend below the plot, spanning it: 2 columns × 3 rows
+const LO = 19, HI = 27, K = 161;                    // C panel's x domain (log10 FLOP) and samples
+const SLO = 9, SHI = 20;                            // S panel's x domain (log2 tokens)
+const SEQS = Array.from({ length: SHI - SLO + 1 }, (_, i) => 2 ** (SLO + i));   // 512 … 1M
+const W = 738, X0 = 60, PW = 316, XS = X0 + PW + 30, Y0 = 18, PH = 200, AX = Y0 + PH;   // W: the prose column, so margin notes sit beside it
+const LY = AX + 60, LW = 300, H = LY + 3 * 20 + 6;  // legend below the plots: 2 columns × 3 rows
 const px = (lc) => X0 + (lc - LO) / (HI - LO) * PW;
 const lcOf = (x) => Math.max(LO, Math.min(HI, LO + (x - X0) / PW * (HI - LO)));
+const pxs = (ls) => XS + (ls - SLO) / (SHI - SLO) * PW;
+const seqOf = (x) => { const v = Math.max(SLO, Math.min(SHI, SLO + (x - XS) / PW * (SHI - SLO)));   // continuous, snapping onto powers of two
+  return Math.abs(v - Math.round(v)) < SSNAP ? 2 ** Math.round(v) : Math.round(2 ** v); };
+const fmtS = (s) => s >= 2 ** 20 ? s / 2 ** 20 + 'M' : s >= 1024 ? s / 1024 + 'K' : String(s);
 const py = (u) => Y0 + (1 - u) * PH;
-const YLO = 6, YHI = 13;                            // log mode: y domain (log10 FLOP/token)
+const YLO = 6, YHI = 14;                            // log mode: y domain (log10 FLOP/token)
 const pyl = (lf) => Y0 + (1 - (Math.max(YLO, lf) - YLO) / (YHI - YLO)) * PH;
 const YS = ['share', 'log', 'lin'];                 // y-axis modes
 const oneHot = (y) => Object.fromEntries(YS.map((k) => [k, +(k === y)]));
-const niceTop = (v) => { const e = 10 ** Math.floor(Math.log10(v)); const m = [1, 2, 2.5, 5, 10].find((x) => x * e >= v); return { top: m * e, nt: m === 2 ? 4 : 5 }; };
+const HEAD = 1.05;                                  // linear mode: the ceiling sits this far above the tallest stack
+// linear gridlines under a continuous ceiling: each 1·2·5 × 10ᵏ step is a level, opaque
+// at ≤ 5 lines and faded out by 10, so a rescale slides and crossfades lines, never pops
+// them; a line also fades in through the headroom as the ceiling rises past it
+export function linTicks(top) {
+  const T = new Map();
+  for (let e = Math.floor(Math.log10(top)) - 1; e <= Math.floor(Math.log10(top)); e++)
+    for (const m of [1, 2, 5]) {
+      const st = m * 10 ** e, o = Math.min(1, Math.max(0, (10 - top / st) / 5));
+      for (let k = 1; o > 0 && k * st <= top; k++) {
+        const v = +(k * st).toPrecision(6), f = o * Math.min(1, (top - v) / (top * (1 - 1 / HEAD)));
+        if (f > (T.get(v) ?? 0)) T.set(v, f);
+      }
+    }
+  return [...T];
+}
 const SUP = '⁰¹²³⁴⁵⁶⁷⁸⁹';
 const sup = (n) => String(n).split('').map((d) => SUP[d]).join('');
 const fmtC = (lc) => { const e = Math.floor(lc + 1e-9); return `${(10 ** (lc - e)).toFixed(2)}×10${sup(e)}`; };
@@ -90,6 +111,7 @@ const fmtP = (u) => (u * 100).toFixed(u < 0.001 && u > 0 ? 2 : 1) + '%';
 const lerp = (a, b, t) => a + (b - a) * t;
 const ease = (p) => 1 - (1 - p) ** 3;
 const SNAP = 0.03;                                  // decades: the slider snaps onto DSv3
+const SSNAP = 0.04;                                 // octaves: an S drag snaps onto the stepper's powers of two
 
 const CSS = `
 dsv3-ladder { display: block; margin: 14px 0 26px; }
@@ -99,6 +121,7 @@ dsv3-ladder { display: block; margin: 14px 0 26px; }
 .ld .top { display: flex; flex-wrap: wrap; align-items: stretch; gap: 8px 10px; padding-bottom: 8px; }
 ${knobCss('.ld .top')}
 .ld .stp button { white-space: nowrap; }
+.ld .pre { margin-left: auto; }
 .ld input[type=range] { width: 156px; margin: 0; accent-color: var(--c-52514e); }
 .ld .cv { font: 11px ui-monospace, Menlo, monospace; min-width: 10ch; }
 .ld .fix { font-size: 11px; color: var(--c-52514e); white-space: nowrap; }
@@ -112,10 +135,11 @@ ${knobCss('.ld .top')}
 class Dsv3Ladder extends (typeof HTMLElement === 'undefined' ? class {} : HTMLElement) {
   connectedCallback() {
     const st = this.id ? readState('l:' + this.id) : null;
-    this.cfg = { c: LOG_C_DSV3, seq: +(this.getAttribute('seq') ?? 4096) };
+    this.cfg = { c: LOG_C_DSV3, seq: +(this.getAttribute('seq') ?? 4096), y: 'share' };
+    this._def = JSON.stringify(this.cfg);
     if (st?.c != null) this.cfg.c = +st.c;
-    if (st?.seq != null && SEQS.includes(+st.seq)) this.cfg.seq = +st.seq;
-    this.cfg.y = YS.includes(st?.y) ? st.y : 'share';
+    if (Number.isInteger(st?.seq) && st.seq >= SEQS[0] && st.seq <= SEQS.at(-1)) this.cfg.seq = st.seq;
+    if (YS.includes(st?.y)) this.cfg.y = st.y;
     this._w = oneHot(this.cfg.y);                   // each view's opacity; a y flip tweens between
     const style = document.createElement('style'); style.textContent = CSS;
     this._root = el('div', 'ld');
@@ -124,10 +148,13 @@ class Dsv3Ladder extends (typeof HTMLElement === 'undefined' ? class {} : HTMLEl
     this._root.append(this._top, this._chart);
     this.append(style, this._root);
     this._buildKnobs();
-    // drag on the plot sets C (handlers on the persistent container: the svg re-renders under the pointer)
-    const at = (e) => { const r = this._chart.firstChild.getBoundingClientRect(), v = lcOf((e.clientX - r.left) * W / r.width);
-      this._set({ c: Math.abs(v - LOG_C_DSV3) < SNAP ? LOG_C_DSV3 : +v.toFixed(2) }, false); };
-    this._chart.onpointerdown = (e) => { if (!e.target.matches('rect[data-hit]')) return;
+    // drag on a panel sets its axis: C (continuous) or S (snaps to the powers of two)
+    // (handlers on the persistent container: the svg re-renders under the pointer)
+    const xOf = (e) => { const r = this._chart.firstChild.getBoundingClientRect(); return (e.clientX - r.left) * W / r.width; };
+    const atC = (e) => { const v = lcOf(xOf(e)); this._set({ c: Math.abs(v - LOG_C_DSV3) < SNAP ? LOG_C_DSV3 : +v.toFixed(2) }, false); };
+    const atS = (e) => this._set({ seq: seqOf(xOf(e)) }, false);
+    this._chart.onpointerdown = (e) => { const k = e.target.dataset?.hit; if (!k) return;
+      const at = k === 's' ? atS : atC;
       this._chart.setPointerCapture(e.pointerId); at(e); this._chart.onpointermove = at; };
     this._chart.onpointerup = this._chart.onpointercancel = () => { this._chart.onpointermove = null; };
     this.render();
@@ -136,24 +163,26 @@ class Dsv3Ladder extends (typeof HTMLElement === 'undefined' ? class {} : HTMLEl
   _buildKnobs() {
     const grp = (label) => { const g = el('span', 'pargrp'); const l = el('div', 'parlab'); l.textContent = label; g.append(l); return g; };
     const row = (...kids) => { const r = el('div', 'parrow'); r.append(...kids); return r; };
-    // compute: a log slider (snaps onto DSv3) + the DSv3 preset
+    // compute: a log slider (snaps onto DSv3)
     const r = this._range = document.createElement('input');
     Object.assign(r, { type: 'range', min: LO, max: HI, step: 0.01 });
     r.dataset.knob = 'c';
     r.oninput = () => { let v = +r.value; if (Math.abs(v - LOG_C_DSV3) < SNAP) v = LOG_C_DSV3; this._set({ c: v }, false); };
     this._cv = el('span', 'cv');
+    const g1 = grp('compute budget C (FLOP)'); g1.append(row(r, this._cv));
+    // the DSv3 preset, top right: its rung and its 4K pretraining S
     const pre = el('span', 'stp'); pre.dataset.knob = 'preset';
     this._pre = document.createElement('button'); this._pre.type = 'button'; this._pre.textContent = 'DeepSeek-V3';
-    this._pre.onclick = () => this._set({ c: LOG_C_DSV3 }, true);
+    this._pre.onclick = () => this._set({ c: LOG_C_DSV3, seq: 4096 }, true);
     pre.append(this._pre);
-    const g1 = grp('compute budget C (FLOP)'); g1.append(row(r, this._cv, pre));
-    // sequence length stepper
+    const g5 = grp('preset'); g5.classList.add('pre'); g5.append(row(pre));
+    // sequence length stepper: the powers of two (an S-panel drag lands between them; ± steps to the next one)
     const eg = el('span', 'stp'); eg.dataset.knob = 'seq';
     const sel = this._sel = document.createElement('select'); sel.className = 'v';
     for (const o of SEQS) sel.append(new Option(o.toLocaleString('en-US'), o));
     sel.onchange = () => this._set({ seq: +sel.value }, true);
     const b = (t, di) => { const x = document.createElement('button'); x.type = 'button'; x.textContent = t; x.dataset.dir = di;
-      x.onclick = () => { const j = SEQS.indexOf(this.cfg.seq) + di; if (SEQS[j]) this._set({ seq: SEQS[j] }, true); }; return x; };
+      x.onclick = () => { const v = this._step(di); if (v) this._set({ seq: v }, true); }; return x; };
     eg.append(b('−', -1), sel, b('+', +1));
     const g2 = grp('sequence length S'); g2.append(row(eg));
     const fix = el('span', 'fix');
@@ -166,43 +195,43 @@ class Dsv3Ladder extends (typeof HTMLElement === 'undefined' ? class {} : HTMLEl
       x.onclick = () => this._set({ y: v }, true); yb.append(x);
     }
     const g4 = grp('y axis'); g4.append(row(yb));
-    this._top.append(g1, g2, g4, g3);
+    this._top.append(g1, g2, g4, g5, g3);
     this._sync();
   }
   _sync() {
     this._range.value = this.cfg.c;
     this._cv.textContent = fmtC(this.cfg.c);
-    this._pre.classList.toggle('on', this.cfg.c === LOG_C_DSV3);
+    this._pre.classList.toggle('on', this.cfg.c === LOG_C_DSV3 && this.cfg.seq === 4096);
+    // an off-grid S (from a drag) shows as a transient option in its sorted place
+    this._sel.querySelector('option[data-off]')?.remove();
+    if (!SEQS.includes(this.cfg.seq)) {
+      const o = new Option(this.cfg.seq.toLocaleString('en-US'), this.cfg.seq); o.dataset.off = '';
+      this._sel.insertBefore(o, this._sel.options[SEQS.findIndex((v) => v > this.cfg.seq)]);
+    }
     this._sel.value = this.cfg.seq;
     for (const x of this._top.querySelectorAll('[data-knob="y"] button')) x.classList.toggle('on', x.dataset.y === this.cfg.y);
-    for (const x of this._top.querySelectorAll('[data-knob="seq"] button')) x.disabled = !SEQS[SEQS.indexOf(this.cfg.seq) + +x.dataset.dir];
+    for (const x of this._top.querySelectorAll('[data-knob="seq"] button')) x.disabled = !this._step(+x.dataset.dir);
   }
+  _step(di) { return di > 0 ? SEQS.find((v) => v > this.cfg.seq) : SEQS.findLast((v) => v < this.cfg.seq); }
   _set(patch, animate) {
     const next = { ...this.cfg, ...patch };
     if (next.c === this.cfg.c && next.seq === this.cfg.seq && next.y === this.cfg.y) return;
     const flip = next.y !== this.cfg.y;
     this.cfg = next;
     this._sync();
-    if (this.id) writeState('l:' + this.id, this.cfg);
+    if (this.id) writeState('l:' + this.id, this.cfg, this._def);
     if (flip) return this._animateMix(oneHot(next.y));
     this._w = oneHot(next.y);                       // a C/S change lands any crossfade in flight
     if (animate) this._animateTo(this._layout()); else { this._gen = (this._gen ?? 0) + 1; this.render(); }
   }
-  // cumulative share boundaries per class at every sample, the 6N share, the cursor
+  // both panels' series, one shared linear ceiling, the cursor in each
   _layout() {
-    const cum = CLASSES.map(() => new Float64Array(K)), six = new Float64Array(K), Ns = [];
-    const lf = CLASSES.map(() => new Float64Array(K)), l6 = new Float64Array(K);   // log10 FLOP/token
-    const ca = CLASSES.map(() => new Float64Array(K)), a6 = new Float64Array(K);   // cumulative FLOP/token
-    let mx = 0;
-    for (let i = 0; i < K; i++) {
-      const p = ladderPoint(LO + (HI - LO) * i / (K - 1), this.cfg.seq);
-      let u = 0, a = 0;
-      CLASSES.forEach((k, j) => { u += p.f[k.id] / p.total; cum[j][i] = u; lf[j][i] = Math.log10(p.f[k.id]); ca[j][i] = a += p.f[k.id]; });
-      six[i] = p.sixN / p.total; l6[i] = Math.log10(p.sixN); a6[i] = p.sixN; mx = Math.max(mx, p.total);
-    }
+    const P = ladderPoint(this.cfg.c, this.cfg.seq), Ns = [];
+    const c = series((i) => ladderPoint(LO + (HI - LO) * i / (K - 1), this.cfg.seq));
+    const s = series((i) => { const f = classFlops(P.a, 2 ** (SLO + (SHI - SLO) * i / (K - 1)));   // the cursor's rung: only the attention core moves
+      return { f, total: Object.values(f).reduce((x, y) => x + y, 0), sixN: P.sixN }; });
     for (let e = LO; e <= HI; e++) Ns.push(ladderPoint(e, 4096).N);
-    const { top, nt } = niceTop(mx);
-    return { cum, six, lf, l6, ca, a6, top, nt, Ns, cx: px(this.cfg.c), P: ladderPoint(this.cfg.c, this.cfg.seq) };
+    return { c, s, top: HEAD * Math.max(c.mx, s.mx), Ns, cx: px(this.cfg.c), sx: pxs(Math.log2(this.cfg.seq)), P };
   }
   // y-axis flip: crossfade the two views over the same frames as the S tween
   _animateMix(to) {
@@ -232,51 +261,51 @@ class Dsv3Ladder extends (typeof HTMLElement === 'undefined' ? class {} : HTMLEl
   render() { this._L = this._layout(); this._draw(this._L); }
   _draw(L) {
     const f1 = (v) => v.toFixed(1), B = [], dims = 'class="dims"';
-    const xs = Array.from({ length: K }, (_, i) => f1(X0 + PW * i / (K - 1)));
+    const xs = [X0, XS].map((x0) => Array.from({ length: K }, (_, i) => f1(x0 + PW * i / (K - 1))));
+    const panels = [['c', L.c, xs[0]], ['s', L.s, xs[1]]];
     const w = this._w, ab = w.log + w.lin, op = (o) => `opacity="${+o.toFixed(3)}"`;
+    const grid = (y, label, o = 1) => {             // a gridline across both panels, labelled once at the left
+      const a = o < 1 ? ` ${op(o)}` : '';
+      for (const x0 of [X0, XS]) B.push(`<line x1="${x0}" y1="${f1(y)}" x2="${x0 + PW}" y2="${f1(y)}" stroke="${C('#e1e0d9')}"${a}/>`);
+      B.push(`<text ${dims} x="${X0 - 5}" y="${f1(y + 3)}" text-anchor="end"${a}>${label}</text>`);
+    };
+    const stack = (attr, Y, cum) => panels.forEach(([id, S, xx]) => {
+      B.push(`<g data-x="${id}">`);
+      CLASSES.forEach((k, j) => {
+        const top = xx.map((x, i) => `${x},${f1(Y(S[cum][j][i]))}`);
+        const bot = xx.map((x, i) => `${x},${f1(Y(j ? S[cum][j - 1][i] : 0))}`).reverse();
+        B.push(`<polygon ${attr}="${k.id}" points="${top.join(' ')} ${bot.join(' ')}" fill="${C(k.c)}"/>`);
+      });
+      B.push('</g>');
+    });
+    const dashed = (attr, Y, key) => panels.forEach(([id, S, xx]) =>
+      B.push(`<polyline ${attr} data-x="${id}" points="${xx.map((x, i) => `${x},${f1(Y(S[key][i]))}`).join(' ')}" fill="none" stroke="${C('#0b0b0b')}" stroke-width="1.25" stroke-dasharray="5 3"/>`));
     // share view: % grid, 100%-stacked bands, the share 6ND covers
     if (w.share > 0) {
       B.push(`<g data-view="share" ${op(w.share)}>`);
-      for (const u of [0, 0.25, 0.5, 0.75, 1]) {
-        B.push(`<line x1="${X0}" y1="${f1(py(u))}" x2="${X0 + PW}" y2="${f1(py(u))}" stroke="${C('#e1e0d9')}"/>`);
-        B.push(`<text ${dims} x="${X0 - 5}" y="${f1(py(u) + 3)}" text-anchor="end">${u * 100}%</text>`);
-      }
-      CLASSES.forEach((k, j) => {
-        const top = xs.map((x, i) => `${x},${f1(py(L.cum[j][i]))}`);
-        const bot = xs.map((x, i) => `${x},${f1(py(j ? L.cum[j - 1][i] : 0))}`).reverse();
-        B.push(`<polygon data-band="${k.id}" points="${top.join(' ')} ${bot.join(' ')}" fill="${C(k.c)}"/>`);
-      });
-      B.push(`<polyline data-six points="${xs.map((x, i) => `${x},${f1(py(Math.min(1, L.six[i])))}`).join(' ')}" fill="none" stroke="${C('#0b0b0b')}" stroke-width="1.25" stroke-dasharray="5 3"/>`);
+      for (const u of [0, 0.25, 0.5, 0.75, 1]) grid(py(u), `${u * 100}%`);
+      stack('data-band', py, 'cum');
+      dashed('data-six', (v) => py(Math.min(1, v)), 'six');
       B.push('</g>');
     }
     // log view: decade grid, each class's FLOP/token as a line, 6N dashed
     if (w.log > 0) {
       B.push(`<g data-view="log" ${op(w.log)}>`);
-      for (let e = YLO; e <= YHI; e++) {
-        B.push(`<line x1="${X0}" y1="${f1(pyl(e))}" x2="${X0 + PW}" y2="${f1(pyl(e))}" stroke="${C('#e1e0d9')}"/>`);
-        B.push(`<text ${dims} x="${X0 - 5}" y="${f1(pyl(e) + 3)}" text-anchor="end">10${sup(e)}</text>`);
-      }
+      for (let e = YLO; e <= YHI; e++) grid(pyl(e), `10${sup(e)}`);
       B.push(`<text ${dims} x="${X0}" y="${Y0 - 7}">FLOP per token, log scale</text>`);
-      CLASSES.forEach((k, j) => B.push(`<polyline data-line="${k.id}" points="${xs.map((x, i) => `${x},${f1(pyl(L.lf[j][i]))}`).join(' ')}" fill="none" stroke="${C(k.c)}" stroke-width="2"/>`));
-      B.push(`<polyline data-six-abs points="${xs.map((x, i) => `${x},${f1(pyl(L.l6[i]))}`).join(' ')}" fill="none" stroke="${C('#0b0b0b')}" stroke-width="1.25" stroke-dasharray="5 3"/>`);
+      panels.forEach(([id, S, xx]) => CLASSES.forEach((k, j) => B.push(`<polyline data-line="${k.id}" data-x="${id}" points="${xx.map((x, i) => `${x},${f1(pyl(S.lf[j][i]))}`).join(' ')}" fill="none" stroke="${C(k.c)}" stroke-width="2"/>`)));
+      dashed('data-six-abs', pyl, 'l6');
       B.push('</g>');
     }
-    // linear view: stacked FLOP/token up to a round ceiling over the whole range, 6N dashed
+    // linear view: stacked FLOP/token under a continuous ceiling over both panels' ranges, 6N dashed
     if (w.lin > 0) {
       const pa = (v) => Y0 + (1 - v / L.top) * PH;
-      B.push(`<g data-view="lin" ${op(w.lin)}>`);
-      for (let t = 0; t <= L.nt; t++) {
-        const v = L.top * t / L.nt;
-        B.push(`<line x1="${X0}" y1="${f1(pa(v))}" x2="${X0 + PW}" y2="${f1(pa(v))}" stroke="${C('#e1e0d9')}"/>`);
-        B.push(`<text ${dims} x="${X0 - 5}" y="${f1(pa(v) + 3)}" text-anchor="end">${t ? fmtF(v) : 0}</text>`);
-      }
+      B.push(`<g data-view="lin" data-top="${L.top}" ${op(w.lin)}>`);
+      grid(pa(0), 0);
+      for (const [v, o] of linTicks(L.top)) if (o > 0.005) grid(pa(v), fmtF(v), o);
       B.push(`<text ${dims} x="${X0}" y="${Y0 - 7}">FLOP per token, linear scale</text>`);
-      CLASSES.forEach((k, j) => {
-        const top = xs.map((x, i) => `${x},${f1(pa(L.ca[j][i]))}`);
-        const bot = xs.map((x, i) => `${x},${f1(pa(j ? L.ca[j - 1][i] : 0))}`).reverse();
-        B.push(`<polygon data-area="${k.id}" points="${top.join(' ')} ${bot.join(' ')}" fill="${C(k.c)}"/>`);
-      });
-      B.push(`<polyline data-six-lin points="${xs.map((x, i) => `${x},${f1(pa(L.a6[i]))}`).join(' ')}" fill="none" stroke="${C('#0b0b0b')}" stroke-width="1.25" stroke-dasharray="5 3"/>`);
+      stack('data-area', pa, 'ca');
+      dashed('data-six-lin', pa, 'a6');
       B.push('</g>');
     }
     for (let e = LO; e <= HI; e++) {
@@ -285,14 +314,25 @@ class Dsv3Ladder extends (typeof HTMLElement === 'undefined' ? class {} : HTMLEl
       B.push(`<text ${dims} x="${x}" y="${AX + 13}" text-anchor="middle">10${sup(e)}</text>`);
       B.push(`<text ${dims} x="${x}" y="${AX + 25}" text-anchor="middle">${fmtN(L.Ns[e - LO])}</text>`);
     }
-    B.push(`<text ${dims} x="${X0 + PW + 24}" y="${AX + 13}">C, FLOP</text><text ${dims} x="${X0 + PW + 24}" y="${AX + 25}">N, params</text>`);
-    // DSv3 marker + cursor
-    const dx = f1(px(LOG_C_DSV3));
-    B.push(`<line x1="${dx}" y1="${Y0 - 4}" x2="${dx}" y2="${AX}" stroke="${C('#0b0b0b')}" stroke-width="0.75" stroke-dasharray="2 2"/>`);
-    B.push(`<text ${dims} x="${dx}" y="${Y0 - 7}" text-anchor="middle">DeepSeek-V3</text>`);
-    B.push(`<line data-cursor="${this.cfg.c}" x1="${f1(L.cx)}" y1="${Y0}" x2="${f1(L.cx)}" y2="${AX}" stroke="${C('#0b0b0b')}" stroke-width="1.5"/>`);
-    B.push(`<circle cx="${f1(L.cx)}" cy="${AX}" r="3.5" fill="${C('#0b0b0b')}"/>`);
-    B.push(`<rect data-hit x="${X0}" y="${Y0}" width="${PW}" height="${PH + 6}" fill="transparent" style="cursor:ew-resize"/>`);
+    for (const s of SEQS) {
+      const x = f1(pxs(Math.log2(s)));
+      B.push(`<line x1="${x}" y1="${AX}" x2="${x}" y2="${AX + 3}" stroke="${C('#898781')}"/>`);
+      B.push(`<text ${dims} x="${x}" y="${AX + 13}" text-anchor="middle">${fmtS(s)}</text>`);
+    }
+    // each panel's caption names its axis and the slice it holds fixed
+    B.push(`<text ${dims} x="${X0 + PW / 2}" y="${AX + 40}" text-anchor="middle">compute budget C, FLOP (N, params) · at S = ${this.cfg.seq.toLocaleString('en-US')}</text>`);
+    B.push(`<text ${dims} x="${XS + PW / 2}" y="${AX + 40}" text-anchor="middle">sequence length S, tokens · at C = ${fmtC(this.cfg.c)}</text>`);
+    // DSv3 markers (its rung; its pretraining S) + the cursor in each panel
+    for (const [x, t] of [[px(LOG_C_DSV3), 'DeepSeek-V3'], [pxs(12), 'DeepSeek-V3 pretraining']]) {
+      B.push(`<line x1="${f1(x)}" y1="${Y0 - 4}" x2="${f1(x)}" y2="${AX}" stroke="${C('#0b0b0b')}" stroke-width="0.75" stroke-dasharray="2 2"/>`);
+      B.push(`<text ${dims} x="${f1(x)}" y="${Y0 - 7}" text-anchor="middle">${t}</text>`);
+    }
+    for (const [k, x, v] of [['cursor', L.cx, this.cfg.c], ['cursor-s', L.sx, this.cfg.seq]]) {
+      B.push(`<line data-${k}="${v}" x1="${f1(x)}" y1="${Y0}" x2="${f1(x)}" y2="${AX}" stroke="${C('#0b0b0b')}" stroke-width="1.5"/>`);
+      B.push(`<circle cx="${f1(x)}" cy="${AX}" r="3.5" fill="${C('#0b0b0b')}"/>`);
+    }
+    for (const [k, x0] of [['c', X0], ['s', XS]])
+      B.push(`<rect data-hit="${k}" x="${x0}" y="${Y0}" width="${PW}" height="${PH + 6}" fill="transparent" style="cursor:ew-resize"/>`);
     // legend = the cursor's breakdown, below the plot: the bands' top-to-bottom order down column 1 (outside N, then 6ND), then column 2 (in N)
     const P = L.P, rows = [...CLASSES].reverse().map((k) => ({ k, v: P.f[k.id] / P.total, f: P.f[k.id] }));
     rows.splice(2, 0, { six: true, v: P.sixN / P.total, f: P.sixN });
@@ -310,20 +350,37 @@ class Dsv3Ladder extends (typeof HTMLElement === 'undefined' ? class {} : HTMLEl
     this._chart.innerHTML = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${B.join('')}</svg>`;
   }
 }
+// one panel's curves from K sample points: cumulative share boundaries per class, the 6N share,
+// log10 and cumulative FLOP/token, and the tallest total (for the linear ceiling)
+function series(pt) {
+  const cum = CLASSES.map(() => new Float64Array(K)), six = new Float64Array(K);
+  const lf = CLASSES.map(() => new Float64Array(K)), l6 = new Float64Array(K);   // log10 FLOP/token
+  const ca = CLASSES.map(() => new Float64Array(K)), a6 = new Float64Array(K);   // cumulative FLOP/token
+  let mx = 0;
+  for (let i = 0; i < K; i++) {
+    const p = pt(i);
+    let u = 0, a = 0;
+    CLASSES.forEach((k, j) => { u += p.f[k.id] / p.total; cum[j][i] = u; lf[j][i] = Math.log10(p.f[k.id]); ca[j][i] = a += p.f[k.id]; });
+    six[i] = p.sixN / p.total; l6[i] = Math.log10(p.sixN); a6[i] = p.sixN; mx = Math.max(mx, p.total);
+  }
+  return { cum, six, lf, l6, ca, a6, mx };
+}
+function blendSeries(A, B, t) {
+  const m = (k) => B[k].map((c, j) => c.map((v, i) => lerp(A[k][j][i], v, t))), v = (k) => B[k].map((x, i) => lerp(A[k][i], x, t));
+  return { ...B, cum: m('cum'), lf: m('lf'), ca: m('ca'), six: v('six'), l6: v('l6'), a6: v('a6') };
+}
 function blend(A, B, t) {
   if (!A || t >= 1) return B;
-  return { ...B, cum: B.cum.map((c, j) => c.map((v, i) => lerp(A.cum[j][i], v, t))),
-    six: B.six.map((v, i) => lerp(A.six[i], v, t)), cx: lerp(A.cx, B.cx, t),
-    lf: B.lf.map((c, j) => c.map((v, i) => lerp(A.lf[j][i], v, t))), l6: B.l6.map((v, i) => lerp(A.l6[i], v, t)),
-    ca: B.ca.map((c, j) => c.map((v, i) => lerp(A.ca[j][i], v, t))), a6: B.a6.map((v, i) => lerp(A.a6[i], v, t)), top: lerp(A.top, B.top, t) };
+  return { ...B, c: blendSeries(A.c, B.c, t), s: blendSeries(A.s, B.s, t),
+    cx: lerp(A.cx, B.cx, t), sx: lerp(A.sx, B.sx, t), top: lerp(A.top, B.top, t) };
 }
 function el(tag, cls) { const e = document.createElement(tag); if (cls) e.className = cls; return e; }
 function readState(key) {
   try { const v = new URLSearchParams(location.hash.slice(1)).get(key); return v ? JSON.parse(v) : null; } catch { return null; }
 }
-function writeState(key, obj) {
-  const p = new URLSearchParams(location.hash.slice(1));
-  p.set(key, JSON.stringify(obj));
-  history.replaceState(null, '', '#' + p.toString());
+function writeState(key, obj, def) {
+  const p = new URLSearchParams(location.hash.slice(1)), s = JSON.stringify(obj);
+  if (s === def) p.delete(key); else p.set(key, s);   // the hash carries only departures from the defaults
+  history.replaceState(null, '', p.size ? '#' + p : location.pathname + location.search);
 }
 if (typeof customElements !== 'undefined' && !customElements.get('dsv3-ladder')) customElements.define('dsv3-ladder', Dsv3Ladder);

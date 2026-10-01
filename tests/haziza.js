@@ -11,8 +11,8 @@ T.check('gate/up splits routed / shared / dense', rowOf('A9').includes('A9a + A9
   && rowOf('A9b').includes('shared expert hidden, pre-SwiGLU'), rowOf('A9').slice(0, 60));
 T.check('routed = 8/9 of the moe rate; dense MLP zero on this rank',
   valOf('A9a') === '9,412,286,939.43 B'.replace(/x/,'') || +trOf('A9a').querySelector('td.vl').textContent.replace(/[^\d.]/g,'') > 0, valOf('A9a'));
-T.check('one kept? and one precision gate all three', rowOf('A9a').includes('R9 ×') && rowOf('A9b').includes('R9 ×')
-  && rowOf('A9c').includes('R9 ×') && !!trOf('R9') && !!trOf('B9'), '');
+T.check('one kept? and one precision gate all three', rowOf('A9a').includes('R9 ·') && rowOf('A9b').includes('R9 ·')
+  && rowOf('A9c').includes('R9 ·') && !!trOf('R9') && !!trOf('B9'), '');
 // columns fixed: widths identical before/after a knob change
 const widths = () => [...sheet.querySelectorAll('tr:nth-child(2) td')].map(td => td.getBoundingClientRect().width.toFixed(1)).join(',');
 const w0 = widths();

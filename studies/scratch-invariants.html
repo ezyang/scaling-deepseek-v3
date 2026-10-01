@@ -1,0 +1,76 @@
+
+    <p>When working complicated systems, we often look for simple reasoning mechanisms which
+    are able to explain a (disproportionately) large amount of the system's behavior.  In
+    LLM training, I notice these three concepts are applied pervasively:</p>
+
+    <ol>
+        <li><strong>Speed of light:</strong> When we know that no matter what we do, we
+        cannot exceed some physical limitation, e.g., the number of FLOPs that the silicon
+        on our GPU can support, or the bandwidth that our Infiniband network supports.
+        Importantly, when we see that, even if we were at speed of light, some performance
+        pathology exists, it shows us that we must take a different approach: no amount
+        of incremental performance engineering will solve the problem.  A related
+        concept is <strong>roofline analysis</strong>.</li>
+
+        <li><strong>Conservation:</strong> We often need to reason about a large possibility
+        space of how we configure our training run, e.g., parallelisms.
+        However, for example, we know that no matter how we slice the pie of
+        compute, at the end of the day we must still do that amount of compute.
+        Given some assumed compute utilization, we can then tell how much communication
+        we can afford: the amount of compute will never change, but we can choose different
+        parallelization changes to adjust how much comms we do. (This is why we're always
+        trying to make sure comms can be completely overlapped with compute, but not
+        the other way around! The amount of compute can't be changed in an arch neutral
+        way!)</li>
+
+        <li><strong>Asymptotics:</strong> The vocabulary LM head is a big deal at small scale,
+        because your vocabulary is quite large.  However, vocabulary size doesn't change
+        as we scale up, whereas parameter count does.  If we are planning on scaling, we should
+        focus on the parts of our system that also scale, as constant costs asymptote to
+        zero as you scale.  (That's not to say constant costs cannot give material performance
+        improvements! But Amdahl's law tells us the amount of improvement we can get via these
+        optimizations diminishes.)</li>
+    </ol>
+
+    Example: the parameter scaling (matrix diagram)
+
+
+
+    Example analysis: A2A overlap critical dim on FC2 — given bandwidth and flops, how big does your
+    hidden dim have to be so that compute = comms.  Reason out flops per hidden dim versus data sent.
+    What happens when you make the model sparser (narrower experts, more experts)
+    - FC2 is harder to overlap because it is less compute
+    - Conservation: it doesn't matter if you're doing it with overlapping or
+      by pipelining
+
+    Dimensional analysis
+
+
+
+
+    Example analysis: Local batch size impact on matmul efficiency
+    Microbatch size impact on kernel perf
+
+    Trading LBS versus PP bubble
+
+
+
+
+    what does "speed of light" mean. a one sided calculation, the speed limit, you cannot get past this
+
+    what does estimate mean. conservation of work. it MUST happen one way or another
+
+    the speed of light / roofline model is very simple: 6ND
+    the matrix diagram
+
+
+    actually look at the dsv3 profile
+
+
+
+
+
+
+
+
+

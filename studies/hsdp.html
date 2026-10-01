@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script data-theme>document.documentElement.classList.toggle('dark', (localStorage.getItem('dsv3-theme') ?? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')) === 'dark');</script>
+  <title>Shard only over NVLink? HSDP for DeepSeek-V3</title>
+  <meta name="description" content="If FSDP's problem is gathers that cross InfiniBand, shard only within the node: what HSDP does to DeepSeek-V3's memory, InfiniBand and NVLink at speed of light, without pipeline parallelism.">
+  <link rel="stylesheet" href="./study.css">
+</head>
+
+<body>
+  <main>
+    <h1>Shard only over NVLink? HSDP for DeepSeek-V3</h1>
+
+    <p class="note">DRAFT (unlisted study). Prose below is AI-drafted and awaits a human
+    edit pass — see the disclosure footnote.<sup><a id="fnref1" href="#fn1">1</a></sup></p>
+
+    <p>This picks up from the FSDP section of <a href="./03-roofline.html">post
+    03</a>, which prices DeepSeek-V3 on 2,048 H800s with EP64 and no pipeline
+    parallelism. Without PP, memory forces eight microbatches of one sequence
+    each: one sequence's activation stash is 38.9 GiB, and two don't fit. The
+    best variant there keeps the routed experts' weights resident and still
+    needs 11.0 s of InfiniBand per step against 6.8 s of compute. Its gathers
+    are already hierarchical: seven-eighths of every non-expert gather travels
+    over NVLink, and only the last eighth crosses IB.</p>
+
+    <p>So: what if we shard only across NVLink? If no shard group spans
+    InfiniBand, do we stop being exposed on it? Hybrid sharding (HSDP) does
+    exactly this, sharding within a group and replicating across groups. The
+    answer comes in three parts. Shrinking the group helps only if it shrinks
+    all the way to one node. One node technically fits in memory. And the step
+    is still exposed: on IB because of the experts, and on an H800, on NVLink
+    too.<sup><a id="fnref2" href="#fn2">2</a></sup></p>
+
+    <table class="xcheck">
+      <tr><th>input</th><th>value</th><th>where it comes from</th></tr>
+      <tr><td>non-expert parameters</td><td>17,117,648,384</td><td>checkpoint tally: attention, shared experts, dense FFNs, norms, routers, embedding, head</td></tr>
+      <tr><td>routed-expert parameters</td><td>653,908,770,816</td><td>checkpoint tally; our EP64 slice is 10,217,324,544, with 32 replicas across the cluster</td></tr>
+      <tr><td>cluster</td><td>2,048 GPUs</td><td>256 nodes of 8</td></tr>
+      <tr><td>state per parameter</td><td>14 bytes</td><td>BF16 weight, FP32 gradient, FP32 master weight, two BF16 Adam moments</td></tr>
+      <tr><td>microbatches per step</td><td>8, one sequence each</td><td>03: the only count that fits without PP</td></tr>
+      <tr><td>activation stash, one sequence</td><td>38.9 GiB</td><td>02's local model under DeepSeek's recompute policy, as 03 uses</td></tr>
+      <tr><td>compute per step</td><td>6.8 s</td><td>03: 6ND at the H800's BF16 peak</td></tr>
+      <tr><td>EP traffic per step</td><td>5.4 s of IB</td><td>03: 4-node limit, FP8 dispatch with its scales, BF16 combine</td></tr>
+      <tr><td>H800 links, per GPU</td><td>50 GB/s IB · 160 GB/s NVLink</td><td>DeepSeek-V3 report</td></tr>
+    </table>
+
+    <h2>Only the node helps</h2>
+
+    <p>With a hierarchical gather over a shard group of k nodes, a node
+    already holds 1/k of the parameters and pulls the other (k − 1)/k across
+    IB, split over its eight NICs. So each non-expert move (a gather, or a
+    reduce-scatter of the gradients) puts (1 − 1/k) of an eighth of the BF16
+    non-expert weights, 4.28 GB, through each GPU's NIC:</p>
+
+    <table class="xcheck">
+      <tr><th>shard group</th><th>IB per non-expert move</th><th>vs. FSDP over all 256 nodes</th></tr>
+      <tr><td>256 nodes (FSDP)</td><td>85.3 ms</td><td>1</td></tr>
+      <tr><td>16 nodes</td><td>80.2 ms</td><td>0.94</td></tr>
+      <tr><td>4 nodes</td><td>64.2 ms</td><td>0.75</td></tr>
+      <tr><td>2 nodes</td><td>42.8 ms</td><td>0.5</td></tr>
+      <tr><td>1 node (HSDP over the node)</td><td>0</td><td>0</td></tr>
+    </table>
+
+    <p>Shrinking the group from 256 nodes to 16, or even to 4, buys almost
+    nothing on IB and costs memory: every gather still brings in nearly the
+    whole parameter over IB. The 1 − 1/k factor only matters at two nodes and
+    only vanishes at one. There's no useful middle. A shard group that crosses
+    nodes pays nearly full-FSDP IB, and one inside the node pays none.</p>
+
+    <p>At one node, what IB sees is plain data parallelism. There are no
+    per-layer gathers, only a once-per-step gradient reduce-scatter and
+    parameter all-gather across the 256 replicas, 0.26 s. All the sharding has
+    moved inside the node. Combined with the optimizer sharding below, the
+    non-experts end up running ZeRO-1 data parallelism across nodes with FSDP
+    inside each node.</p>
+
+    <h2>It technically fits</h2>
+
+    <p>Plain HSDP keeps a whole copy of the non-expert state in every node:
+    14 bytes per parameter over eight GPUs is 27.9 GiB each, and with the
+    experts and the stash that's 89.4 GiB, against the H800's 79.65. What does
+    fit is sharding only the BF16 weights and FP32 gradient accumulators
+    within the node, and the FP32 master weights and Adam moments (8 of the
+    14 bytes) over all 2,048 GPUs, as in ZeRO-1. That saves 15.9 GiB, and IB
+    doesn't charge for it: ZeRO-1's reduce-scatter and all-gather are the same
+    bytes as a data-parallel all-reduce.</p>
+
+    <table class="xcheck">
+      <tr><th>per GPU</th><th>plain HSDP</th><th>HSDP, optimizer over all 2,048</th></tr>
+      <tr><td>non-expert state</td><td>27.9 GiB</td><td>12.0 GiB</td></tr>
+      <tr><td>routed experts (our slice)</td><td>22.6 GiB</td><td>22.6 GiB</td></tr>
+      <tr><td>stash, one sequence</td><td>38.9 GiB</td><td>38.9 GiB</td></tr>
+      <tr><td><strong>total</strong></td><td><strong>89.4 GiB</strong> (doesn't fit)</td><td><strong>73.5 GiB</strong> (fits)</td></tr>
+    </table>
+
+    <p>Each piece fits for its own reason, and none of them would on its own:</p>
+
+    <ul>
+      <li><strong>Non-experts: both kinds of sharding.</strong> Plain ZeRO-1
+      data parallelism would hold the full BF16 weights and FP32 gradients on
+      every GPU, 95.7 GiB of non-expert state alone. Sharding those 6 bytes
+      eight ways inside the node is what gets it to 12.0 GiB.</li>
+      <li><strong>Experts: EP does the work.</strong> The routed experts are
+      97% of the parameters, but each GPU holds only its 1/64 slice: 19.0 GiB
+      of BF16 weights, plus 3.6 GiB of FP32 gradient, master and moments
+      sharded over the slice's 32 replicas. HSDP can't shrink this further:
+      no node-mate holds our slice, so there's nothing in the node to shard
+      it with.</li>
+      <li><strong>Stash: one sequence at a time.</strong> The largest item,
+      and the reason microbatching is forced.</li>
+    </ul>
+
+    <p>"Technically" is about the remaining 6.1 GiB. The total leaves out the
+    buffer holding the layer currently gathered, communication buffers and
+    allocator fragmentation, and those could plausibly use it all.</p>
+
+    <h2>Still exposed on IB</h2>
+
+    <p>Microbatching is why the experts don't get the data-parallel
+    treatment. For the non-experts, each microbatch gathers the weights for
+    the forward, gathers them again for the backward, and reduce-scatters the
+    gradients into the node's FP32 shards: three moves per microbatch, all on
+    NVLink. IB only sees the once-per-step sync. The experts' weights stay
+    resident, but their gradients can't be accumulated locally: an unsharded
+    FP32 gradient for our slice is 38.1 GiB, which takes the total to
+    110 GiB. So the experts run ZeRO-2 over IB, with a BF16 reduce-scatter
+    across the 32 replicas every microbatch and one gather of the updated
+    weights at the end: nine moves, 3.6 s.</p>
+
+    <p>Against the expert-resident variant from 03, HSDP deletes 21 of 24
+    non-expert IB moves, 1.79 s, which leaves <strong>9.2 s</strong> of IB
+    against 6.8 s of compute. The non-expert traffic was never the big part:
+    the hierarchy had already put seven-eighths of it on NVLink, and its IB
+    share was an eighth of a 17-billion-parameter blob. What remains is
+    traffic that scales with tokens or microbatches, not with parameters: EP's
+    5.4 s, and the experts' 3.6 s.</p>
+
+    <p>Could the experts get the same trick? Laying EP out across nodes, one
+    GPU per node in each EP group, would give every node eight copies of one
+    slice to shard among themselves. But then every routed copy crosses IB:
+    about eight per token instead of 3.5, and a node limit of four would now
+    mean four GPUs, 16 of the 256 experts.</p>
+
+    <h2>And on an H800, NVLink too</h2>
+
+    <p>Moving bytes onto NVLink assumes NVLink has room. HSDP doesn't add
+    NVLink traffic. Each non-expert move puts seven-eighths of the BF16
+    non-expert weights on NVLink, whether it's a hierarchical FSDP gather or
+    an HSDP one; HSDP only deletes the IB leg. But it makes NVLink the place
+    where all the gather traffic lands. At 160 GB/s the 24 moves are 4.5 s, on
+    top of the 3.2 s EP spends forwarding tokens from the GPU their IB copy
+    lands on to their experts' GPUs:<sup><a id="fnref3" href="#fn3">3</a></sup>
+    7.7 s in all, more than the 6.8 s of compute.</p>
+
+    <p>That's an H800 number. The H800 is an H100 with its NVLink cut from
+    900 GB/s to 400 (both directions combined), and the same tensor-core
+    peaks. Scaling DeepSeek's 160 GB/s by the same ratio, an H100's NVLink
+    would carry the same traffic in about 3.4 s, comfortably under compute.
+    But the H100's IB is no faster, so HSDP still comes out at 9.2 s of IB
+    there. A better NVLink leaves the experts as the only problem, but doesn't
+    solve it. This is the same squeeze that makes tensor parallelism
+    expensive in 03: both spend NVLink, and the H800 has little to spare.</p>
+
+    <h2>Summary</h2>
+
+    <ul>
+      <li>For IB, the shard group is all or nothing: any group that crosses
+      nodes pays nearly full-FSDP IB per gather, and HSDP over the node is
+      data parallelism.</li>
+      <li>That layout technically fits, at 73.5 GiB, but only with the
+      optimizer state sharded over all 2,048 GPUs and one sequence per
+      microbatch.</li>
+      <li>It removes 1.79 s of IB and leaves 9.2 s, because EP and the
+      experts' per-microbatch gradient reduce-scatters don't depend on how
+      the non-experts are sharded.</li>
+      <li>On an H800 it also puts 7.7 s on NVLink, so the step would be bound
+      on both links; an H100's NVLink would have room.</li>
+    </ul>
+
+    <div class="footnotes">
+      <p class="note" id="fn1"><sup>1</sup> Disclosure: this draft study was
+      generated by Claude from a conversation with the author working through
+      a "Why not HSDP?" aside drafted for post 03 and cut from it. It has not
+      yet had a human edit pass and is not part of the published series. The
+      cut aside used FP32 Adam moments (18 bytes per parameter); the numbers
+      here use the series' 14.
+      <a href="#fnref1">↩</a></p>
+
+      <p class="note" id="fn2"><sup>2</sup> Speed-of-light conventions, as in
+      03: traffic is summed at the link rates above with no overlap and no
+      efficiency factor, and compute is at the BF16 peak. A "move" is one
+      weight-sized collective (an all-gather, or a reduce-scatter of the
+      gradients) in BF16; the once-per-step sync reduces FP32 gradients and
+      gathers BF16 weights. Memory counts weights, gradients, optimizer state
+      and the activation stash only.
+      <a href="#fnref2">↩</a></p>
+
+      <p class="note" id="fn3"><sup>3</sup> DeepEP sends each token across IB
+      once per destination node, to the GPU with the sender's local rank,
+      which forwards it over NVLink to the GPUs holding its experts. Under 03's
+      routing convention a token visits four nodes and two of its eight
+      experts in each; with four experts per GPU, those two land on
+      2 − 3/31 = 59/31 ≈ 1.9 distinct GPUs on average. The receiving GPU keeps
+      its own share, so of the token's 4 × 59/31 destination GPUs, 7/8 are
+      reached over NVLink, against 4 × 7/8 = 3.5 IB copies: 59/31 as many
+      NVLink copies as IB copies, of the same FP8 dispatch and BF16 combine
+      bytes, at 160 GB/s instead of 50. That's 59/31 × 50/160 ≈ 0.59 of EP's
+      5.42 s of IB, or 3.22 s.
+      <a href="#fnref3">↩</a></p>
+    </div>
+  </main>
+  <script type="module">
+    import '../src/viewer.js';
+    import './series.js';
+  </script>
+</body>
+
+</html>

@@ -20,7 +20,7 @@
 // A cell without an expr is a LEAF: its value is injected by the caller
 // (slot-split layer counts, op-graph stash rates) and drill-down ends there.
 
-// ---- the mini formula language: numbers, cell ids, + - × / ( ) and ≥ ------
+// ---- the mini formula language: numbers, cell ids, + - · / ( ) and ≥ ------
 // (≥ evaluates to 0/1 — indicator arithmetic keeps piecewise rules, like the
 // ZeRO shard groups, expressible without the formula changing shape)
 import { ACT_BUCKETS, actBucketsOf, ppStage, LOCAL_PAR, ilvPeak } from './localmodel.js';
@@ -29,7 +29,7 @@ import { markKey } from './blockgraph.js';
 import { DSV3 } from './model.js';
 
 // H — the architecture: named dimensions as CELLS, so parameter counts and
-// stash formulas read semantically (H3 × 3 × H1 × H2) instead of as opaque
+// stash formulas read semantically (H3 · 3 · H1 · H2) instead of as opaque
 // numerals. Values come from the same DSV3 dict the whole engine runs on.
 export const ARCH_CELLS = [
   ['H1', 'hidden', 'hidden dim'],
@@ -66,7 +66,7 @@ function parse(src) {
   };
   const term = () => {
     let v = factor();
-    for (ws(); src[i] === '×' || src[i] === '/'; ws()) { const op = src[i++]; v = { op, a: v, b: factor() }; }
+    for (ws(); src[i] === '·' || src[i] === '/'; ws()) { const op = src[i++]; v = { op, a: v, b: factor() }; }
     return v;
   };
   const factor = () => {
@@ -90,7 +90,7 @@ export function evalExpr(src, get) {
       : n.op === '≥' ? (go(n.a) >= go(n.b) ? 1 : 0)
         : n.op === '+' ? go(n.a) + go(n.b)
           : n.op === '-' ? go(n.a) - go(n.b)
-            : n.op === '×' ? go(n.a) * go(n.b) : go(n.a) / go(n.b);
+            : n.op === '·' ? go(n.a) * go(n.b) : go(n.a) / go(n.b);
   return go(parse(src));
 }
 export const refsOf = (src) => [...new Set(src.match(/[A-Z]\d+[a-z]?/g) ?? [])];
@@ -110,7 +110,7 @@ export function buildCells(env) {
   // × P6. DualPipeV / ×1 mb keep 02's shape byte-for-byte.
   const ILV = env.sched === 'interleaved';
   const gradB = env.gradB ?? 4;   // the gradient buffer's bytes/param (02: fp32 = 4; Megatron's perf recipes: bf16 = 2)
-  const L1w = ILV ? '(L1 × P6)' : 'L1', L2w = ILV ? '(L2 × P6d)' : 'L2', P6t = ILV ? '' : ' × P6';
+  const L1w = ILV ? '(L1 · P6)' : 'L1', L2w = ILV ? '(L2 · P6d)' : 'L2', P6t = ILV ? '' : ' · P6';
   // one CLASS of one component (the accordion sub-rows): q = Q1/Q2/Q3,
   // S• = its ZeRO shard-group INPUT (the group size when this level shards
   // the component, else 1 — so the formula never changes shape, only the
@@ -118,7 +118,7 @@ export function buildCells(env) {
   // formula — both e4m3 orientations pay one fp32 scale per 1×128 tile,
   // 2 + F1 × 2 × 4/128. The component TOTALS are the sums of these rows:
   // the accordion IS the computation.
-  const cls = (bpp, q, S, w8) => `${w8 ? (env.mx ? '(2 + F1 × 2 × 1/32)' : '(2 + F1 × 2 × 4/128)') : String(bpp)} × ${q} / ${S}`;
+  const cls = (bpp, q, S, w8) => `${w8 ? (env.mx ? '(2 + F1 · 2 · 1/32)' : '(2 + F1 · 2 · 4/128)') : String(bpp)} · ${q} / ${S}`;
   // sheet-side alternate names (the diagram keeps the graph's tensor
   // names): dispatched tokens ARE the routed experts' gate/up input; the
   // shared expert reads the post-norm2 stream directly (pre-a2a)
@@ -140,7 +140,7 @@ export function buildCells(env) {
   // back to its as-is rates, labeled so.
   const buckets = (env.bM ?? []).flatMap((rM, i) => {
     const rD = env.bD[i], fM = env.bMF?.[i] ?? rM, fD = env.bDF?.[i] ?? rD;
-    const last = i === nBk - 1, tail = last ? ' + D3 × P7' : '';
+    const last = i === nBk - 1, tail = last ? ' + D3 · P7' : '';
     const lbl = `${alias(env.bLabels[i])}${last ? ' (+ vocab D3)' : ''}`;   // indented under A1 — no 'stash ·' prefix
     const R = env.bRate?.[i];
     // BREAKOUT buckets (residual, norm outs, the remainder): one sub-cell
@@ -162,22 +162,22 @@ export function buildCells(env) {
         const mkEdit = t.aux ? undefined : { t: 'mark', k: markKey(t.id) };
         if (t.aux) {
           const gate = lastRid ?? rid;
-          const rate = [t.fMv ? `${L1w} × ${t.fMv}` : null, t.fDv ? `${L2w} × ${t.fDv}` : null].filter(Boolean).join(' + ');
+          const rate = [t.fMv ? `${L1w} · ${t.fMv}` : null, t.fDv ? `${L2w} · ${t.fDv}` : null].filter(Boolean).join(' + ');
           return [
-            { id: sid, depth: 2, unit: 'B', label: t.label, ui, expr: `${gate} × (${rate}) × P7${P6t}` },
+            { id: sid, depth: 2, unit: 'B', label: t.label, ui, expr: `${gate} · (${rate}) · P7${P6t}` },
             ...(lastRid ? [] : [{ id: rid, depth: 3, label: 'kept?', ui, value: t.r }]),
           ];
         }
         lastRid = null;
         if (!t.whole) return [{ id: sid, depth: 2, unit: 'B', label: `${alias(t.label)} (partial under policy)`, ui,
-          expr: `(${L1w} × ${t.cMv} + ${L2w} × ${t.cDv}) × P7${P6t}` }];
-        const p1 = t.fMv ? `${L1w} × ${t.tM ? `(${t.tM})` : t.fMv}` : null;
-        const p2 = t.fDv ? `${L2w} × ${t.tD ? `(${t.tD})` : t.fDv}` : null;
+          expr: `(${L1w} · ${t.cMv} + ${L2w} · ${t.cDv}) · P7${P6t}` }];
+        const p1 = t.fMv ? `${L1w} · ${t.tM ? `(${t.tM})` : t.fMv}` : null;
+        const p2 = t.fDv ? `${L2w} · ${t.tD ? `(${t.tD})` : t.fDv}` : null;
         const rate = [p1, p2].filter(Boolean).join(' + ');
         if (!rate) return [{ id: sid, depth: 2, unit: 'B', label: alias(t.label), ui, value: 0 }];
         lastRid = rid;
         return [
-          { id: sid, depth: 2, unit: 'B', label: alias(t.label), ui, expr: `${rid} × (${rate}) × P7${P6t}` },
+          { id: sid, depth: 2, unit: 'B', label: alias(t.label), ui, expr: `${rid} · (${rate}) · P7${P6t}` },
           { id: rid, depth: 3, label: 'kept?', ui, edit: mkEdit, value: t.r },
           ...(t.prec != null ? [{ id: t.bref, depth: 3, unit: 'B/e', label: 'precision (B/elem)', ui, edit: dtEdit(t.dtc), value: descale(t.prec) }] : []),
         ];
@@ -192,7 +192,7 @@ export function buildCells(env) {
     const whole = (fM > 0 || fD > 0) && ((rM === fM && rD === fD) || (rM === 0 && rD === 0));
     if (!whole) return [{ id: `A${i + 2}`, unit: 'B', depth: 1, label: `${lbl} (partial under policy)`,
       ui: env.bIds?.[i] ? { c: env.bIds[i] } : undefined,
-      expr: `(${L1w} × ${rM} + ${L2w} × ${rD}) × P7${P6t}${tail}` }];
+      expr: `(${L1w} · ${rM} + ${L2w} · ${rD}) · P7${P6t}${tail}` }];
     // the gate/up bucket is ONE stashed graph node (the SwiGLU-input
     // quantize's output) whose elems span routed + shared (+ the dense MLP
     // in dense layers): split it for display — validated: the sub-dims must
@@ -209,11 +209,11 @@ export function buildCells(env) {
           { id: `A${i + 2}`, unit: 'B', depth: 1, label: lbl, ui: ui9,
             expr: `A${i + 2}a + A${i + 2}b + A${i + 2}c${tail}` },
           { id: `A${i + 2}a`, depth: 2, unit: 'B', label: 'gate, up · routed (routed experts’ hidden, pre-SwiGLU)', ui: ui9,
-            expr: `${R9} × ${L1w} × (${GS.routed} × ${B9}) × P7${P6t}` },
+            expr: `${R9} · ${L1w} · (${GS.routed} · ${B9}) · P7${P6t}` },
           { id: `A${i + 2}b`, depth: 2, unit: 'B', label: 'gate, up · shared (shared expert hidden, pre-SwiGLU)', ui: { c: `${env.bIds[i]}:sh` },
-            expr: `${R9} × ${L1w} × (${GS.shared} × ${B9}) × P7${P6t}` },
+            expr: `${R9} · ${L1w} · (${GS.shared} · ${B9}) · P7${P6t}` },
           { id: `A${i + 2}c`, depth: 2, unit: 'B', label: 'gate, up · dense MLP (dense layers’ hidden)', ui: ui9,
-            expr: `${R9} × ${L2w} × (${GS.dense} × ${B9}) × P7${P6t}` },
+            expr: `${R9} · ${L2w} · (${GS.dense} · ${B9}) · P7${P6t}` },
           { id: R9, depth: 2, label: 'kept?', ui: ui9, edit: { t: 'mark', k: markKey(env.bIds[i]) }, value: kept },
           { id: B9, depth: 2, unit: 'B/e', label: 'precision (B/elem)', ui: ui9,
             edit: R.dtc === 'o_proj' ? { t: 'cb', k: 'e5m6' } : { t: 'dt', k: R.dtc }, value: descale(R.prec) },
@@ -223,15 +223,15 @@ export function buildCells(env) {
     // the rate DECOMPOSITION (per saved tensor: dims × B•, + fp32 aux; the
     // ᵀ dual folds into B•'s value) when the caller validated one;
     // zero-rate kinds drop out
-    const t1 = fM ? `${L1w} × ${R?.eM ? `(${R.eM})` : fM}` : null;
-    const t2 = fD ? `${L2w} × ${R?.eD ? `(${R.eD})` : fD}` : null;
-    const rate = [t1, t2].filter(Boolean).join(' + ') || 'L1 × 0 + L2 × 0';
+    const t1 = fM ? `${L1w} · ${R?.eM ? `(${R.eM})` : fM}` : null;
+    const t2 = fD ? `${L2w} · ${R?.eD ? `(${R.eD})` : fD}` : null;
+    const rate = [t1, t2].filter(Boolean).join(' + ') || 'L1 · 0 + L2 · 0';
     const ui = env.bIds?.[i] ? { c: env.bIds[i] } : undefined;
     const dtE = R?.dtc == null ? undefined
       : R.dtc === 'o_proj' ? { t: 'cb', k: 'e5m6' } : { t: 'dt', k: R.dtc };
     return [
       { id: `A${i + 2}`, unit: 'B', depth: 1, label: lbl, ui,
-        expr: `R${i + 2} × (${rate}) × P7${P6t}${tail}` },
+        expr: `R${i + 2} · (${rate}) · P7${P6t}${tail}` },
       { id: `R${i + 2}`, depth: 2, label: 'kept?', ui,
         edit: env.bIds?.[i] ? { t: 'mark', k: markKey(env.bIds[i]) } : undefined,
         value: rM === fM && rD === fD ? 1 : 0 },
@@ -243,25 +243,25 @@ export function buildCells(env) {
   // additionally proves those against the checkpoint-exact PARAMS) — a
   // mismatch falls back to opaque value rows, never a wrong formula.
   const N2ROWS = [
-    ['N2a', 'q/kv down-proj', 'H1 × H7 + H1 × (H8 + H11)'],
-    ['N2b', 'q up-proj', 'H7 × H9 × (H10 + H11)'],
-    ['N2c', 'kv up-proj', 'H8 × H9 × (H10 + H12)'],
-    ['N2d', 'attn out-proj', 'H9 × H12 × H1'],
-    ['N2e', 'RMSNorms (norm1 · norm2 · 2 latent norms)', '2 × H1 + H7 + H8'],
-    ['N2f', 'router (weight + bias)', '(H1 + 1) × H3'],
-    ['N2g', 'shared expert (gate/up/down)', 'H13 × 3 × H1 × H2'],
+    ['N2a', 'q/kv down-proj', 'H1 · H7 + H1 · (H8 + H11)'],
+    ['N2b', 'q up-proj', 'H7 · H9 · (H10 + H11)'],
+    ['N2c', 'kv up-proj', 'H8 · H9 · (H10 + H12)'],
+    ['N2d', 'attn out-proj', 'H9 · H12 · H1'],
+    ['N2e', 'RMSNorms (norm1 · norm2 · 2 latent norms)', '2 · H1 + H7 + H8'],
+    ['N2f', 'router (weight + bias)', '(H1 + 1) · H3'],
+    ['N2g', 'shared expert (gate/up/down)', 'H13 · 3 · H1 · H2'],
   ];
-  const N3A = '3 × H1 × H5';
+  const N3A = '3 · H1 · H5';
   const nv = (e) => evalExpr(e, archGet);
-  const n1ok = env.N.routed == null || nv('H3 × 3 × H1 × H2') === env.N.routed;   // no target (the oracle's minimal env) = trust the arch
+  const n1ok = env.N.routed == null || nv('H3 · 3 · H1 · H2') === env.N.routed;   // no target (the oracle's minimal env) = trust the arch
   const nOk = N2ROWS.reduce((t, [, , e]) => t + nv(e), 0) === env.N.restLayer
     && N2ROWS.slice(0, 5).reduce((t, [, , e]) => t + nv(e), 0) + nv(N3A) === env.N.denseLayer;
   const defs = [
     { id: 'P1', label: 'GPUs in the cluster', value: env.world, ui: { k: 'gpus' }, edit: { t: 'step', k: 'gpus' } },
     { id: 'P2', label: 'pipeline stages (PP)', value: env.pp, ui: { k: 'pp' }, edit: { t: 'step', k: 'pp' } },
     { id: 'P3', label: 'expert parallelism (EP)', value: env.ep, ui: { k: 'ep' }, edit: { t: 'step', k: 'ep' } },
-    { id: 'P4', label: 'data parallelism (non-expert params: GPUs ÷ PP ÷ TP)', expr: 'P1 / (P2 × P11)' },
-    { id: 'P5', label: 'expert data parallelism (GPUs ÷ PP ÷ EP — TP widens it: expert-tensor-parallel is 1)', expr: 'P4 × P11 / P3' },
+    { id: 'P4', label: 'data parallelism (non-expert params: GPUs ÷ PP ÷ TP)', expr: 'P1 / (P2 · P11)' },
+    { id: 'P5', label: 'expert data parallelism (GPUs ÷ PP ÷ EP — TP widens it: expert-tensor-parallel is 1)', expr: 'P4 · P11 / P3' },
     ...(ILV ? [
       // Megatron interleaved 1F1B: the rank's peak chunk-stashes (P10) are
       // dealt over its VP chunks in groups of PP, so each layer KIND's
@@ -274,7 +274,7 @@ export function buildCells(env) {
       { id: 'P8', label: 'virtual pipeline stages per rank (VP)', value: env.vpp ?? 1, ui: { k: 'vpp' }, edit: { t: 'step', k: 'vpp' } },
       { id: 'P9', label: 'this rank (0-based)', value: Math.min(env.stage ?? 0, env.pp - 1), ui: { k: 'rank' }, edit: { t: 'step', k: 'rank' } },
       { id: 'P10', label: `chunk-stashes at the peak on this rank (warmup 2(PP−r−1) + (VP−1)·PP${env.a2a ? ' + 1 (a2a overlap)' : ''}, plus the steady-state forward)`,
-        expr: env.pp === 1 ? String(env.vpp ?? 1) : env.vpp === 1 ? 'P2 - P9' : env.a2a ? 'P2 × P8 + P2 - 2 × P9' : 'P2 × P8 + P2 - 2 × P9 - 1', ui: { k: 'sched' } },
+        expr: env.pp === 1 ? String(env.vpp ?? 1) : env.vpp === 1 ? 'P2 - P9' : env.a2a ? 'P2 · P8 + P2 - 2 · P9' : 'P2 · P8 + P2 - 2 · P9 - 1', ui: { k: 'sched' } },
     ] : [
       { id: 'P6', label: 'microbatches in flight' + (env.sched !== 'one' && env.pp > 1 ? ' (DualPipeV: PP + ½)' : ''),
         expr: env.sched === 'one' || env.pp === 1 ? '1' : 'P2 + 0.5', ui: { k: 'sched' }, edit: { t: 'flip', k: 'sched' } },
@@ -289,7 +289,7 @@ export function buildCells(env) {
       // gbs instances make microbatches per step a knob (P12 — the count
       // ZeRO-2/3 pay their collectives on); the busiest GPU's share of the
       // global batch (P14) split P12 ways sets every stash (P7)
-      { id: 'P7', label: 'tokens per microbatch, this GPU\u2019s share (seq 4096 × sequences per microbatch, ÷ TP under sequence parallel)', expr: '4096 × P15 / P11' },
+      { id: 'P7', label: 'tokens per microbatch, this GPU\u2019s share (seq 4096 × sequences per microbatch, ÷ TP under sequence parallel)', expr: '4096 · P15 / P11' },
       { id: 'P12', label: 'microbatches per step (m)', value: env.mb ?? 1, ui: { k: 'mb' }, edit: { t: 'step', k: 'mb' } },
       { id: 'P13', label: 'global batch (4096-token sequences)', value: env.gbs },
       { id: 'P14', label: 'sequences per step on the busiest GPU (⌈global batch ÷ DP⌉: DP needn\u2019t divide it)', value: Math.ceil(env.gbs / (env.world / env.pp / (env.tp ?? 1))) },
@@ -302,12 +302,12 @@ export function buildCells(env) {
     // the level resolves to per-component SHARD GROUPS (1 = unsharded) via
     // indicator arithmetic — the byte formulas below never change shape
     // when Z1 moves, and neither do these
-    { id: 'S2', depth: 1, ui: { k: 'zero' }, label: 'shard group · weights, experts', expr: '(S1 ≥ 3) × (P5 - 1) + 1' },
-    { id: 'S3', depth: 1, ui: { k: 'zero' }, label: 'shard group · weights, others', expr: '(S1 ≥ 3) × (P4 - 1) + 1' },
-    { id: 'S4', depth: 1, ui: { k: 'zero' }, label: 'shard group · gradients, experts', expr: '(S1 ≥ 2) × (P5 - 1) + 1' },
-    { id: 'S5', depth: 1, ui: { k: 'zero' }, label: 'shard group · gradients, others', expr: '(S1 ≥ 2) × (P4 - 1) + 1' },
-    { id: 'S6', depth: 1, ui: { k: 'zero' }, label: 'shard group · optimizer, experts', expr: '(S1 ≥ 1) × (P5 - 1) + 1' },
-    { id: 'S7', depth: 1, ui: { k: 'zero' }, label: 'shard group · optimizer, others', expr: '(S1 ≥ 1) × (P4 - 1) + 1' },
+    { id: 'S2', depth: 1, ui: { k: 'zero' }, label: 'shard group · weights, experts', expr: '(S1 ≥ 3) · (P5 - 1) + 1' },
+    { id: 'S3', depth: 1, ui: { k: 'zero' }, label: 'shard group · weights, others', expr: '(S1 ≥ 3) · (P4 - 1) + 1' },
+    { id: 'S4', depth: 1, ui: { k: 'zero' }, label: 'shard group · gradients, experts', expr: '(S1 ≥ 2) · (P5 - 1) + 1' },
+    { id: 'S5', depth: 1, ui: { k: 'zero' }, label: 'shard group · gradients, others', expr: '(S1 ≥ 2) · (P4 - 1) + 1' },
+    { id: 'S6', depth: 1, ui: { k: 'zero' }, label: 'shard group · optimizer, experts', expr: '(S1 ≥ 1) · (P5 - 1) + 1' },
+    { id: 'S7', depth: 1, ui: { k: 'zero' }, label: 'shard group · optimizer, others', expr: '(S1 ≥ 1) · (P4 - 1) + 1' },
     { id: 'F1', label: env.mx ? 'mxfp8-resident params (row + column copies)? (0/1)' : 'e4m3+ᵀ-resident params? (0/1)', value: fp8p ? 1 : 0, ui: { k: 'fp8params' }, edit: { t: 'cb', k: 'fp8params' } },
     { id: 'L1', label: 'MoE layers on this rank (slot split)', value: g.moe, ui: { k: 'rank' }, edit: { t: 'flip', k: 'rank' } },
     { id: 'L2', label: 'dense layers on this rank (slot split)', value: g.dense, ui: { k: 'rank' }, edit: { t: 'flip', k: 'rank' } },
@@ -316,7 +316,7 @@ export function buildCells(env) {
     { id: 'L5', depth: 1, label: 'lm head on this rank? (0/1)', value: g.head ? 1 : 0, ui: { k: 'rank' }, edit: { t: 'flip', k: 'rank' } },
     ...ARCH_CELLS.map(([id, key, label]) => ({ id, label, value: DSV3[key], note: '(architecture)' })),
     { id: 'N1', label: 'params · routed experts, one MoE layer', unit: 'p',
-      expr: n1ok ? 'H3 × 3 × H1 × H2' : undefined, value: n1ok ? undefined : env.N.routed },
+      expr: n1ok ? 'H3 · 3 · H1 · H2' : undefined, value: n1ok ? undefined : env.N.routed },
     ...(nOk ? [
       { id: 'N2', label: 'params · rest of a MoE layer', unit: 'p', expr: 'N2a + N2b + N2c + N2d + N2e + N2f + N2g' },
       ...N2ROWS.map(([id, label, expr]) => ({ id, depth: 1, unit: 'p', label, expr })),
@@ -337,11 +337,11 @@ export function buildCells(env) {
       { id: 'N7', label: 'params · dense layer, TP-sharded', unit: 'p', value: env.N.denseLayerTp ?? env.N.denseLayer },
       { id: 'N8', label: 'params · dense layer, TP-replicated', unit: 'p', value: env.N.denseLayer - (env.N.denseLayerTp ?? env.N.denseLayer) },
     ]),
-    { id: 'N4', label: 'params · one vocab matrix', unit: 'p', expr: 'H6 × H1' },
-    { id: 'Q1', label: 'expert params on this GPU', unit: 'p', expr: 'L1 × N1 / P3' },
-    { id: 'Q2', label: 'non-expert block params on this GPU (sharded parts ÷ TP, replicated parts whole)', unit: 'p', expr: 'L1 × (N5 / P11 + N6) + L2 × (N7 / P11 + N8)' },
+    { id: 'N4', label: 'params · one vocab matrix', unit: 'p', expr: 'H6 · H1' },
+    { id: 'Q1', label: 'expert params on this GPU', unit: 'p', expr: 'L1 · N1 / P3' },
+    { id: 'Q2', label: 'non-expert block params on this GPU (sharded parts ÷ TP, replicated parts whole)', unit: 'p', expr: 'L1 · (N5 / P11 + N6) + L2 · (N7 / P11 + N8)' },
     { id: 'Q3', label: 'vocab params on this GPU (+ final norm)', unit: 'p',
-      expr: env.simplify ? 'L3 × N4 / P11' : 'L3 × N4 / P11 + L5 × H1' },   // vocab-parallel; the 7 K final norm (replicated) is a simplify casualty
+      expr: env.simplify ? 'L3 · N4 / P11' : 'L3 · N4 / P11 + L5 · H1' },   // vocab-parallel; the 7 K final norm (replicated) is a simplify casualty
     { id: 'W1', label: env.mx ? 'weights (2 B bf16; F1 flips block params mxfp8 row+col)' : 'weights (2 B bf16; F1 flips block params e4m3+ᵀ)', unit: 'B', expr: 'W2 + W3 + W4' },
     { id: 'W2', depth: 1, label: 'experts', unit: 'B', expr: cls(2, 'Q1', 'S2', true) },
     { id: 'W3', depth: 1, label: 'non-expert blocks', unit: 'B', expr: cls(2, 'Q2', 'S3', true) },
@@ -357,12 +357,12 @@ export function buildCells(env) {
     { id: 'D1', label: 'stash/token · one MoE layer (the chips’ sum)', unit: 'B/tok', value: env.aM },
     { id: 'D2', label: 'stash/token · one dense layer', unit: 'B/tok', value: env.aD },
     { id: 'D3', label: 'stash/token · vocab side (x0 / logits + loss)', unit: 'B/tok',
-      expr: 'L4 × 2 × H1 + L5 × 6 × H6' },
+      expr: 'L4 · 2 · H1 + L5 · 6 · H6' },
     // the acts total is the SUM OF ITS ACCORDION (the buckets partition the
     // op graph's savedBytes exactly, so this equals (L1×D1 + L2×D2) × 4096
     // × P6 + D3 × 4096 — D1/D2 stay as the per-layer summary rates)
     { id: 'A1', label: 'saved activations', unit: 'B',
-      expr: nBk ? bucketSum : `(${L1w} × D1 + ${L2w} × D2) × P7${P6t} + D3 × P7` },
+      expr: nBk ? bucketSum : `(${L1w} · D1 + ${L2w} · D2) · P7${P6t} + D3 · P7` },
     // one cell per stash BUCKET (+ its 0/1 recompute-choice row): the
     // per-token rates ride the formula as exact literals (dyadic — their
     // decimal strings round-trip), sourced from the op graph per layer kind
@@ -409,7 +409,7 @@ const rateExprs = (AM, AD, curM, curD, bFM, bFD) => ACT_BUCKETS.map((b, k) => {
       .filter((id) => !NAMED.has(id));
   if (!ids.length && !BREAKOUT.has(k)) return null;
   let prec = null, mixed = false;
-  // one tensor's rate expression for one layer KIND (dims × B• + aux);
+  // one tensor's rate expression for one layer KIND (dims · B• + aux);
   // bref names the precision input the terms reference
   const tExpr = (A, id, bref, withAux = false) => {
     const n2 = A.byId[id];
@@ -420,9 +420,10 @@ const rateExprs = (AM, AD, curM, curD, bFM, bFD) => ACT_BUCKETS.map((b, k) => {
       if (prec == null) prec = bpe;
       else if (prec !== bpe) mixed = true;
       let dims = String(n2.elems);
-      try { if (n2.tdims && evalExpr(n2.tdims, () => NaN) === n2.elems) dims = n2.tdims; } catch { /* keep the literal */ }
-      if (dims.includes('+')) dims = `(${dims})`;   // multi-term tdims must bind before × B•
-      terms.push(`${dims} × ${bref}`);
+      const td = n2.tdims?.replace(/×/g, '·');   // the op graph's dims say × (diagram labels); formulas say ·
+      try { if (td && evalExpr(td, () => NaN) === n2.elems) dims = td; } catch { /* keep the literal */ }
+      if (dims.includes('+')) dims = `(${dims})`;   // multi-term tdims must bind before · B•
+      terms.push(`${dims} · ${bref}`);
     }
     if (withAux && n2.aux && !A.replayed.has(id)) terms.push(String(n2.aux.bytes));
     return terms.length ? terms.join(' + ') : null;
@@ -503,7 +504,7 @@ export const cellsEnv = (S, anaM, anaD, anaMF, anaDF) => ({
   bM: actBucketsOf(anaM), bD: actBucketsOf(anaD), bLabels: ACT_BUCKETS.map((b) => b.label),
   bIds: ACT_BUCKETS.map((b) => b.ids[0] ?? null),
   gateSplit: { i: ACT_BUCKETS.findIndex((b) => b.ids[0] === 'quant'),
-    routed: 'H4×2×H2', shared: 'H13×2×H2', dense: '2×H5' },
+    routed: 'H4·2·H2', shared: 'H13·2·H2', dense: '2·H5' },
   bMF: actBucketsOf(anaMF ?? anaM), bDF: actBucketsOf(anaDF ?? anaD),
   bRate: anaMF && anaDF
     ? rateExprs(anaMF, anaDF, anaM, anaD, actBucketsOf(anaMF), actBucketsOf(anaDF))
@@ -525,7 +526,7 @@ const ilvEnv = (S, aM, aD) => {
     const by = new Map();
     pk.segs.forEach((sg, c) => { if (sg[kind]) by.set(pk.live[c], (by.get(pk.live[c]) ?? 0) + sg[kind]); });
     if (!by.size) continue;
-    out.ifExpr[kind] = `(${[...by.entries()].sort((a, b) => b[0] - a[0]).map(([k, L]) => `${L} × ${k}`).join(' + ')}) / ${Lc}`;
+    out.ifExpr[kind] = `(${[...by.entries()].sort((a, b) => b[0] - a[0]).map(([k, L]) => `${L} · ${k}`).join(' + ')}) / ${Lc}`;
   }
   return out;
 };

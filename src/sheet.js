@@ -176,13 +176,13 @@ export class Dsv3Sheet extends HTMLElement {
     });
   }
   // build the worksheet XML: one row per cell, the VALUE column carrying
-  // LIVE formulas (ids → C-column addresses; × → *, ≥ → >= — booleans
+  // LIVE formulas (ids → C-column addresses; · → *, ≥ → >= — booleans
   // coerce in arithmetic in both Excel and Sheets). Inputs export as plain
   // numbers, so the downloaded workbook RECOMPUTES when you edit them.
   _sheetXml(cells) {
     const rowOf = new Map(cells.cells.map((c, i) => [c.id, i + 2]));
     const xf = (e2) => e2.replace(/[A-Z]\d+[a-z]?/g, (id) => `C${rowOf.get(id) ?? '#REF!'}`)
-      .replace(/×/g, '*').replace(/≥/g, '>=');
+      .replace(/·/g, '*').replace(/≥/g, '>=');
     const xesc = (t2) => String(t2).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     const str = (ref, t2, st = 0) => `<c r="${ref}" t="inlineStr"${st ? ` s="${st}"` : ''}><is><t xml:space="preserve">${xesc(t2)}</t></is></c>`;
     const APPROX = { B: [2 ** 30, 'GiB'], 'B/tok': [1024, 'KiB/tok'], p: [1e9, 'B params'] };
