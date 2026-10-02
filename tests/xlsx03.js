@@ -36,12 +36,10 @@ check('GPUs 4096');
 T.check('… knob edits export as the leaf value', /<v>4096<\/v>/.test(sheetXml()), '');
 setKnob('GPUs', null);
 
-// one button per sheet; the blob is a real xlsx zip
-const btns = document.querySelectorAll('.cellsheet .cs-dl');
-T.check('a download button in every sheet header', btns.length === document.querySelectorAll('.cellsheet').length, btns.length);
-const hd = document.querySelector('.cellsheet tr'), h1 = hd.getBoundingClientRect().height;
-btns[0].remove(); const h0 = hd.getBoundingClientRect().height; hd.lastElementChild.append(btns[0]);
-T.check('… without growing the header row', h0 === h1, `${h0} → ${h1}`);
+// one download for the whole page, after the last sheet; the blob is a real xlsx zip
+const btns = document.querySelectorAll('.sheet-dl'), sheets = document.querySelectorAll('.cellsheet');
+T.check('one download button, below every sheet', btns.length === 1 && document.querySelectorAll('.cs-dl').length === 0
+  && (sheets[sheets.length - 1].compareDocumentPosition(btns[0]) & Node.DOCUMENT_POSITION_FOLLOWING), btns.length);
 let blobUrl = null;
 const oClick = HTMLAnchorElement.prototype.click;
 HTMLAnchorElement.prototype.click = function () { if (this.download) blobUrl = this.href; else oClick.call(this); };

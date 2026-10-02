@@ -85,7 +85,7 @@
     /* 02's sheet interactions: hover a formula name for its cell card, click it to jump to its row; a clicked row stays selected */
     .cellsheet td.fx b.ref { cursor: pointer; }
     .cellsheet tr.sel td { background: var(--c-fff3d1); }
-    .cellsheet .cs-dl { float: right; font: inherit; color: var(--c-2a78d6); background: none; border: 0; padding: 0; cursor: pointer; }   /* sheetedit.js: the whole page as one .xlsx */
+    .sheet-dl { font: inherit; color: var(--c-2a78d6); background: none; border: 0; padding: 0; cursor: pointer; }   /* sheetedit.js: the whole page as one .xlsx */
     /* sheetedit.js: real-knob values wear 02's editable face (click to type); values off the published page turn amber */
     .cellsheet td.vl.edv { background: var(--c-eef4fc); cursor: text; }
     @media (hover: hover) { .cellsheet td.vl.edv:hover { background: var(--c-dcebfa); } }
@@ -1266,6 +1266,8 @@
     as we scale compute.
     The roofline will never exactly predict real-world behavior, but the clarity of a simple model means that we can figure out
     what went wrong (either in the model, or in our implementation).</p>
+
+    <p><button class="sheet-dl" title="every sheet on this page as one .xlsx with live formulas (cell names become cell references), at the current knob values">⤓ Download all the sheets as one .xlsx</button></p>
 
   </main>
   <script type="module">

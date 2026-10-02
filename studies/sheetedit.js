@@ -9,8 +9,9 @@
 // only), so the floating reset (reset.js) lists and undoes them. Prose numbers
 // that quote a cell (data-cellref = the row's name) follow along; each render
 // fires 'dsv3-cells' so page scripts can follow too (current(), setKnob()).
-// Every sheet's header offers the whole page as one .xlsx with live formulas
-// (names → C-column addresses), at the current knob values.
+// The page's .sheet-dl button (static HTML, at the bottom) downloads every
+// sheet as one .xlsx with live formulas (names → C-column addresses), at the
+// current knob values.
 import { describe } from './reset.js';
 import { downloadXlsx, xesc } from '../src/xlsx.js';
 
@@ -287,12 +288,7 @@ export function sheetXml() {
     + '<cols>' + [9, 44, 22, 11, 40, 50].map((w, i) => `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`).join('') + '</cols>'
     + `<sheetData>${head}${body.join('')}</sheetData></worksheet>`;
 }
-for (const th of document.querySelectorAll('.cellsheet tr:first-child th:last-child')) {
-  const b = Object.assign(document.createElement('button'), { className: 'cs-dl', textContent: '⤓ .xlsx',
-    title: 'download every sheet on this page as one .xlsx with live formulas (cell names become cell references), at the current knob values' });
-  b.addEventListener('click', (ev) => { ev.stopPropagation(); downloadXlsx(...PAGE.xlsx, sheetXml()); });
-  th.append(b);
-}
+for (const b of document.querySelectorAll('.sheet-dl')) b.addEventListener('click', () => downloadXlsx(...PAGE.xlsx, sheetXml()));
 
 describe(KEY, () => Object.entries(KNOBS).filter(([, k]) => edits[k]).map(([name, k]) => ({
   html: `<b>${name}</b> ${fmtKnob(PUB.get(name))} → ${fmtKnob(edits[k])}`,
