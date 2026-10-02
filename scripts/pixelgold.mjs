@@ -20,7 +20,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { join } from 'node:path';
-import { shoot, root } from './shotlib.mjs';
+import { shoot, closeShots, root } from './shotlib.mjs';
 import { decode, encode } from './pngio.mjs';
 
 const W = 1500, H = 2600;   // shot window; a widget touching its edge = enlarge it
@@ -67,11 +67,11 @@ mkdirSync(GOLD, { recursive: true });
 // trim the shot to its content (background = the corner pixel) + 8px apron
 function trim(img) {
   const { w, h, data } = img;
-  const bg = data.readUInt32BE(0);
+  const px = new Uint32Array(data.buffer, data.byteOffset, w * h), bg = px[0];
   let x0 = w, y0 = h, x1 = -1, y1 = -1;
   for (let y = 0; y < h; y++)
     for (let x = 0; x < w; x++)
-      if (data.readUInt32BE((y * w + x) * 4) !== bg) {
+      if (px[y * w + x] !== bg) {
         if (x < x0) x0 = x; if (x > x1) x1 = x;
         if (y < y0) y0 = y; if (y > y1) y1 = y;
       }
@@ -116,9 +116,7 @@ let next = 0;
 if (!VS) await Promise.all(Array.from({ length: 4 }, async () => {
   while (next < picked.length) {
     const s = picked[next++];
-    const tmp = join('/tmp', `pixelgold-${s.name}.png`);
-    await shoot(s.page, s.sel, { origin: 24, dark: s.dark, w: W, h: H, dsf: 1, out: tmp });
-    const img = trim(decode(readFileSync(tmp)));
+    const img = trim(decode(await shoot(s.page, s.sel, { origin: 24, dark: s.dark, w: W, h: H, dsf: 1 })));
     const goldPath = join(GOLD, s.name + '.png');
     const gold = existsSync(goldPath) ? decode(readFileSync(goldPath)) : null;
     let verdict = 'match', ndiff = 0, diffImg = null;
@@ -134,6 +132,7 @@ if (!VS) await Promise.all(Array.from({ length: 4 }, async () => {
     results.push({ ...s, img, gold, verdict, diffImg, goldPath });
   }
 }));
+await closeShots();
 
 results.sort((a, b) => a.name.localeCompare(b.name));
 const bad = results.filter((r) => r.verdict !== 'match');

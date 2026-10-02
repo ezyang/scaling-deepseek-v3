@@ -65,9 +65,11 @@ generality.
   chrome-headless-shell): expect a wholesale re-baseline after Chrome/OS
   updates.
 - `node scripts/battery.mjs [filter…]` — the whole battery (sanity +
-  diagramlint + every scenario in tests/) in parallel, ~3 s. Run this one.
-  Browser drivers prefer Playwright's chrome-headless-shell (~10× faster
-  startup, never touches the real Chrome profile); `CHROME=<path>` overrides.
+  diagramlint + every scenario in tests/) in parallel, ~12 s. Run this one.
+  Browser drivers (scripts/cdp.mjs) keep one long-lived browser per process
+  over the DevTools pipe, a fresh browser context per page load. They
+  prefer Playwright's chrome-headless-shell (never touches the real Chrome
+  profile); `CHROME=<path>` overrides.
 - `node scripts/interact.mjs <page> <scenario.js>` — sequenced
   click/hover/assert scenarios in headless Chrome. Prefer interaction tests
   over static screenshots; invest in test affordances freely. Durable

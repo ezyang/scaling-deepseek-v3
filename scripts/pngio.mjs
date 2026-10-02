@@ -14,30 +14,32 @@ export function decode(buf) {
     } else if (type === 'IDAT') idat.push(data);
     off += 12 + len;
   }
-  const bpp = ct === 6 ? 4 : 3, stride = w * bpp;
-  const raw = inflateSync(Buffer.concat(idat));
-  const out = Buffer.alloc(w * h * 4);
-  const prev = Buffer.alloc(stride), cur = Buffer.alloc(stride);
-  for (let y = 0; y < h; y++) {
-    const f = raw[y * (stride + 1)];
-    raw.copy(cur, 0, y * (stride + 1) + 1, (y + 1) * (stride + 1));
-    for (let x = 0; x < stride; x++) {
-      const a = x >= bpp ? cur[x - bpp] : 0, b = prev[x], c = x >= bpp ? prev[x - bpp] : 0;
-      if (f === 1) cur[x] = (cur[x] + a) & 255;
-      else if (f === 2) cur[x] = (cur[x] + b) & 255;
-      else if (f === 3) cur[x] = (cur[x] + ((a + b) >> 1)) & 255;
-      else if (f === 4) {
+  const bpp = ct === 6 ? 4 : 3, stride = w * bpp, s = stride + 1;
+  // unfilter in place; a zero scanline above row 0 stands in for "no previous row"
+  const px = Buffer.alloc(s + h * s);
+  inflateSync(Buffer.concat(idat)).copy(px, s);
+  for (let r = s + 1; r < px.length; r += s) {
+    const f = px[r - 1], end = r + stride;
+    if (f === 1) for (let i = r + bpp; i < end; i++) px[i] += px[i - bpp];
+    else if (f === 2) for (let i = r; i < end; i++) px[i] += px[i - s];
+    else if (f === 3) {
+      for (let i = r; i < r + bpp; i++) px[i] += px[i - s] >> 1;
+      for (let i = r + bpp; i < end; i++) px[i] += (px[i - bpp] + px[i - s]) >> 1;
+    } else if (f === 4) {
+      for (let i = r; i < r + bpp; i++) px[i] += px[i - s];   // Paeth with a = c = 0 picks b
+      for (let i = r + bpp; i < end; i++) {
+        const a = px[i - bpp], b = px[i - s], c = px[i - s - bpp];
         const p = a + b - c, pa = Math.abs(p - a), pb = Math.abs(p - b), pc = Math.abs(p - c);
-        cur[x] = (cur[x] + (pa <= pb && pa <= pc ? a : pb <= pc ? b : c)) & 255;
+        px[i] += pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
       }
     }
-    for (let x = 0; x < w; x++) {
-      out[(y * w + x) * 4] = cur[x * bpp];
-      out[(y * w + x) * 4 + 1] = cur[x * bpp + 1];
-      out[(y * w + x) * 4 + 2] = cur[x * bpp + 2];
-      out[(y * w + x) * 4 + 3] = ct === 6 ? cur[x * bpp + 3] : 255;
+  }
+  const out = Buffer.alloc(w * h * 4);
+  for (let y = 0, r = s + 1; y < h; y++, r += s) {
+    if (ct === 6) { px.copy(out, y * stride, r, r + stride); continue; }
+    for (let x = 0, o = y * w * 4; x < stride; x += 3, o += 4) {
+      out[o] = px[r + x]; out[o + 1] = px[r + x + 1]; out[o + 2] = px[r + x + 2]; out[o + 3] = 255;
     }
-    cur.copy(prev);
   }
   return { w, h, data: out };
 }

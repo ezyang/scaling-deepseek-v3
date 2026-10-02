@@ -7,7 +7,7 @@
 //
 //   node scripts/ogshot.mjs
 import { join } from 'node:path';
-import { shoot, root } from './shotlib.mjs';
+import { shoot, closeShots, root } from './shotlib.mjs';
 
 const W = 1200, H = 630, PAD = 24;
 const SHOTS = [
@@ -20,3 +20,4 @@ for (const { page, sel, out } of SHOTS) {
   await shoot(page, sel, { card: { W, H, PAD }, unclip: true, w: W, h: H, dsf: 2, out: join(root, out) });
   console.log(`ogshot: ${out} (${W * 2}×${H * 2} from ${page} ${sel})`);
 }
+await closeShots();

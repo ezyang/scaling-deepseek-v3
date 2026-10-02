@@ -8,16 +8,16 @@
 // overflow the element box on both sides) lands where asked. Coordinates are
 // delta-corrected by re-measuring, since a transformed ancestor makes
 // position:fixed resolve against it rather than the viewport.
-import { createServer } from 'node:http';
-import { readFile } from 'node:fs/promises';
-import { execFile } from 'node:child_process';
-import { extname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { chromePath } from './chromepath.mjs';
+import { readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { launch, serve, root } from './cdp.mjs';
 
-export const root = fileURLToPath(new URL('..', import.meta.url));
-const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png' };
-const CHROME = chromePath();
+export { root };
+// one server + one browser per device scale factor, launched on first use.
+// DSF is a launch flag, not Emulation.setDeviceMetricsOverride: emulated
+// DSF paints the fractionally-positioned card ~1 device px off.
+let server = null;
+const browsers = new Map();
 
 // opts.card = {W,H,PAD}: scale to fit the card, centered (og mode).
 // opts.origin = N: scale 1, painted union anchored at (N, N) (pixel mode).
@@ -62,26 +62,25 @@ const ISOLATE = (sel, o) => `
   }
 `;
 
+// Resolves with the PNG (also written to opts.out when given). Captured when
+// the 40 s virtual-time budget runs out — the page is idle by then.
 export async function shoot(page, sel, opts) {
+  const srv = await (server ??= serve());
+  if (!browsers.has(opts.dsf)) browsers.set(opts.dsf, launch([`--force-device-scale-factor=${opts.dsf}`]));
+  const browser = await browsers.get(opts.dsf);
   const pageHtml = await readFile(join(root, page), 'utf8');
-  const injected = pageHtml.replace('</body>',
-    `<script type="module">(async () => {${ISOLATE(sel, opts)}})();</script></body>`);
-  const srv = createServer(async (req, res) => {
-    try {
-      const path = decodeURIComponent(new URL(req.url, 'http://x').pathname);
-      if (path === '/' + page) { res.writeHead(200, { 'content-type': 'text/html' }); res.end(injected); return; }
-      const body = await readFile(join(root, path));
-      res.writeHead(200, { 'content-type': MIME[extname(path)] ?? 'application/octet-stream' });
-      res.end(body);
-    } catch { res.writeHead(404); res.end(); }
-  });
-  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
-  const url = `http://127.0.0.1:${srv.address().port}/${page}`;
+  const job = srv.inject(page, pageHtml.replace('</body>',
+    `<script type="module">(async () => {${ISOLATE(sel, opts)}})();</script></body>`));
+  const p = await browser.open(job.url, { width: opts.w, height: opts.h });
   try {
-    await new Promise((res2, rej) => execFile(CHROME,
-      ['--headless', '--disable-gpu', '--hide-scrollbars', '--virtual-time-budget=40000',
-        `--window-size=${opts.w},${opts.h}`, `--force-device-scale-factor=${opts.dsf ?? 1}`,
-        `--screenshot=${opts.out}`, url],
-      { maxBuffer: 64 * 1024 * 1024, timeout: 60_000 }, (err) => err ? rej(err) : res2()));
-  } finally { srv.close(); }
+    await p.until();
+    const png = await p.screenshot({ fast: !opts.out });   // files ship (og images); buffers just get decoded
+    if (opts.out) await writeFile(opts.out, png);
+    return png;
+  } finally { await p.close(); job.done(); }
+}
+
+export async function closeShots() {
+  for (const b of browsers.values()) (await b).close();
+  (await server)?.close();
 }

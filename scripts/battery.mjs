@@ -4,14 +4,17 @@
 //
 //   node scripts/battery.mjs [name-substring …]   # filter scenarios by name
 //
-// The runs are fully independent (each interact.mjs spawns its own server +
-// browser), so the battery runs them concurrently, longest scenario first,
-// and reports one line per job.
+// Scenarios run in-process, each in a fresh browser context of a small pool
+// of long-lived browsers (scripts/cdp.mjs); the scripts that aren't
+// scenarios run as subprocesses. Everything runs concurrently, longest
+// first, one report line per job.
 import { readdir, readFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { availableParallelism } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { launch, serve } from './cdp.mjs';
+import { runScenario } from './interact.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const filters = process.argv.slice(2);
@@ -30,33 +33,39 @@ for (const f of (await readdir(join(root, 'tests'))).filter(f => f.endsWith('.js
   const page = src.match(/^\/\/ @page (\S+)/m)?.[1];
   if (!page) { console.error(`SKIP ${name}: no "// @page" header`); process.exitCode = 1; continue; }
   const extra = src.match(/^\/\/ @args (.+)$/m)?.[1].trim().split(/\s+/) ?? [];
-  jobs.push({ name, args: ['scripts/interact.mjs', page, join('tests', f), ...extra], size: src.length });
+  const width = extra.includes('--width') ? parseInt(extra[extra.indexOf('--width') + 1], 10) : undefined;
+  jobs.push({ name, page, file: join('tests', f), width, size: src.length });
 }
 jobs.sort((a, b) => (b.size ?? Infinity) - (a.size ?? Infinity));   // longest scenarios first: they set the critical path
 
 const limit = Math.max(2, availableParallelism() - 2);
+const POOL = 4;   // browsers shared by the scenario workers
 const t0 = performance.now();
+const [srv, ...browsers] = jobs.some(j => j.file) ? await Promise.all([serve(), ...Array.from({ length: POOL }, () => launch())]) : [];
 let next = 0, failed = 0;
-const run = (job) => new Promise((res) => {
+const sub = (job) => new Promise((res) => execFile('node', job.args, { cwd: root, maxBuffer: 16 * 1024 * 1024, timeout: 120_000 },
+  (err, stdout, stderr) => res({ ok: !err, out: stdout + stderr })));
+const scenario = (job, browser) => runScenario(browser, srv, job.page, job.file, { width: job.width })
+  .then(r => ({ ok: !r.fails, out: r.text }), e => ({ ok: false, out: 'ERROR ' + e.message }));
+const run = async (job, w) => {
   const t = performance.now();
-  execFile('node', job.args, { cwd: root, maxBuffer: 16 * 1024 * 1024 }, (err, stdout, stderr) => {
-    const secs = ((performance.now() - t) / 1000).toFixed(1);
-    const out = stdout + stderr;
-    const tally = out.match(/interact: (\d+) checks/)?.[1]
-      ?? out.match(/sanity: (\d+)/)?.[1]
-      ?? out.match(/(\d+) finding/)?.[1];
-    if (err) {
-      failed++;
-      console.log(`FAIL  ${job.name}  (${secs}s)`);
-      console.log(out.split('\n').filter(l => /FAIL|ERROR|error/.test(l) || !out.includes('interact:')).slice(-15).map(l => '      ' + l).join('\n'));
-    } else {
-      console.log(`pass  ${job.name}  (${tally ? tally + ' checks, ' : ''}${secs}s)`);
-    }
-    res();
-  });
-});
-await Promise.all(Array.from({ length: limit }, async () => {
-  while (next < jobs.length) await run(jobs[next++]);
+  const { ok, out } = await (job.file ? scenario(job, browsers[w % POOL]) : sub(job));
+  const secs = ((performance.now() - t) / 1000).toFixed(1);
+  const tally = out.match(/interact: (\d+) checks/)?.[1]
+    ?? out.match(/sanity: (\d+)/)?.[1]
+    ?? out.match(/(\d+) finding/)?.[1];
+  if (!ok) {
+    failed++;
+    console.log(`FAIL  ${job.name}  (${secs}s)`);
+    console.log(out.split('\n').filter(l => /FAIL|ERROR|error/.test(l) || !out.includes('interact:')).slice(-15).map(l => '      ' + l).join('\n'));
+  } else {
+    console.log(`pass  ${job.name}  (${tally ? tally + ' checks, ' : ''}${secs}s)`);
+  }
+};
+await Promise.all(Array.from({ length: limit }, async (_, w) => {
+  while (next < jobs.length) await run(jobs[next++], w);
 }));
+for (const b of browsers) b.close();
+srv?.close();
 console.log(`\nbattery: ${jobs.length} jobs, ${failed} failure(s), ${((performance.now() - t0) / 1000).toFixed(1)}s`);
 process.exit(failed || process.exitCode ? 1 : 0);
