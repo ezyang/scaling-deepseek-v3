@@ -19,7 +19,7 @@
 
 <body>
   <main>
-    <nav class="series-strip"><a href="../index.html">DeepSeek-V3: from roofline to reality</a> · post 2 of 2</nav>
+    <nav class="series-strip"><a href="../index.html">DeepSeek-V3: from roofline to reality</a> · post 2 of 3</nav>
     <h1>Memory: a Hopper case study</h1>
     <p class="sub">How to fit it on 80 GiB.<span class="mn-ref"></span><span class="mn">Well, technically,
     <code>nvidia-smi</code> will report only 79.65 GiB. But we'll use
@@ -157,7 +157,7 @@
     DP) and expert parallelism (reducing expert weights by a factor of EP).
     However, we cannot do full ZeRO-3, as it turns out a communication
     roofline shows we will either OOM or be communication bound (we leave this analysis to a
-    future post).  And with only ZeRO-1 (optimizer state only—including the
+    <a href="./03-roofline.html">future post</a>).  And with only ZeRO-1 (optimizer state only—including the
     FP32 master parameters) and EP, we
     still cannot fit, so we need to bring out the big guns.</p>
 
@@ -549,7 +549,7 @@
       "../src/xlsx.js": "../src/xlsx.js?v=0d0c89f5",
       "./mobile.js": "./mobile.js?v=2dbf376b",
       "./reset.js": "./reset.js?v=374568e6",
-      "./series.js": "./series.js?v=3db94403",
+      "./series.js": "./series.js?v=29dbe961",
       "./sheetedit.js": "./sheetedit.js?v=db6a0bcd",
       "./toc.js": "./toc.js?v=bf4b443d"
     }

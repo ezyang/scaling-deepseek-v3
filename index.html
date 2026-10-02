@@ -92,6 +92,11 @@
         — How to fit it on 80 GiB. We identify all of the main uses of memory
         in training, and then walk through the impact of pipeline parallelism,
         activation checkpointing and low precision on your memory usage.</li>
+      <li><a href="./studies/03-roofline.html">Working the roofline for DeepSeek-V3 on Hopper</a>
+        — By carefully reasoning out the mechanics of how our distributed
+        training works, we can put together a simple set of formulas that let
+        us model how our system will behave, even if we don't actually have a
+        cluster of 2048 H800s.</li>
     </ul>
 
   </main>
@@ -131,7 +136,7 @@
       "./src/xlsx.js": "./src/xlsx.js?v=0d0c89f5",
       "./studies/mobile.js": "./studies/mobile.js?v=2dbf376b",
       "./studies/reset.js": "./studies/reset.js?v=374568e6",
-      "./studies/series.js": "./studies/series.js?v=3db94403",
+      "./studies/series.js": "./studies/series.js?v=29dbe961",
       "./studies/sheetedit.js": "./studies/sheetedit.js?v=db6a0bcd",
       "./studies/toc.js": "./studies/toc.js?v=bf4b443d"
     }

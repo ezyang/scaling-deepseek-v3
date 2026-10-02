@@ -5,8 +5,16 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <script data-theme>document.documentElement.classList.toggle('dark', (localStorage.getItem('dsv3-theme') ?? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')) === 'dark');</script>
-  <title>03 (draft)</title>
-  <link rel="stylesheet" href="./study.css">
+  <title>Working the roofline for DeepSeek-V3 on Hopper</title>
+  <meta name="description" content="By carefully reasoning out the mechanics of how our distributed training works, we can put together a simple set of formulas that let us model how our system will behave, even if we don't actually have a cluster of 2048 H800s.">
+  <meta property="og:title" content="Working the roofline for DeepSeek-V3 on Hopper">
+  <meta property="og:description" content="By carefully reasoning out the mechanics of how our distributed training works, we can put together a simple set of formulas that let us model how our system will behave, even if we don't actually have a cluster of 2048 H800s.">
+  <meta property="og:type" content="article">
+  <meta property="og:image" content="https://deepseek-v3.ezyang.com/assets/og-03.png">
+  <meta property="og:image:width" content="2400">
+  <meta property="og:image:height" content="1260">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="stylesheet" href="./study.css?v=3604a445">
   <style>
     dsv3-ladder { display: block; margin: 14px 0 26px; }
     dsv3-mmfig { display: block; margin-top: 0; margin-bottom: 0; }
@@ -109,6 +117,7 @@
 
 <body>
   <main>
+    <nav class="series-strip"><a href="../index.html">DeepSeek-V3: from roofline to reality</a> · post 3 of 3</nav>
     <h1>Working the roofline for DeepSeek-V3 on Hopper</h1>
 
     <p>In <a href="./02-hopper-memory.html">part two</a>, we looked at how our
@@ -1270,6 +1279,48 @@
     <p><button class="sheet-dl" title="every sheet on this page as one .xlsx with live formulas (cell names become cell references), at the current knob values">⤓ Download all the sheets as one .xlsx</button></p>
 
   </main>
+  <!-- cache stamps: regenerate with `node scripts/stamp.mjs` -->
+  <script type="importmap">
+  {
+    "imports": {
+      "../src/anatomy.js": "../src/anatomy.js?v=567b416a",
+      "../src/audit.js": "../src/audit.js?v=55bebb06",
+      "../src/blockgraph.js": "../src/blockgraph.js?v=59818233",
+      "../src/bwd.js": "../src/bwd.js?v=92618f1f",
+      "../src/cells.js": "../src/cells.js?v=962b1978",
+      "../src/compare.js": "../src/compare.js?v=d3cae233",
+      "../src/dsv41.js": "../src/dsv41.js?v=a67ac394",
+      "../src/dsv41model.js": "../src/dsv41model.js?v=db63a9e2",
+      "../src/epscale.js": "../src/epscale.js?v=2b547243",
+      "../src/epsim.js": "../src/epsim.js?v=74a088d1",
+      "../src/fsdp.js": "../src/fsdp.js?v=d80bd2c9",
+      "../src/fsdpsched.js": "../src/fsdpsched.js?v=da30ddec",
+      "../src/gemm.js": "../src/gemm.js?v=20821ad5",
+      "../src/ladder.js": "../src/ladder.js?v=fa11c551",
+      "../src/localmodel.js": "../src/localmodel.js?v=4e66c392",
+      "../src/memory.js": "../src/memory.js?v=abe7690c",
+      "../src/mesh.js": "../src/mesh.js?v=88101f2e",
+      "../src/mmfig.js": "../src/mmfig.js?v=6a25c447",
+      "../src/model.js": "../src/model.js?v=94fa90eb",
+      "../src/params.js": "../src/params.js?v=13936278",
+      "../src/recipes.js": "../src/recipes.js?v=f851e5cf",
+      "../src/sheet.js": "../src/sheet.js?v=48a8ae78",
+      "../src/sim.js": "../src/sim.js?v=262eedc6",
+      "../src/sol.js": "../src/sol.js?v=3940c3f4",
+      "../src/theme.js": "../src/theme.js?v=55d178c6",
+      "../src/tip.js": "../src/tip.js?v=bca5e3f8",
+      "../src/trace.js": "../src/trace.js?v=61553c96",
+      "../src/ui.js": "../src/ui.js?v=36c43837",
+      "../src/viewer.js": "../src/viewer.js?v=0fdd8b82",
+      "../src/xlsx.js": "../src/xlsx.js?v=0d0c89f5",
+      "./mobile.js": "./mobile.js?v=2dbf376b",
+      "./reset.js": "./reset.js?v=374568e6",
+      "./series.js": "./series.js?v=29dbe961",
+      "./sheetedit.js": "./sheetedit.js?v=db6a0bcd",
+      "./toc.js": "./toc.js?v=bf4b443d"
+    }
+  }
+  </script>
   <script type="module">
     import '../src/viewer.js';
     import '../src/gemm.js';

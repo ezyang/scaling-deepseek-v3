@@ -9,6 +9,7 @@ import './mobile.js';   // ≤860px framing: widget previews + focus mode, margi
 export const SERIES = [
   { href: '01-deepseek-diagram.html', title: 'An infra-oriented diagram of the DeepSeek-V3 architecture' },
   { href: '02-hopper-memory.html', title: 'Memory: a Hopper case study' },
+  { href: '03-roofline.html', title: 'Working the roofline for DeepSeek-V3 on Hopper' },
   // published incrementally — uncomment as posts go live (keep in step with index.html's list)
 ];
 
