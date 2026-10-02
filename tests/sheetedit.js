@@ -12,6 +12,16 @@ const val = (txt) => rowsOf(txt)[0].cells[2].textContent;
 const pubHTML = trs.map((tr) => tr.innerHTML);
 const bad = trs.filter((tr) => fmtExact(published.get(tr.cells[0].innerHTML)) !== tr.cells[2].textContent);
 T.check('every formula reproduces its published exact value', bad.length === 0, bad.map((tr) => tr.cells[0].textContent).join(' '));
+// the HTML's own numbers are only the pre-module fallback: each must match what the formulas render
+const raw = new DOMParser().parseFromString(await (await fetch(location.pathname)).text(), 'text/html');
+const txt = (el) => el.textContent.replace(/\s+/g, ' ').trim();
+const rawTrs = [...raw.querySelectorAll('.cellsheet tr')].filter((tr) => tr.querySelector('td.nm'));
+const stale = rawTrs.flatMap((tr, i) => [2, 3, 4].filter((c) => txt(tr.cells[c]) !== txt(trs[i].cells[c]))
+  .map((c) => `${txt(tr.cells[0])} col ${c}: ${txt(tr.cells[c])} → ${txt(trs[i].cells[c])}`));
+const refs = [...document.querySelectorAll('[data-cellref]')], rawRefs = [...raw.querySelectorAll('[data-cellref]')];
+rawRefs.forEach((q, i) => { if (txt(q) !== txt(refs[i])) stale.push(`prose ${q.dataset.cellref}: ${txt(q)} → ${txt(refs[i])}`); });
+T.check('the HTML\'s numbers (every column, every quoting prose span) are what the formulas render',
+  rawTrs.length === trs.length && rawRefs.length === refs.length && stale.length === 0, stale.join(' | '));
 const edv = [...document.querySelectorAll('.cellsheet td.vl.edv')].map((td) => td.parentElement.cells[0].textContent);
 T.check('editable: exactly the real knobs', edv.join(' ') === 'πsolbf16 πsolfp8 βIB B S GPUs EP NVL nc', edv.join(' '));
 T.check('untouched: no hash, nothing amber', location.hash === '' && !document.querySelector('.cellsheet tr.off'), location.hash);

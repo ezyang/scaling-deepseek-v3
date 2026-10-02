@@ -1,10 +1,11 @@
-// 03's static cell sheets, made live. The published values stay in the HTML
-// (the page reads right before, and without, this module); the formula
-// column IS the program: each formula's HTML compiles to exact rational
+// 03's static cell sheets, made live. The formula column IS the program:
+// every value on screen is computed from it, the HTML's numbers are only the
+// pre-module fallback (tests/sheetedit.js fails while one is stale). Each
+// formula's HTML compiles to exact rational
 // arithmetic, so editing a real knob (B, S, GPUs, EP, NVL, n_c and the rates the model runs at: π^sol_bf16, π^sol_fp8, β_IB;
 // the spec compute peaks are fixed)
-// recomputes every dependent row, wherever it's repeated. Rows that drift
-// from the published value turn amber. Edits live in the hash (departures
+// recomputes every dependent row, wherever it's repeated. Rows that depart
+// from the untouched sheet turn amber. Edits live in the hash (departures
 // only), so the floating reset (reset.js) lists and undoes them. Prose numbers
 // that quote a cell (data-cellref = the row's name) follow along; each render
 // fires 'dsv3-cells' so page scripts can follow too (current(), setKnob()).
@@ -93,7 +94,7 @@ for (const tr of document.querySelectorAll('.cellsheet tr')) {
   const [nm, lb, vl, sc, si, fx] = tr.cells;
   if (nm?.className !== 'nm') continue;
   const name = nm.innerHTML;
-  tr._pub = [vl.innerHTML, sc.innerHTML, si.innerHTML];
+  tr._sci = !!sc.innerHTML;
   tr._unit = si.querySelector('.u')?.textContent.trim();
   if (rows.has(name)) { rows.get(name).trs.push(tr); continue; }
   const leaf = !fx.innerHTML.replace(/<i>[\s\S]*?<\/i>/g, '').trim();
@@ -152,20 +153,16 @@ function render() {
     for (const tr of r.trs) {
       const [, , vl, sc, si] = tr.cells;
       if (vl.querySelector('input')) continue;
-      if (!off) [vl.innerHTML, sc.innerHTML, si.innerHTML] = tr._pub;
-      else {
-        vl.textContent = KNOBS[name] ? fmtKnob(v) : fmtExact(v);
-        if (tr._pub[1]) sc.innerHTML = fmtSci(num(v));
-        if (tr._unit) si.innerHTML = fmtSI(num(v), tr._unit);
-      }
+      vl.textContent = KNOBS[name] ? fmtKnob(v) : fmtExact(v);
+      if (tr._sci) sc.innerHTML = fmtSci(num(v));
+      if (tr._unit) si.innerHTML = fmtSI(num(v), tr._unit);
       tr.classList.toggle('off', off);
     }
   }
   // prose numbers quoting a cell (<span data-cellref="name">published SI</span>)
   for (const q of document.querySelectorAll('[data-cellref]')) {
     const name = q.dataset.cellref, v = now.get(name), off = !eq(v, PUB.get(name));
-    q._pub ??= q.innerHTML;
-    q.innerHTML = off ? fmtSI(num(v), rows.get(name).trs[0]._unit) : q._pub;
+    q.innerHTML = fmtSI(num(v), rows.get(name).trs[0]._unit);
     q.classList.toggle('off', off);
   }
   document.dispatchEvent(new CustomEvent('dsv3-cells', { detail: now }));
