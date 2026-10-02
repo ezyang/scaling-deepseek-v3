@@ -1,9 +1,9 @@
 // @page studies/03-roofline.html
 // the EP sim's autoplay: on a fresh load the first full view samples from token
 // 1 to the resting 1,000 in ~3 s — the tallies move nearly every frame and the
-// bars ease, while the token's ink (blue experts, black IB arrows, header, the
-// histogram's blue bin) fades out first and eases back in as token 1,000's at
-// the end, so nothing token-specific flickers mid-run; 1,000 tokens is the
+// bars ease, while token 1 stays drawn as the example routing (blue experts,
+// black IB arrows, header, the histogram's blue bin) and crossfades to token
+// 1,000 at the end, so nothing token-specific flickers mid-run; 1,000 tokens is the
 // default, so the run leaves the hash clean and the page's ↺ dot off; it plays
 // once per load (reset is by hand), "redo animation" replays it, and any knob
 // interrupts it
@@ -29,20 +29,20 @@ T.check('no autoplay while out of view', routed() === 1, routed());
 
 into();
 const t0 = performance.now(), seen = new Set(), swaps = [], drawn = () => qa('rect[data-bar]').map((r) => +r.getAttribute('height') / 62);
-let last = token(), prev = drawn(), jump = 0, inkMid = 0, dotMid = false;
+let last = token(), prev = drawn(), jump = 0, inkMid = 1, tokMid = new Set(), dotMid = false;
 while (performance.now() - t0 < 4000) {
   await T.tick(16);
   seen.add(routed());
   const now = drawn(); jump = Math.max(jump, ...now.map((v, k) => Math.abs(v - prev[k]))); prev = now;
   const el = performance.now() - t0;
-  if (el > 400 && el < 2700) { const i = ink(); inkMid = Math.max(inkMid, i.hdr, i.left, i.bin, i.label); }
+  if (el > 400 && el < 2700) { const i = ink(); inkMid = Math.min(inkMid, i.hdr, i.left, i.bin, i.label / 2); tokMid.add(token()); }
   dotMid ||= dot();
   if (token() !== last) { swaps.push(el); last = token(); }
 }
 T.check('the bars ease: no share moves over 0.25 between frames (token 2 alone swings 0.5)', jump < 0.25, jump.toFixed(3));
 T.check('… and settle on the exact shares', qa('rect[data-bar]').every((r) => Math.abs(+r.getAttribute('height') - (+r.dataset.share * 62)) < 0.06), '');
 T.check('the tallies glide: >100 distinct counts on the way', seen.size > 100, seen.size);
-T.check('mid-run: no token ink at all (left, header, blue bin, blue labels)', inkMid === 0, inkMid);
+T.check('mid-run: token 1 fully inked throughout (left, header, blue bin, blue labels)', inkMid === 1 && tokMid.size === 1 && tokMid.has(1), `${inkMid} ${[...tokMid]}`);
 T.check('the header switches once, at the end', swaps.length === 1 && swaps[0] > 2500, swaps.map(Math.round).join());
 const ref = simulate(1000);
 T.check('lands on token 1,000, tallies match simulate()', token() === 1000 && routed() === 1000 && +q('[data-mean=ib]').dataset.true === ref.ib / ref.n, `${token()} ${routed()}`);
@@ -58,7 +58,7 @@ T.check('reset: token 1, by hand (no replay on the next full view); a departure,
 
 q('[data-knob="anim"] [data-v="redo"]').click(); await T.tick(1500);
 const mid = routed();
-T.check('redo animation replays it, from token 1', mid > 1 && mid < 1000 && ink().left === 0, mid);
+T.check('redo animation replays it, from token 1, which it shows', mid > 1 && mid < 1000 && token() === 1 && ink().left === 1 && qa('svg > g[opacity]').length === 1, mid);
 await T.tick(2500);
 T.check('… to the resting 1,000, hash clean again', routed() === 1000 && token() === 1000 && location.hash === '' && !dot(), `${routed()} ${location.hash}`);
 q('[data-knob="anim"] [data-v="redo"]').click(); await T.tick(1500);

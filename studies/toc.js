@@ -12,10 +12,11 @@ if (main) {
   for (const node of main.childNodes) {
     // authored scrap stays out of the nav: collection stops at the SLOP marker
     if (node.nodeType === Node.TEXT_NODE && /SLOP/.test(node.textContent)) break;
-    if (node.tagName === 'H2') hs.push(node);
+    if (node.tagName === 'H2' || node.tagName === 'H3') hs.push(node);
   }
 }
-if (hs.length >= 4) {
+// the gate counts sections (h2); subsections (h3) ride along as indented items
+if (hs.filter(h => h.tagName === 'H2').length >= 4) {
   const nav = document.createElement('nav');
   nav.className = 'toc';
   nav.setAttribute('aria-label', 'sections');
@@ -23,6 +24,7 @@ if (hs.length >= 4) {
     const a = document.createElement('a');
     a.innerHTML = '<span class="tick"></span><span class="lab"></span>';
     a.querySelector('.lab').textContent = h.textContent;
+    if (h.tagName === 'H3') a.className = 'sub';
     // house-speed scroll: 12 frames ≈ 200 ms, frame-stepped (native smooth
     // scroll takes seconds over a long post)
     a.onclick = (e) => {

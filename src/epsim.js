@@ -200,25 +200,27 @@ class Dsv3Epsim extends (typeof HTMLElement === 'undefined' ? class {} : HTMLEle
     this.render();
   }
   // ~3 s from token 1 to 1,000, n = 1000^(f/N) so the dot glides a decade a second along the log
-  // axis. The token's ink (blue experts, black IB arrows, its header, the histogram's blue bin)
-  // fades out first and eases back in as token 1,000's at the end: nothing token-specific flickers
-  // mid-run. The bars ease toward their shares (a fifth of the way a frame) so the early tokens'
-  // big swings (100% → 50% → 33% …) slide instead of jumping. Any knob interrupts it.
+  // axis. Token 1 stays drawn throughout as the example routing (crossfading in first if the run
+  // started from another token, as on redo) and crossfades to token 1,000 at the end: nothing
+  // token-specific flickers mid-run. The bars ease toward their shares (a fifth of the way a frame)
+  // so the early tokens' big swings (100% → 50% → 33% …) slide instead of jumping. Any knob interrupts it.
   autoplay(s = this._snap()) {
     const N = 180, FADE = 12, gen = this._gen = (this._gen ?? 0) + 1;
-    const A = this._auto = { n: s.n, bars: s.share, op: s.a };   // the token drawn, its ink's opacity
+    const first = this.cur, A = this._auto = { n: 1, bars: s.share, op: 1 };   // the token drawn, its ink's opacity
+    const from = s.cur.join() === first.join() ? null : { cur: s.cur, a: s.a };
     let f = 0, last = null;
-    this.cur = s.cur; this._msg = null;
+    this._msg = null;
     const tick = () => {
       if (this._gen !== gen) return;
       f++;
       while (this.T.n < Math.min(REST, Math.round(REST ** (f / N)))) last = add(this.T, route(this.T.n + 1, this.mode));
       if (f === N) { this.cur = last; A.n = this.T.n; }
-      A.op = f < N ? s.a * (1 - ease(Math.min(1, f / FADE))) : ease(Math.min(1, (f - N) / FADE));
+      const fd = f < N ? (from && f < FADE ? from : null) : f < N + FADE ? { cur: first } : null;   // the crossfade underway
+      A.op = fd ? ease((f < N ? f : f - N) / FADE) : 1;
       let gap = 0;
       this.T.hist.forEach((h, k) => { A.bars[k] += (h / this.T.n - A.bars[k]) * 0.2; gap = Math.max(gap, Math.abs(h / this.T.n - A.bars[k])); });
       if (f >= N + FADE && gap < 5e-4) { this._auto = null; this._sync(); }   // settled: the last frame draws the exact shares
-      this._draw(null, 1, this._auto && A.bars, this._auto ? A.op : 1);
+      this._draw(fd, A.op, this._auto && A.bars);
       if (this._auto) setTimeout(tick, 16);
     };
     setTimeout(tick, 16);

@@ -44,7 +44,7 @@
     .tally td.rs { font-weight: 600; color: var(--c-52514e); vertical-align: top; }
     .tally th.n, .tally td.n { text-align: right; font-variant-numeric: tabular-nums; }
     .tally th:last-child, .tally td:last-child { padding-right: 2px; }
-    .tally td.n .d { display: inline-block; width: 1.4em; text-align: left; }   /* fixed fraction slot: 8.0 and 7.78 share a decimal point */
+    .tally td.n .d { display: inline-block; width: 1.4em; text-align: left; }   /* fixed fraction slot: 8.0 and 5.42 share a decimal point */
     .tally tr.hl td:not(.rs) { background: var(--c-fff8ea); font-weight: 600; }
     .tally td.fx { font: 11px ui-monospace, monospace; color: var(--c-52514e); }   /* the sheet cell each number comes from */
     .tally td.fx b { color: var(--c-2a78d6); font-weight: 600; }
@@ -78,6 +78,9 @@
     .cellsheet td.vl.edv { background: var(--c-eef4fc); cursor: text; }
     @media (hover: hover) { .cellsheet td.vl.edv:hover { background: var(--c-dcebfa); } }
     .cellsheet tr.off td.vl, .cellsheet tr.off td.ap { color: var(--c-b05f00); }
+    /* a prose number quoting a cell (data-cellref = the row's name): sheetedit keeps it in step, hover shows the cell card, click jumps to the row */
+    [data-cellref] { cursor: pointer; border-bottom: 1px dotted var(--c-898781); }
+    [data-cellref].off { color: var(--c-b05f00); }
     .cellsheet .cs-in { box-sizing: border-box; width: 100%; margin: -2px 0; padding: 1px 3px; text-align: right;
       font: inherit; font-variant-numeric: tabular-nums; color: var(--c-0b0b0b); background: var(--c-ffffff);
       border: 1px solid var(--c-2a78d6); border-radius: 3px; outline: none; }
@@ -125,8 +128,9 @@
     is a bad idea for DSv3, because it will be communications bound on
     InfiniBand bandwidth.  If we consider <strong>speed of light</strong>,
     where we assume our compute and communications go as fast as physically
-    possible (according to the hardware spec sheets), these calculations
-    are simple enough to be done on a calculator.</p>
+    possible (either according to the hardware spec sheets or controlled
+    microbenchmarks), we can estimate the overall wall time of a training step
+    with a spreadsheet.</p>
 
     <p>The goals for this part are two-fold.  First, we will walk through the
     speed of light rooflines for DeepSeek-V3 on Hopper.  But second, and more
@@ -135,6 +139,73 @@
     useful, but it can also feel a bit like magic the first time you encounter it.
     I want to explain it in enough detail that you could derive it from first principles
     and also tell when you <em>shouldn't</em> use it.</p>
+
+    <h2>What's speed of light?</h2>
+
+    <p>In physics, nothing can go
+    faster than speed of light: it is a strict upper bound on the speed of objects
+    in the universe.  When doing roofline analysis, using speed of light
+    quantities for your GPU's FLOP/s and your network's bandwidth tells you the
+    best performance your hadware can potentially deliver.  It may not be possible
+    to achieve this performance, but it can roughly tell you how much you are
+    leaving on the table.</p>
+
+    <p>However, there is a problem: what exactly is the speed of light for our
+    hardware?  An obvious choice is to use the TFLOP/s advertised
+    in NVIDIA marketing materials, which are computed by taking the GPUs advertised
+    clock frequency, number of arithmetic units and FLOP/cycle the units can take.
+    But these numbers are essentially never achievable in practice for matrix
+    multiplies, even under optimal microbenchmarking conditions.
+    If you issue wgmma instructions in a loop with zeroed tensors,
+    you can indeed <a href="https://arxiv.org/abs/2402.13499">get over 95% of the theoretical peak performance</a>.  But this doesn't translate into matrix multiply performance:</p>
+
+    <ul>
+        <li>There's more to matrix multiplies than just issuing wgmma in a
+        loop.  You have to load data from memory and the cache hierarchy,
+        issue non-tensor core bookkeeping instructions and come up with
+        a good schedule for all of this.  Now, it is absolutely possible for
+        a GEMM to be poorly optimized for sizes--you should roofline your
+        GEMMs too--but a well optimized GEMM will still have a gap.</li>
+
+        <li>Even when you are issuing wgmma in a loop, if you running it
+        on non-zero data, you quickly run into thermal limits of the GPU
+        which will reduce your clock speed.  This leads to the surprising
+        phenomenon where the performance of your GEMM depends on what kind of
+        data is in the input tensors (better not tune on zero tensors!)  It's
+        also common to power cap GPUs to improve performance per watt.</li>
+    </ul>
+
+    <p>Because the divergence between marketing and achievable matmul FLOPs can
+    be quite large, we will prefer to use achievable FLOPs in our analysis above,
+    e.g., by benchmarking cublas's GEMM speed for large enough inputs on the
+    actual GPUs you plan to run your training on (e.g., in case they're power capped).
+    This microbenchmark is not too hard to reproduce by hand, but in this analysis
+    we're going to use the benchmarks from <a href="https://huggingface.co/spaces/HuggingFaceTB/smol-training-playbook#compute-units-and-flops">HuggingFace's Smol Training Playbook</a>:
+    </p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">π<sub>bf16</sub></td><td>H800 BF16 peak, spec (FLOP/s)</td><td class="vl">989,000,000,000,000</td><td class="vl sc ap">9.89 × 10<sup>14</sup></td><td class="vl si ap">989<span class="d"></span><span class="u"> TFLOP/s</span></td><td class="fx"><i>(hardware spec)</i></td></tr>
+    <tr class="hl"><td class="nm">π<sup>sol</sup><sub>bf16</sub></td><td>BF16 GEMM, measured (FLOP/s)</td><td class="vl">757,700,000,000,000</td><td class="vl sc ap">7.58 × 10<sup>14</sup></td><td class="vl si ap">758<span class="d"></span><span class="u"> TFLOP/s</span></td><td class="fx"><i>(Smol, H100: torch.matmul, best of 5)</i></td></tr>
+    <tr><td class="nm">η<sub>bf16</sub></td><td>share of the spec peak achieved</td><td class="vl"></td><td class="vl sc ap">7.66 × 10<sup>−1</sup></td><td class="vl si ap">76<span class="d">.6</span><span class="u"> %</span></td><td class="fx"><b>π<sup>sol</sup><sub>bf16</sub></b> / <b>π<sub>bf16</sub></b></td></tr>
+    <tr><td class="nm">π<sub>fp8</sub></td><td>H800 FP8 peak, spec (FLOP/s)</td><td class="vl">1,979,000,000,000,000</td><td class="vl sc ap">1.98 × 10<sup>15</sup></td><td class="vl si ap">1<span class="d">.98</span><span class="u"> PFLOP/s</span></td><td class="fx"><i>(hardware spec, dense)</i></td></tr>
+    <tr class="hl"><td class="nm">π<sup>sol</sup><sub>fp8</sub></td><td>FP8 GEMM, measured (FLOP/s)</td><td class="vl">1,456,600,000,000,000</td><td class="vl sc ap">1.46 × 10<sup>15</sup></td><td class="vl si ap">1<span class="d">.46</span><span class="u"> PFLOP/s</span></td><td class="fx"><i>(Smol, H100: e4m3 _scaled_mm, best of 5)</i></td></tr>
+    <tr><td class="nm">η<sub>fp8</sub></td><td>share of the spec peak achieved</td><td class="vl"></td><td class="vl sc ap">7.36 × 10<sup>−1</sup></td><td class="vl si ap">73<span class="d">.6</span><span class="u"> %</span></td><td class="fx"><b>π<sup>sol</sup><sub>fp8</sub></b> / <b>π<sub>fp8</sub></b></td></tr>
+    </table></div>
+
+    <p>For network bandwidth, you can get pretty close to the spec sheet for InfiniBand,
+    so we just use the full spec sheet 50 GB/s.  However, DeepSeek reported themselves
+    in their paper that they measured only 160 GB/s unidirectional bandwidth on H800's NVLink,
+    so we will adopt that for our calculations (this won't matter much, except for mostly
+    arguing that NVLink is still not the bottleneck, even with the nerfed H800 NVLink.)</p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr class="hl"><td class="nm">β<sub>IB</sub></td><td>IB bandwidth per GPU (B/s)</td><td class="vl">50,000,000,000</td><td class="vl sc ap">5.00 × 10<sup>10</sup></td><td class="vl si ap">50<span class="d"></span><span class="u"> GB/s</span></td><td class="fx"><i>(hardware spec; DeepSeek's report uses it as is)</i></td></tr>
+    <tr><td class="nm">β<sub>NV</sub></td><td>NVLink per GPU, per direction, spec (B/s)</td><td class="vl">200,000,000,000</td><td class="vl sc ap">2.00 × 10<sup>11</sup></td><td class="vl si ap">200<span class="d"></span><span class="u"> GB/s</span></td><td class="fx"><i>(hardware spec: H800, cut from H100's 450)</i></td></tr>
+    <tr class="hl"><td class="nm">β<sup>sol</sup><sub>NV</sub></td><td>NVLink, achieved (B/s)</td><td class="vl">160,000,000,000</td><td class="vl sc ap">1.60 × 10<sup>11</sup></td><td class="vl si ap">160<span class="d"></span><span class="u"> GB/s</span></td><td class="fx"><i>(DeepSeek-V3 report)</i></td></tr>
+    <tr><td class="nm">η<sub>NV</sub></td><td>share of the spec bandwidth achieved</td><td class="vl">0.8</td><td class="vl sc ap">8.00 × 10<sup>−1</sup></td><td class="vl si ap">80<span class="d"></span><span class="u"> %</span></td><td class="fx"><b>β<sup>sol</sup><sub>NV</sub></b> / <b>β<sub>NV</sub></b></td></tr>
+    </table></div>
 
     <h2>What's a roofline?</h2>
 
@@ -233,9 +304,9 @@
         bottleneck, although typically the bottleneck is InfiniBand).</li>
     </ol>
 
-    <h3>How many FLOPs do we need to do?</h3>
+    <h2>How many FLOPs do we need to do?</h2>
 
-    <p><strong>Short answer:</strong>  The classic training FLOPs approximation is 6ND,
+    <p>The classic training FLOPs approximation is 6ND,
     where N is the number of activated parameters in the model and D is the number of
     tokens (either the total number of trainable tokens, giving the total amount of FLOPs
     for the training run, or simply the number of tokens in a global batch, giving the
@@ -247,16 +318,8 @@
     indifferent to our choice of parallelism: we always have to run these FLOPs somewhere,
     one way or another, no matter how we have split up our work.</p>
 
-    <p>Thus, plugging the BF16<span class="mn-ref"></span><span class="mn">Why BF16?  Arguably, the hardware FLOP/s for FP8 is
-    more applicable as many matmuls in DSv3 are done in FP8.  We've chosen
-    to present the roofline relative to BF16 compute because this is how DSv3 chose
-    to do their MFU accounting, but there's a reasonable argument that we should compute
-    MFU as a ratio of latencies, which allows for a straightforward generalization into
-    a mixed dtype regime.  However, the problem of how to choose your
-    denominator will not matter too much in analysis of DSv3 only, since we
-    will consistently apply the same denominator everywhere.  This problem is worth
-    more careful consideration when trying to compare MFU numbers across different
-    architectures, cluster setups, etc.</span> speed of light numbers in:</p>
+    <p>Most matrix multiplies in DSv3 are done in FP8 precision.  So we can get a quick
+    and dirty estimate of step time by simply dividing the FLOPs by our speed of light FP8 TFLOP/s:</p>
 
     <div class="cellsheet"><table>
     <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
@@ -266,18 +329,35 @@
     <tr><td class="nm">D</td><td>tokens per step</td><td class="vl">62,914,560</td><td class="vl sc ap">6.29 × 10<sup>7</sup></td><td class="vl si ap">62<span class="d">.9</span><span class="u"> M</span></td><td class="fx"><b>B</b> · <b>S</b></td></tr>
     <tr><td class="nm">C</td><td>FLOPs per step</td><td class="vl">13,825,708,010,263,019,520</td><td class="vl sc ap">1.38 × 10<sup>19</sup></td><td class="vl si ap">13<span class="d">.8</span><span class="u"> EFLOP</span></td><td class="fx">6 · <b>N</b> · <b>D</b></td></tr>
     <tr><td class="nm">GPUs</td><td>GPUs in the cluster</td><td class="vl">2,048</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(model input)</i></td></tr>
-    <tr><td class="nm">π<sub>bf16</sub></td><td>H800 BF16 peak (FLOP/s)</td><td class="vl">989,000,000,000,000</td><td class="vl sc ap">9.89 × 10<sup>14</sup></td><td class="vl si ap">989<span class="d"></span><span class="u"> TFLOP/s</span></td><td class="fx"><i>(hardware spec)</i></td></tr>
-    <tr class="hl"><td class="nm">T<sub>c</sub></td><td>step time at peak (s)</td><td class="vl">6.825919099</td><td class="vl sc ap">6.83 × 10<sup>0</sup></td><td class="vl si ap">6<span class="d">.83</span><span class="u"> s</span></td><td class="fx"><b>C</b> / (<b>GPUs</b> · <b>π<sub>bf16</sub></b>)</td></tr>
+    <tr class="hl"><td class="nm">T<sub>c</sub></td><td>step time at speed of light (s)</td><td class="vl"></td><td class="vl sc ap">4.63 × 10<sup>0</sup></td><td class="vl si ap">4<span class="d">.63</span><span class="u"> s</span></td><td class="fx"><b>C</b> / (<b>GPUs</b> · <b>π<sup>sol</sup><sub>fp8</sub></b>) <i>(every GEMM at FP8: see T<sup>+</sup><sub>c</sub>)</i></td></tr>
     </table></div>
 
-    <p>The 6ND approximation systematically undercounts attention FLOPs, since the attention core (the QKᵀ and PV matmuls) doesn't
-    actually have any trainable parameters.  We can add a correction factor for this based
-    on sequence length:<span class="mn-ref"></span><span class="mn">[[AI: Strictly,
+    <h3>Isn't that too simple?</h3>
+
+    <p>It is.  We should refine this approximation in three ways, in order
+    of the magnitude of the correction for our configuration:</p>
+
+    <ol>
+        <li>The 6ND approximation undercounts attention FLOPs, since the
+        attention core (the QKᵀ and PV matmuls) doesn't actually have any
+        trainable parameters (it scales on sequence length).  The attention
+        is non-negligible and we need to account for it.</li>
+
+        <li>We are doing some recompute to help us fit the activations
+        in memory.  We need to add these recompute FLOPs our FLOP count.</li>
+
+        <li>Not all matrix multiplies in DSv3 are FP8; notably attention,
+        router and LM head are in BF16.  We have a different speed of light
+        number of BF16 FLOPs, so we should use a different divisor for
+        these FLOPs.</li>
+    </ol>
+
+    <p>Let's take these in order. Classically, attention FLOPs are 4S^2d (where S is the sequence length
+    and d is the total attention width across all heads), but if you have causal
+    masking, this halves the number of FLOPs.<span class="mn-ref"></span><span class="mn">Technically,
     a causal query at position <i>i</i> attends to <i>i</i> keys, itself included,
-    so the average is (<b>S</b> + 1)/2 keys rather than <b>S</b>/2.  The exact count,
-    3 × <b>L</b> × <b>n<sub>h</sub></b> × (<b>d<sub>h</sub></b> + <b>d<sup>R</sup><sub>h</sub></b> + <b>d<sub>h</sub></b>) × (<b>S</b> + 1),
-    is 30,709,800,960 FLOPs per token: 1/4096 ≈ 0.02% more.  We keep the
-    conventional <b>S</b>/2.]]</span></p>
+    so the average is (<b>S</b> + 1)/2 keys rather than <b>S</b>/2.  But that's only 0.02% more
+    so we keep the simpler formula.</p>
 
     <div class="cellsheet"><table>
     <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
@@ -287,14 +367,68 @@
     <tr><td class="nm">n<sub>h</sub></td><td>attention heads</td><td class="vl">128</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(architecture)</i></td></tr>
     <tr><td class="nm">d<sub>h</sub></td><td>head dim · qk nope, v</td><td class="vl">128</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(architecture)</i></td></tr>
     <tr><td class="nm">d<sup>R</sup><sub>h</sub></td><td>head dim · qk rope</td><td class="vl">64</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(architecture)</i></td></tr>
-    <tr><td class="nm">C<sub>attn</sub></td><td>attention FLOPs per step</td><td class="vl">1,931,622,027,676,876,800</td><td class="vl sc ap">1.93 × 10<sup>18</sup></td><td class="vl si ap">1<span class="d">.93</span><span class="u"> EFLOP</span></td><td class="fx">3 · <b>L</b> · <b>n<sub>h</sub></b> · (<b>d<sub>h</sub></b> + <b>d<sup>R</sup><sub>h</sub></b> + <b>d<sub>h</sub></b>) · <b>S</b> · <b>D</b> <i>(fwd+bwd; 2 FLOPs × <b>S</b>/2 causal)</i></td></tr>
-    <tr><td class="nm">C<sup>+</sup></td><td>FLOPs per step + attention</td><td class="vl">15,757,330,037,939,896,320</td><td class="vl sc ap">1.58 × 10<sup>19</sup></td><td class="vl si ap">15<span class="d">.8</span><span class="u"> EFLOP</span></td><td class="fx"><b>C</b> + <b>C<sub>attn</sub></b></td></tr>
-    <tr class="hl"><td class="nm">T<sup>+</sup><sub>c</sub></td><td>step time + attention (s)</td><td class="vl">7.779584234</td><td class="vl sc ap">7.78 × 10<sup>0</sup></td><td class="vl si ap">7<span class="d">.78</span><span class="u"> s</span></td><td class="fx"><b>C<sup>+</sup></b> / (<b>GPUs</b> · <b>π<sub>bf16</sub></b>)</td></tr>
+    <tr><td class="nm">c<sub>attn</sub></td><td>attention FLOPs · one layer, one sequence, fwd</td><td class="vl">687,194,767,360</td><td class="vl sc ap">6.87 × 10<sup>11</sup></td><td class="vl si ap">687<span class="d"></span><span class="u"> GFLOP</span></td><td class="fx">2 · <b>n<sub>h</sub></b> · (<b>d<sub>h</sub></b> + <b>d<sup>R</sup><sub>h</sub></b> + <b>d<sub>h</sub></b>) · <b>S</b> · <b>S</b> / 2 <i>(QKᵀ contracts <b>d<sub>h</sub></b> + <b>d<sup>R</sup><sub>h</sub></b>, AV contracts <b>d<sub>h</sub></b>; 2 FLOPs per multiply-add; causal keeps half the <b>S</b> · <b>S</b> pairs)</i></td></tr>
+    <tr><td class="nm">C<sub>attn</sub></td><td>attention FLOPs per step</td><td class="vl">1,931,622,027,676,876,800</td><td class="vl sc ap">1.93 × 10<sup>18</sup></td><td class="vl si ap">1<span class="d">.93</span><span class="u"> EFLOP</span></td><td class="fx">3 · <b>L</b> · <b>B</b> · <b>c<sub>attn</sub></b> <i>(fwd+bwd = 3× fwd, every layer, every sequence)</i></td></tr>
+    <tr class="hl"><td class="nm">T<sub>attn</sub></td><td>attention core time, BF16 (s)</td><td class="vl"></td><td class="vl sc ap">1.24 × 10<sup>0</sup></td><td class="vl si ap">1<span class="d">.24</span><span class="u"> s</span></td><td class="fx"><b>C<sub>attn</sub></b> / (<b>GPUs</b> · <b>π<sup>sol</sup><sub>bf16</sub></b>)</td></tr>
     </table></div>
 
-    <p><strong>Long answer:</strong>  Where the heck does the 6ND
-    approximation come from?  At its heart, it is an approximation based off
-    of the idea that your non-attention matmuls take the bulk of the FLOPs in
+    <p>Next, we need to account for recompute.  Our chosen recompute policy from
+    <a href="./02-hopper-memory.html">part 2</a> recomputes many norms, which
+    aren't modeled in our 6ND FLOPs approximation; the only GEMMs we recompute are
+    the outputs of the MLA up-projections.  We can count specifically the parameters
+    involved in recompute:</p>
+
+    <dsv3-layer id="redo-block" style="min-height:596px" recompute="dsv3" controls="static" redotint nocaption></dsv3-layer>
+
+    <p>This recompute is very cheap; it adds very little to our overall wall time!</p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">N<sup>up</sup><sub>q</sub></td><td>q up-projection params, per layer</td><td class="vl">37,748,736</td><td class="vl sc ap">3.77 × 10<sup>7</sup></td><td class="vl si ap">37<span class="d">.7</span><span class="u"> M</span></td><td class="fx"><i>(read off the diagram)</i></td></tr>
+    <tr><td class="nm">N<sup>up</sup><sub>kv</sub></td><td>kv up-projection params, per layer</td><td class="vl">16,777,216</td><td class="vl sc ap">1.68 × 10<sup>7</sup></td><td class="vl si ap">16<span class="d">.8</span><span class="u"> M</span></td><td class="fx"><i>(read off the diagram)</i></td></tr>
+    <tr><td class="nm">N<sub>rc</sub></td><td>replayed GEMM params</td><td class="vl">3,326,083,072</td><td class="vl sc ap">3.33 × 10<sup>9</sup></td><td class="vl si ap">3<span class="d">.33</span><span class="u"> G</span></td><td class="fx"><b>L</b> · (<b>N<sup>up</sup><sub>q</sub></b> + <b>N<sup>up</sup><sub>kv</sub></b>)</td></tr>
+    <tr><td class="nm">C<sub>rc</sub></td><td>recompute FLOPs per step</td><td class="vl">418,518,105,996,656,640</td><td class="vl sc ap">4.19 × 10<sup>17</sup></td><td class="vl si ap">419<span class="d"></span><span class="u"> PFLOP</span></td><td class="fx">2 · <b>N<sub>rc</sub></b> · <b>D</b> <i>(forward replay: 2 FLOPs per param per token)</i></td></tr>
+    <tr class="hl"><td class="nm">T<sub>rc</sub></td><td>recompute time, FP8 (s)</td><td class="vl"></td><td class="vl sc ap">1.40 × 10<sup>−1</sup></td><td class="vl si ap">140<span class="d"></span><span class="u"> ms</span></td><td class="fx"><b>C<sub>rc</sub></b> / (<b>GPUs</b> · <b>π<sup>sol</sup><sub>fp8</sub></b>)</td></tr>
+    </table></div>
+
+    <p>Finally, let's properly account the precision each matmul occurs in.  Here is the
+    architecture diagram from <a href="./02-hopper-memory.html">part 2</a> again, with
+    the matmuls color coded by their compute precision:
+    </p>
+
+    <dsv3-layer id="dtype-block" style="min-height:596px" recipe="dsv3-fp8" controls="static" dtypetint nocaption></dsv3-layer>
+
+    <p>The majority of FLOPs are in FP8, so we'll compute this factor by subtracting out
+    the BF16 FLOPs from our already computed FP8 FLOPs and then figuring their wall
+    time with separate speed of light numbers (attention is skipped here since we already
+    computed its wall time above).  You can see that the BF16 compute is negligible;
+    we only needed to adjust our net wall time by <span data-cellref="ΔT<sub>bf16</sub>">121 ms</span>.</p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">N<sub>bf16</sub></td><td>params in BF16 GEMMs</td><td class="vl">1,033,109,504</td><td class="vl sc ap">1.03 × 10<sup>9</sup></td><td class="vl si ap">1<span class="d">.03</span><span class="u"> G</span></td><td class="fx"><i>(checkpoint tally: output head 7,168 × 129,280 + 58 routers × 7,168 × 256)</i></td></tr>
+    <tr><td class="nm">C<sub>bf16</sub></td><td>BF16 GEMM FLOPs inside 6ND</td><td class="vl">389,985,779,255,869,440</td><td class="vl sc ap">3.90 × 10<sup>17</sup></td><td class="vl si ap">390<span class="d"></span><span class="u"> PFLOP</span></td><td class="fx">6 · <b>N<sub>bf16</sub></b> · <b>D</b></td></tr>
+    <tr><td class="nm">C<sub>fp8</sub></td><td>FP8 GEMM FLOPs inside 6ND</td><td class="vl">13,435,722,231,007,150,080</td><td class="vl sc ap">1.34 × 10<sup>19</sup></td><td class="vl si ap">13<span class="d">.4</span><span class="u"> EFLOP</span></td><td class="fx"><b>C</b> − <b>C<sub>bf16</sub></b></td></tr>
+    <tr class="hl"><td class="nm">T<sub>fp8</sub></td><td>FP8 GEMM time (s)</td><td class="vl"></td><td class="vl sc ap">4.50 × 10<sup>0</sup></td><td class="vl si ap">4<span class="d">.50</span><span class="u"> s</span></td><td class="fx"><b>C<sub>fp8</sub></b> / (<b>GPUs</b> · <b>π<sup>sol</sup><sub>fp8</sub></b>)</td></tr>
+    <tr class="hl"><td class="nm">T<sub>bf16</sub></td><td>BF16 GEMM time, head + routers (s)</td><td class="vl"></td><td class="vl sc ap">2.51 × 10<sup>−1</sup></td><td class="vl si ap">251<span class="d"></span><span class="u"> ms</span></td><td class="fx"><b>C<sub>bf16</sub></b> / (<b>GPUs</b> · <b>π<sup>sol</sup><sub>bf16</sub></b>)</td></tr>
+    <tr><td class="nm">ΔT<sub>bf16</sub></td><td>step time added by BF16 pricing (s)</td><td class="vl"></td><td class="vl sc ap">1.21 × 10<sup>−1</sup></td><td class="vl si ap">121<span class="d"></span><span class="u"> ms</span></td><td class="fx"><b>T<sub>fp8</sub></b> + <b>T<sub>bf16</sub></b> − <b>T<sub>c</sub></b> <i>(vs every GEMM at FP8)</i></td></tr>
+    </table></div>
+
+    <p>Putting it all together:</p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">T<sub>fp8</sub></td><td>FP8 GEMM time (s)</td><td class="vl"></td><td class="vl sc ap">4.50 × 10<sup>0</sup></td><td class="vl si ap">4<span class="d">.50</span><span class="u"> s</span></td><td class="fx"><b>C<sub>fp8</sub></b> / (<b>GPUs</b> · <b>π<sup>sol</sup><sub>fp8</sub></b>)</td></tr>
+    <tr><td class="nm">T<sub>attn</sub></td><td>attention core time, BF16 (s)</td><td class="vl"></td><td class="vl sc ap">1.24 × 10<sup>0</sup></td><td class="vl si ap">1<span class="d">.24</span><span class="u"> s</span></td><td class="fx"><b>C<sub>attn</sub></b> / (<b>GPUs</b> · <b>π<sup>sol</sup><sub>bf16</sub></b>)</td></tr>
+    <tr><td class="nm">T<sub>rc</sub></td><td>recompute time, FP8 (s)</td><td class="vl"></td><td class="vl sc ap">1.40 × 10<sup>−1</sup></td><td class="vl si ap">140<span class="d"></span><span class="u"> ms</span></td><td class="fx"><b>C<sub>rc</sub></b> / (<b>GPUs</b> · <b>π<sup>sol</sup><sub>fp8</sub></b>)</td></tr>
+    <tr><td class="nm">T<sub>bf16</sub></td><td>BF16 GEMM time, head + routers (s)</td><td class="vl"></td><td class="vl sc ap">2.51 × 10<sup>−1</sup></td><td class="vl si ap">251<span class="d"></span><span class="u"> ms</span></td><td class="fx"><b>C<sub>bf16</sub></b> / (<b>GPUs</b> · <b>π<sup>sol</sup><sub>bf16</sub></b>)</td></tr>
+    <tr class="hl"><td class="nm">T<sup>+</sup><sub>c</sub></td><td>step time, all corrections (s)</td><td class="vl"></td><td class="vl sc ap">6.14 × 10<sup>0</sup></td><td class="vl si ap">6<span class="d">.14</span><span class="u"> s</span></td><td class="fx"><b>T<sub>fp8</sub></b> + <b>T<sub>bf16</sub></b> + <b>T<sub>attn</sub></b> + <b>T<sub>rc</sub></b></td></tr>
+    </table></div>
+
+    <h3>What about the non-matmuls?</h3>
+
+    <p>The core of the 6ND approximation is based off
+    the idea that your non-attention matmuls take the bulk of the FLOPs in
     your model (in <a href="./01-deepseek-diagram.html">part 1</a>, we used
     this idea to justify treating the matmuls specially in our architecture
     diagram).  The number of FLOPs per token that a learned linear
@@ -431,7 +565,7 @@
 
     <dsv3-ladder id="ladder" style="min-height: 466px"></dsv3-ladder>
 
-    <h3>Expert parallelism</h3>
+    <h2>Expert parallelism</h2>
 
     <p>How much time do the dispatch and combine communications take in the
     expert parallel region?  This is a bit more annoying to do in the Hopper
@@ -494,10 +628,9 @@
     <tr><td class="nm">V<sub>disp</sub></td><td>dispatch bytes/token·layer</td><td class="vl">25,088</td><td class="vl sc ap">2.51 × 10<sup>4</sup></td><td class="vl si ap">25<span class="d">.1</span><span class="u"> KB</span></td><td class="fx"><b>M<sub>IB</sub></b> · <b>d</b> · 1 <i>(FP8)</i></td></tr>
     <tr><td class="nm">V<sub>comb</sub></td><td>combine bytes/token·layer</td><td class="vl">50,176</td><td class="vl sc ap">5.02 × 10<sup>4</sup></td><td class="vl si ap">50<span class="d">.2</span><span class="u"> KB</span></td><td class="fx"><b>M<sub>IB</sub></b> · <b>d</b> · 2 <i>(BF16)</i></td></tr>
     <tr><td class="nm">V<sub>tok</sub></td><td>EP IB bytes per token</td><td class="vl">8,730,624</td><td class="vl sc ap">8.73 × 10<sup>6</sup></td><td class="vl si ap">8<span class="d">.73</span><span class="u"> MB</span></td><td class="fx">2 · (<b>V<sub>disp</sub></b> + <b>V<sub>comb</sub></b>) · <b>L<sub>moe</sub></b> <i>(fwd+bwd)</i></td></tr>
-    <tr><td class="nm">β<sub>IB</sub></td><td>IB bandwidth per GPU (B/s)</td><td class="vl">50,000,000,000</td><td class="vl sc ap">5.00 × 10<sup>10</sup></td><td class="vl si ap">50<span class="d"></span><span class="u"> GB/s</span></td><td class="fx"><i>(hardware spec)</i></td></tr>
     <tr><td class="nm">D<sub>GPU</sub></td><td>tokens per GPU per step</td><td class="vl">30,720</td><td class="vl sc ap">3.07 × 10<sup>4</sup></td><td class="vl si ap">30<span class="d">.7</span><span class="u"> K</span></td><td class="fx"><b>D</b> / <b>GPUs</b></td></tr>
     <tr><td class="nm">V<sub>EP</sub></td><td>EP IB bytes per GPU·step</td><td class="vl">268,204,769,280</td><td class="vl sc ap">2.68 × 10<sup>11</sup></td><td class="vl si ap">268<span class="d"></span><span class="u"> GB</span></td><td class="fx"><b>V<sub>tok</sub></b> · <b>D<sub>GPU</sub></b></td></tr>
-    <tr class="hl"><td class="nm">T<sub>EP</sub></td><td>EP time per step (s)</td><td class="vl">5.364095386</td><td class="vl sc ap">5.36 × 10<sup>0</sup></td><td class="vl si ap">5<span class="d">.36</span><span class="u"> s</span></td><td class="fx"><b>V<sub>EP</sub></b> / <b>β<sub>IB</sub></b></td></tr>
+    <tr class="hl"><td class="nm">T<sub>EP</sub></td><td>EP time per step (s)</td><td class="vl"></td><td class="vl sc ap">5.36 × 10<sup>0</sup></td><td class="vl si ap">5<span class="d">.36</span><span class="u"> s</span></td><td class="fx"><b>V<sub>EP</sub></b> / <b>β<sub>IB</sub></b></td></tr>
     </table></div>
 
     <p>Technically, we shouldn't round FP8 to one byte: the DeepSeek-V3 FP8 format
@@ -511,24 +644,20 @@
     <tr><td class="nm">V<sup>+</sup><sub>disp</sub></td><td>dispatch bytes/token·layer</td><td class="vl">25,872</td><td class="vl sc ap">2.59 × 10<sup>4</sup></td><td class="vl si ap">25<span class="d">.9</span><span class="u"> KB</span></td><td class="fx"><b>M<sub>IB</sub></b> · (<b>d</b> + 4 · <b>V5</b>)</td></tr>
     <tr><td class="nm">V<sup>+</sup><sub>tok</sub></td><td>EP IB bytes per token</td><td class="vl">8,821,568</td><td class="vl sc ap">8.82 × 10<sup>6</sup></td><td class="vl si ap">8<span class="d">.82</span><span class="u"> MB</span></td><td class="fx">2 · (<b>V<sup>+</sup><sub>disp</sub></b> + <b>V<sub>comb</sub></b>) · <b>L<sub>moe</sub></b></td></tr>
     <tr><td class="nm">V<sup>+</sup><sub>EP</sub></td><td>EP IB bytes per GPU·step</td><td class="vl">270,998,568,960</td><td class="vl sc ap">2.71 × 10<sup>11</sup></td><td class="vl si ap">271<span class="d"></span><span class="u"> GB</span></td><td class="fx"><b>V<sup>+</sup><sub>tok</sub></b> · <b>D<sub>GPU</sub></b></td></tr>
-    <tr class="hl"><td class="nm">T<sup>+</sup><sub>EP</sub></td><td>EP time per step (s)</td><td class="vl">5.419971379</td><td class="vl sc ap">5.42 × 10<sup>0</sup></td><td class="vl si ap">5<span class="d">.42</span><span class="u"> s</span></td><td class="fx"><b>V<sup>+</sup><sub>EP</sub></b> / <b>β<sub>IB</sub></b></td></tr>
+    <tr class="hl"><td class="nm">T<sup>+</sup><sub>EP</sub></td><td>EP time per step (s)</td><td class="vl"></td><td class="vl sc ap">5.42 × 10<sup>0</sup></td><td class="vl si ap">5<span class="d">.42</span><span class="u"> s</span></td><td class="fx"><b>V<sup>+</sup><sub>EP</sub></b> / <b>β<sub>IB</sub></b></td></tr>
     </table></div>
 
     <p>As a reminder, this was our compute wall time for a step:</p>
 
     <div class="cellsheet"><table>
     <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
-    <tr class="hl"><td class="nm">T<sup>+</sup><sub>c</sub></td><td>step time + attention (s)</td><td class="vl">7.779584234</td><td class="vl sc ap">7.78 × 10<sup>0</sup></td><td class="vl si ap">7<span class="d">.78</span><span class="u"> s</span></td><td class="fx"><b>C<sup>+</sup></b> / (<b>GPUs</b> · <b>π<sub>bf16</sub></b>)</td></tr>
+    <tr class="hl"><td class="nm">T<sup>+</sup><sub>c</sub></td><td>step time, all corrections (s)</td><td class="vl"></td><td class="vl sc ap">6.14 × 10<sup>0</sup></td><td class="vl si ap">6<span class="d">.14</span><span class="u"> s</span></td><td class="fx"><b>T<sub>fp8</sub></b> + <b>T<sub>bf16</sub></b> + <b>T<sub>attn</sub></b> + <b>T<sub>rc</sub></b></td></tr>
+    <tr class="hl"><td class="nm">f<sub>EP</sub></td><td>EP time, share of compute</td><td class="vl"></td><td class="vl sc ap">8.83 × 10<sup>−1</sup></td><td class="vl si ap">88<span class="d">.3</span><span class="u"> %</span></td><td class="fx"><b>T<sup>+</sup><sub>EP</sub></b> / <b>T<sup>+</sup><sub>c</sub></b></td></tr>
     </table></div>
 
-    <p>We can see that at speed of light, EP
-    communication alone uses 79% of our 6ND compute time, or 70% once we
-    count the attention core.  In reality, this ratio
-    will be different depending on what the achievable FLOPs and bandwidth
-    on our hardware is.  Like FLOPs, however, this answer is indifferent to
-    our other choices of parallelism.</p>
+    <p>We can see that at speed of light, EP communication alone uses up <span data-cellref="f<sub>EP</sub>">88.3 %</span> of our compute time.</p>
 
-    <h3>ZeRO/FSDP</h3>
+    <h2>ZeRO/FSDP</h2>
 
     <p>The fact that EP is using most of our InfiniBand bandwidth is bad news
     for doing FSDP, which would also compete for IB bandwidth.  However, we
@@ -537,6 +666,8 @@
     used PP.  Let's do the numbers.  In the discussion below, we're going to
     assume that the routed expert parameters have already been sharded per EP64
     and then further sharded with the remaining EFSDP mesh dim.</p>
+
+    <h3>Non-PP microbatching with gradient accumulation</h3>
 
     <p>Straight off the bat, there is a complication.  Usually, when we say
     FSDP, we think mean all-gathering parameters before
@@ -587,9 +718,10 @@
     of our compute and comms.  How can we estimate these? A
     speed-of-light analysis!</p>
 
-    <p>Unfortunately, there is some persnickety bookkeeping
-    to get accurate numbers.  The crux of the matter is whether or
-    not the all-gather for a parameter happens entirely over InfiniBand, or if some
+    <h3>Accounting for hierarchical all-gather over IB and NVLink</h3>
+
+    <p>To get accurate numbers for how long our all-gathers take, we need to reason
+    about whether the all-gather for a parameter happens entirely over InfiniBand, or if some
     communications can be handled in NVLink.  Suppose we are doing FSDP communications
     over the entire cluster (DP2048).  We don't actually need to send the
     unsharded parameters to 2048 GPUs over IB: we can use a hierarchical collective.
@@ -616,6 +748,8 @@
     experts and blue boxes are everything else that holds parameters):</p>
 
     <dsv3-anatomy style="min-height:847px" tally experttint lens="params" squares="matrix" layer="fsdp-params" detail controls="static" nocaption></dsv3-anatomy>
+
+    <h3>Computing the cost of FSDP</h3>
 
     <p>OK, we can get out the calculator now.  First, the non-experts, which
     communicate with IB over all ranks modulo NVLink:</p>
@@ -653,9 +787,9 @@
     <div class="cellsheet"><table>
     <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
     <tr><td class="nm">V<sub>ag</sub></td><td>BF16 AG bytes/GPU</td><td class="vl">24,058,761,946.5</td><td class="vl sc ap">2.41 × 10<sup>10</sup></td><td class="vl si ap">24<span class="d">.1</span><span class="u"> GB</span></td><td class="fx">(<b>V<sub>ne</sub></b> + <b>V<sub>exp</sub></b>) · 2 <i>(BF16)</i></td></tr>
-    <tr class="hl"><td class="nm">T<sub>ag</sub></td><td>AG time (s)</td><td class="vl">0.4811752389</td><td class="vl sc ap">4.81 × 10<sup>−1</sup></td><td class="vl si ap">481<span class="d"></span><span class="u"> ms</span></td><td class="fx"><b>V<sub>ag</sub></b> / <b>β<sub>IB</sub></b></td></tr>
+    <tr class="hl"><td class="nm">T<sub>ag</sub></td><td>AG time (s)</td><td class="vl"></td><td class="vl sc ap">4.81 × 10<sup>−1</sup></td><td class="vl si ap">481<span class="d"></span><span class="u"> ms</span></td><td class="fx"><b>V<sub>ag</sub></b> / <b>β<sub>IB</sub></b></td></tr>
     <tr><td class="nm">V<sub>rs</sub></td><td>FP32 RS bytes/GPU</td><td class="vl">48,117,523,893</td><td class="vl sc ap">4.81 × 10<sup>10</sup></td><td class="vl si ap">48<span class="d">.1</span><span class="u"> GB</span></td><td class="fx">(<b>V<sub>ne</sub></b> + <b>V<sub>exp</sub></b>) · 4 <i>(FP32)</i></td></tr>
-    <tr class="hl"><td class="nm">T<sub>rs</sub></td><td>RS time (s)</td><td class="vl">0.9623504779</td><td class="vl sc ap">9.62 × 10<sup>−1</sup></td><td class="vl si ap">962<span class="d"></span><span class="u"> ms</span></td><td class="fx"><b>V<sub>rs</sub></b> / <b>β<sub>IB</sub></b></td></tr>
+    <tr class="hl"><td class="nm">T<sub>rs</sub></td><td>RS time (s)</td><td class="vl"></td><td class="vl sc ap">9.62 × 10<sup>−1</sup></td><td class="vl si ap">962<span class="d"></span><span class="u"> ms</span></td><td class="fx"><b>V<sub>rs</sub></b> / <b>β<sub>IB</sub></b></td></tr>
     </table></div>
 
     <p>And we can sum these up to figure out how long our FSDP comms take in total (we've put
@@ -664,50 +798,26 @@
     <div class="cellsheet"><table>
     <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
     <tr><td class="nm">V<sub>sync</sub></td><td>ZeRO-1 bytes/GPU per step</td><td class="vl">72,176,285,839.5</td><td class="vl sc ap">7.22 × 10<sup>10</sup></td><td class="vl si ap">72<span class="d">.2</span><span class="u"> GB</span></td><td class="fx"><b>V<sub>ag</sub></b> + <b>V<sub>rs</sub></b></td></tr>
-    <tr class="hl"><td class="nm">T<sub>sync</sub></td><td>ZeRO-1 time per step (s)</td><td class="vl">1.443525717</td><td class="vl sc ap">1.44 × 10<sup>0</sup></td><td class="vl si ap">1<span class="d">.44</span><span class="u"> s</span></td><td class="fx"><b>V<sub>sync</sub></b> / <b>β<sub>IB</sub></b></td></tr>
+    <tr class="hl"><td class="nm">T<sub>sync</sub></td><td>ZeRO-1 time per step (s)</td><td class="vl"></td><td class="vl sc ap">1.44 × 10<sup>0</sup></td><td class="vl si ap">1<span class="d">.44</span><span class="u"> s</span></td><td class="fx"><b>V<sub>sync</sub></b> / <b>β<sub>IB</sub></b></td></tr>
     <tr><td class="nm">V<sub>mb</sub></td><td>ZeRO-3 bytes/GPU per mb</td><td class="vl">96,235,047,786</td><td class="vl sc ap">9.62 × 10<sup>10</sup></td><td class="vl si ap">96<span class="d">.2</span><span class="u"> GB</span></td><td class="fx">2 · <b>V<sub>ag</sub></b> + <b>V<sub>rs</sub></b></td></tr>
-    <tr class="hl"><td class="nm">T<sub>mb</sub></td><td>ZeRO-3 time per mb (s)</td><td class="vl">1.924700956</td><td class="vl sc ap">1.92 × 10<sup>0</sup></td><td class="vl si ap">1<span class="d">.92</span><span class="u"> s</span></td><td class="fx"><b>V<sub>mb</sub></b> / <b>β<sub>IB</sub></b></td></tr>
-    <tr class="hl"><td class="nm">T<sub>2mb</sub></td><td>ZeRO-3 time, 2 mbs (s)</td><td class="vl">3.849401911</td><td class="vl sc ap">3.85 × 10<sup>0</sup></td><td class="vl si ap">3<span class="d">.85</span><span class="u"> s</span></td><td class="fx">2 · <b>T<sub>mb</sub></b></td></tr>
-    <tr class="hl"><td class="nm">T<sub>4mb</sub></td><td>ZeRO-3 time, 4 mbs (s)</td><td class="vl">7.698803823</td><td class="vl sc ap">7.70 × 10<sup>0</sup></td><td class="vl si ap">7<span class="d">.70</span><span class="u"> s</span></td><td class="fx">4 · <b>T<sub>mb</sub></b></td></tr>
-    <tr class="hl"><td class="nm">T<sub>8mb</sub></td><td>ZeRO-3 time, 8 mbs (s)</td><td class="vl">15.397607646</td><td class="vl sc ap">1.54 × 10<sup>1</sup></td><td class="vl si ap">15<span class="d">.4</span><span class="u"> s</span></td><td class="fx">8 · <b>T<sub>mb</sub></b></td></tr>
+    <tr class="hl"><td class="nm">T<sub>mb</sub></td><td>ZeRO-3 time per mb (s)</td><td class="vl"></td><td class="vl sc ap">1.92 × 10<sup>0</sup></td><td class="vl si ap">1<span class="d">.92</span><span class="u"> s</span></td><td class="fx"><b>V<sub>mb</sub></b> / <b>β<sub>IB</sub></b></td></tr>
+    <tr class="hl"><td class="nm">T<sub>2mb</sub></td><td>ZeRO-3 time, 2 mbs (s)</td><td class="vl"></td><td class="vl sc ap">3.85 × 10<sup>0</sup></td><td class="vl si ap">3<span class="d">.85</span><span class="u"> s</span></td><td class="fx">2 · <b>T<sub>mb</sub></b></td></tr>
+    <tr class="hl"><td class="nm">T<sub>4mb</sub></td><td>ZeRO-3 time, 4 mbs (s)</td><td class="vl"></td><td class="vl sc ap">7.70 × 10<sup>0</sup></td><td class="vl si ap">7<span class="d">.70</span><span class="u"> s</span></td><td class="fx">4 · <b>T<sub>mb</sub></b></td></tr>
+    <tr class="hl"><td class="nm">T<sub>8mb</sub></td><td>ZeRO-3 time, 8 mbs (s)</td><td class="vl"></td><td class="vl sc ap">1.54 × 10<sup>1</sup></td><td class="vl si ap">15<span class="d">.4</span><span class="u"> s</span></td><td class="fx">8 · <b>T<sub>mb</sub></b></td></tr>
     </table></div>
 
     <p>For reference, these were the other numbers we've already computed:</p>
 
     <div class="cellsheet"><table>
     <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
-    <tr class="hl"><td class="nm">T<sup>+</sup><sub>c</sub></td><td>step time + attention (s)</td><td class="vl">7.779584234</td><td class="vl sc ap">7.78 × 10<sup>0</sup></td><td class="vl si ap">7<span class="d">.78</span><span class="u"> s</span></td><td class="fx"><b>C<sup>+</sup></b> / (<b>GPUs</b> · <b>π<sub>bf16</sub></b>)</td></tr>
-    <tr class="hl"><td class="nm">T<sup>+</sup><sub>EP</sub></td><td>EP time per step (s)</td><td class="vl">5.419971379</td><td class="vl sc ap">5.42 × 10<sup>0</sup></td><td class="vl si ap">5<span class="d">.42</span><span class="u"> s</span></td><td class="fx"><b>V<sup>+</sup><sub>EP</sub></b> / <b>β<sub>IB</sub></b></td></tr>
+    <tr class="hl"><td class="nm">T<sup>+</sup><sub>c</sub></td><td>step time, all corrections (s)</td><td class="vl"></td><td class="vl sc ap">6.14 × 10<sup>0</sup></td><td class="vl si ap">6<span class="d">.14</span><span class="u"> s</span></td><td class="fx"><b>T<sub>fp8</sub></b> + <b>T<sub>bf16</sub></b> + <b>T<sub>attn</sub></b> + <b>T<sub>rc</sub></b></td></tr>
+    <tr class="hl"><td class="nm">T<sup>+</sup><sub>EP</sub></td><td>EP time per step (s)</td><td class="vl"></td><td class="vl sc ap">5.42 × 10<sup>0</sup></td><td class="vl si ap">5<span class="d">.42</span><span class="u"> s</span></td><td class="fx"><b>V<sup>+</sup><sub>EP</sub></b> / <b>β<sub>IB</sub></b></td></tr>
     </table></div>
 
-    <p>You can see we are indeed comms bound!  We can in fact plot the percentage of
-    how much exposed time we have as we increase the number of microbatches.<span class="mn-ref"></span><span class="mn">The graph interpolates between the actual physically possible microbatch counts.  You could in fact achieve these effective microbatch sizes by tweaking your global batch size!</span><span class="mn-ref"></span><span class="mn">[[AI: Daniel Haziza
-    charts this same trade-off with different modeling choices.  His x axis
-    is the global batch (2,048 GPUs, 4,096-token sequences), and each GPU runs
-    its whole share in one pass.  It's the same experiment: splitting our 7.5
-    sequences into <i>m</i> microbatches scales every term by 1/<i>m</i>,
-    just like a one-pass batch of 15,360/<i>m</i>.  Our <i>m</i> = 1, 2, 4, 8
-    are his 15,360, 7,680, 3,840 and 1,920 sequences, where he reads 28, 43,
-    60 and 75% idle to our 0, 16, 41 and 63%.  Four choices differ.
-    <b>Overlap:</b> we let comms hide under compute and count only the excess;
-    he adds them, idle = comm/(comm + compute).  Ours is the best case, his
-    the worst, and real prefetching lands in between.
-    <b>EP:</b> we put the <b>T<sup>+</sup><sub>EP</sub></b> = 5.42 s of
-    all-to-alls on the same IB link; his chart counts FSDP's share alone.
-    Once comms overlap you can't separate the two, since they compete for one
-    link.
-    <b>Compute peak:</b> we price compute at the BF16 peak (7.78 s); he puts
-    the GEMMs at the FP8 peak, as DeepSeek runs them, with attention at BF16
-    (about 4.4 s).
-    <b>Gathers:</b> we gather each layer again before backward; with the FP32
-    reduce-scatter that's four gathers' worth per microbatch
-    (<b>T<sub>mb</sub></b> = 1.92 s).  He gathers once, three gathers' worth:
-    1.44 s in our bytes.  His memory model holds only two layers of gathered
-    weights, though, which implies the re-gather he doesn't charge.
-    No overlap and faster compute raise his idle share; EP and the re-gather
-    raise ours.  Run our bytes under his four choices and you get 25, 40, 57
-    and 73%; the rest is his slightly larger byte count (1.54 s of comm to
-    our 1.44 s).]]</span></p>
+    <p>Our EP and FSDP traffic at one microbatch alone would make us comms bound;
+    the fact that we have to do multiple microbatches to make activations fit
+    in memory is added insult to injury.  We can in fact plot the percentage of
+    how much exposed time we have as we increase the number of microbatches.<span class="mn-ref"></span><span class="mn">The graph interpolates between the actual physically possible microbatch counts.  You could in fact achieve these effective microbatch sizes by tweaking your global batch size!</span></p>
 
     <dsv3-fsdpcurve style="min-height: 464px"></dsv3-fsdpcurve>
 
@@ -720,7 +830,7 @@
         so you end up with a lot of exposed comms with many microbatches.</li>
     </ol>
 
-    <h3>Pipeline parallelism</h3>
+    <h2>Pipeline parallelism</h2>
 
     <p>Let's see now why pipeline parallelism is a better trade.  Pipeline parallel
     only needs to move the residual stream across pipeline stages, which is relatively
@@ -732,7 +842,7 @@
     <tr><td class="nm">D<sub>PP</sub></td><td>tokens per replica·step</td><td class="vl">491,520</td><td class="vl sc ap">4.92 × 10<sup>5</sup></td><td class="vl si ap">492<span class="d"></span><span class="u"> K</span></td><td class="fx"><b>D</b> · <b>PP</b> / <b>GPUs</b></td></tr>
     <tr><td class="nm">V<sub>res</sub></td><td>residual bytes per token</td><td class="vl">14,336</td><td class="vl sc ap">1.43 × 10<sup>4</sup></td><td class="vl si ap">14<span class="d">.3</span><span class="u"> KB</span></td><td class="fx"><b>d</b> · 2 <i>(BF16)</i></td></tr>
     <tr><td class="nm">V<sub>PP</sub></td><td>PP IB bytes per GPU·step</td><td class="vl">14,092,861,440</td><td class="vl sc ap">1.41 × 10<sup>10</sup></td><td class="vl si ap">14<span class="d">.1</span><span class="u"> GB</span></td><td class="fx">2 · <b>V<sub>res</sub></b> · <b>D<sub>PP</sub></b></td></tr>
-    <tr class="hl"><td class="nm">T<sub>PP</sub></td><td>PP time per step (s)</td><td class="vl">0.2818572288</td><td class="vl sc ap">2.82 × 10<sup>−1</sup></td><td class="vl si ap">282<span class="d"></span><span class="u"> ms</span></td><td class="fx"><b>V<sub>PP</sub></b> / <b>β<sub>IB</sub></b></td></tr>
+    <tr class="hl"><td class="nm">T<sub>PP</sub></td><td>PP time per step (s)</td><td class="vl"></td><td class="vl sc ap">2.82 × 10<sup>−1</sup></td><td class="vl si ap">282<span class="d"></span><span class="u"> ms</span></td><td class="fx"><b>V<sub>PP</sub></b> / <b>β<sub>IB</sub></b></td></tr>
     </table></div>
 
     <p>However, we do pay a penalty: the PP bubble.</p>
@@ -919,18 +1029,34 @@
     <tr><td class="nm">t<sub>B</sub></td><td>backward time, in units of F</td><td class="vl">2</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(B ≈ 2F)</i></td></tr>
     <tr><td class="nm">t<sub>W</sub></td><td>weight-gradient time, in F</td><td class="vl">1</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(W ≈ F)</i></td></tr>
     <tr><td class="nm">t<sub>F&amp;B</sub></td><td>overlapped F&amp;B time, in F</td><td class="vl">3</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx">1 + <b>t<sub>B</sub></b> <i>(compute-bound: F + B)</i></td></tr>
-    <tr class="hl"><td class="nm">b<sub>Dual</sub></td><td>DualPipe bubble, share of compute</td><td class="vl">0.03888888889</td><td class="vl sc ap">3.89 × 10<sup>−2</sup></td><td class="vl si ap">3<span class="d">.89</span><span class="u"> %</span></td><td class="fx">(<b>PP</b> / 2 − 1) · (<b>t<sub>F&amp;B</sub></b> + <b>t<sub>B</sub></b> − 3 · <b>t<sub>W</sub></b>) / (<b>m</b> · (1 + <b>t<sub>B</sub></b>))</td></tr>
+    <tr class="hl"><td class="nm">b<sub>Dual</sub></td><td>DualPipe bubble, share of compute</td><td class="vl"></td><td class="vl sc ap">3.89 × 10<sup>−2</sup></td><td class="vl si ap">3<span class="d">.89</span><span class="u"> %</span></td><td class="fx">(<b>PP</b> / 2 − 1) · (<b>t<sub>F&amp;B</sub></b> + <b>t<sub>B</sub></b> − 3 · <b>t<sub>W</sub></b>) / (<b>m</b> · (1 + <b>t<sub>B</sub></b>))</td></tr>
     </table></div>
 
     <p>Notice this depends only on
-    the number of stages and microbatches, not on the model's size: the
-    bubble is a scheduling tax, and the fixed global batch is what bounds it.
-    More microbatches would shrink it, but at one sequence per microbatch we
-    already have as many as the batch allows.]]</p>
+    the number of stages and microbatches, not on the model's size.  In general, you can
+    reduce your pipeline bubble by having more microbatches (at the cost of worse
+    GEMM utilization at smaller microbatch size), but once you run out of local
+    batch size you cannot increase the microbatch count any more.</p>
+
+    <p>[[AI: DualPipe has one more cost, which shows up in ZeRO-1's
+    once-per-step sync.  Each GPU holds two stages, one from each end of the
+    pipeline, so it keeps an eighth of the parameters rather than a
+    sixteenth, and shares them with the 256 GPUs that hold the same pair: 32
+    nodes for the non-experts, 4 replicas of each expert slice.  That's
+    still tiny next to the FSDP section's every-layer gathers.]]</p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">s<sub>GPU</sub></td><td>stages per GPU</td><td class="vl">2</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(DualPipe: one from each end)</i></td></tr>
+    <tr><td class="nm">V<sup>PP</sup><sub>ne</sub></td><td>IB non-expert params/GPU per move</td><td class="vl">259,105,029.25</td><td class="vl sc ap">2.59 × 10<sup>8</sup></td><td class="vl si ap">259<span class="d"></span><span class="u"> M</span></td><td class="fx"><b>Ψ<sub>ne</sub></b> · <b>s<sub>GPU</sub></b> / <b>PP</b> · (1 − <b>PP</b> / (<b>s<sub>GPU</sub></b> · <b>IBDP</b>)) <i>(32 nodes hold our stages)</i></td></tr>
+    <tr><td class="nm">V<sup>PP</sup><sub>exp</sub></td><td>IB expert params/GPU per move</td><td class="vl">957,874,176</td><td class="vl sc ap">9.58 × 10<sup>8</sup></td><td class="vl si ap">958<span class="d"></span><span class="u"> M</span></td><td class="fx"><b>Ψ<sub>exp</sub></b> · <b>s<sub>GPU</sub></b> / <b>PP</b> · (1 − <b>PP</b> / (<b>s<sub>GPU</sub></b> · <b>EDP</b>)) <i>(4 replicas of our slice)</i></td></tr>
+    <tr><td class="nm">V<sup>PP</sup><sub>sync</sub></td><td>ZeRO-1 bytes/GPU per step</td><td class="vl">7,301,875,231.5</td><td class="vl sc ap">7.30 × 10<sup>9</sup></td><td class="vl si ap">7<span class="d">.30</span><span class="u"> GB</span></td><td class="fx">(<b>V<sup>PP</sup><sub>ne</sub></b> + <b>V<sup>PP</sup><sub>exp</sub></b>) · (2 + 4) <i>(BF16 AG + FP32 RS; average rank, the one with the embedding and head moves more)</i></td></tr>
+    <tr class="hl"><td class="nm">T<sup>PP</sup><sub>sync</sub></td><td>ZeRO-1 time per step (s)</td><td class="vl"></td><td class="vl sc ap">1.46 × 10<sup>−1</sup></td><td class="vl si ap">146<span class="d"></span><span class="u"> ms</span></td><td class="fx"><b>V<sup>PP</sup><sub>sync</sub></b> / <b>β<sub>IB</sub></b></td></tr>
+    </table></div>
 
     <dsv3-ppcurve style="min-height: 464px"></dsv3-ppcurve>
 
-    <h3>Putting it together</h3>
+    <h2>Putting it together</h2>
 
     <p>By carefully reasoning out the mechanics of how our distributed
     training works, we can put together a simple set of formulas that let us
@@ -943,27 +1069,8 @@
     reality, but the clarity of a simple model means that we can figure out
     what went wrong (either in the model, or in our implementation.)</p>
 
-    <p>[[AI: Two terms in the tally below don't have a sheet yet.  DeepSeek
-    recomputes the MLA up-projections in backward instead of saving their
-    outputs, which replays those GEMMs' forward.  And ZeRO-1's once-per-step
-    sync has to be repriced for DeepSeek's PP16 layout: each GPU holds one
-    stage, a sixteenth of the parameters, and syncs it only with the 128 GPUs
-    that hold the same stage (16 nodes for the non-experts, 2 replicas of
-    each expert slice).]]</p>
-
-    <div class="cellsheet"><table>
-    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
-    <tr><td class="nm">d′<sub>c</sub></td><td>query compression dim</td><td class="vl">1,536</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(architecture)</i></td></tr>
-    <tr><td class="nm">d<sub>c</sub></td><td>KV compression dim</td><td class="vl">512</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(architecture)</i></td></tr>
-    <tr><td class="nm">C<sub>rc</sub></td><td>recompute FLOPs per step</td><td class="vl">418,518,105,996,656,640</td><td class="vl sc ap">4.19 × 10<sup>17</sup></td><td class="vl si ap">419<span class="d"></span><span class="u"> PFLOP</span></td><td class="fx">2 · <b>L</b> · (<b>d′<sub>c</sub></b> · <b>n<sub>h</sub></b> · (<b>d<sub>h</sub></b> + <b>d<sup>R</sup><sub>h</sub></b>) + <b>d<sub>c</sub></b> · <b>n<sub>h</sub></b> · (<b>d<sub>h</sub></b> + <b>d<sub>h</sub></b>)) · <b>D</b> <i>(forward replay: q up to nope + rope, kv up to k + v)</i></td></tr>
-    <tr class="hl"><td class="nm">T<sub>rc</sub></td><td>recompute time per step (s)</td><td class="vl">0.2066274458</td><td class="vl sc ap">2.07 × 10<sup>−1</sup></td><td class="vl si ap">207<span class="d"></span><span class="u"> ms</span></td><td class="fx"><b>C<sub>rc</sub></b> / (<b>GPUs</b> · <b>π<sub>bf16</sub></b>)</td></tr>
-    <tr><td class="nm">V<sup>PP</sup><sub>ne</sub></td><td>IB non-expert params/GPU per move</td><td class="vl">125,373,401.25</td><td class="vl sc ap">1.25 × 10<sup>8</sup></td><td class="vl si ap">125<span class="d"></span><span class="u"> M</span></td><td class="fx"><b>Ψ<sub>ne</sub></b> / <b>PP</b> · (1 − <b>PP</b> / <b>IBDP</b>) <i>(16 nodes hold our stage)</i></td></tr>
-    <tr><td class="nm">V<sup>PP</sup><sub>exp</sub></td><td>IB expert params/GPU per move</td><td class="vl">319,291,392</td><td class="vl sc ap">3.19 × 10<sup>8</sup></td><td class="vl si ap">319<span class="d"></span><span class="u"> M</span></td><td class="fx"><b>Ψ<sub>exp</sub></b> / <b>PP</b> · (1 − <b>PP</b> / <b>EDP</b>) <i>(2 replicas of our slice)</i></td></tr>
-    <tr><td class="nm">V<sup>PP</sup><sub>sync</sub></td><td>ZeRO-1 bytes/GPU per step</td><td class="vl">2,667,988,759.5</td><td class="vl sc ap">2.67 × 10<sup>9</sup></td><td class="vl si ap">2<span class="d">.67</span><span class="u"> GB</span></td><td class="fx">(<b>V<sup>PP</sup><sub>ne</sub></b> + <b>V<sup>PP</sup><sub>exp</sub></b>) · (2 + 4) <i>(BF16 AG + FP32 RS; average stage, the rank with the embedding and head moves more)</i></td></tr>
-    <tr class="hl"><td class="nm">T<sup>PP</sup><sub>sync</sub></td><td>ZeRO-1 time per step (s)</td><td class="vl">0.05335977519</td><td class="vl sc ap">5.34 × 10<sup>−2</sup></td><td class="vl si ap">53<span class="d">.4</span><span class="u"> ms</span></td><td class="fx"><b>V<sup>PP</sup><sub>sync</sub></b> / <b>β<sub>IB</sub></b></td></tr>
-    </table></div>
-
-    <p>With publicly available data, we can compare our findings with what
+    <p>In fact, let's do this exercise right now.
+    With publicly available data, we can compare our findings with what
     DeepSeek publicly reported in both their technical report as well as
     their published profiling traces.</p>
 
@@ -987,25 +1094,23 @@
     <div class="tally"><table>
         <thead><tr><th>resource</th><th>what</th><th>cell</th><th class="n">theoretical (s)</th><th class="n">effective (s)</th></tr></thead>
         <tbody>
-        <tr><td class="rs" rowspan="3">tensor cores</td><td>6ND plus the attention core</td><td class="fx"><b>T<sup>+</sup><sub>c</sub></b></td><td class="n">7<span class="d">.78</span></td><td class="n">6<span class="d">.69</span></td></tr>
-        <tr><td>recompute (MLA up-projections)</td><td class="fx"><b>T<sub>rc</sub></b></td><td class="n">0<span class="d">.21</span></td><td class="n">0<span class="d">.21</span></td></tr>
-        <tr class="hl"><td>total</td><td class="fx"><b>T<sup>+</sup><sub>c</sub></b> + <b>T<sub>rc</sub></b></td><td class="n">8<span class="d">.0</span></td><td class="n">6<span class="d">.9</span></td></tr>
+        <tr class="hl"><td class="rs">tensor cores</td><td>6ND + attention core + recompute</td><td class="fx"><b>T<sup>+</sup><sub>c</sub></b></td><td class="n">6<span class="d">.1</span></td><td class="n">6<span class="d">.9</span></td></tr>
         </tbody><tbody>
         <tr><td class="rs" rowspan="4">IB</td><td>EP dispatch + combine, forward and backward</td><td class="fx"><b>T<sup>+</sup><sub>EP</sub></b></td><td class="n">5<span class="d">.42</span></td><td class="n">5<span class="d">.98</span></td></tr>
         <tr><td>PP activations and gradients</td><td class="fx"><b>T<sub>PP</sub></b></td><td class="n">0<span class="d">.28</span></td><td class="n">0<span class="d">.31</span></td></tr>
-        <tr><td>ZeRO-1 gradient reduce-scatter + parameter all-gather</td><td class="fx"><b>T<sup>PP</sup><sub>sync</sub></b></td><td class="n">0<span class="d">.05</span></td><td class="n">0<span class="d">.06</span></td></tr>
-        <tr class="hl"><td>total</td><td class="fx"><b>T<sup>+</sup><sub>EP</sub></b> + <b>T<sub>PP</sub></b> + <b>T<sup>PP</sup><sub>sync</sub></b></td><td class="n">5<span class="d">.8</span></td><td class="n">6<span class="d">.4</span></td></tr>
+        <tr><td>ZeRO-1 gradient reduce-scatter + parameter all-gather</td><td class="fx"><b>T<sup>PP</sup><sub>sync</sub></b></td><td class="n">0<span class="d">.15</span></td><td class="n">0<span class="d">.16</span></td></tr>
+        <tr class="hl"><td>total</td><td class="fx"><b>T<sup>+</sup><sub>EP</sub></b> + <b>T<sub>PP</sub></b> + <b>T<sup>PP</sup><sub>sync</sub></b></td><td class="n">5<span class="d">.8</span></td><td class="n">6<span class="d">.5</span></td></tr>
         </tbody>
     </table></div>
 
     <div>
-    <p><strong>[[AI TODO: theoretical compute is priced at the BF16 peak
-    (DeepSeek's MFU convention), which is not a bound.</strong>  The
-    dtype-aware bound (FP8 peak for the FP8 GEMMs, BF16 for the attention
-    core, head and router, as in 02 and the roofline sheet) is 4.46 s for
-    6ND + attention, 4.56 s with recompute: IB-bound against 5.8 s.  Worth
-    a sentence or a toggle wherever the text leans on "speed of light" for
-    compute.</p>
+    <p><strong>[[AI TODO: theoretical is now Smol's measured GEMM rates, dtype-aware.</strong>
+    FP8 GEMMs at π<sup>sol</sup><sub>fp8</sub>; the attention core, head
+    and router at π<sup>sol</sup><sub>bf16</sub>; IB stays at its 50 GB/s
+    spec, β<sub>IB</sub>, as in DeepSeek's report.  Both columns are
+    compute-bound: theory 6.1 s against 5.8 s, effective (DeepGEMM, FA3,
+    DeepEP's 45 GB/s) 6.9 s against 6.5 s.  The prose below still prices
+    theory at the BF16 peak.  MFU (Y4) alone stays on the spec BF16 peak.</p>
 
     <p><em>Why this suggests more low-precision text.</em>  The effective
     GEMM rates say FP8 on Hopper buys much less than 2×.  DeepGEMM's DSv3
@@ -1013,10 +1118,10 @@
     <em>peak</em>, or roughly 0.95–1.8× a good BF16 GEMM at 80% of peak.
     02 already says the 2× is optimistic on Hopper (fine-grained scaling
     spends some of it outside the MMA, plus quantization).  03 is where
-    that gets a number.  The BF16 theoretical → effective step folds
-    FP8's gain and the kernel tax together; a dtype-aware middle column
-    would separate them: BF16 → dtype-aware is the precision choice, and
-    dtype-aware → effective is the kernel tax.</p>
+    that gets a number.  With the theoretical column dtype-aware,
+    theoretical → effective is the kernel tax alone: Smol's best-shape
+    rates against DeepGEMM's at the DSv3 shapes and FA3's.  The precision
+    choice would be a BF16-only column beside it.</p>
 
     <p><em>Related, same table: backward rates.</em>  The source list assumes
     backward GEMMs run at forward rates.  In DeepSeek's trace, the forward
@@ -1033,11 +1138,11 @@
     </div>
 
     <p>The effective numbers move the two sides in opposite directions: IB
-    loses 10%, but compute <em>gains</em> 14%, because the FP8 GEMMs beat the
+    loses 10%, but <mark class="flag">compute <em>gains</em> 14%, because the FP8 GEMMs beat the
     BF16 peak by more than attention and the head fall short of it.  At the
-    BF16 peak the step is compute-bound (8.0 s against 5.8 s); in practice
+    BF16 peak the step is compute-bound (8.0 s against 5.8 s);</mark> <span class="flag-why">[[FLAG: theoretical compute is now Smol's measured rates (6.1 s), so compute no longer gains: it loses 12% (6.1 → 6.9), the same direction as IB (5.8 → 6.5, 10%). In theory the step is compute-bound 6.1 s against 5.8 s]]</span> in practice
     it's roughly balanced, and still slightly compute-bound (6.9 s against
-    6.4 s).  That's close to the 1:1 the technical report describes, and we
+    6.5 s).  That's close to the 1:1 the technical report describes, and we
     got there without tuning anything to hit it.</p>
 
     <h4>What overlap buys</h4>
@@ -1050,26 +1155,26 @@
 
     <table>
         <tr><th></th><th>no overlap, 1F1B</th><th>DualPipe</th></tr>
-        <tr><td>theoretical</td><td>8.0 + 5.8 + 12.5% bubble = 14.8 s</td><td>max(8.0 × 1.18, 5.8) + 3.9% bubble ≈ 9.8 s</td></tr>
-        <tr><td>effective</td><td>6.9 + 6.4 + 12.5% bubble = 14.2 s</td><td>max(6.9 × 1.18, 6.4) + 3.9% bubble ≈ 8.4 s</td></tr>
+        <tr><td>theoretical</td><td><mark class="flag">8.0 + 5.8 + 12.5% bubble = 14.8 s</mark> <span class="flag-why">[[FLAG: at T⁺c = 6.1 s: 6.1 + 5.8 + 12.5% bubble ≈ 12.8 s]]</span></td><td><mark class="flag">max(8.0 × 1.18, 5.8) + 3.9% bubble ≈ 9.8 s</mark> <span class="flag-why">[[FLAG: max(6.1 × 1.18, 5.8) + 3.9% bubble ≈ 7.5 s]]</span></td></tr>
+        <tr><td>effective</td><td>6.9 + 6.5 + 12.5% bubble ≈ 14.2 s</td><td>max(6.9 × 1.18, 6.5) + 3.9% bubble ≈ 8.4 s</td></tr>
     </table>
 
     <p>Both versions say overlap wins by a wide margin, and they agree about
     what to do next.  Compute is the binding side, so the 20 SMs cost real
-    time (1.4 s per step at the BF16 peak, 1.2 s effective) while IB sits
+    time (<mark class="flag">1.4 s per step at the BF16 peak</mark> <span class="flag-why">[[FLAG: 0.18 × 6.14 = 1.1 s at the measured rates]]</span>, 1.2 s effective) while IB sits
     idle part of the time, and a communication kernel that used fewer SMs
     would be worth more than one that moved fewer bytes.  What the effective
-    numbers change is how much room there is: IB's slack is 3.6 s at the
-    peaks but only 1.7 s in practice, so the bytes can't grow much before
+    numbers change is how much room there is: IB's slack is <mark class="flag">3.6 s at the
+    peaks</mark> <span class="flag-why">[[FLAG: 7.24 − 5.85 = 1.4 s at the measured rates, so theory and practice (1.7 s) now nearly agree; "but only" may not survive]]</span> but only 1.7 s in practice, so the bytes can't grow much before
     the advice flips.</p>
 
     <p>Looking back, each of the three tools did one job.  <strong>Speed of
     light</strong> ruled out FSDP without any engineering: even at IB's full
-    line rate, no ZeRO flavor gets the step under about 9 s, a third over its
-    compute at the BF16 peak, so no amount of clever overlap could rescue it.  <strong>Conservation</strong> let us price each
+    line rate, no ZeRO flavor gets the step under about 9 s, <mark class="flag">a third over its
+    compute at the BF16 peak</mark> <span class="flag-why">[[FLAG: at the measured compute rates ZeRO-3 at 8 microbatches, the only count that fits, is 20.8 s, 3.4× compute (6.14 s)]]</span>, so no amount of clever overlap could rescue it.  <strong>Conservation</strong> let us price each
     piece without committing to a full parallel layout, and it also tells us
     which side we can negotiate with.  The compute is fixed; the IB time is
-    the product of our choices, and those choices swing it enormously (0.05 s
+    the product of our choices, and those choices swing it enormously (0.15 s
     for ZeRO-1 against 15.4 s for ZeRO-3).  That's why we always try to hide
     communication under compute and never the other way round.
     <strong>Asymptotics</strong> told us which costs matter as models grow:
@@ -1088,7 +1193,7 @@
     <tr><td class="nm">Y2</td><td>reported step time (s)</td><td class="vl">19.90656</td><td class="vl sc ap">1.99 × 10<sup>1</sup></td><td class="vl si ap">19<span class="d">.9</span><span class="u"> s</span></td><td class="fx"><b>Y1</b> · 3,600 · <b>D<sub>GPU</sub></b> / 10<sup>12</sup></td></tr>
     <tr><td class="nm">P17</td><td>seqs per GPU per step (avg)</td><td class="vl">7.5</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><b>D<sub>GPU</sub></b> / <b>S</b></td></tr>
     <tr><td class="nm">Y3</td><td>steady-state step time, measured (s)</td><td class="vl">12.2019675</td><td class="vl sc ap">1.22 × 10<sup>1</sup></td><td class="vl si ap">12<span class="d">.2</span><span class="u"> s</span></td><td class="fx"><b>P17</b> · (<b>L<sub>moe</sub></b> / 4) · 0.112202 <i>(DeepSeek's profile-data trace: one DualPipe forward + backward chunk pair of 4 MoE layers, 112.202 ms; balanced routing, no PP comm)</i></td></tr>
-    <tr class="hl"><td class="nm">Y4</td><td>model FLOPs utilization</td><td class="vl">0.3428979743</td><td class="vl sc ap">3.43 × 10<sup>−1</sup></td><td class="vl si ap">34<span class="d">.3</span><span class="u"> %</span></td><td class="fx"><b>T<sub>c</sub></b> / <b>Y2</b></td></tr>
+    <tr class="hl"><td class="nm">Y4</td><td>model FLOPs utilization</td><td class="vl"></td><td class="vl sc ap">3.43 × 10<sup>−1</sup></td><td class="vl si ap">34<span class="d">.3</span><span class="u"> %</span></td><td class="fx"><b>C</b> / (<b>GPUs</b> · <b>π<sub>bf16</sub></b> · <b>Y2</b>) <i>(MFU is priced at the spec peak)</i></td></tr>
     </table></div>
 
 
@@ -1118,21 +1223,22 @@
       const nm = tr.querySelector('td.nm')?.innerHTML;
       if (nm && !def.has(nm)) def.set(nm, tr);
     }
-    const rowOf = (b) => def.get(b?.innerHTML);
+    const rowOf = (b) => def.get(b?.dataset.cellref ?? b?.innerHTML);
     for (const b of document.querySelectorAll('.cellsheet td.fx b, .tally td.fx b')) if (rowOf(b)) b.classList.add('ref');
     const card = (tr) => {
       const [nm, lb, vl, , si, fx] = tr.cells;
       const leaf = !fx.querySelector('b') && fx.children.length === 1 && fx.firstElementChild.tagName === 'I';
       const approx = si.textContent.trim();
       const d = document.createElement('div');
-      d.innerHTML = `<b>${nm.innerHTML}</b> · ${lb.innerHTML}<br>= ${leaf ? '' : `${fx.innerHTML} = `}`
-        + vl.textContent + (approx ? ` ≈ ${approx.replace(/\s+/g, ' ')}` : '');
+      // a rounded value has no exact entry: the card then reads formula ≈ SI
+      const terms = [leaf ? '' : `= ${fx.innerHTML}`, vl.textContent && `= ${vl.textContent}`, approx && `≈ ${approx.replace(/\s+/g, ' ')}`];
+      d.innerHTML = `<b>${nm.innerHTML}</b> · ${lb.innerHTML}<br>` + terms.filter(Boolean).join(' ');
       return d;
     };
     let sel = null, fuse;
     const select = (tr) => { sel?.classList.remove('sel'); sel = tr; tr?.classList.add('sel'); };
     // the closing tally's cell column links into the sheets the same way (its rows don't select)
-    for (const sheet of document.querySelectorAll('.cellsheet, .tally')) {
+    for (const sheet of document.querySelectorAll('.cellsheet, .tally:has(td.fx)')) {
       attachTip(sheet, (ev) => { const tr = rowOf(ev.target.closest?.('b.ref')); return tr ? card(tr) : null; },
         { parent: document.body, cls: 'cs-tip', pinnable: (ev) => !ev.target.closest('b.ref') });
       sheet.addEventListener('click', (ev) => {
@@ -1145,6 +1251,11 @@
         if (ev.detail > 1 || !getSelection().isCollapsed) return;
         fuse = setTimeout(() => select(sel === row ? null : row), 250);
       });
+    }
+    // prose numbers quoting a cell: the same card on hover, the same jump on click
+    for (const q of document.querySelectorAll('main [data-cellref]')) {
+      attachTip(q, () => card(rowOf(q)), { parent: document.body, cls: 'cs-tip', pinnable: () => false });
+      q.addEventListener('click', () => { const tr = rowOf(q); select(tr); tr.scrollIntoView({ block: 'center' }); });
     }
   </script>
 </body>

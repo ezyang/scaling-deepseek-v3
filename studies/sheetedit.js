@@ -1,13 +1,15 @@
 // 03's static cell sheets, made live. The published values stay in the HTML
 // (the page reads right before, and without, this module); the formula
 // column IS the program: each formula's HTML compiles to exact rational
-// arithmetic, so editing a real knob (B, S, GPUs, EP, NVL, π_bf16, β_IB)
+// arithmetic, so editing a real knob (B, S, GPUs, EP, NVL and the rates the model runs at: π^sol_bf16, π^sol_fp8, β_IB;
+// the spec compute peaks are fixed)
 // recomputes every dependent row, wherever it's repeated. Rows that drift
 // from the published value turn amber. Edits live in the hash (departures
-// only), so the floating reset (reset.js) lists and undoes them.
+// only), so the floating reset (reset.js) lists and undoes them. Prose numbers
+// that quote a cell (data-cellref = the row's name) follow along.
 import { describe } from './reset.js';
 
-const KNOBS = { B: 'B', S: 'S', GPUs: 'GPUs', 'π<sub>bf16</sub>': 'pi', EP: 'EP', NVL: 'NVL', 'β<sub>IB</sub>': 'bIB' };
+const KNOBS = { B: 'B', S: 'S', GPUs: 'GPUs', 'π<sup>sol</sup><sub>bf16</sub>': 'sol', 'π<sup>sol</sup><sub>fp8</sub>': 'sol8', EP: 'EP', NVL: 'NVL', 'β<sub>IB</sub>': 'IB' };
 const COUNTS = new Set(['B', 'S', 'GPUs', 'EP', 'NVL']);
 const KEY = 'c:cells';
 
@@ -60,20 +62,21 @@ function compile(html) {
 }
 
 // ---- the sheets' own number formats ----------------------------------------
-// exact column: exact when it terminates within 9 decimals, else 9 decimals
-// (at least 10 significant digits)
-export function fmtExact([n, d]) {
+// exact column: the decimal when it terminates within 9 places, else blank —
+// a rounded figure isn't exact (the ≈ columns carry it). Typed knobs always
+// terminate, so they print in full (places = Infinity)
+export function fmtExact([n, d], places = 9) {
   const neg = n < 0n; if (neg) n = -n;
   let k = 0;
-  while (k <= 9 && (n * 10n ** BigInt(k)) % d) k++;
-  if (k > 9) { k = 9; if (n < d) { let z = 1; while (n * 10n ** BigInt(z) < d) z++; k = z + 9; } }
-  const m = 10n ** BigInt(k), r = (2n * n * m + d) / (2n * d);
+  while ((n * 10n ** BigInt(k)) % d) if (++k > places) return '';
+  const m = 10n ** BigInt(k), r = n * m / d;
   return (neg ? '−' : '') + (r / m).toLocaleString('en-US') + (k ? '.' + (r % m).toString().padStart(k, '0') : '');
 }
+const fmtKnob = (q) => fmtExact(q, Infinity);
 const fmtSci = (x) => { const [m, e] = x.toExponential(2).split('e'); return `${m} × 10<sup>${(+e).toString().replace('-', '−')}</sup>`; };
 const PFX = ['', 'K', 'M', 'G', 'T', 'P', 'E'];
 function fmtSI(x, unit) {
-  const base = unit === '%' || unit === 's' || !PFX.includes(unit[0]) ? unit : unit.slice(1);
+  const base = unit === 'ms' ? 's' : unit === '%' || unit === 's' || !PFX.includes(unit[0]) ? unit : unit.slice(1);
   let v = base === '%' ? x * 100 : x, p = 0, pf = '';
   if (base === 's') { if (Math.abs(v) < 1) { v *= 1000; pf = 'm'; } }
   else if (base !== '%') { while (p < 6 && Math.abs(v) >= 1000) { v /= 1000; p++; } pf = PFX[p]; }
@@ -133,7 +136,7 @@ try {
 } catch { edits = {}; }
 function save() {
   const p = new URLSearchParams(location.hash.slice(1)), o = {};
-  for (const [k, q] of Object.entries(edits)) { const s = fmtExact(q).replace(/,/g, ''); o[k] = Number.isSafeInteger(+s) ? +s : s; }
+  for (const [k, q] of Object.entries(edits)) { const s = fmtKnob(q).replace(/,/g, ''); o[k] = Number.isSafeInteger(+s) ? +s : s; }
   if (Object.keys(o).length) p.set(KEY, JSON.stringify(o)); else p.delete(KEY);
   history.replaceState(null, '', p.size ? '#' + p : location.pathname + location.search);
 }
@@ -146,12 +149,19 @@ function render() {
       if (vl.querySelector('input')) continue;
       if (!off) [vl.innerHTML, sc.innerHTML, si.innerHTML] = tr._pub;
       else {
-        vl.textContent = fmtExact(v);
+        vl.textContent = KNOBS[name] ? fmtKnob(v) : fmtExact(v);
         if (tr._pub[1]) sc.innerHTML = fmtSci(num(v));
         if (tr._unit) si.innerHTML = fmtSI(num(v), tr._unit);
       }
       tr.classList.toggle('off', off);
     }
+  }
+  // prose numbers quoting a cell (<span data-cellref="name">published SI</span>)
+  for (const q of document.querySelectorAll('[data-cellref]')) {
+    const name = q.dataset.cellref, v = now.get(name), off = !eq(v, PUB.get(name));
+    q._pub ??= q.innerHTML;
+    q.innerHTML = off ? fmtSI(num(v), rows.get(name).trs[0]._unit) : q._pub;
+    q.classList.toggle('off', off);
   }
 }
 function set(k, q) {
@@ -160,10 +170,13 @@ function set(k, q) {
 }
 
 // ---- editing: click an editable value, type, Enter (Esc cancels) ------------
-// typed numbers accept commas, e-notation and an SI suffix (989T, 50G)
-const parse = (s) => {
-  const m = /^\s*(\d[\d,]*(?:\.\d*)?|\.\d+)(?:e([+-]?\d+))?\s*([kKMGTPE]?)\s*$/.exec(s);
-  if (!m) return null;
+// typed numbers accept commas, e-notation, an SI prefix and the row's unit,
+// loosely spelled (989T, 800 TFLOP/s, 800 tflops, 50 GB/s, 50GBps; Gb/s is bits)
+const UNITS = { 'FLOP/s': /^flop(?:s|\/s(?:ec)?)?$/i, 'B/s': /^(?:B|bytes?)(?:\/s(?:ec)?|ps)?$/ };
+const parse = (s, unit) => {
+  const m = /^\s*(\d[\d,]*(?:\.\d*)?|\.\d+)(?:e([+-]?\d+))?\s*([kmgtpe]?)\s*([a-z/]*)\s*$/i.exec(s);
+  if (!m) return 'not a number';
+  if (m[4] && !UNITS[unit]?.test(m[4])) return unit ? `unit should be ${unit}` : 'just a number here, no unit';
   let q = dec(m[1].replace(/\.$/, ''));
   const e = +(m[2] ?? 0) + 3 * PFX.indexOf(m[3].toUpperCase());
   return OPS['·'](q, e >= 0 ? Q(10n ** BigInt(e)) : Q(1n, 10n ** BigInt(-e)));
@@ -172,14 +185,14 @@ const err = Object.assign(document.createElement('div'), { className: 'cs-err' }
 document.body.append(err);
 function open(td, name) {
   if (td.querySelector('input')) return;
-  const k = KNOBS[name], inp = document.createElement('input');
+  const k = KNOBS[name], inp = document.createElement('input'), u = rows.get(name).trs[0]._unit;
   inp.className = 'cs-in'; inp.value = td.textContent; inp.spellcheck = false;
   td.replaceChildren(inp); inp.focus(); inp.select();
   let done = false;
   const close = () => { done = true; err.style.display = 'none'; td.replaceChildren(); render(); };
   const commit = (soft) => {
-    const q = parse(inp.value);
-    const why = !q ? 'not a number' : invalid({ ...edits, [k]: q });
+    const q = parse(inp.value, u?.slice(1));   // TFLOP/s → FLOP/s, GB/s → B/s
+    const why = typeof q === 'string' ? q : invalid({ ...edits, [k]: q });
     if (!why) { close(); set(k, q); if (!soft) td.focus(); return; }
     if (soft) { close(); return; }   // blur with a bad value: drop it
     inp.classList.add('bad');
@@ -206,7 +219,7 @@ for (const [name, r] of rows) {
 render();
 
 describe(KEY, () => Object.entries(KNOBS).filter(([, k]) => edits[k]).map(([name, k]) => ({
-  html: `<b>${name}</b> ${fmtExact(PUB.get(name))} → ${fmtExact(edits[k])}`,
+  html: `<b>${name}</b> ${fmtKnob(PUB.get(name))} → ${fmtKnob(edits[k])}`,
   el: rows.get(name).trs[0],
   revert: () => set(k, null),
 })));

@@ -29,7 +29,7 @@ import { C } from './theme.js';
 import { knobCss } from './ui.js';
 import { attachTip } from './tip.js';
 
-const PEAK = 989e12, IB = 50e9;                     // H800 BF16 peak (E1), IB per GPU (E2)
+const PEAK = 1456.6e12, PEAK16 = 757.7e12, IB = 50e9;   // best measured FP8 and BF16 GEMMs (the page's π^sol_fp8, π^sol_bf16: Smol), IB per GPU at spec (β_IB)
 const GPUS = 2048, EP = 64, NODE = 8, SEQ = 4096;
 export const LOCAL = 8;                             // the busiest GPU's sequences: ⌈15,360 ÷ 2,048⌉
 export const MS = [1, 2, 4, 8];                     // microbatches per step
@@ -39,7 +39,8 @@ const XS = A.routedExperts / EP * PARAMS.expert;                // our expert sl
 export const MOVE_B = NX / NODE * (GPUS / NODE - 1) / (GPUS / NODE) * 2 + XS * (GPUS / EP - 1) / (GPUS / EP) * 2;
 export const MOVE_S = MOVE_B / IB;
 const RS_S = 2 * MOVE_S;                            // FP32 gradients: two moves' worth
-// forward FLOPs per token of a MoE layer: 2 × active params + the causal attention core (the page's 6N + C3, ÷ 3)
+// forward FLOPs per token of a MoE layer: 2 × active params + the causal attention core (the page's 6N + C3, ÷ 3),
+// FP8 except the router and the attention core (BF16)
 // memory: the bars' stash policy (activation bytes per 4,096-token sequence
 // per layer), one layer's whole BF16 parameters and its FP32 gradients. The staging buffers are
 // preallocated, each double-buffered (a layer in use while the next gathers;
@@ -47,8 +48,8 @@ const RS_S = 2 * MOVE_S;                            // FP32 gradients: two moves
 const RECIPE = 'dsv3-fp8', RECOMPUTE = 'dsv3';
 export const ACT_SEQ = layerAnalysis('moe', { recipe: RECIPE, recompute: RECOMPUTE, seqLen: SEQ }).savedBytes * SEQ;
 export const LAYER_B = (NX + XS) * 2, GRAD_B = 2 * LAYER_B, STAGE = 2;
-export const FWD_TOK = 2 * PARAMS.activeMoeBlock + A.heads * (A.qkNope + A.qkRope + A.vHead) * SEQ;
-export const fwdS = (mbs) => FWD_TOK * mbs * SEQ / PEAK;
+export const FWD8 = 2 * (PARAMS.activeMoeBlock - PARAMS.routerWeight), FWD16 = 2 * PARAMS.routerWeight + A.heads * (A.qkNope + A.qkRope + A.vHead) * SEQ;
+export const fwdS = (mbs) => (FWD8 / PEAK + FWD16 / PEAK16) * mbs * SEQ;
 
 // the schedule: blocks {k (tween key), track 'c'|'n', op, layer, mb, t0, t1}
 // plus the compute track's idle gaps (op 'idle')
@@ -255,8 +256,8 @@ class Dsv3Fsdpsched extends (typeof HTMLElement === 'undefined' ? class {} : HTM
     const tok = this.mbs * SEQ;
     if (b.op === 'idle') return `compute idle, waiting on InfiniBand: ${ms(d)}`;
     if (b.op === 'F' || b.op === 'B') {
-      const fl = FWD_TOK * tok * (b.op === 'B' ? 2 : 1);
-      return `${b.op === 'F' ? 'forward' : 'backward'} · layer ${b.layer}${mb}\n${(fl / 1e12).toFixed(1)} TFLOP on ${tok.toLocaleString('en-US')} tokens ÷ 989 TFLOP/s = ${ms(d)}`;
+      const tf = (f) => (f * tok * (b.op === 'B' ? 2 : 1) / 1e12).toFixed(1);
+      return `${b.op === 'F' ? 'forward' : 'backward'} · layer ${b.layer}${mb} · ${tok.toLocaleString('en-US')} tokens\n${tf(FWD8)} TFLOP FP8 ÷ 1,456.6 TFLOP/s + ${tf(FWD16)} TFLOP BF16 ÷ 757.7 TFLOP/s = ${ms(d)}`;
     }
     const what = b.op === 'RS' ? `reduce-scatter of layer ${b.layer}'s gradients` : `all-gather of layer ${b.layer}'s weights, before its ${b.k[3] === 'B' ? 'backward' : 'forward'}`;
     const bytes = b.op === 'RS' ? 2 * MOVE_B : MOVE_B, dt = b.op === 'RS' ? 'FP32' : 'BF16';
@@ -291,13 +292,17 @@ if (typeof customElements !== 'undefined' && !customElements.get('dsv3-fsdpsched
 // out just under the line, and the call is per MBs state — only 8 is under.
 const L_MOE = A.layers - A.denseLayers;
 const N_EXP = L_MOE * A.routedExperts * PARAMS.expert, N_NE = PARAMS.total - N_EXP;
+const N_BF16 = PARAMS.embed + L_MOE * PARAMS.routerWeight;   // the page's Nbf16: the output head (an embedding-sized copy) and the routers
 // the page's V⁺disp + Vcomb, B per token per MoE layer per pass: 3.5 remote
 // nodes × (FP8 hidden + fp32 scales per 128) out, × BF16 hidden back
 const M_IB = 4 * (1 - NODE / EP);
 export const EP_TOK = M_IB * (A.hidden + 4 * A.hidden / 128) + M_IB * A.hidden * 2;
 const TOK = 15360 * SEQ / GPUS;                     // D_GPU
 export const STEP = {
-  comp: (6 * PARAMS.activeTotal + 3 * A.layers * A.heads * (A.qkNope + A.qkRope + A.vHead) * SEQ) * TOK / PEAK,   // T⁺c
+  // T⁺c: 6N + the recompute policy's replay of the MLA up-projections at FP8 (the page's C⁺fp8), the head,
+  // routers and causal attention core at BF16 (C⁺bf16)
+  comp: ((6 * (PARAMS.activeTotal - N_BF16) + 2 * A.layers * (A.qRank * A.heads * (A.qkNope + A.qkRope) + A.kvRank * A.heads * (A.qkNope + A.vHead))) / PEAK
+    + (6 * N_BF16 + 3 * A.layers * A.heads * (A.qkNope + A.qkRope + A.vHead) * SEQ) / PEAK16) * TOK,
   ep: 2 * EP_TOK * L_MOE * TOK / IB,                                                                          // T⁺EP
   mb: (N_NE / NODE * (1 - NODE / GPUS) + N_EXP / EP * (1 - EP / GPUS)) * (2 + 2 + 4) / IB,                   // Tmb
 };
@@ -324,7 +329,7 @@ export function memAt(m) {
   return { m, shards: MEMB.shards, staging: MEMB.staging, acts, total };
 }
 
-const CW = 700, CX0 = 52, CX1 = 570, CY0 = 36, CY1 = 236, SMAX = 0.7;   // the top panel: idle share of the step, 0 … 70%
+const CW = 700, CX0 = 52, CX1 = 570, CY0 = 36, CY1 = 236, SMAX = 0.8;   // the top panel: idle share of the step, 0 … 80%
 const SY = CY1 + 26;   // the shared x axis between the panels (m above the line; <dsv3-fsdpcurve> adds microbatch size below)
 const MY0 = SY + 42, MY1 = MY0 + 150, MMAX = 200 * 2 ** 30, CH = MY1 + 10;   // the memory panel, 0 … 200 GiB
 const cx = (m) => CX0 + (CX1 - CX0) * (m - 1) / 7, cy = (s) => CY1 - (CY1 - CY0) * s / SMAX;
@@ -366,8 +371,8 @@ class Dsv3Fsdpcurve extends (typeof HTMLElement === 'undefined' ? class {} : HTM
     const P = [], yc = STEP.comp, sh = (m) => at(m).exposed / at(m).step, pc = (q) => Math.round(100 * q.exposed / q.step);
     P.push(`<text class="dims" data-hdr x="0" y="11">idle share of the step on one H800 of 2,048 (EP64, ZeRO-3, no PP) · the average GPU's 7.5 sequences · speed of light, comms fully overlapped</text>`);
     idleTop(P, cx, sh, 1, 8, 'exposed');
-    // the crossover: below it the collectives hide under compute
-    P.push(`<circle data-cross cx="${f2(cx(CROSS))}" cy="${CY1}" r="3.5" fill="${C('#fcfcfb')}" stroke="${C('#0b0b0b')}" stroke-width="1.5"/>`,
+    // the crossover: below it the collectives hide under compute (none on the axis when comms exceed compute even at m = 1)
+    if (CROSS >= 1) P.push(`<circle data-cross cx="${f2(cx(CROSS))}" cy="${CY1}" r="3.5" fill="${C('#fcfcfb')}" stroke="${C('#0b0b0b')}" stroke-width="1.5"/>`,
       `<text class="dims" x="${f2(cx(2.35))}" y="${CY1 - 6}">← comms = compute at m = ${CROSS.toFixed(2)}</text>`);
     P.push(`<text x="${f2(cx(5.3))}" y="${f2(cy(0.16))}" text-anchor="middle" style="fill:${C('#d03b3b')}">exposed = (comms − compute) ÷ comms</text>`,
       `<text class="dims" x="${f2(cx(5.3))}" y="${f2(cy(0.16) + 14)}" text-anchor="middle">comms = EP ${f2(STEP.ep)} s + m × T<tspan dy="2" font-size="8">mb</tspan><tspan dy="-2"> ${f2(STEP.mb)} s; compute ${f2(STEP.comp)} s</tspan></text>`);
@@ -412,7 +417,7 @@ class Dsv3Fsdpcurve extends (typeof HTMLElement === 'undefined' ? class {} : HTM
     P.push(`<text class="dims" x="${CX1 + 14}" y="${SY - 9}">microbatches, m</text><text class="dims" x="${CX1 + 14}" y="${SY + 17}">microbatch size</text>`,
       `<text class="dims" x="${CX1 + 14}" y="${SY + 29}">= 7.5 ÷ m sequences</text>`);
     P.push(guideSvg('#d03b3b'));
-    this._chart.innerHTML = `<svg width="${CW}" height="${CH}" viewBox="0 0 ${CW} ${CH}" role="img" aria-label="The idle share of the step against the number of microbatches, 1 to 8, or equivalently the microbatch size, 7.5 sequences down to 0.94. Comms are EP's all-to-alls, a flat ${f2(STEP.ep)} s, plus ZeRO-3's gathers and reduce-scatters, ${f2(STEP.mb)} s per microbatch; compute is ${f2(yc)} s. Comms stay hidden under compute up to ${CROSS.toFixed(2)} microbatches; past that the excess is exposed, (comms − compute) ÷ comms of the step: ${pc(at(2))}% at 2, ${pc(at(4))}% at 4, ${pc(at(8))}% at 8. Below, on the same axis, the busiest GPU's peak memory falls like one over the microbatch count against the H800's 80 GiB, a soft line since not everything a GPU holds is counted: at 4 microbatches it's over, at ${gib(memAt(4).total)}, and only 8 is under it, at ${gib(memAt(8).total)}, where ${pc(at(8))}% of the step is exposed.">${P.join('')}</svg>`;
+    this._chart.innerHTML = `<svg width="${CW}" height="${CH}" viewBox="0 0 ${CW} ${CH}" role="img" aria-label="The idle share of the step against the number of microbatches, 1 to 8, or equivalently the microbatch size, 7.5 sequences down to 0.94. Comms are EP's all-to-alls, a flat ${f2(STEP.ep)} s, plus ZeRO-3's gathers and reduce-scatters, ${f2(STEP.mb)} s per microbatch; compute is ${f2(yc)} s. ${CROSS >= 1 ? `Comms stay hidden under compute up to ${CROSS.toFixed(2)} microbatches; past that the excess is exposed,` : 'Comms exceed compute at every count, so the excess is exposed,'} (comms − compute) ÷ comms of the step: ${pc(at(2))}% at 2, ${pc(at(4))}% at 4, ${pc(at(8))}% at 8. Below, on the same axis, the busiest GPU's peak memory falls like one over the microbatch count against the H800's 80 GiB, a soft line since not everything a GPU holds is counted: at 4 microbatches it's over, at ${gib(memAt(4).total)}, and only 8 is under it, at ${gib(memAt(8).total)}, where ${pc(at(8))}% of the step is exposed.">${P.join('')}</svg>`;
   }
   // the hover hooks <dsv3-ppcurve> overrides: m → the guide's points (x, the top curve's y, the
   // memory bytes, and optionally y1, a second top curve's); a dot → its m; svg x → the nearest MBs state; m → the tip

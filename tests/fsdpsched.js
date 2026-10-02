@@ -26,7 +26,7 @@ const near = (a, b, e = 1e-9) => Math.abs(a - b) < e;
 
 T.check('move = 399.3 MB, 7.99 ms', near(M.MOVE_B, 399333231.75, 1) && near(M.MOVE_S * 1e3, 7.9867, 1e-3), M.MOVE_B);
 T.check('resting: 8 microbatches', btn('m', 8).classList.contains('on'), '');
-T.check('resting readout: 50% exposed', /535\.9 ms.*269\.9 ms \(50%\)/.test(q('[data-readout]').textContent), q('[data-readout]').textContent);
+T.check('resting readout: 61% exposed', /514\.6 ms.*312\.6 ms \(61%\)/.test(q('[data-readout]').textContent), q('[data-readout]').textContent);
 T.check('resting header fits', q('[data-hdr]').getComputedTextLength() < 738, q('[data-hdr]').getComputedTextLength());
 T.check('resting: 48 moves drawn', qa('rect[data-op=AG]').length + qa('rect[data-op=RS]').length === 48, qa('rect[data-op=AG]').length);
 T.check('readout fits', q('[data-readout]').getComputedTextLength() < 738, q('[data-readout]').getComputedTextLength());
@@ -43,7 +43,7 @@ for (const m of M.MS) {
   T.check(`${tag}: each reduce-scatter after its backward`, ns.filter((b) => b.op === 'RS').every((r) => r.t0 >= S.blocks.find((b) => b.k === `B${r.layer}:${r.mb}`).t1 - 1e-12), '');
 }
 T.check('overlap @8: exposed = first gather + last (FP32) reduce-scatter', near(M.schedule(8).exposed, 3 * M.MOVE_S, 1e-12), '');
-T.check('fixed axis covers every state', M.T_MAX === 0.54, M.T_MAX);
+T.check('fixed axis covers every state', M.T_MAX === 0.52, M.T_MAX);
 
 T.check('m 1: each gather abuts its consumer', M.schedule(8).blocks.filter((b) => b.op === 'AG').every((g) => near(g.t1, M.schedule(8).blocks.find((b) => b.k === `${g.k[3]}${g.layer}:${g.mb}`).t0, 1e-12)), '');
 
@@ -80,7 +80,7 @@ btn('m', 1).click();
 await T.tick(400);
 T.check('fit bars follow the knob', L2.mb === 1 && L2.mbs === 8 && [...L2.querySelectorAll('.lv-bar text')].map((t) => t.textContent).join('|') !== acts8, `${L2.mb} ${L2.mbs}`);
 T.check('m 1: 6 moves drawn', qa('rect[data-op=AG]').length + qa('rect[data-op=RS]').length === 6, qa('rect[data-op=AG]').length);
-T.check('m 1 readout', /290\.0 ms = compute 266\.1 ms \+ exposed IB 24\.0 ms \(8%\)/.test(q('[data-readout]').textContent), q('[data-readout]').textContent);
+T.check('m 1 readout', /226\.0 ms = compute 202\.0 ms \+ exposed IB 24\.0 ms \(11%\)/.test(q('[data-readout]').textContent), q('[data-readout]').textContent);
 const S1 = M.schedule(8), sx = (t) => 64 + (738 - 22 - 64) * t / M.T_MAX;
 T.check('tween lands exactly', S1.blocks.every((b) => near(+q(`rect[data-k="${b.k}"]`).getAttribute('x'), +sx(b.t0).toFixed(2), 0.006)), '');
 T.check('memory tween lands exactly', near(topY(w), +myOf(pk(M.schedule(8))).toFixed(2), 0.006) && q('polygon[data-mem="2"]').getAttribute('points') === (w.render(), q('polygon[data-mem="2"]').getAttribute('points')), topY(w));
@@ -92,7 +92,7 @@ const r = q('rect[data-k="AG2B:3"]'), b = r.getBoundingClientRect();
 r.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: b.x + b.width / 2, clientY: b.y + b.height / 2 }));
 await T.tick(30);
 const tip = w.querySelector('.fsc > .dsv3-tip')?.textContent ?? '';
-T.check('tip: gather before backward, microbatch, price', /layer 2's weights, before its backward · microbatch 4 of 8/.test(tip) && /399\.3 MB[^]*= 8\.0 ms/.test(tip), tip);
+T.check('tip: gather before backward, microbatch, price', /layer 2's weights, before its backward · microbatch 4 of 8/.test(tip) && /399\.3 MB[^]*÷ 50 GB\/s = 8\.0 ms/.test(tip), tip);
 const rr = q('rect[data-k="RS1:3"]'), rb = rr.getBoundingClientRect();
 rr.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: rb.x + rb.width / 2, clientY: rb.y + rb.height / 2 }));
 await T.tick(30);

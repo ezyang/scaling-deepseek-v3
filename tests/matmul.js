@@ -23,6 +23,7 @@ T.check('a term lights its cell', on('src') === 'ew12 w12', on('src'));
 T.check('term (1,2): reads x1, adds into y2', on('dep') === 'a2 ey2 x1 y2', on('dep'));
 fig.dispatchEvent(new MouseEvent('mouseleave'));
 T.check('leave clears', on('src') + on('dep') + on('sib') === '', on('dep'));
+fig.scrollIntoView({ block: 'start' });   // elementFromPoint only sees the viewport
 const tgt = (x, y) => document.elementFromPoint(x, y)?.closest('.w, .v');
 const probe = (a, b, name) => {
   const ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();

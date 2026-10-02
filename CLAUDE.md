@@ -18,6 +18,13 @@ generality.
   "SLOP BELOW" marker is placeholder — don't edit or polish it. The author
   edits files mid-session: check `git status` before committing so unrelated
   WIP doesn't get swept into a commit.
+- Red-flag, don't rewrite: when author-owned prose looks wrong (a stale
+  number, a claim a change invalidated) and voice rules keep you from
+  editing it, mark it `<mark class="flag">passage</mark> <span
+  class="flag-why">[[FLAG: reason]]</span>` (study.css: wavy red underline,
+  red reason) and mention it in your report. Search `[[FLAG:` to find them
+  all, in the page or the source. The author resolves and removes flags. Never on a live
+  page — report those instead.
 - Delete dead sections outright; version control is the archive.
 - URL previews: each post's og:image is assets/og-NN.png, a prerendered
   screenshot of its signature widget; `node scripts/ogshot.mjs` regenerates

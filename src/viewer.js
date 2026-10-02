@@ -718,8 +718,12 @@ ${s} .op { fill: var(--c-f3f2ee); stroke: var(--c-e1e0d9); }
 ${s} .comm { fill: var(--c-f3f1fb); stroke: var(--c-6b5bd2); }
 ${s} .res { fill: var(--c-fcfcfb); stroke: var(--c-c3c2b7); stroke-dasharray: 3 2; }
 ${s} .redo { fill: var(--c-e0f3f3); stroke: var(--c-0a98a0); stroke-width: 1.5; }
+${s} .redo.y { fill: var(--c-fff8ea); stroke: var(--c-eda100); }
 ${s} rect.xpt { fill: var(--c-e2eab4); stroke: var(--c-6b7d12); stroke-width: 1.5; }
 ${s} rect.nxp { fill: var(--c-d9e4f0); stroke: var(--c-4a6a8e); stroke-width: 1.5; }
+${s} rect.dt-e4m3 { fill: var(--c-fbe4ef); stroke: var(--c-d6408b); stroke-width: 1.5; }
+${s} rect.dt-bf16 { fill: var(--c-e9e8e3); stroke: var(--c-52514e); stroke-width: 1.5; }
+${s} rect.dt-fp32 { fill: var(--c-f5e1dc); stroke: var(--c-8a3324); stroke-width: 1.5; }
 ${s} .grp { fill: none; stroke: var(--c-e1e0d9); }
 ${s} .name { font: 600 11px system-ui; fill: var(--c-0b0b0b); }
 ${s} .dims { font: 9px system-ui; fill: var(--c-898781); }
@@ -1817,6 +1821,19 @@ export class Dsv3Layer extends HTMLElement {
         leg.innerHTML = `${bx('#e2eab4', '#6b7d12')}routed experts · ${bx('#d9e4f0', '#4a6a8e')}non-expert parameters`;
         mini.append(leg);
       }
+      if (this.hasAttribute('dtypetint')) {   // the compute-dtype key, in the boxes' own fill + stroke
+        const leg = el('span');
+        leg.style.cssText = 'color:var(--c-52514e);margin-left:14px;font-size:11px;white-space:nowrap;';
+        const bx = (f, s) => `<svg width="16" height="11" style="display:inline-block;margin:0 3px 0 0;vertical-align:-1px"><rect x="0.75" y="0.75" width="14.5" height="9.5" rx="2" fill="${C(f)}" stroke="${C(s)}" stroke-width="1.5"/></svg>`;
+        leg.innerHTML = `${bx('#fbe4ef', '#d6408b')}FP8 (e4m3) GEMM · ${bx('#e9e8e3', '#52514e')}BF16 GEMM`;
+        mini.append(leg);
+      }
+      if (this.hasAttribute('redotint') && cmode === 'static') {   // the static tier's replay key
+        const leg = el('span');
+        leg.style.cssText = 'color:var(--c-52514e);margin-left:14px;font-size:11px;white-space:nowrap;';
+        leg.innerHTML = `<svg width="16" height="11" style="display:inline-block;margin:0 3px 0 0;vertical-align:-1px"><rect x="0.75" y="0.75" width="14.5" height="9.5" rx="2" fill="${C('#fff8ea')}" stroke="${C('#eda100')}" stroke-width="1.5"/></svg>GEMM replayed in backward (recompute)`;
+        mini.append(leg);
+      }
       if (this.getAttribute('lens') === 'param-bytes') {
         // the strip unit rescales with the ×N toggle — label it so the jump
         // reads as a unit change, not a glitch (▫ = nonzero but sub-square)
@@ -2186,7 +2203,7 @@ export class Dsv3Layer extends HTMLElement {
         + (ONLY !== 'ffn' && this._ctl.quant && this.hasAttribute('tabs') ? 20 : 0);
     const SX1 = C1 + 22, SX2 = C2 + 22, RAIL1 = C1 - 26;
     const WIDTH = ONLY === 'mla' ? C1 + W + 250
-      : C2 + W + (this.detail ? (this._ctl.quant ? 232 : 224) : 180); // right margin fits aux labels (+ shared column in detail; quant byte tags are wider)
+      : C2 + W + (this.detail ? (this._ctl.quant ? 232 : 224) : this._ctl.quant ? 180 : 120); // right margin fits aux labels (+ shared column in detail; quant byte tags are wider; static non-detail's widest, ← rstd, ends ~C2+W+45 — 120 fits the 980px post column unscrolled)
     // dims display: factored (128\u00d7192) or multiplied out (24576)
     const flatten = (s) => {
       if (!FLAT || !s) return s;
@@ -2286,7 +2303,12 @@ export class Dsv3Layer extends HTMLElement {
     // numerically sensitive GEMM) — its tag is a pinned readout of the recipe,
     // shown in EVERY quant tier (the AC section too) so the label never flips
     // between sections.
-    const dtBtn = (id, x, y) => (id === 'router' ? !(this._ctl.quant || this._ctl.dtype) : !this._ctl.dtype) ? '' :
+    // dtypetint below the dtype tier: the tag is a static readout of the
+    // GEMM's compute dtype (no lever), right-aligned where the button sits
+    const DTT = this.hasAttribute('dtypetint') && !this._ctl.dtype;
+    const dtBtn = (id, x, y) => DTT
+      ? `<text class="dims" x="${x + 50}" y="${y + 7}" text-anchor="end" style="font-weight:600;fill:${C(DT_STYLE[COMPUTE_DT(dt(id))])}">${COMPUTE_DT(dt(id))}</text>`
+      : (id === 'router' ? !(this._ctl.quant || this._ctl.dtype) : !this._ctl.dtype) ? '' :
       // pinned tags are 4px wider for the 🔒 — the frame grows LEFT so the
       // right edge stays put inside the box
       `<foreignObject x="${id === 'router' || id === 'o_proj' ? x - 6 : x}" y="${y}" width="${id === 'router' || id === 'o_proj' ? 60 : 52}" height="20">` +
@@ -2873,13 +2895,18 @@ export class Dsv3Layer extends HTMLElement {
     // redotint (opt-in): a ↻ op's box wears the recompute tint — ops are what
     // replay (the chips under them already say what's stashed). An overlay on
     // the box, eased through the stash tween like every mark-dependent element.
-    const TINT = this._ctl.marks && this.hasAttribute('redotint');
+    // The static tier draws save-everything, so it tints the instance's own
+    // policy instead, GEMMs only (03's recompute FLOPs: the replayed matmuls),
+    // in the plan's selected-block amber — no stash chips there for amber to
+    // collide with, unlike the marks tier, where amber means stashed.
+    const TINT = (this._ctl.marks || !this._ctl.quant) && this.hasAttribute('redotint');
+    const RMARKS = this._ctl.marks ? marks : this.marks;
     const tint = (id, x, y, w, h, rx) => {
       const k = id == null ? null : markKey(id);
-      if (!TINT || !MARKABLE.includes(k)) return '';
+      if (!TINT || !MARKABLE.includes(k) || (!this._ctl.marks && !this.matmuls[k])) return '';
       const on = (mk) => +(mk[k] !== true);
-      const a = lerpQ(on(VQ?.prev?.marks ?? marks), on(marks));
-      return a > 0.001 ? `<rect class="redo" x="${x}" y="${y}" width="${w}" height="${h}" rx="${rx}" opacity="${a.toFixed(3)}"/>` : '';
+      const a = lerpQ(on(VQ?.prev?.marks ?? RMARKS), on(RMARKS));
+      return a > 0.001 ? `<rect class="redo${this._ctl.marks ? '' : ' y'}" x="${x}" y="${y}" width="${w}" height="${h}" rx="${rx}" opacity="${a.toFixed(3)}"/>` : '';
     };
     const micro = (label, x, y, w = W, tip, pc = '', opId = null) => {
       const pcTip = opId == null || tip?.includes('parameters:') ? null : exactParam(opId);
@@ -3002,7 +3029,7 @@ export class Dsv3Layer extends HTMLElement {
           (PBYTES && !this._ctl.dtype ? `<text class="dims" x="${x + 134}" y="${y + 13}" text-anchor="end">bf16</text>` : '') +
           `<text class="name" x="${x + 6}" y="${y + 13}">${name}</text>` +
           `<text class="dims" x="${x + 6}" y="${y + 25}">${PONLY ? pc.trim() : flatten(dims) + pc}</text></g>` +
-          (withBtns ? modeBtn(['qkv_down'], x + 140 - 86, y + 29) + dtBtn('qkv_down', x + 140 - 58, y + 29) : ''));
+          (withBtns ? modeBtn(['qkv_down'], x + 140 - 86, y + 29) + dtBtn('qkv_down', x + 140 - 58, DTT ? y + 6 : y + 29) : ''));
         flopBar(x + 6, y + 52, ana.byId.qkv_down.flopsTok * frac, dt('qkv_down'), 128, dtPm('qkv_down'), 'qkv_down');
         paramBlocks(x + 6, y + 52, nP, 'd', HALF_ROW);
         return ex;
@@ -3081,7 +3108,7 @@ export class Dsv3Layer extends HTMLElement {
           (PBYTES && !this._ctl.dtype ? `<text class="dims" x="${x + 134}" y="${y + 13}" text-anchor="end">bf16</text>` : '') +
           `<text class="name" x="${x + 6}" y="${y + 13}">${m.label}</text>` +
           `<text class="dims" x="${x + 6}" y="${y + 25}">${PONLY ? pstr(id).trim() : flatten(m.dims) + pstr(id)}</text></g>` +
-          modeBtn([id], x + 140 - 86, y + 29) + dtBtn(id, x + 140 - 58, y + 29));
+          modeBtn([id], x + 140 - 86, y + 29) + dtBtn(id, x + 140 - 58, DTT ? y + 6 : y + 29));
         flopBar(x + 6, y + 52, ana.byId[id]?.flopsTok, dt(id), 128, dtPm(id), id);
         paramBlocks(x + 6, y + 52, sqParam(id), 'd', 21);
         return ex;
@@ -3944,6 +3971,17 @@ export class Dsv3Layer extends HTMLElement {
         const id = g.dataset.op, r = g.querySelector(':scope > rect');
         const x = this.kind === 'moe' && (id === 'ffn_gate_up' || id === 'ffn_down');
         if (r && (x || exactParam(id) || id === 'shared')) r.classList.add(x ? 'xpt' : 'nxp');
+      }
+    // any box color code: the a2a boxes drop their comm purple (plain boxes),
+    // so the only colors on the diagram are the code's own
+    if (['dtypetint', 'experttint', 'redotint'].some((a) => this.hasAttribute(a)))
+      for (const r of svgEl.querySelectorAll('rect.comm')) r.classList.replace('comm', 'box');
+    // dtypetint (opt-in): every GEMM box wears its COMPUTE dtype (e5m6 is a
+    // stash format, so attn out-proj reads e4m3; mxfp8 shares fp8's pink)
+    if (this.hasAttribute('dtypetint'))
+      for (const g of svgEl.querySelectorAll('g[data-op]')) {
+        const d = this.matmuls[g.dataset.op], r = g.querySelector(':scope > rect');
+        if (r && d) r.classList.add(`dt-${COMPUTE_DT(d) === 'mxfp8' ? 'e4m3' : COMPUTE_DT(d)}`);
       }
     for (const b of svgEl.querySelectorAll('button[data-dt]')) {
       b.onclick = () => {

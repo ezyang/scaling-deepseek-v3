@@ -24,7 +24,8 @@ carry a measured `style="min-height:…px"` placeholder (scroll restoration);
 | `recipes` | view | comma list of recipe keys | curates which recipe chips/options an instance offers (both the house segment and the legacy select); absent = all. The Hopper article drops nv-mxfp8 (the Blackwell post's recipe) |
 | `recompute` | state | `dsv3` · `none` · `attn-replay` · `selective` · `full` | save/recompute marks preset |
 | `experttint` | view | boolean | every parameter-carrying box wears its sharding class: the MoE tab's two routed-expert GEMMs olive (`.xpt`), everything else with parameters slate (`.nxp`; param-less boxes stay plain) — a class on the box's own rect, set after render; a box-swatch key (`[data-xt-legend]`) joins the controls-row legend. Opt-in (03's FSDP section); 01/02 don't set it |
-| `redotint` | view | boolean | marks tiers only: every ↻ op's box wears the recompute teal (`.redo` overlay, eased through the stash tween) — ops are what replay; the chips under them already say what's stashed. Opt-in (studies/ac-pareto.html); 02 doesn't set it |
+| `dtypetint` | view | boolean | every GEMM box wears its COMPUTE dtype (e5m6 reads e4m3, mxfp8 shares the pink): `.dt-e4m3` pink, `.dt-bf16` ink, `.dt-fp32` brick — a class on the box's own rect, set after render, from the instance's recipe; below the dtype tier each box also gets a static colored dtype readout where the dtype button would sit (top-right). A box-swatch key joins the controls-row legend. Opt-in (03's FLOPs corrections, `static` tier); 01/02 don't set it |
+| `redotint` | view | boolean | marks tiers only: every ↻ op's box wears the recompute teal (`.redo` overlay, eased through the stash tween) — ops are what replay; the chips under them already say what's stashed. In the `static` tier (save-everything drawing) it tints the instance's `recompute` policy instead, GEMMs only, in the plan's selected-block amber (`.redo.y`: no stash chips there for amber to collide with; the marks tier keeps teal because its amber means stashed), with a box-swatch key in the controls row (03's recompute FLOPs: under `dsv3` that's exactly q/kv up-proj). Opt-in (studies/ac-pareto.html, 03); 02 doesn't set it. Any box color code (`dtypetint`, `experttint`, `redotint`) also drops the a2a dispatch/combine boxes' comm purple to plain boxes, so the code's colors are the only ones on the diagram |
 | `kind` | state | `moe` · `dense` | which FFN column variant (flip-stable layout; the MLA column is shared) |
 | `transposed` | state | boolean | Hopper e4m3ᵀ dual-orientation stashes; part of recipe recognition (canonical per recipe via `RECIPE_T`). Labeled '(expert inputs)': under realistic recompute policies the dual set is only the MoE-FFN inputs (norm2 out + dispatched tokens) — attention-side candidates are replayed or E5M6. Mechanics stay general (any fp8 stash a wgrad reads duals) |
 | `cumulative` | state | boolean | parameter parentheticals ×(selected kind's block count), always multiplied out; tabs + enclosure hide. No double-multiplication cues: whenever a number is already multiplied out, the ×N leaves its label (the plan's ×3/×58 tags in cumulative; the experts group's ×256 under multiplied sizes). The `local` variant is PINNED cumulative (no per-block toggle: the fit bar totals the rank, so a per-block diagram would disagree with the chart it explains) |
@@ -583,10 +584,11 @@ its first full view (IntersectionObserver, ≥ 99%) samples to the resting
 1,000 in ~3 s: n = 1000^(f/180), so the dot glides a decade a second along
 the log axis and the tallies move nearly every frame (the bars easing a
 fifth of the way to their shares each frame, so the first tokens' 100% →
-50% → 33% swings slide). The token's ink (blue experts, black IB arrows,
-its header and tally line, the histogram's blue bin and the blue of its
-labels) fades out first and eases back in as token 1,000's at the end, so
-nothing token-specific flickers mid-run. 1,000 tokens under the sheet's
+50% → 33% swings slide). Token 1 stays drawn throughout as the example
+routing (blue experts, black IB arrows, its header and tally line, the
+histogram's blue bin and the blue of its labels), crossfading in first if
+the run starts from another token (redo), and crossfades to token 1,000's
+at the end, so nothing token-specific flickers mid-run. 1,000 tokens under the sheet's
 routing is the default, so the run leaves the hash clean and the page's ↺
 dot off; it plays once per load (reset goes to token 1 by hand), "redo
 animation" replays it from token 1, and any knob interrupts it. Under
@@ -643,9 +645,9 @@ A flip tweens every cell's fill (~200 ms). `role(view, row, node, rank)`,
 ## `<dsv3-fsdpsched>` — the ZeRO-3 timeline (src/fsdpsched.js, post 03 draft)
 
 A two-layer toy model built from DSv3 MoE layers on one H800 of 2,048
-(EP64, ZeRO-3), at speed of light (BF16 peak 989 TFLOP/s, IB 50 GB/s). Two
+(EP64, ZeRO-3), at speed of light (the Smol Training Playbook's measured GEMM rates, the page's π^sol_fp8 and π^sol_bf16: FP8 1,456.6 TFLOP/s, BF16 757.7; IB at its 50 GB/s spec, β_IB). Two
 tracks: compute (F, B = 2× F; per token 2 × active params + the causal
-attention core, the page's (6N + C3) ÷ 3 per layer) and InfiniBand (an
+attention core, the page's (6N + C3) ÷ 3 per layer; the router and attention core at BF16, the rest FP8) and InfiniBand (an
 all-gather before each layer's forward and again before its backward, a
 reduce-scatter after its backward). Every gather is one BF16 move of
 the layer as 03's Vne/Vexp cells price it (the non-expert 1/8 hierarchical +
@@ -684,7 +686,7 @@ over both schedules' corners.
 | state | | `#f:<id>={m}` | URL hash, when knobbed and the element has an id |
 
 A flip tweens (~200 ms): blocks keyed by op·layer·microbatch (gathers also
-by the pass they feed: `AG2B:3`) slide, the rest fade. `schedule(mbs)` (sequences per microbatch), `MOVE_B`/`MOVE_S`, `FWD_TOK`, `fwdS`, `T_MAX`, `MS`, `LOCAL`, `ACT_SEQ`, `LAYER_B`, `GRAD_B`, `STAGE`, `MEM_MAX`, `memPts(S)` are
+by the pass they feed: `AG2B:3`) slide, the rest fade. `schedule(mbs)` (sequences per microbatch), `MOVE_B`/`MOVE_S`, `FWD8`/`FWD16` (FP8, BF16 forward FLOPs per token), `fwdS`, `T_MAX`, `MS`, `LOCAL`, `ACT_SEQ`, `LAYER_B`, `GRAD_B`, `STAGE`, `MEM_MAX`, `memPts(S)` are
 node-importable; test affordances: `rect[data-k]`, `rect[data-op=F|B|AG|RS|idle]`,
 `polygon[data-mem=0|1|2]` (gather staging · reduce-scatter staging · activations), `[data-readout]` (tests/fsdpsched.js).
 
@@ -700,10 +702,12 @@ model and pinned to 03's cells by tests/fsdpcurve.js: compute `STEP.comp`
 m; `EP_TOK` = 76,048 B per token per MoE layer per pass), and ZeRO-3's
 per-microbatch collectives `STEP.mb` (Tmb: two BF16 gathers and an FP32
 reduce-scatter of every layer), paid m times — so comms is a straight line. The top panel plots what that
-costs: the exposed share of the step, (comms − compute) ÷ comms, 0 … 70%
+costs: the exposed share of the step, (comms − compute) ÷ comms, 0 … 80%
 (the scale `<dsv3-ppcurve>` shares, so the two read side by side), a red
-curve over a pale area: 0 up to the crossover `CROSS` (m = 1.23, a hollow
-dot on the axis), then rising. The seconds (EP, Tmb, compute) are in the
+curve over a pale area: 0 up to the crossover `CROSS` (a hollow dot on the
+axis), then rising — except comms already exceed compute at m = 1
+(`CROSS` = 0.37: EP 5.42 s + 0.37 × Tmb 1.92 s = compute 6.14 s), so the curve
+starts at 16% and no dot is drawn. The seconds (EP, Tmb, compute) are in the
 formula's label and the tips.
 Below it, on the same m axis (a separate panel, not a second y axis: the
 two curves' crossing would be an artifact of scaling), the busiest GPU's
@@ -717,7 +721,7 @@ fragmentation aren't counted — so no crossing is marked: the zone above it
 is tinted (the exposed triangle's pale red, behind the curve) and the tint
 fades out just under the line ("less what isn't counted"); the claim is per
 MBs state: 4 is over (86.62 GiB, labelled), only 8 is under ("only m = 8
-fits", by the 63%). No knobs, no URL state. Tips on every dot (`at(m)` +
+fits", top left). No knobs, no URL state. Tips on every dot (`at(m)` +
 `memAt(m)` breakdown, over/under 80 GiB); off the dots, anywhere in the plot
 snaps to the nearest MBs state (column boundaries at m = 1.5 · 3 · 6 — no
 in-between m is a real configuration) and shows its tip. Whatever is hovered,
@@ -739,13 +743,13 @@ DualPipeV (`PPR`, `PDP` = 256; the cells' and 02's layout, per GPU the same
 layers, stashes and bubble as DSv3's published 16-stage DualPipe). Each
 pipeline's `PLB` = 60 sequences split m ways; the axis runs from `PMIN` =
 2 × PP = 16 (DualPipeV's minimum) to 60, and the MBs states are `PMS` = 20 ·
-30 · 60 (localmodel's `mbChoices`). Comms are flat in m and under compute
-at every m (`PSTEP`: EP = T⁺EP; PP's BF16 sends across the 15 chunk
+30 · 60 (localmodel's `mbChoices`). Comms are flat in m and stay hidden under compute
+at every m (EP + PP + ZeRO-1 = 5.83 s against compute 6.14 s) (`PSTEP`: EP = T⁺EP; PP's BF16 sends across the 15 chunk
 boundaries both ways, on the average rank; ZeRO-1's once-per-step FP32 RS +
 BF16 AG over IB). So the only idle time is the bubble, `atP(m).bubble` =
 compute × (PP − 1)/(3m) (DualPipeV's 14F out of 6mF, with the page's F&B ≈
 3F and W ≈ F). The top panel plots its share of the step, (PP − 1) ÷ (3m +
-PP − 1), on the FSDP chart's 0 … 70% scale. Dashed over it (no area,
+PP − 1), on the FSDP chart's 0 … 80% scale. Dashed over it (no area,
 hollow dots), plain 1F1B on the same 8 ranks: `atP(m).bubble1` = compute ×
 (PP − 1)/m, three times DualPipeV's, its share (PP − 1) ÷ (m + PP − 1) of
 `step1` (1F1B at m = 60 idles exactly DualPipeV's m = 20). Its comms stay
