@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script data-theme>document.documentElement.classList.toggle('dark', (localStorage.getItem('dsv3-theme') ?? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')) === 'dark');</script>
+  <title>Kimi K3 on GB300: the roofline, sheets only (draft)</title>
+  <meta name="robots" content="noindex">
+  <link rel="stylesheet" href="./study.css">
+  <style>
+    /* 03's static formula sheets (studies/sheetedit.js makes them live) */
+    .cellsheet { max-width: 760px; box-sizing: border-box; margin: 14px 0; font: 12px system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--c-0b0b0b);
+      border: 1px solid var(--c-e1e0d9); border-radius: 6px; background: var(--c-fcfcfb); padding: 8px 12px; }
+    .cellsheet table { border-collapse: collapse; width: 100%; table-layout: fixed; }
+    .cellsheet th:nth-child(1) { width: 38px; } .cellsheet th:nth-child(2) { width: 170px; } .cellsheet th:nth-child(3) { width: 181px; }
+    .cellsheet th:nth-child(4) { width: 83px; } .cellsheet th:nth-child(5) { width: 105px; }
+    .cellsheet th { box-sizing: border-box; text-align: left; font-size: 10.5px; color: var(--c-898781); font-weight: 600; padding: 1px 10px 3px 2px; }
+    .cellsheet td { padding: 1.5px 10px 1.5px 2px; border-top: 1px solid var(--c-f0efe9); font-size: 11.5px; vertical-align: baseline; white-space: nowrap; }
+    .cellsheet th.vl, .cellsheet td.vl { text-align: right; font-variant-numeric: tabular-nums; }
+    .cellsheet td.si .d { display: inline-block; width: 1.7em; text-align: left; }
+    .cellsheet td.si .u { display: inline-block; width: 4.3em; text-align: left; white-space: pre; }
+    .cellsheet th.si .u { display: inline-block; width: calc(4.3 * 11.5px); text-align: left; white-space: pre; }
+    .cellsheet td.sc sup { display: inline-block; width: 1.35em; text-align: left; }
+    .cellsheet td:nth-child(2) { white-space: normal; }
+    .cellsheet td.nm { font: 600 11px ui-monospace, monospace; color: var(--c-2a78d6); }
+    .cellsheet td.fx { font: 11px ui-monospace, monospace; color: var(--c-52514e); white-space: normal; }
+    .cellsheet td.fx b { color: var(--c-2a78d6); font-weight: 600; }
+    .cellsheet td.fx i { font: 11.5px system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--c-898781); font-style: normal; }
+    .cellsheet td.ap { color: var(--c-898781); }
+    .cellsheet sup, .cellsheet sub { line-height: 0; font-size: 0.8em; }
+    .cellsheet tr.hl td { background: var(--c-fff8ea); font-weight: 600; }
+    .cellsheet td.fx b.ref { cursor: pointer; }
+    .cellsheet tr.sel td { background: var(--c-fff3d1); }
+    .cellsheet .cs-dl { float: right; font: inherit; color: var(--c-2a78d6); background: none; border: 0; padding: 0; cursor: pointer; }
+    .cellsheet td.vl.edv { background: var(--c-eef4fc); cursor: text; }
+    @media (hover: hover) { .cellsheet td.vl.edv:hover { background: var(--c-dcebfa); } }
+    .cellsheet tr.off td.vl, .cellsheet tr.off td.ap { color: var(--c-b05f00); }
+    [data-cellref] { cursor: pointer; border-bottom: 1px dotted var(--c-898781); }
+    [data-cellref].off { color: var(--c-b05f00); }
+    .cellsheet .cs-in { box-sizing: border-box; width: 100%; margin: -2px 0; padding: 1px 3px; text-align: right;
+      font: inherit; font-variant-numeric: tabular-nums; color: var(--c-0b0b0b); background: var(--c-ffffff);
+      border: 1px solid var(--c-2a78d6); border-radius: 3px; outline: none; }
+    .cellsheet .cs-in.bad { border-color: var(--c-d03b3b); }
+    .cs-err { position: absolute; display: none; z-index: 7; max-width: 300px; padding: 4px 8px; border-radius: 4px;
+      background: var(--c-fdf1f1); border: 1px solid var(--c-d03b3b); color: var(--c-1c1c1a);
+      font: 11.5px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+    .cs-tip b { color: var(--c-2a78d6); font-weight: 600; }
+    .cs-tip i { color: var(--c-898781); font-style: normal; }
+    .cs-tip sup, .cs-tip sub { line-height: 0; font-size: 0.8em; }
+    .cellsheet sup:has(+ sub), .cs-tip sup:has(+ sub) { display: inline-block; width: 0; vertical-align: 0.7em; }
+    /* the frontier table: one row per cluster size, the best fitting layout per policy (page script, from the sheet's formulas) */
+    .tally { width: fit-content; box-sizing: border-box; margin: 14px 0; font: 12px system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--c-0b0b0b);
+      border: 1px solid var(--c-e1e0d9); border-radius: 6px; background: var(--c-fcfcfb); padding: 8px 12px; }
+    .tally table { border-collapse: collapse; }
+    .tally th { text-align: left; font-size: 10.5px; color: var(--c-898781); font-weight: 600; padding: 1px 16px 3px 2px; }
+    .tally th.g { text-align: center; padding-right: 16px; border-bottom: 1px solid var(--c-e1e0d9); }
+    .tally td { padding: 2.5px 16px 2.5px 2px; border-top: 1px solid var(--c-f0efe9); vertical-align: baseline; }
+    .tally th.n, .tally td.n { text-align: right; font-variant-numeric: tabular-nums; }
+    .tally th:last-child, .tally td:last-child { padding-right: 2px; }
+    .tally tr.hl td { background: var(--c-fff8ea); font-weight: 600; }
+    .tally td.no { color: var(--c-898781); }
+    .tally td.cb { color: var(--c-d03b3b); }
+    .tally .lay { font: 11px ui-monospace, monospace; color: var(--c-52514e); }
+  </style>
+</head>
+
+<body data-sheet="k3">
+  <main>
+    <h1>Kimi K3 on GB300: the roofline, sheets only</h1>
+
+    <p class="note">DRAFT (unlisted study). Sheets only, no diagrams; the prose is
+    AI-drafted and awaits a human edit pass — see the disclosure footnote.<sup><a id="fnref1" href="#fn1">1</a></sup></p>
+
+    <p class="ai">[[AI: The question: with a fixed global batch, GB300 NVL72 hardware and a fixed mixed-precision recipe, what is the smallest cluster that trains Kimi K3 at (close to) its best tokens/s per GPU? Part 3’s method, run again: count the FLOPs, count the bytes each parallelism moves per link, divide by the link’s rate, and check that compute covers the communication. Everything here is a speed-of-light number: spec peaks, perfect overlap, no kernel inefficiency. The sheets are live, as in part 3: the formula column is the program, blue values are knobs, and every sheet’s header downloads the whole page as one workbook.]]</p>
+
+    <p class="ai">[[AI: Assumptions carried from the brief: forced-balanced routing (every EP rank receives exactly S · k tokens per sequence, as MoonEP guarantees); a rank-aware pipeline cache for the attention residual, so each layer output crosses a pipeline boundary once; cross-rank activation offload, so the in-flight activations of 1F1B are averaged across pipeline ranks; and two activation-checkpointing policies, <b>A</b> (recompute everything that is not a matmul) and <b>B</b> (recompute everything except SDPA, KDA and the routed experts).]]</p>
+
+    <h2>The hardware: GB300 NVL72</h2>
+
+    <p class="ai">[[AI: Spec-sheet dense peaks; there is no public GB300 GEMM microbenchmark to stand in for part 3’s measured Hopper rates, so η is a knob that scales both GEMM rates (set it to 0.75 to mimic Hopper’s measured share). The NVLink domain is 72 GPUs; the scale-out link is one ConnectX-8 per GPU. Memory is what PyTorch reports on a B300, not the spec sheet’s 288 GB.]]</p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">π<sub>bf16</sub></td><td>GB300 BF16 dense peak, spec (FLOP/s)</td><td class="vl">2,500,000,000,000,000</td><td class="vl sc ap">2.50 × 10<sup>15</sup></td><td class="vl si ap">2<span class="d">.50</span><span class="u"> PFLOP/s</span></td><td class="fx"><i>(hardware spec, dense)</i></td></tr>
+    <tr><td class="nm">π<sub>fp8</sub></td><td>GB300 FP8 dense peak, spec (FLOP/s)</td><td class="vl">5,000,000,000,000,000</td><td class="vl sc ap">5.00 × 10<sup>15</sup></td><td class="vl si ap">5<span class="d"></span><span class="u"> PFLOP/s</span></td><td class="fx"><i>(hardware spec, dense)</i></td></tr>
+    <tr><td class="nm">π<sub>fp4</sub></td><td>GB300 FP4 dense peak, spec (FLOP/s)</td><td class="vl">15,000,000,000,000,000</td><td class="vl sc ap">1.50 × 10<sup>16</sup></td><td class="vl si ap">15<span class="d"></span><span class="u"> PFLOP/s</span></td><td class="fx"><i>(hardware spec, dense; this recipe does not use it)</i></td></tr>
+    <tr><td class="nm">η</td><td>share of the spec peak the GEMMs reach</td><td class="vl">1</td><td class="vl sc ap">1.00 × 10<sup>0</sup></td><td class="vl si ap">100<span class="d"></span><span class="u"> %</span></td><td class="fx"><i>(model input: no public GB300 GEMM microbenchmark; Hopper measured 74–77 % in part 3)</i></td></tr>
+    <tr class="hl"><td class="nm">π<sup>sol</sup><sub>bf16</sub></td><td>BF16 GEMM rate used below (FLOP/s)</td><td class="vl">2,500,000,000,000,000</td><td class="vl sc ap">2.50 × 10<sup>15</sup></td><td class="vl si ap">2<span class="d">.50</span><span class="u"> PFLOP/s</span></td><td class="fx"><b>π<sub>bf16</sub></b> · <b>η</b></td></tr>
+    <tr class="hl"><td class="nm">π<sup>sol</sup><sub>fp8</sub></td><td>FP8 GEMM rate used below (FLOP/s)</td><td class="vl">5,000,000,000,000,000</td><td class="vl sc ap">5.00 × 10<sup>15</sup></td><td class="vl si ap">5<span class="d"></span><span class="u"> PFLOP/s</span></td><td class="fx"><b>π<sub>fp8</sub></b> · <b>η</b></td></tr>
+    <tr><td class="nm">β<sub>NV</sub></td><td>NVLink per GPU, per direction (B/s)</td><td class="vl">900,000,000,000</td><td class="vl sc ap">9.00 × 10<sup>11</sup></td><td class="vl si ap">900<span class="d"></span><span class="u"> GB/s</span></td><td class="fx"><i>(hardware spec: 1.8 TB/s bidirectional)</i></td></tr>
+    <tr><td class="nm">β<sub>IB</sub></td><td>scale-out per GPU (B/s)</td><td class="vl">100,000,000,000</td><td class="vl sc ap">1.00 × 10<sup>11</sup></td><td class="vl si ap">100<span class="d"></span><span class="u"> GB/s</span></td><td class="fx"><i>(hardware spec: ConnectX-8, 800 Gb/s)</i></td></tr>
+    <tr><td class="nm">NVL</td><td>GPUs per NVLink domain</td><td class="vl">72</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(hardware spec)</i></td></tr>
+    <tr><td class="nm">M<sub>GPU</sub></td><td>device memory per GPU (B)</td><td class="vl">297,020,948,480</td><td class="vl sc ap">2.97 × 10<sup>11</sup></td><td class="vl si ap">297<span class="d"></span><span class="u"> GB</span></td><td class="fx"><i>(as PyTorch reports it: 276.6 GiB; the spec sheet says 288 GB)</i></td></tr>
+    </table></div>
+
+    <h2>The model: Kimi K3</h2>
+
+    <p class="ai">[[AI: The architecture from the released config and modeling code (the shapes that are only in the code: the KDA decay bottleneck and the gated norm). Ninety-three layers in a 3 : 1 KDA : gated-MLA hybrid, the first layer dense, every other layer a Stable LatentMoE with 896 routed experts of which 16 are active, read and written through a 3,584-wide latent; two shared experts in the hidden dim. The attention residual (AttnRes) adds a handful of norms and pseudo-query projections per layer.]]</p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">d</td><td>hidden dim</td><td class="vl">7,168</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(architecture)</i></td></tr>
+    <tr><td class="nm">V</td><td>vocabulary</td><td class="vl">163,840</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(architecture)</i></td></tr>
+    <tr><td class="nm">L</td><td>layers</td><td class="vl">93</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(architecture)</i></td></tr>
+    <tr><td class="nm">L<sub>kda</sub></td><td>KDA layers</td><td class="vl">69</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(architecture: 3 of every 4)</i></td></tr>
+    <tr><td class="nm">L<sub>mla</sub></td><td>gated-MLA layers</td><td class="vl">24</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(architecture: every 4th, plus the last)</i></td></tr>
+    <tr><td class="nm">L<sub>dns</sub></td><td>dense-FFN layers</td><td class="vl">1</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(architecture: layer 1, a KDA layer)</i></td></tr>
+    <tr><td class="nm">L<sub>moe</sub></td><td>MoE layers</td><td class="vl">92</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><b>L</b> − <b>L<sub>dns</sub></b></td></tr>
+    <tr><td class="nm">n<sub>h</sub></td><td>attention heads</td><td class="vl">96</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(architecture)</i></td></tr>
+    <tr><td class="nm">d<sub>h</sub></td><td>head dim · KDA q/k/v, MLA qk nope, v</td><td class="vl">128</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(architecture)</i></td></tr>
+    <tr><td class="nm">d<sup>R</sup><sub>h</sub></td><td>head dim · MLA qk "rope" (never rotated: NoPE)</td><td class="vl">64</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(architecture)</i></td></tr>
+    <tr><td class="nm">P</td><td>projection width</td><td class="vl">12,288</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><b>n<sub>h</sub></b> · <b>d<sub>h</sub></b></td></tr>
+    <tr><td class="nm">r<sub>q</sub></td><td>q latent rank</td><td class="vl">1,536</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(architecture)</i></td></tr>
+    <tr><td class="nm">r<sub>kv</sub></td><td>kv latent rank</td><td class="vl">512</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(architecture)</i></td></tr>
+    <tr><td class="nm">k<sub>cv</sub></td><td>KDA short-conv kernel</td><td class="vl">4</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(architecture)</i></td></tr>
+    <tr><td class="nm">r<sub>α</sub></td><td>KDA decay bottleneck rank</td><td class="vl">128</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(modeling_kimi_linear.py: = head dim)</i></td></tr>
+    <tr><td class="nm">E</td><td>routed experts</td><td class="vl">896</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(architecture)</i></td></tr>
+    <tr><td class="nm">k</td><td>experts per token</td><td class="vl">16</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(architecture)</i></td></tr>
+    <tr><td class="nm">I</td><td>expert inter dim</td><td class="vl">3,072</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(architecture)</i></td></tr>
+    <tr><td class="nm">ℓ</td><td>expert latent width</td><td class="vl">3,584</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(architecture: routed experts read and write the latent)</i></td></tr>
+    <tr><td class="nm">n<sub>sh</sub></td><td>shared experts</td><td class="vl">2</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(architecture: one fused MLP of 2× width, in the hidden dim)</i></td></tr>
+    <tr><td class="nm">I<sub>dns</sub></td><td>dense-FFN inter dim</td><td class="vl">33,792</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(architecture)</i></td></tr>
+    </table></div>
+
+    <p class="ai">[[AI: The parameter tally reproduces the advertised 2.78T total and 104.2B active exactly (the test pins both to the digit). Sparsity is 27× (total over active), against DeepSeek-V3’s 18×: more parameters to hold per activated FLOP.]]</p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">N<sub>kda</sub></td><td>KDA attention params, one layer</td><td class="vl">443,740,384</td><td class="vl sc ap">4.44 × 10<sup>8</sup></td><td class="vl si ap">444<span class="d"></span><span class="u"> M</span></td><td class="fx">3 · <b>d</b> · <b>P</b> + 3 · <b>P</b> · <b>k<sub>cv</sub></b> + <b>d</b> · <b>r<sub>α</sub></b> + <b>r<sub>α</sub></b> · <b>P</b> + <b>P</b> + <b>n<sub>h</sub></b> + <b>d</b> · <b>n<sub>h</sub></b> + <b>d</b> · <b>P</b> + <b>d<sub>h</sub></b> + <b>P</b> · <b>d</b> <i>(q/k/v projections, three depthwise convs, decay f<sub>a</sub>·f<sub>b</sub> + dt bias + A_log, β, full-rank output gate, gated-norm weight, out-proj)</i></td></tr>
+    <tr><td class="nm">N<sub>mla</sub></td><td>gated-MLA attention params, one layer</td><td class="vl">232,196,096</td><td class="vl sc ap">2.32 × 10<sup>8</sup></td><td class="vl si ap">232<span class="d"></span><span class="u"> M</span></td><td class="fx"><b>d</b> · <b>r<sub>q</sub></b> + <b>r<sub>q</sub></b> + <b>r<sub>q</sub></b> · <b>n<sub>h</sub></b> · (<b>d<sub>h</sub></b> + <b>d<sup>R</sup><sub>h</sub></b>) + <b>d</b> · (<b>r<sub>kv</sub></b> + <b>d<sup>R</sup><sub>h</sub></b>) + <b>r<sub>kv</sub></b> + <b>r<sub>kv</sub></b> · <b>n<sub>h</sub></b> · (<b>d<sub>h</sub></b> + <b>d<sub>h</sub></b>) + <b>d</b> · <b>P</b> + <b>P</b> · <b>d</b> <i>(q down · norm · up, kv down · norm · up, full-rank gate, out-proj)</i></td></tr>
+    <tr><td class="nm">N<sub>rt</sub></td><td>router params, one layer</td><td class="vl">6,423,424</td><td class="vl sc ap">6.42 × 10<sup>6</sup></td><td class="vl si ap">6<span class="d">.42</span><span class="u"> M</span></td><td class="fx"><b>E</b> · <b>d</b> + <b>E</b> <i>(weight + correction bias)</i></td></tr>
+    <tr><td class="nm">N<sub>e</sub></td><td>params, one routed expert</td><td class="vl">33,030,144</td><td class="vl sc ap">3.30 × 10<sup>7</sup></td><td class="vl si ap">33<span class="d">.0</span><span class="u"> M</span></td><td class="fx">3 · <b>ℓ</b> · <b>I</b> <i>(gate, up, down in the latent)</i></td></tr>
+    <tr><td class="nm">N<sub>lat</sub></td><td>latent projections, one layer</td><td class="vl">51,383,808</td><td class="vl sc ap">5.14 × 10<sup>7</sup></td><td class="vl si ap">51<span class="d">.4</span><span class="u"> M</span></td><td class="fx"><b>d</b> · <b>ℓ</b> + <b>ℓ</b> + <b>ℓ</b> · <b>d</b> <i>(down · norm · up)</i></td></tr>
+    <tr><td class="nm">N<sub>sh</sub></td><td>shared-expert params, one layer</td><td class="vl">132,120,576</td><td class="vl sc ap">1.32 × 10<sup>8</sup></td><td class="vl si ap">132<span class="d"></span><span class="u"> M</span></td><td class="fx">3 · <b>d</b> · <b>I</b> · <b>n<sub>sh</sub></b></td></tr>
+    <tr><td class="nm">N<sub>moe</sub></td><td>MoE FFN params, one layer</td><td class="vl">29,784,936,832</td><td class="vl sc ap">2.98 × 10<sup>10</sup></td><td class="vl si ap">29<span class="d">.8</span><span class="u"> G</span></td><td class="fx"><b>N<sub>rt</sub></b> + <b>E</b> · <b>N<sub>e</sub></b> + <b>N<sub>sh</sub></b> + <b>N<sub>lat</sub></b></td></tr>
+    <tr><td class="nm">N<sup>act</sup><sub>moe</sub></td><td>MoE FFN params a token activates, one layer</td><td class="vl">718,410,112</td><td class="vl sc ap">7.18 × 10<sup>8</sup></td><td class="vl si ap">718<span class="d"></span><span class="u"> M</span></td><td class="fx"><b>N<sub>rt</sub></b> + <b>k</b> · <b>N<sub>e</sub></b> + <b>N<sub>sh</sub></b> + <b>N<sub>lat</sub></b></td></tr>
+    <tr><td class="nm">N<sub>dns</sub></td><td>dense FFN params</td><td class="vl">726,663,168</td><td class="vl sc ap">7.27 × 10<sup>8</sup></td><td class="vl si ap">727<span class="d"></span><span class="u"> M</span></td><td class="fx">3 · <b>d</b> · <b>I<sub>dns</sub></b></td></tr>
+    <tr><td class="nm">N<sub>misc</sub></td><td>norms + attention-residual params, one layer</td><td class="vl">43,008</td><td class="vl sc ap">4.30 × 10<sup>4</sup></td><td class="vl si ap">43<span class="d">.0</span><span class="u"> K</span></td><td class="fx">6 · <b>d</b> <i>(two block RMSNorms; two AttnRes norms and two pseudo-query projections)</i></td></tr>
+    <tr><td class="nm">N<sub>emb</sub></td><td>embedding (= LM head) params</td><td class="vl">1,174,405,120</td><td class="vl sc ap">1.17 × 10<sup>9</sup></td><td class="vl si ap">1<span class="d">.17</span><span class="u"> G</span></td><td class="fx"><b>V</b> · <b>d</b></td></tr>
+    <tr><td class="nm">N<sub>fin</sub></td><td>final norm + attention-residual params</td><td class="vl">21,504</td><td class="vl sc ap">2.15 × 10<sup>4</sup></td><td class="vl si ap">21<span class="d">.5</span><span class="u"> K</span></td><td class="fx">3 · <b>d</b></td></tr>
+    <tr class="hl"><td class="nm">N<sub>tot</sub></td><td>total params</td><td class="vl">2,779,484,476,000</td><td class="vl sc ap">2.78 × 10<sup>12</sup></td><td class="vl si ap">2<span class="d">.78</span><span class="u"> T</span></td><td class="fx">2 · <b>N<sub>emb</sub></b> + (<b>N<sub>kda</sub></b> + <b>N<sub>dns</sub></b> + <b>N<sub>misc</sub></b>) + (<b>L<sub>kda</sub></b> − <b>L<sub>dns</sub></b>) · (<b>N<sub>kda</sub></b> + <b>N<sub>moe</sub></b> + <b>N<sub>misc</sub></b>) + <b>L<sub>mla</sub></b> · (<b>N<sub>mla</sub></b> + <b>N<sub>moe</sub></b> + <b>N<sub>misc</sub></b>) + <b>N<sub>fin</sub></b> <i>(text model; the 401M vision tower and the (unreleased) MTP layer are out)</i></td></tr>
+    <tr class="hl"><td class="nm">N</td><td>activated params</td><td class="vl">104,189,612,640</td><td class="vl sc ap">1.04 × 10<sup>11</sup></td><td class="vl si ap">104<span class="d"></span><span class="u"> G</span></td><td class="fx"><b>N<sub>emb</sub></b> + (<b>N<sub>kda</sub></b> + <b>N<sub>dns</sub></b> + <b>N<sub>misc</sub></b>) + (<b>L<sub>kda</sub></b> − <b>L<sub>dns</sub></b>) · (<b>N<sub>kda</sub></b> + <b>N<sup>act</sup><sub>moe</sub></b> + <b>N<sub>misc</sub></b>) + <b>L<sub>mla</sub></b> · (<b>N<sub>mla</sub></b> + <b>N<sup>act</sup><sub>moe</sub></b> + <b>N<sub>misc</sub></b>) + <b>N<sub>fin</sub></b> <i>(DeepSeek’s convention: the embedding lookup is not counted, the head is)</i></td></tr>
+    <tr><td class="nm">N<sub>exp</sub></td><td>routed-expert params</td><td class="vl">2,722,740,830,208</td><td class="vl sc ap">2.72 × 10<sup>12</sup></td><td class="vl si ap">2<span class="d">.72</span><span class="u"> T</span></td><td class="fx"><b>L<sub>moe</sub></b> · <b>E</b> · <b>N<sub>e</sub></b></td></tr>
+    <tr><td class="nm">N<sub>ne</sub></td><td>non-expert params</td><td class="vl">56,743,645,792</td><td class="vl sc ap">5.67 × 10<sup>10</sup></td><td class="vl si ap">56<span class="d">.7</span><span class="u"> G</span></td><td class="fx"><b>N<sub>tot</sub></b> − <b>N<sub>exp</sub></b></td></tr>
+    </table></div>
+
+    <h2>The batch and the cluster</h2>
+
+    <p class="ai">[[AI: K3’s report does not state its pre-training batch; Kimi K2 trained at 67M tokens per step, which this sheet adopts as 8,192 sequences of 8,192 tokens (K3 pre-trains at 8k context before extension). The cluster size is the knob the whole page is about; its default is the answer the last section reaches.]]</p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">B</td><td>sequences per step</td><td class="vl">8,192</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(model input: 67M tokens per step, Kimi K2’s pre-training batch; K3’s is not published)</i></td></tr>
+    <tr><td class="nm">S</td><td>tokens per sequence</td><td class="vl">8,192</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(model input: K3 pre-trains at 8k before extending)</i></td></tr>
+    <tr><td class="nm">D</td><td>tokens per step</td><td class="vl">67,108,864</td><td class="vl sc ap">6.71 × 10<sup>7</sup></td><td class="vl si ap">67<span class="d">.1</span><span class="u"> M</span></td><td class="fx"><b>B</b> · <b>S</b></td></tr>
+    <tr><td class="nm">GPUs</td><td>GPUs in the cluster</td><td class="vl">288</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(model input: four NVL72 domains, the smallest cluster where policy A fits with FP32 gradients and states — see the tables at the end)</i></td></tr>
+    <tr><td class="nm">D<sub>GPU</sub></td><td>tokens per GPU per step</td><td class="vl"></td><td class="vl sc ap">2.33 × 10<sup>5</sup></td><td class="vl si ap">233<span class="d"></span><span class="u"> K</span></td><td class="fx"><b>D</b> / <b>GPUs</b></td></tr>
+    </table></div>
+
+    <h2>Compute</h2>
+
+    <p class="ai">[[AI: The recipe, as briefed: MXFP8 for the attention projections, the dense FFN and shared experts, the routed experts and their latent projections, and the LM head; the routers run BF16 with FP32 logits out; both attention cores in BF16. Routed experts could run their weights in MXFP4, K3’s post-training QAT format, but this sheet keeps them in MXFP8; π<sub>fp4</sub> is listed for the reader who wants to try it. Policy A recomputes only vector work, which 6ND never counted, so it adds no time here; policy B replays every non-expert, non-core matmul once in backward, a 2ND term on the replayed parameters. The KDA core is priced per token from its chunkwise form: three d<sub>h</sub>×d<sub>h</sub> state matmuls per head plus the intra-chunk terms; it is small, and this is the roughest line on the page.]]</p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">N<sub>bf16</sub></td><td>params in BF16 GEMMs</td><td class="vl">590,872,576</td><td class="vl sc ap">5.91 × 10<sup>8</sup></td><td class="vl si ap">591<span class="d"></span><span class="u"> M</span></td><td class="fx"><b>L<sub>moe</sub></b> · <b>E</b> · <b>d</b> <i>(the routers (BF16 forward, FP32 logits out); every other linear, the LM head included, runs MXFP8)</i></td></tr>
+    <tr><td class="nm">C</td><td>FLOPs per step, 6ND</td><td class="vl">41,952,279,269,222,645,760</td><td class="vl sc ap">4.20 × 10<sup>19</sup></td><td class="vl si ap">42<span class="d">.0</span><span class="u"> EFLOP</span></td><td class="fx">6 · <b>N</b> · <b>D</b></td></tr>
+    <tr><td class="nm">C<sub>bf16</sub></td><td>BF16 GEMM FLOPs inside 6ND</td><td class="vl">237,916,724,064,681,984</td><td class="vl sc ap">2.38 × 10<sup>17</sup></td><td class="vl si ap">238<span class="d"></span><span class="u"> PFLOP</span></td><td class="fx">6 · <b>N<sub>bf16</sub></b> · <b>D</b></td></tr>
+    <tr><td class="nm">C<sub>fp8</sub></td><td>FP8 GEMM FLOPs inside 6ND</td><td class="vl">41,714,362,545,157,963,776</td><td class="vl sc ap">4.17 × 10<sup>19</sup></td><td class="vl si ap">41<span class="d">.7</span><span class="u"> EFLOP</span></td><td class="fx"><b>C</b> − <b>C<sub>bf16</sub></b></td></tr>
+    <tr><td class="nm">c<sub>qk</sub></td><td>QKᵀ-shaped FLOPs · one MLA layer, one sequence</td><td class="vl">1,236,950,581,248</td><td class="vl sc ap">1.24 × 10<sup>12</sup></td><td class="vl si ap">1<span class="d">.24</span><span class="u"> TFLOP</span></td><td class="fx">2 · <b>n<sub>h</sub></b> · (<b>d<sub>h</sub></b> + <b>d<sup>R</sup><sub>h</sub></b>) · <b>S</b> · <b>S</b> / 2 <i>(causal keeps half the pairs)</i></td></tr>
+    <tr><td class="nm">c<sub>pv</sub></td><td>PV-shaped FLOPs · one MLA layer, one sequence</td><td class="vl">824,633,720,832</td><td class="vl sc ap">8.25 × 10<sup>11</sup></td><td class="vl si ap">825<span class="d"></span><span class="u"> GFLOP</span></td><td class="fx">2 · <b>n<sub>h</sub></b> · <b>d<sub>h</sub></b> · <b>S</b> · <b>S</b> / 2</td></tr>
+    <tr><td class="nm">C<sub>sdpa</sub></td><td>softmax-attention FLOPs per step</td><td class="vl">1,459,166,279,268,040,704</td><td class="vl sc ap">1.46 × 10<sup>18</sup></td><td class="vl si ap">1<span class="d">.46</span><span class="u"> EFLOP</span></td><td class="fx"><b>L<sub>mla</sub></b> · <b>B</b> · (4 · <b>c<sub>qk</sub></b> + 3 · <b>c<sub>pv</sub></b>) <i>(FlashAttention: QKᵀ-shaped ×4 (fwd, bwd replay, dQ, dK), PV-shaped ×3 (fwd, dV, dP))</i></td></tr>
+    <tr><td class="nm">C<sub>ch</sub></td><td>KDA chunk size</td><td class="vl">64</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(chunkwise form: recurrent across chunks, parallel within)</i></td></tr>
+    <tr><td class="nm">c<sub>kda</sub></td><td>KDA FLOPs per token, one layer, fwd</td><td class="vl">17,301,504</td><td class="vl sc ap">1.73 × 10<sup>7</sup></td><td class="vl si ap">17<span class="d">.3</span><span class="u"> MFLOP</span></td><td class="fx"><b>n<sub>h</sub></b> · (6 · <b>d<sub>h</sub></b> · <b>d<sub>h</sub></b> + 10 · <b>C<sub>ch</sub></b> · <b>d<sub>h</sub></b>) <i>(per head: read, correct and update the d<sub>h</sub>×d<sub>h</sub> state (3 matmuls), plus the intra-chunk KKᵀ, UT transform (W, U) and QKᵀ·U terms; the C×C inverse is dropped)</i></td></tr>
+    <tr><td class="nm">C<sub>kda</sub></td><td>KDA FLOPs per step</td><td class="vl">240,344,445,738,811,392</td><td class="vl sc ap">2.40 × 10<sup>17</sup></td><td class="vl si ap">240<span class="d"></span><span class="u"> PFLOP</span></td><td class="fx">3 · <b>L<sub>kda</sub></b> · <b>D</b> · <b>c<sub>kda</sub></b> <i>(fwd + 2× for bwd; the kernel’s own state recompute is not counted)</i></td></tr>
+    <tr><td class="nm">N<sub>rp</sub></td><td>params replayed under policy B</td><td class="vl">54,394,835,552</td><td class="vl sc ap">5.44 × 10<sup>10</sup></td><td class="vl si ap">54<span class="d">.4</span><span class="u"> G</span></td><td class="fx"><b>N</b> − <b>N<sub>emb</sub></b> − <b>L<sub>moe</sub></b> · <b>k</b> · <b>N<sub>e</sub></b> <i>(everything a token activates except the head and the routed experts: attention projections, latent, shared experts, routers, the dense FFN)</i></td></tr>
+    <tr><td class="nm">C<sub>rp</sub></td><td>recompute FLOPs per step, policy B</td><td class="vl">7,300,751,242,723,065,856</td><td class="vl sc ap">7.30 × 10<sup>18</sup></td><td class="vl si ap">7<span class="d">.30</span><span class="u"> EFLOP</span></td><td class="fx">2 · <b>N<sub>rp</sub></b> · <b>D</b> <i>(one forward replay)</i></td></tr>
+    <tr><td class="nm">T<sub>fp8</sub></td><td>FP8 GEMM time (s)</td><td class="vl"></td><td class="vl sc ap">2.90 × 10<sup>1</sup></td><td class="vl si ap">29<span class="d">.0</span><span class="u"> s</span></td><td class="fx"><b>C<sub>fp8</sub></b> / (<b>GPUs</b> · <b>π<sup>sol</sup><sub>fp8</sub></b>)</td></tr>
+    <tr><td class="nm">T<sub>bf16</sub></td><td>BF16 GEMM time, routers (s)</td><td class="vl"></td><td class="vl sc ap">3.30 × 10<sup>−1</sup></td><td class="vl si ap">330<span class="d"></span><span class="u"> ms</span></td><td class="fx"><b>C<sub>bf16</sub></b> / (<b>GPUs</b> · <b>π<sup>sol</sup><sub>bf16</sub></b>)</td></tr>
+    <tr><td class="nm">T<sub>sdpa</sub></td><td>softmax-attention time, BF16 (s)</td><td class="vl"></td><td class="vl sc ap">2.03 × 10<sup>0</sup></td><td class="vl si ap">2<span class="d">.03</span><span class="u"> s</span></td><td class="fx"><b>C<sub>sdpa</sub></b> / (<b>GPUs</b> · <b>π<sup>sol</sup><sub>bf16</sub></b>)</td></tr>
+    <tr><td class="nm">T<sub>kda</sub></td><td>KDA time, BF16 (s)</td><td class="vl"></td><td class="vl sc ap">3.34 × 10<sup>−1</sup></td><td class="vl si ap">334<span class="d"></span><span class="u"> ms</span></td><td class="fx"><b>C<sub>kda</sub></b> / (<b>GPUs</b> · <b>π<sup>sol</sup><sub>bf16</sub></b>)</td></tr>
+    <tr><td class="nm">T<sub>rp</sub></td><td>replay time, policy B (s)</td><td class="vl"></td><td class="vl sc ap">5.07 × 10<sup>0</sup></td><td class="vl si ap">5<span class="d">.07</span><span class="u"> s</span></td><td class="fx"><b>C<sub>rp</sub></b> / (<b>GPUs</b> · <b>π<sup>sol</sup><sub>fp8</sub></b>)</td></tr>
+    <tr class="hl"><td class="nm">T<sup>A</sup><sub>c</sub></td><td>compute time per step, policy A (s)</td><td class="vl"></td><td class="vl sc ap">3.17 × 10<sup>1</sup></td><td class="vl si ap">31<span class="d">.7</span><span class="u"> s</span></td><td class="fx"><b>T<sub>fp8</sub></b> + <b>T<sub>bf16</sub></b> + <b>T<sub>sdpa</sub></b> + <b>T<sub>kda</sub></b> <i>(A recomputes only non-matmul work, which 6ND never counted)</i></td></tr>
+    <tr class="hl"><td class="nm">T<sup>B</sup><sub>c</sub></td><td>compute time per step, policy B (s)</td><td class="vl"></td><td class="vl sc ap">3.67 × 10<sup>1</sup></td><td class="vl si ap">36<span class="d">.7</span><span class="u"> s</span></td><td class="fx"><b>T<sup>A</sup><sub>c</sub></b> + <b>T<sub>rp</sub></b></td></tr>
+    <tr><td class="nm">ρ<sub>∞</sub></td><td>tokens/s per GPU, compute only, policy A</td><td class="vl"></td><td class="vl sc ap">7.36 × 10<sup>3</sup></td><td class="vl si ap">7<span class="d">.36</span><span class="u"> K</span></td><td class="fx"><b>D<sub>GPU</sub></b> / <b>T<sup>A</sup><sub>c</sub></b> <i>(the ceiling: no bubble, no exposed comms)</i></td></tr>
+    </table></div>
+
+    <h2>The layout</h2>
+
+    <p class="ai">[[AI: EP lives inside one NVLink domain; PP stacks domains (or splits one), and whatever is left is data parallel. The non-expert parameters are replicated across the EP ranks of a domain, which matters for both memory and the optimizer sharding below.]]</p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">PP</td><td>pipeline ranks</td><td class="vl">8</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(model input)</i></td></tr>
+    <tr><td class="nm">EP</td><td>expert parallelism</td><td class="vl">36</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(model input: inside one NVLink domain; half a domain here, so PP 8 × EP 36 is exactly four domains with one replica)</i></td></tr>
+    <tr><td class="nm">DP</td><td>replicas of an expert slice</td><td class="vl">1</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><b>GPUs</b> / (<b>PP</b> · <b>EP</b>)</td></tr>
+    <tr><td class="nm">DP<sub>ne</sub></td><td>replicas of a non-expert slice</td><td class="vl">36</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><b>GPUs</b> / <b>PP</b> <i>(every EP rank holds the same non-expert slice)</i></td></tr>
+    </table></div>
+
+    <h2>Expert parallelism over NVLink</h2>
+
+    <p class="ai">[[AI: Dispatch and combine stay on NVLink. Per token and MoE layer the latent goes out MXFP8 (with one scale byte per 32) and comes back BF16, to k · (1 − 1/EP) remote ranks without dedup; K3 saves only the dispatch input and re-dispatches in backward, so the forward dispatch is paid three times per step rather than twice. The EP ranks also hold identical non-expert slices, whose gradients reduce and whose updated weights gather over the same NVLink.]]</p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">M<sub>NV</sub></td><td>remote ranks per token</td><td class="vl"></td><td class="vl sc ap">1.56 × 10<sup>1</sup></td><td class="vl si ap"></td><td class="fx"><b>k</b> · (1 − 1 / <b>EP</b>) <i>(no dedup: with experts sharing a rank the expectation is EP · (1 − (1 − 1/EP)<sup>k</sup>) − 1 ≈ 14.2 at EP 72)</i></td></tr>
+    <tr><td class="nm">V<sub>disp</sub></td><td>dispatch bytes/token·layer</td><td class="vl"></td><td class="vl sc ap">5.75 × 10<sup>4</sup></td><td class="vl si ap">57<span class="d">.5</span><span class="u"> KB</span></td><td class="fx"><b>M<sub>NV</sub></b> · <b>ℓ</b> · (1 + 1 / 32) <i>(MXFP8 latent + one E8M0 scale per 32)</i></td></tr>
+    <tr><td class="nm">V<sub>comb</sub></td><td>combine bytes/token·layer</td><td class="vl"></td><td class="vl sc ap">1.12 × 10<sup>5</sup></td><td class="vl si ap">112<span class="d"></span><span class="u"> KB</span></td><td class="fx"><b>M<sub>NV</sub></b> · <b>ℓ</b> · 2 <i>(BF16)</i></td></tr>
+    <tr><td class="nm">V<sub>tok</sub></td><td>EP NVLink bytes per token</td><td class="vl"></td><td class="vl sc ap">3.64 × 10<sup>7</sup></td><td class="vl si ap">36<span class="d">.4</span><span class="u"> MB</span></td><td class="fx">(3 · <b>V<sub>disp</sub></b> + 2 · <b>V<sub>comb</sub></b>) · <b>L<sub>moe</sub></b> <i>(fwd + bwd, plus one dispatch replay: K3 saves only the dispatch input and re-dispatches in backward)</i></td></tr>
+    <tr><td class="nm">V<sub>EP</sub></td><td>EP NVLink bytes per GPU·step</td><td class="vl"></td><td class="vl sc ap">8.48 × 10<sup>12</sup></td><td class="vl si ap">8<span class="d">.48</span><span class="u"> TB</span></td><td class="fx"><b>V<sub>tok</sub></b> · <b>D<sub>GPU</sub></b></td></tr>
+    <tr class="hl"><td class="nm">T<sub>EP</sub></td><td>EP time per step (s)</td><td class="vl"></td><td class="vl sc ap">9.42 × 10<sup>0</sup></td><td class="vl si ap">9<span class="d">.42</span><span class="u"> s</span></td><td class="fx"><b>V<sub>EP</sub></b> / <b>β<sub>NV</sub></b></td></tr>
+    <tr><td class="nm">Q<sub>exp</sub></td><td>routed-expert params on this GPU</td><td class="vl">9,453,961,216</td><td class="vl sc ap">9.45 × 10<sup>9</sup></td><td class="vl si ap">9<span class="d">.45</span><span class="u"> G</span></td><td class="fx"><b>N<sub>exp</sub></b> / (<b>PP</b> · <b>EP</b>)</td></tr>
+    <tr><td class="nm">Q<sub>ne</sub></td><td>non-expert params on this GPU</td><td class="vl">7,092,955,724</td><td class="vl sc ap">7.09 × 10<sup>9</sup></td><td class="vl si ap">7<span class="d">.09</span><span class="u"> G</span></td><td class="fx"><b>N<sub>ne</sub></b> / <b>PP</b></td></tr>
+    <tr><td class="nm">V<sup>NV</sup><sub>ne</sub></td><td>non-expert grad reduce + weight gather over NVLink, bytes/GPU</td><td class="vl"></td><td class="vl sc ap">4.14 × 10<sup>10</sup></td><td class="vl si ap">41<span class="d">.4</span><span class="u"> GB</span></td><td class="fx"><b>Q<sub>ne</sub></b> · (1 − 1 / <b>EP</b>) · (<b>g<sub>B</sub></b> + 2) <i>(the EP ranks are replicas of the non-expert slice: gradient reduce-scatter, BF16 all-gather, ring volume)</i></td></tr>
+    <tr><td class="nm">T<sup>NV</sup><sub>ne</sub></td><td>non-expert sync over NVLink (s)</td><td class="vl"></td><td class="vl sc ap">4.60 × 10<sup>−2</sup></td><td class="vl si ap">46<span class="d">.0</span><span class="u"> ms</span></td><td class="fx"><b>V<sup>NV</sup><sub>ne</sub></b> / <b>β<sub>NV</sub></b></td></tr>
+    <tr class="hl"><td class="nm">T<sub>NV</sub></td><td>NVLink time per step (s)</td><td class="vl"></td><td class="vl sc ap">9.47 × 10<sup>0</sup></td><td class="vl si ap">9<span class="d">.47</span><span class="u"> s</span></td><td class="fx"><b>T<sub>EP</sub></b> + <b>T<sup>NV</sup><sub>ne</sub></b></td></tr>
+    <tr class="hl"><td class="nm">f<sub>NV</sub></td><td>NVLink time, share of compute (policy A)</td><td class="vl"></td><td class="vl sc ap">2.99 × 10<sup>−1</sup></td><td class="vl si ap">29<span class="d">.9</span><span class="u"> %</span></td><td class="fx"><b>T<sub>NV</sub></b> / <b>T<sup>A</sup><sub>c</sub></b></td></tr>
+    </table></div>
+
+    <p class="ai">[[AI: At speed of light NVLink is busy for <span data-cellref="f<sub>NV</sub>">29<span class="d">.9</span><span class="u"> %</span></span> of the compute time: fine, but not negligible, and the share is independent of cluster size (both sides scale with tokens per GPU).]]</p>
+
+    <h2>ZeRO-1 over the scale-out network</h2>
+
+    <p class="ai">[[AI: Optimizer states are sharded over every replica of a slice. The per-step cost is a reduce-scatter of the gradients (at g<sub>B</sub>) and a BF16 all-gather of the updated weights of each GPU’s IB share, plus Muon’s Newton–Schulz gather (each rank fetches the remote shards of the matrices it owns). When a slice has exactly one replica the term is zero: that is the situation at the default cluster size, and it is why the smallest cluster is also the one with no scale-out optimizer traffic at all.]]</p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">Ψ</td><td>params/GPU over IB</td><td class="vl"></td><td class="vl sc ap">9.65 × 10<sup>9</sup></td><td class="vl si ap">9<span class="d">.65</span><span class="u"> G</span></td><td class="fx">(<b>N<sub>ne</sub></b> + <b>N<sub>exp</sub></b>) / (<b>PP</b> · <b>EP</b>) <i>(the expert slice whole; the non-expert slice split among the domain’s EP ranks, who gather the rest over NVLink)</i></td></tr>
+    <tr><td class="nm">V<sub>NS</sub></td><td>Newton–Schulz gather, bytes/GPU</td><td class="vl">0</td><td class="vl sc ap">0.00 × 10<sup>0</sup></td><td class="vl si ap">0<span class="d"></span><span class="u"> B</span></td><td class="fx"><b>Ψ</b> / <b>DP</b> · (1 − 1 / <b>DP</b>) · 4 <i>(Muon: each rank fetches the remote shards of the matrices it owns, FP32)</i></td></tr>
+    <tr><td class="nm">V<sub>sync</sub></td><td>ZeRO-1 bytes/GPU per step</td><td class="vl">0</td><td class="vl sc ap">0.00 × 10<sup>0</sup></td><td class="vl si ap">0<span class="d"></span><span class="u"> B</span></td><td class="fx"><b>Ψ</b> · (1 − 1 / <b>DP</b>) · (<b>g<sub>B</sub></b> + 2) + <b>V<sub>NS</sub></b> <i>(gradient reduce-scatter at g<sub>B</sub>, BF16 all-gather; zero when the slice has one replica)</i></td></tr>
+    <tr class="hl"><td class="nm">T<sub>sync</sub></td><td>ZeRO-1 time per step (s)</td><td class="vl">0</td><td class="vl sc ap">0.00 × 10<sup>0</sup></td><td class="vl si ap">0<span class="d"></span><span class="u"> ms</span></td><td class="fx"><b>V<sub>sync</sub></b> / <b>β<sub>IB</sub></b></td></tr>
+    </table></div>
+
+    <h2>Pipeline parallelism</h2>
+
+    <p class="ai">[[AI: A pipeline boundary carries the AttnRes block, 12 layer outputs per token with the rank-aware cache (each output sent once), rather than one residual: 12× DeepSeek-V3’s per-token boundary traffic. It is charged to the scale-out link even when the whole pipeline fits inside a domain. The bubble is plain 1F1B without virtual stages; with 100+ microbatches per pipeline at the default size it is a few percent, and virtual stages would cut it further at larger clusters.]]</p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">r<sub>res</sub></td><td>layer outputs crossing a PP boundary, per token</td><td class="vl">12</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(model input: the AttnRes block; the rank-aware cache sends each layer output once, so this is min(12, layers per rank))</i></td></tr>
+    <tr><td class="nm">D<sub>PP</sub></td><td>tokens per pipeline per step</td><td class="vl"></td><td class="vl sc ap">1.86 × 10<sup>6</sup></td><td class="vl si ap">1<span class="d">.86</span><span class="u"> M</span></td><td class="fx"><b>D</b> · <b>PP</b> / <b>GPUs</b></td></tr>
+    <tr><td class="nm">V<sub>res</sub></td><td>boundary bytes per token</td><td class="vl">172,032</td><td class="vl sc ap">1.72 × 10<sup>5</sup></td><td class="vl si ap">172<span class="d"></span><span class="u"> KB</span></td><td class="fx"><b>r<sub>res</sub></b> · <b>d</b> · 2 <i>(BF16)</i></td></tr>
+    <tr><td class="nm">V<sub>PP</sub></td><td>PP bytes per GPU·step</td><td class="vl"></td><td class="vl sc ap">6.41 × 10<sup>11</sup></td><td class="vl si ap">641<span class="d"></span><span class="u"> GB</span></td><td class="fx">2 · <b>V<sub>res</sub></b> · <b>D<sub>PP</sub></b> <i>(an interior rank: activations forward, gradients back; charged to the scale-out link)</i></td></tr>
+    <tr class="hl"><td class="nm">T<sub>PP</sub></td><td>PP time per step (s)</td><td class="vl"></td><td class="vl sc ap">6.41 × 10<sup>0</sup></td><td class="vl si ap">6<span class="d">.41</span><span class="u"> s</span></td><td class="fx"><b>V<sub>PP</sub></b> / <b>β<sub>IB</sub></b></td></tr>
+    <tr><td class="nm">m</td><td>microbatches per pipeline per step</td><td class="vl"></td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><b>D<sub>PP</sub></b> / <b>S</b> <i>(one sequence each)</i></td></tr>
+    <tr class="hl"><td class="nm">b<sub>PP</sub></td><td>1F1B bubble, share of compute</td><td class="vl"></td><td class="vl sc ap">3.08 × 10<sup>−2</sup></td><td class="vl si ap">3<span class="d">.08</span><span class="u"> %</span></td><td class="fx">(<b>PP</b> − 1) / <b>m</b> <i>(no virtual stages)</i></td></tr>
+    <tr><td class="nm">T<sup>A</sup><sub>bub</sub></td><td>bubble time per step, policy A (s)</td><td class="vl"></td><td class="vl sc ap">9.74 × 10<sup>−1</sup></td><td class="vl si ap">974<span class="d"></span><span class="u"> ms</span></td><td class="fx"><b>T<sup>A</sup><sub>c</sub></b> · <b>b<sub>PP</sub></b></td></tr>
+    <tr><td class="nm">T<sup>B</sup><sub>bub</sub></td><td>bubble time per step, policy B (s)</td><td class="vl"></td><td class="vl sc ap">1.13 × 10<sup>0</sup></td><td class="vl si ap">1<span class="d">.13</span><span class="u"> s</span></td><td class="fx"><b>T<sup>B</sup><sub>c</sub></b> · <b>b<sub>PP</sub></b></td></tr>
+    </table></div>
+
+    <h2>Memory</h2>
+
+    <p class="ai">[[AI: Weights unsharded in MXFP8 (gathered in BF16, kept in both scaling orientations: 2 · (1 + 1/32) B per parameter); gradients unsharded at g<sub>B</sub> bytes (4 for the all-FP32 policy, 2 for BF16 grads with FP32 accumulation in the epilogue; K3’s pipeline ZeRO-2 with CPU-offloaded shards would remove most of this line, left in as the device-resident case); optimizer state o<sub>B</sub> bytes per parameter (FP32 master + one Muon momentum, FP32 or BF16) sharded across all replicas. Both are knobs; the second table at the end sweeps all four combinations. The per-token stash is tallied per layer kind under each policy: MXFP8 for anything a GEMM consumes or a replayed vector op needs, BF16 for the kernels’ inputs and outputs. Under policy A the routed experts’ fc1 outputs dominate (k · 2 · I bytes per token per layer); policy B keeps those and little else.]]</p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">b<sub>8</sub></td><td>bytes per MXFP8 element</td><td class="vl">1.03125</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx">1 + 1 / 32 <i>(one E8M0 scale per 32)</i></td></tr>
+    <tr><td class="nm">g<sub>B</sub></td><td>bytes per unsharded gradient element</td><td class="vl">4</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(model input: 4 = FP32 grads, accumulation and reduce-scatter; 2 = BF16 grads and reduce-scatter with FP32 accumulation in the epilogue)</i></td></tr>
+    <tr><td class="nm">o<sub>B</sub></td><td>optimizer bytes per sharded param</td><td class="vl">8</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(model input: FP32 master weights + one Muon momentum: 8 = FP32 states, 6 = BF16 states)</i></td></tr>
+    <tr><td class="nm">W</td><td>weights on this GPU, MXFP8 (B)</td><td class="vl">34,128,016,188.75</td><td class="vl sc ap">3.41 × 10<sup>10</sup></td><td class="vl si ap">34<span class="d">.1</span><span class="u"> GB</span></td><td class="fx">2 · <b>b<sub>8</sub></b> · (<b>Q<sub>exp</sub></b> + <b>Q<sub>ne</sub></b>) <i>(unsharded, resident in both scaling orientations (forward and dgrad), as Transformer Engine keeps them)</i></td></tr>
+    <tr><td class="nm">G</td><td>gradients on this GPU (B)</td><td class="vl">66,187,667,760</td><td class="vl sc ap">6.62 × 10<sup>10</sup></td><td class="vl si ap">66<span class="d">.2</span><span class="u"> GB</span></td><td class="fx"><b>g<sub>B</sub></b> · (<b>Q<sub>exp</sub></b> + <b>Q<sub>ne</sub></b>) <i>(unsharded; K3’s pipeline ZeRO-2 + CPU offload would cut this)</i></td></tr>
+    <tr><td class="nm">O</td><td>optimizer state on this GPU (B)</td><td class="vl"></td><td class="vl sc ap">7.72 × 10<sup>10</sup></td><td class="vl si ap">77<span class="d">.2</span><span class="u"> GB</span></td><td class="fx"><b>o<sub>B</sub></b> · (<b>Q<sub>exp</sub></b> / <b>DP</b> + <b>Q<sub>ne</sub></b> / <b>DP<sub>ne</sub></b>) <i>(sharded across every replica of the slice)</i></td></tr>
+    </table></div>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">σ<sub>res</sub></td><td>residual stash per token, one layer</td><td class="vl">28,672</td><td class="vl sc ap">2.87 × 10<sup>4</sup></td><td class="vl si ap">28<span class="d">.7</span><span class="u"> KB</span></td><td class="fx">4 · <b>d</b> <i>(block input and post-attention residual, BF16; the AttnRes cache adds nothing per layer)</i></td></tr>
+    <tr><td class="nm">σ<sup>A</sup><sub>kda</sub></td><td>KDA stash per token, policy A</td><td class="vl">88,035</td><td class="vl sc ap">8.80 × 10<sup>4</sup></td><td class="vl si ap">88<span class="d">.0</span><span class="u"> KB</span></td><td class="fx">5 · <b>P</b> · <b>b<sub>8</sub></b> + <b>n<sub>h</sub></b> · <b>b<sub>8</sub></b> + 2 · <b>P</b> <i>(q, k, v, decay and gate GEMM outputs cached MXFP8 (conv, feature map, sigmoid replayed from them), β, the kernel output BF16)</i></td></tr>
+    <tr><td class="nm">σ<sup>A</sup><sub>mla</sub></td><td>gated-MLA stash per token, policy A</td><td class="vl">138,114</td><td class="vl sc ap">1.38 × 10<sup>5</sup></td><td class="vl si ap">138<span class="d"></span><span class="u"> KB</span></td><td class="fx">(<b>r<sub>q</sub></b> + <b>r<sub>kv</sub></b> + <b>d<sup>R</sup><sub>h</sub></b>) · <b>b<sub>8</sub></b> + 2 · <b>n<sub>h</sub></b> · (2 · (<b>d<sub>h</sub></b> + <b>d<sup>R</sup><sub>h</sub></b>) + 2 · <b>d<sub>h</sub></b>) + 4 · <b>n<sub>h</sub></b> + <b>P</b> · <b>b<sub>8</sub></b> <i>(latents cached MXFP8; q, k, v, o BF16 and the LSE for FlashAttention’s backward; the gate GEMM output)</i></td></tr>
+    <tr><td class="nm">σ<sup>A</sup><sub>moe</sub></td><td>MoE stash per token, policy A</td><td class="vl">125,088</td><td class="vl sc ap">1.25 × 10<sup>5</sup></td><td class="vl si ap">125<span class="d"></span><span class="u"> KB</span></td><td class="fx">4 · <b>E</b> + <b>ℓ</b> · <b>b<sub>8</sub></b> + <b>k</b> · 2 · <b>I</b> · <b>b<sub>8</sub></b> + <b>ℓ</b> · <b>b<sub>8</sub></b> + 4 · <b>k</b> + 2 · <b>I</b> · <b>n<sub>sh</sub></b> · <b>b<sub>8</sub></b> <i>(FP32 router logits; the dispatch input (dispatch replayed); fc1 outputs of the k experts, MXFP8 (the activation replayed); the combined latent; k probs; the shared experts’ fc1 outputs)</i></td></tr>
+    <tr><td class="nm">σ<sup>A</sup><sub>dns</sub></td><td>dense-FFN stash per token, policy A</td><td class="vl">69,696</td><td class="vl sc ap">6.97 × 10<sup>4</sup></td><td class="vl si ap">69<span class="d">.7</span><span class="u"> KB</span></td><td class="fx">2 · <b>I<sub>dns</sub></b> · <b>b<sub>8</sub></b></td></tr>
+    <tr class="hl"><td class="nm">σ<sup>A</sup></td><td>stash per token, all layers, policy A</td><td class="vl">24,616,479</td><td class="vl sc ap">2.46 × 10<sup>7</sup></td><td class="vl si ap">24<span class="d">.6</span><span class="u"> MB</span></td><td class="fx"><b>L</b> · <b>σ<sub>res</sub></b> + <b>L<sub>kda</sub></b> · <b>σ<sup>A</sup><sub>kda</sub></b> + <b>L<sub>mla</sub></b> · <b>σ<sup>A</sup><sub>mla</sub></b> + <b>L<sub>moe</sub></b> · <b>σ<sup>A</sup><sub>moe</sub></b> + <b>L<sub>dns</sub></b> · <b>σ<sup>A</sup><sub>dns</sub></b> + 6 · <b>V</b> <i>(+ the head’s BF16 logits and FP32 loss gradient)</i></td></tr>
+    </table></div>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">σ<sup>B</sup><sub>kda</sub></td><td>KDA stash per token, policy B</td><td class="vl">24,576</td><td class="vl sc ap">2.46 × 10<sup>4</sup></td><td class="vl si ap">24<span class="d">.6</span><span class="u"> KB</span></td><td class="fx">2 · <b>P</b> <i>(the kernel output only; its inputs come back with the replay)</i></td></tr>
+    <tr><td class="nm">σ<sup>B</sup><sub>mla</sub></td><td>gated-MLA stash per token, policy B</td><td class="vl">24,960</td><td class="vl sc ap">2.50 × 10<sup>4</sup></td><td class="vl si ap">25<span class="d">.0</span><span class="u"> KB</span></td><td class="fx">2 · <b>P</b> + 4 · <b>n<sub>h</sub></b> <i>(o and the LSE)</i></td></tr>
+    <tr><td class="nm">σ<sup>B</sup><sub>moe</sub></td><td>MoE stash per token, policy B</td><td class="vl">105,136</td><td class="vl sc ap">1.05 × 10<sup>5</sup></td><td class="vl si ap">105<span class="d"></span><span class="u"> KB</span></td><td class="fx"><b>k</b> · 2 · <b>I</b> · <b>b<sub>8</sub></b> + <b>ℓ</b> · <b>b<sub>8</sub></b> + 4 · <b>k</b> <i>(the experts’ fc1 outputs, the combined latent, k probs; dispatch input, router, latent and shared experts come back with the replay)</i></td></tr>
+    <tr class="hl"><td class="nm">σ<sup>B</sup></td><td>stash per token, all layers, policy B</td><td class="vl">14,283,584</td><td class="vl sc ap">1.43 × 10<sup>7</sup></td><td class="vl si ap">14<span class="d">.3</span><span class="u"> MB</span></td><td class="fx"><b>L</b> · 2 · <b>d</b> + <b>L<sub>kda</sub></b> · <b>σ<sup>B</sup><sub>kda</sub></b> + <b>L<sub>mla</sub></b> · <b>σ<sup>B</sup><sub>mla</sub></b> + <b>L<sub>moe</sub></b> · <b>σ<sup>B</sup><sub>moe</sub></b> + 6 · <b>V</b> <i>(block inputs BF16 + the kept kernels’ stashes + the head)</i></td></tr>
+    </table></div>
+
+    <p class="ai">[[AI: Activations in flight: one sequence per microbatch, (PP + 1)/2 microbatches resident on average once cross-rank offload balances 1F1B’s skew, and this rank’s 1/PP of the layers.]]</p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">n<sub>flt</sub></td><td>microbatches in flight, averaged over ranks</td><td class="vl">4.5</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx">(<b>PP</b> + 1) / 2 <i>(1F1B holds PP − r on rank r; cross-rank offload balances them)</i></td></tr>
+    <tr><td class="nm">A<sup>A</sup></td><td>saved activations per GPU, policy A (B)</td><td class="vl">113,432,735,232</td><td class="vl sc ap">1.13 × 10<sup>11</sup></td><td class="vl si ap">113<span class="d"></span><span class="u"> GB</span></td><td class="fx"><b>σ<sup>A</sup></b> · <b>S</b> · <b>n<sub>flt</sub></b> / <b>PP</b> <i>(one sequence per microbatch; this rank’s 1/PP of the layers)</i></td></tr>
+    <tr><td class="nm">A<sup>B</sup></td><td>saved activations per GPU, policy B (B)</td><td class="vl">65,818,755,072</td><td class="vl sc ap">6.58 × 10<sup>10</sup></td><td class="vl si ap">65<span class="d">.8</span><span class="u"> GB</span></td><td class="fx"><b>σ<sup>B</sup></b> · <b>S</b> · <b>n<sub>flt</sub></b> / <b>PP</b></td></tr>
+    <tr class="hl"><td class="nm">M<sup>A</sup></td><td>memory per GPU, policy A (B)</td><td class="vl"></td><td class="vl sc ap">2.91 × 10<sup>11</sup></td><td class="vl si ap">291<span class="d"></span><span class="u"> GB</span></td><td class="fx"><b>W</b> + <b>G</b> + <b>O</b> + <b>A<sup>A</sup></b></td></tr>
+    <tr class="hl"><td class="nm">M<sup>B</sup></td><td>memory per GPU, policy B (B)</td><td class="vl"></td><td class="vl sc ap">2.43 × 10<sup>11</sup></td><td class="vl si ap">243<span class="d"></span><span class="u"> GB</span></td><td class="fx"><b>W</b> + <b>G</b> + <b>O</b> + <b>A<sup>B</sup></b></td></tr>
+    <tr class="hl"><td class="nm">f<sup>A</sup><sub>mem</sub></td><td>of device memory, policy A</td><td class="vl"></td><td class="vl sc ap">9.80 × 10<sup>−1</sup></td><td class="vl si ap">98<span class="d">.0</span><span class="u"> %</span></td><td class="fx"><b>M<sup>A</sup></b> / <b>M<sub>GPU</sub></b> <i>(over 100 %: does not fit)</i></td></tr>
+    <tr class="hl"><td class="nm">f<sup>B</sup><sub>mem</sub></td><td>of device memory, policy B</td><td class="vl"></td><td class="vl sc ap">8.19 × 10<sup>−1</sup></td><td class="vl si ap">81<span class="d">.9</span><span class="u"> %</span></td><td class="fx"><b>M<sup>B</sup></b> / <b>M<sub>GPU</sub></b></td></tr>
+    </table></div>
+
+    <h2>Putting it together</h2>
+
+    <p class="ai">[[AI: At the default layout (288 GPUs: PP 8 × EP 36, a single replica, so no ZeRO-1 traffic at all) both policies fit, A at <span data-cellref="f<sup>A</sup><sub>mem</sub>">98<span class="d">.0</span><span class="u"> %</span></span> of device memory and B at <span data-cellref="f<sup>B</sup><sub>mem</sub>">81<span class="d">.9</span><span class="u"> %</span></span>. Policy A runs at <span data-cellref="ρ<sup>A</sup>">7<span class="d">.14</span><span class="u"> K</span></span> tokens/s per GPU, <span data-cellref="ε<sup>A</sup>">97<span class="d">.0</span><span class="u"> %</span></span> of the compute-only ceiling: the only loss is a <span data-cellref="b<sub>PP</sub>">3<span class="d">.08</span><span class="u"> %</span></span> bubble. Policy B pays its replay and lands at <span data-cellref="ρ<sup>B</sup>">6<span class="d">.15</span><span class="u"> K</span></span> (<span data-cellref="ε<sup>B</sup>">83<span class="d">.6</span><span class="u"> %</span></span>); its reward is fitting on a smaller cluster. The first table below sweeps cluster sizes and picks, per policy, the fitting layout with the best tokens/s per GPU; the second finds the smallest fitting cluster for each gradient × optimizer-state policy. Rows marked † are communication bound at speed of light (comms exceed compute on some link), so their step time is understated.]]</p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr class="hl"><td class="nm">T<sub>IB</sub></td><td>scale-out time per step (s)</td><td class="vl"></td><td class="vl sc ap">6.41 × 10<sup>0</sup></td><td class="vl si ap">6<span class="d">.41</span><span class="u"> s</span></td><td class="fx"><b>T<sub>sync</sub></b> + <b>T<sub>PP</sub></b></td></tr>
+    <tr class="hl"><td class="nm">f<sub>IB</sub></td><td>scale-out time, share of compute (policy A)</td><td class="vl"></td><td class="vl sc ap">2.03 × 10<sup>−1</sup></td><td class="vl si ap">20<span class="d">.3</span><span class="u"> %</span></td><td class="fx"><b>T<sub>IB</sub></b> / <b>T<sup>A</sup><sub>c</sub></b> <i>(under 100 % with f<sub>NV</sub>: compute bound, comms overlapped)</i></td></tr>
+    <tr class="hl"><td class="nm">T<sup>A</sup><sub>step</sub></td><td>step time, policy A (s)</td><td class="vl"></td><td class="vl sc ap">3.26 × 10<sup>1</sup></td><td class="vl si ap">32<span class="d">.6</span><span class="u"> s</span></td><td class="fx"><b>T<sup>A</sup><sub>c</sub></b> + <b>T<sup>A</sup><sub>bub</sub></b> <i>(compute plus the bubble)</i></td></tr>
+    <tr class="hl"><td class="nm">T<sup>B</sup><sub>step</sub></td><td>step time, policy B (s)</td><td class="vl"></td><td class="vl sc ap">3.79 × 10<sup>1</sup></td><td class="vl si ap">37<span class="d">.9</span><span class="u"> s</span></td><td class="fx"><b>T<sup>B</sup><sub>c</sub></b> + <b>T<sup>B</sup><sub>bub</sub></b></td></tr>
+    <tr class="hl"><td class="nm">ρ<sup>A</sup></td><td>tokens/s per GPU, policy A</td><td class="vl"></td><td class="vl sc ap">7.14 × 10<sup>3</sup></td><td class="vl si ap">7<span class="d">.14</span><span class="u"> K</span></td><td class="fx"><b>D<sub>GPU</sub></b> / <b>T<sup>A</sup><sub>step</sub></b></td></tr>
+    <tr class="hl"><td class="nm">ρ<sup>B</sup></td><td>tokens/s per GPU, policy B</td><td class="vl"></td><td class="vl sc ap">6.15 × 10<sup>3</sup></td><td class="vl si ap">6<span class="d">.15</span><span class="u"> K</span></td><td class="fx"><b>D<sub>GPU</sub></b> / <b>T<sup>B</sup><sub>step</sub></b></td></tr>
+    <tr><td class="nm">ε<sup>A</sup></td><td>of the compute-only ceiling, policy A</td><td class="vl"></td><td class="vl sc ap">9.70 × 10<sup>−1</sup></td><td class="vl si ap">97<span class="d">.0</span><span class="u"> %</span></td><td class="fx"><b>ρ<sup>A</sup></b> / <b>ρ<sub>∞</sub></b></td></tr>
+    <tr><td class="nm">ε<sup>B</sup></td><td>of the compute-only ceiling, policy B</td><td class="vl"></td><td class="vl sc ap">8.36 × 10<sup>−1</sup></td><td class="vl si ap">83<span class="d">.6</span><span class="u"> %</span></td><td class="fx"><b>ρ<sup>B</sup></b> / <b>ρ<sub>∞</sub></b></td></tr>
+    </table></div>
+
+    <div class="tally frontier"><table>
+    <thead>
+    <tr><th rowspan="2">GPUs</th><th rowspan="2" class="n">domains</th><th colspan="3" class="g">policy A · recompute non-matmul</th><th colspan="3" class="g">policy B · recompute all but SDPA, KDA, experts</th></tr>
+    <tr><th>layout</th><th class="n">memory</th><th class="n">tok/s/GPU</th><th>layout</th><th class="n">memory</th><th class="n">tok/s/GPU</th></tr>
+    </thead>
+    <tbody></tbody>
+    </table></div>
+
+    <div class="tally mins"><table>
+    <thead>
+    <tr><th rowspan="2">gradients</th><th rowspan="2">optimizer states</th><th colspan="2" class="g">policy A</th><th colspan="2" class="g">policy B</th></tr>
+    <tr><th class="n">min GPUs · layout</th><th class="n">tok/s/GPU</th><th class="n">min GPUs · layout</th><th class="n">tok/s/GPU</th></tr>
+    </thead>
+    <tbody></tbody>
+    </table></div>
+
+    <p class="ai">[[AI: Reading the tables: tokens/s per GPU falls monotonically with cluster size once the model fits, because the per-step fixed costs (ZeRO-1 traffic, the bubble) amortize over fewer tokens per GPU, and the layout that wins at every size is one replica of a PP × EP grid that just fits. So “the minimum number of GB300s that maximizes tokens/s per GPU” is the smallest cluster at which the preferred policy fits: with FP32 gradients and states, four domains (288 GPUs) under policy A, three (216) under policy B at a 13 % lower rate; BF16 optimizer states buy policy A the three-domain cluster, and BF16 gradients as well take policy B down to two. Fits above 95 % of device memory should be read as “on the line”: this roofline holds no communication buffers, no fragmentation, no vision tower. Not modeled: virtual pipeline stages, context parallelism, MoonEP’s redundant experts, the vision tower, MTP, activation offload bandwidth, and any kernel efficiency below the spec peak (set η).]]</p>
+
+    <p class="note" id="fn1"><sup>1</sup> Disclosure: this draft study — prose, sheet structure and model — was generated by Fable (Claude) from the Kimi K3 config and technical report, part 3’s roofline sheets and the author’s stated assumptions, and has not yet had a human edit pass. It is not part of the published series. <a href="#fnref1">↩</a></p>
+
+  </main>
+  <script type="module">
+    import '../src/viewer.js';
+    import './reset.js';
+    import './sheetedit.js';
+  </script>
+  <script type="module">
+    // 03's sheet interactions (cell cards, jump-to-row, row select) + the frontier table
+    import { attachTip } from '../src/tip.js';
+    import { current, withKnobs } from './sheetedit.js';
+    const def = new Map();
+    for (const tr of document.querySelectorAll('.cellsheet tr')) {
+      const nm = tr.querySelector('td.nm')?.innerHTML;
+      if (nm && !def.has(nm)) def.set(nm, tr);
+    }
+    const rowOf = (b) => def.get(b?.dataset.cellref ?? b?.innerHTML);
+    for (const b of document.querySelectorAll('.cellsheet td.fx b')) if (rowOf(b)) b.classList.add('ref');
+    const card = (tr) => {
+      const [nm, lb, vl, , si, fx] = tr.cells;
+      const leaf = !fx.querySelector('b') && fx.children.length === 1 && fx.firstElementChild.tagName === 'I';
+      const approx = si.textContent.trim();
+      const d = document.createElement('div');
+      const terms = [leaf ? '' : `= ${fx.innerHTML}`, vl.textContent && `= ${vl.textContent}`, approx && `≈ ${approx.replace(/\s+/g, ' ')}`];
+      d.innerHTML = `<b>${nm.innerHTML}</b> · ${lb.innerHTML}<br>` + terms.filter(Boolean).join(' ');
+      return d;
+    };
+    let sel = null, fuse;
+    const select = (tr) => { sel?.classList.remove('sel'); sel = tr; tr?.classList.add('sel'); };
+    const jump = (tr) => { select(tr); tr.scrollIntoView({ block: 'center' }); };
+    for (const sheet of document.querySelectorAll('.cellsheet')) {
+      attachTip(sheet, (ev) => { const tr = rowOf(ev.target.closest?.('b.ref')); return tr ? card(tr) : null; },
+        { parent: document.body, cls: 'cs-tip', pinnable: (ev) => !ev.target.closest('b.ref') });
+      sheet.addEventListener('click', (ev) => {
+        const tr = rowOf(ev.target.closest?.('b.ref'));
+        if (tr) { jump(tr); return; }
+        const row = ev.target.closest?.('tr');
+        if (!row?.querySelector('td')) return;
+        clearTimeout(fuse);
+        if (ev.detail > 1 || !getSelection().isCollapsed) return;
+        fuse = setTimeout(() => select(sel === row ? null : row), 250);
+      });
+    }
+    for (const q of document.querySelectorAll('main [data-cellref]')) {
+      attachTip(q, () => card(rowOf(q)), { parent: document.body, cls: 'cs-tip', pinnable: () => false });
+      q.addEventListener('click', () => jump(rowOf(q)));
+    }
+    // the frontier: for each cluster size, every PP × EP layout the knobs allow, both policies;
+    // keep the fitting layout with the best tokens/s per GPU (the sheet's own formulas, via withKnobs)
+    const num = ([a, b]) => Number(a) / Number(b);
+    const tbody = document.querySelector('.frontier tbody');
+    const fmtG = (x) => x >= 1e9 ? (x / 1e9).toFixed(0) + ' GB' : (x / 1e6).toFixed(0) + ' MB';
+    const build = (now) => {
+      const NVL = num(now.get('NVL')), L = num(now.get('L')), MGPU = num(now.get('M<sub>GPU</sub>'));
+      const EPs = [], PPs = [];
+      for (let e = 1; e <= NVL; e++) if (NVL % e === 0) EPs.push(e);
+      for (let p = 1; p <= L; p++) if ([1, 2, 3, 4, 6, 8, 12, 16, 24, 31, 32, 48, 93].includes(p)) PPs.push(p);
+      const sizes = [1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64, 128].map((x) => x * NVL);
+      const rows = [];
+      for (const g of sizes) {
+        const best = { A: null, B: null };
+        for (const PP of PPs) for (const EP of EPs) {
+          if (g % (PP * EP)) continue;
+          const v = withKnobs({ GPUs: [BigInt(g), 1n], PP: [BigInt(PP), 1n], EP: [BigInt(EP), 1n], rres: [BigInt(Math.min(12, Math.ceil(L / PP))), 1n] });
+          const cb = num(v.get('f<sub>IB</sub>')) > 1 || num(v.get('f<sub>NV</sub>')) > 1;
+          for (const pol of ['A', 'B']) {
+            const mem = num(v.get(`M<sup>${pol}</sup>`)), rho = num(v.get(`ρ<sup>${pol}</sup>`));
+            if (mem > MGPU) continue;
+            if (!best[pol] || rho > best[pol].rho) best[pol] = { PP, EP, mem, rho, cb };
+          }
+        }
+        rows.push({ g, best });
+      }
+      const cell = (bst) => bst
+        ? `<td class="lay">PP ${bst.PP} × EP ${bst.EP} × DP ${Math.round(1)}</td><td class="n">${(100 * bst.mem / MGPU).toFixed(0)} %</td><td class="n${bst.cb ? ' cb' : ''}">${Math.round(bst.rho).toLocaleString('en-US')}${bst.cb ? ' †' : ''}</td>`
+        : '<td class="no" colspan="3">does not fit</td>';
+      let firstA = false, firstB = false;
+      tbody.innerHTML = rows.map(({ g, best }) => {
+        const hl = (best.A && !firstA) || (best.B && !firstB);
+        if (best.A) firstA = true; if (best.B) firstB = true;
+        return `<tr${hl ? ' class="hl"' : ''}><td class="n">${g.toLocaleString('en-US')}</td><td class="n">${g / NVL}</td>${cell(best.A)}${cell(best.B)}</tr>`;
+      }).join('');
+      for (const td of tbody.querySelectorAll('td.lay')) {   // DP = GPUs / (PP · EP)
+        const g = +td.parentElement.cells[0].textContent.replace(/,/g, ''), [, pp, ep] = td.textContent.match(/PP (\d+) × EP (\d+)/);
+        td.textContent = `PP ${pp} × EP ${ep} × DP ${g / (pp * ep)}`;
+      }
+    };
+    // the second table: the smallest fitting cluster for each gradient × optimizer-state policy
+    const mins = document.querySelector('.mins tbody');
+    const buildMins = (now) => {
+      const NVL = num(now.get('NVL')), L = num(now.get('L')), MGPU = num(now.get('M<sub>GPU</sub>'));
+      const EPs = [], PPs = [1, 2, 3, 4, 6, 8, 12, 16, 24, 31, 32, 48, 93].filter((p) => p <= L);
+      for (let e = 1; e <= NVL; e++) if (NVL % e === 0) EPs.push(e);
+      const combos = [[2, 6, 'BF16', 'BF16'], [2, 8, 'BF16', 'FP32'], [4, 6, 'FP32', 'BF16'], [4, 8, 'FP32', 'FP32']];
+      mins.innerHTML = combos.map(([gB, oB, gl, ol]) => {
+        const best = { A: null, B: null };
+        for (let dom = 1; dom <= 64 && !(best.A && best.B); dom++) {
+          const g = dom * NVL;
+          for (const PP of PPs) for (const EP of EPs) {
+            if (g % (PP * EP)) continue;
+            const v = withKnobs({ GPUs: [BigInt(g), 1n], PP: [BigInt(PP), 1n], EP: [BigInt(EP), 1n], rres: [BigInt(Math.min(12, Math.ceil(L / PP))), 1n], gB: [BigInt(gB), 1n], oB: [BigInt(oB), 1n] });
+            const cb = num(v.get('f<sub>IB</sub>')) > 1 || num(v.get('f<sub>NV</sub>')) > 1;
+            for (const pol of ['A', 'B']) {
+              const mem = num(v.get(`M<sup>${pol}</sup>`)), rho = num(v.get(`ρ<sup>${pol}</sup>`));
+              if (mem > MGPU || (best[pol] && best[pol].g < g)) continue;
+              if (!best[pol] || rho > best[pol].rho) best[pol] = { g, PP, EP, mem, rho, cb };
+            }
+          }
+        }
+        const cell = (b) => b ? `<td class="n"><span class="lay">${b.g.toLocaleString('en-US')} · PP ${b.PP} × EP ${b.EP} × DP ${b.g / (b.PP * b.EP)}</span></td><td class="n${b.cb ? ' cb' : ''}">${Math.round(b.rho).toLocaleString('en-US')}${b.cb ? ' †' : ''}</td>` : '<td class="no" colspan="2">no fit under 64 domains</td>';
+        return `<tr><td>${gl}</td><td>${ol}</td>${cell(best.A)}${cell(best.B)}</tr>`;
+      }).join('');
+    };
+    build(current()); buildMins(current());
+    document.addEventListener('dsv3-cells', (ev) => { build(ev.detail); buildMins(ev.detail); });
+  </script>
+</body>
+
+</html>

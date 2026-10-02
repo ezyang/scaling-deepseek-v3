@@ -1,9 +1,9 @@
 // 03's static cell sheets, made live. The formula column IS the program:
 // every value on screen is computed from it, the HTML's numbers are only the
 // pre-module fallback (tests/sheetedit.js fails while one is stale). Each
-// formula's HTML compiles to exact rational
-// arithmetic, so editing a real knob (B, S, GPUs, EP, NVL, n_c and the rates the model runs at: π^sol_bf16, π^sol_fp8, β_IB;
-// the spec compute peaks are fixed)
+// formula's HTML compiles to exact rational arithmetic, so editing a real
+// knob (PAGES below names them per page: 03's B, S, GPUs, EP, NVL, n_c and the
+// rates the model runs at; the spec compute peaks are fixed)
 // recomputes every dependent row, wherever it's repeated. Rows that depart
 // from the untouched sheet turn amber. Edits live in the hash (departures
 // only), so the floating reset (reset.js) lists and undoes them. Prose numbers
@@ -14,8 +14,40 @@
 import { describe } from './reset.js';
 import { downloadXlsx, xesc } from '../src/xlsx.js';
 
-const KNOBS = { B: 'B', S: 'S', GPUs: 'GPUs', 'π<sup>sol</sup><sub>bf16</sub>': 'sol', 'π<sup>sol</sup><sub>fp8</sub>': 'sol8', EP: 'EP', NVL: 'NVL', 'β<sub>IB</sub>': 'IB', 'n<sub>c</sub>': 'SMc' };
-const COUNTS = new Set(['B', 'S', 'GPUs', 'EP', 'NVL', 'SMc']);
+// per page (<body data-sheet>): which rows are knobs (name → hash key), which
+// must be whole numbers, the cross-row rules an edit must keep, the .xlsx name
+const PAGES = {
+  '03': {
+    knobs: { B: 'B', S: 'S', GPUs: 'GPUs', 'π<sup>sol</sup><sub>bf16</sub>': 'sol', 'π<sup>sol</sup><sub>fp8</sub>': 'sol8', EP: 'EP', NVL: 'NVL', 'β<sub>IB</sub>': 'IB', 'n<sub>c</sub>': 'SMc' },
+    counts: ['B', 'S', 'GPUs', 'EP', 'NVL', 'SMc'],
+    xlsx: ['dsv3-roofline-sheet.xlsx', 'DSv3 roofline'],
+    rules(v, edits, pub) {
+      const [G, E, N] = ['GPUs', 'EP', 'NVL'].map((k) => v(k)[0]);
+      if (G % E) return `EP must divide GPUs (${G.toLocaleString('en-US')})`;
+      if (E % N) return `NVL must divide EP (${E.toLocaleString('en-US')})`;
+      if (E < 4n * N) return 'EP must span at least 4 nodes (EP ≥ 4 · NVL): M = 4 assumes a token can reach 4 nodes';
+      const sms = pub.get('n<sub>SM</sub>')?.[0];
+      if (edits.SMc?.[0] > sms) return `an H800 has ${sms} SMs`;
+      return null;
+    },
+  },
+  k3: {
+    knobs: { B: 'B', S: 'S', GPUs: 'GPUs', 'η': 'eta', 'β<sub>NV</sub>': 'NV', 'β<sub>IB</sub>': 'IB', NVL: 'NVL', PP: 'PP', EP: 'EP', 'r<sub>res</sub>': 'rres', 'g<sub>B</sub>': 'gB', 'o<sub>B</sub>': 'oB' },
+    counts: ['B', 'S', 'GPUs', 'NVL', 'PP', 'EP', 'rres', 'gB', 'oB'],
+    xlsx: ['kimi-k3-roofline-sheet.xlsx', 'Kimi K3 roofline'],
+    rules(v, edits, pub) {
+      const [G, P, E, N] = ['GPUs', 'PP', 'EP', 'NVL'].map((k) => v(k)[0]);
+      if (N % E) return `EP must divide NVL (${N}): EP lives inside one NVLink domain`;
+      if (G % (P * E)) return `PP · EP must divide GPUs (${G.toLocaleString('en-US')})`;
+      const L = pub.get('L')?.[0];
+      if (P > L) return `the model has ${L} layers`;
+      return null;
+    },
+  },
+};
+const PAGE = PAGES[document.body.dataset.sheet ?? '03'];
+const KNOBS = PAGE.knobs;
+const COUNTS = new Set(PAGE.counts);
 const KEY = 'c:cells';
 
 // ---- exact rationals: [num, den] BigInts, den > 0, reduced ----------------
@@ -126,13 +158,7 @@ function invalid(edits) {
     if (edits[k][0] <= 0n) return `${k} must be positive`;
     if (COUNTS.has(k) && edits[k][1] !== 1n) return `${k} must be a whole number`;
   }
-  const [G, E, N] = ['GPUs', 'EP', 'NVL'].map((k) => v(k)[0]);
-  if (G % E) return `EP must divide GPUs (${G.toLocaleString('en-US')})`;
-  if (E % N) return `NVL must divide EP (${E.toLocaleString('en-US')})`;
-  if (E < 4n * N) return 'EP must span at least 4 nodes (EP ≥ 4 · NVL): M = 4 assumes a token can reach 4 nodes';
-  const sms = PUB.get('n<sub>SM</sub>')?.[0];
-  if (edits.SMc?.[0] > sms) return `an H800 has ${sms} SMs`;
-  return null;
+  return PAGE.rules(v, edits, PUB);
 }
 
 // ---- state ------------------------------------------------------------------
@@ -149,6 +175,7 @@ function save() {
   history.replaceState(null, '', p.size ? '#' + p : location.pathname + location.search);
 }
 export const current = () => evalAll(edits);
+export const withKnobs = (over) => evalAll({ ...edits, ...over });   // the sheet at other knob values (page sweeps), on top of the user's edits
 function render() {
   const now = current();
   for (const [name, r] of rows) {
@@ -260,7 +287,7 @@ export function sheetXml() {
 for (const th of document.querySelectorAll('.cellsheet tr:first-child th:last-child')) {
   const b = Object.assign(document.createElement('button'), { className: 'cs-dl', textContent: '⤓ .xlsx',
     title: 'download every sheet on this page as one .xlsx with live formulas (cell names become cell references), at the current knob values' });
-  b.addEventListener('click', (ev) => { ev.stopPropagation(); downloadXlsx('dsv3-roofline-sheet.xlsx', 'DSv3 roofline', sheetXml()); });
+  b.addEventListener('click', (ev) => { ev.stopPropagation(); downloadXlsx(...PAGE.xlsx, sheetXml()); });
   th.append(b);
 }
 
