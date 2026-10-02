@@ -180,8 +180,8 @@
         a GEMM to be poorly optimized for sizes—you should roofline your
         GEMMs too—but a well optimized GEMM will still have a gap.</li>
 
-        <li>Even when you are issuing wgmma in a loop, if you are running it
-        on non-zero data, you quickly run into power limits of the GPU
+        <li>Even when you are issuing wgmma in a loop, in some situations, if you are running it
+        on non-zero data, you may run into power limits of the GPU
         which will reduce your clock speed.  This leads to the surprising
         phenomenon where the performance of your GEMM depends on what kind of
         data is in the input tensors (better not tune on zero tensors!)  It's
@@ -193,7 +193,8 @@
     e.g., by benchmarking cublas's GEMM speed for large enough inputs on the
     actual GPUs you plan to run your training on (e.g., in case they're power capped).
     This microbenchmark is not too hard to reproduce by hand, but in this analysis
-    we're going to use the benchmarks from <a href="https://huggingface.co/spaces/HuggingFaceTB/smol-training-playbook#compute-units-and-flops">HuggingFace's Smol Training Playbook</a>:
+    we're going to use the benchmarks from <a href="https://huggingface.co/spaces/HuggingFaceTB/smol-training-playbook#compute-units-and-flops">HuggingFace's Smol Training Playbook</a>, assuming
+    that the tensor core FLOPs of H100 match those of H800:
     </p>
 
     <div class="cellsheet"><table>
@@ -1122,7 +1123,7 @@
     <tr class="hl"><td class="nm">T<sub>step</sub></td><td>step time at speed of light (s)</td><td class="vl"></td><td class="vl sc ap">6.64 × 10<sup>0</sup></td><td class="vl si ap">6<span class="d">.64</span><span class="u"> s</span></td><td class="fx"><b>T<sup>+</sup><sub>c</sub></b> + <b>T<sub>Dual</sub></b> <i>(compute plus the bubble)</i></td></tr>
     </table></div>
 
-    <p>We can compare this against the self-reported full training time of DSv3 and see how different our SOL roofline is compared to the actual training numbers.</p>
+    <p>We can compare this against the self-reported pretraining time of DSv3 and see how different our SOL roofline is compared to the actual training numbers.</p>
 
     <div class="cellsheet"><table>
     <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
@@ -1133,13 +1134,13 @@
     <tr class="hl"><td class="nm">f<sub>sol</sub></td><td>speed of light over reality</td><td class="vl"></td><td class="vl sc ap">3.00 × 10<sup>0</sup></td><td class="vl si ap">3<span class="d">.00</span><span class="u"> ×</span></td><td class="fx"><b>ρ<sub>sol</sub></b> / <b>ρ<sub>DS</sub></b></td></tr>
     </table></div>
 
-    <p>We are off by 3x!  Where does the difference come from?</p>
+    <p>We are off by 3×!  Where does the difference come from?</p>
 
     <h2>Comparing against the DeepSeek trace</h2>
 
     <p>
-    DeepSeek published <a href="https://github.com/deepseek-ai/profile-data">a profiling trace of one rank</a> of a 64-GPU H800 profiling run of their EP64 setup.  It captures four repeats of one layer's forward for a 4,096-token microbatch, overlapped with one layer's backward for another.  Routing is simulated as perfectly balanced and PP communication is left out.  We can use this to localize some of the difference between the real run and SOL, by going through each kernel in the profile one by one and comparing it with what
-    our SOL says it should be:<span class="mn-ref"></span><span class="mn">Trace times are averaged over the capture's four cycles.  The routed-expert GEMMs are additionally normalized to 32,768 routed rows (the capture delivered slightly fewer: 32,512 forward, 32,128 backward), and their weight-gradient entries are the elapsed span of four concurrent expert kernels rather than a per-kernel mean, so the totals are not raw wall times.</span></p>
+    DeepSeek published <a href="https://github.com/deepseek-ai/profile-data">a profiling trace of one rank</a> of a 64-GPU H800 profiling run of their EP64 setup.  It captures a forward chunk of four MoE layers for a 4,096-token microbatch, overlapped with a backward chunk of four MoE layers for another.  Routing is simulated as perfectly balanced and PP communication is left out.  We can use this to localize some of the difference between the real run and SOL, by going through each kernel in the profile one by one and comparing it with what
+    our SOL says it should be:<span class="mn-ref"></span><span class="mn">Trace times are averaged over the chunk's four layers.  The routed-expert GEMMs are additionally normalized to 32,768 routed rows (the capture delivered slightly fewer: 32,512 forward, 32,128 backward), and their weight-gradient entries are the elapsed span of four concurrent expert kernels rather than a per-kernel mean, so the totals are not raw wall times.</span></p>
 
     <details class="fold"><summary>the per-kernel speed-of-light sheet</summary>
     <div class="cellsheet"><table>
@@ -1240,14 +1241,16 @@
 
     <p>Same conventions as the kernel table, though averaging is somewhat misleading
     here, as the DeepEP notify handshake is quite variable, since it blocks on remote ranks.  You can also see that SOL
-    systematically overestimated our network performance, but that the proportions are correct.
+    systematically overestimated our network performance, but that the proportions are correct: for example, dispatch to combine stays near 1:2 in both columns.
     In fact, the DeepSeek trace reveals that their compute and comms are
     balanced on a knife's edge: in this single-rank capture, compute and communication occupy
-    the GPU almost equally (about 31 ms against 29 ms per cycle, and one of the four cycles tips
+    the GPU almost equally (about 31 ms against 29 ms per layer, and one of the four layers tips
     the other way), so it is at best narrowly compute bound.  This is unlikely to be an accident; they
     probably tuned their system based on real-world profiles to balance it as
     closely as possible!
     </p>
+
+    <p>This is not a complete explanation for the end-to-end 3× difference, but the trace accounts for most of it.  The compute runs 2.2 to 2.5× its SOL time; comms are also slower by the same 2.2 to 2.5×.  The profile is not a full train step and it measures a steady-state layer with balanced routing. We could imagine that real routing imbalance, the pipeline bubble, MTP, the batch-size ramp early in training, checkpointing and stragglers combine to cover the rest of the gap.</p>
 
     <h2>Conclusion</h2>
 
@@ -1257,9 +1260,10 @@
     of 2048 H800s.  The obvious benefit of this is that we can now make predictions
     about our system performance (for example, we see that FSDP will be hopelessly
     comms bound).  But to me, the more important takeaway is that the act
-    of rooflining forces us to truly understand what it is our system is doing—we
-    may in fact do rooflines that are wrong, that fail to predict behavior in
-    reality, but the clarity of a simple model means that we can figure out
+    of rooflining forces us to truly understand what it is our system is doing.
+    For example, we took 6ND apart to understand how the characteristics of our job change
+    as we scale compute.
+    The roofline will never exactly predict real-world behavior, but the clarity of a simple model means that we can figure out
     what went wrong (either in the model, or in our implementation).</p>
 
   </main>
