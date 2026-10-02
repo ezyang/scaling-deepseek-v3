@@ -27,7 +27,7 @@ T.check('every formula name resolves to a defining row', names.every((b) => b.cl
 T.check('total params = 2,779,484,476,000', val('Ntot') === '2,779,484,476,000', val('Ntot'));
 T.check('activated params = 104,189,612,640', val('N') === '104,189,612,640', val('N'));
 const edv = [...document.querySelectorAll('.cellsheet td.vl.edv')].map((td) => td.parentElement.cells[0].textContent);
-T.check('editable: exactly this page\'s knobs', edv.join(' ') === 'η βNV βIB NVL B S GPUs PP EP Vpp rres gB oB βhost', edv.join(' '));
+T.check('editable: exactly this page\'s knobs', edv.join(' ') === 'πsolbf16 πsolfp8 βNV βIB NVL B S GPUs PP EP Vpp rres gB oB βhost', edv.join(' '));
 T.check('untouched: no hash, nothing amber', location.hash === '' && !document.querySelector('.cellsheet tr.off'), location.hash);
 // the default: 216 GPUs, PP 12 × EP 18, one replica — under 1F1B only B fits; ZB-V-Min fits A; no ZeRO-1 traffic
 T.check('default layout: DP 1, ZeRO-1 bytes 0', val('DP') === '1' && val('Vsync') === '0', `${val('DP')} ${val('Vsync')}`);
