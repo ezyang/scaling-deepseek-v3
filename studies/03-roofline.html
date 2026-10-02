@@ -1068,8 +1068,8 @@
 
     <p>This is already massively better than our FSDP exposed time.  But it
     gets even better.  If we use a DualPipe-style schedule (we'll use DualPipeV
-    for the analysis below, as it is strictly better than the DualPipe DeepSeek-V3 was
-    trained with),  we can reduce the bubble even further: (PP − 1)(F&amp;B + B −
+    for the analysis below, as it is <mark class="flag">strictly better than the DualPipe DeepSeek-V3 was
+    trained with</mark> <span class="flag-why">[[FLAG: <a href="https://hackmd.io/@ufotalent/r1lVXsa9Jg">the Cut-in-half source, Table 1</a>, lists tradeoffs at equal device count: half the parameter memory, but twice the PP communication and a slightly larger bubble, (d − 1)/2 versus d/2 − 1 in common time units. It argues that the memory benefit outweighs the extra communication for EP workloads, not that DualPipeV strictly dominates DualPipe. The bubble formula below is consistent with the source when F/B/W denote the smaller chunks.]]</span>),  we can reduce the bubble even further: (PP − 1)(F&amp;B + B −
     3W), where F, B and W are one chunk's times, W is the weight-gradient half of the backward (W ≈ F) and F&amp;B
     is a forward and a backward run overlapped.</span></p>
 
