@@ -9,7 +9,10 @@
 // only), so the floating reset (reset.js) lists and undoes them. Prose numbers
 // that quote a cell (data-cellref = the row's name) follow along; each render
 // fires 'dsv3-cells' so page scripts can follow too (current(), setKnob()).
+// Every sheet's header offers the whole page as one .xlsx with live formulas
+// (names → C-column addresses), at the current knob values.
 import { describe } from './reset.js';
+import { downloadXlsx, xesc } from '../src/xlsx.js';
 
 const KNOBS = { B: 'B', S: 'S', GPUs: 'GPUs', 'π<sup>sol</sup><sub>bf16</sub>': 'sol', 'π<sup>sol</sup><sub>fp8</sub>': 'sol8', EP: 'EP', NVL: 'NVL', 'β<sub>IB</sub>': 'IB', 'n<sub>c</sub>': 'SMc' };
 const COUNTS = new Set(['B', 'S', 'GPUs', 'EP', 'NVL', 'SMc']);
@@ -220,6 +223,46 @@ for (const [name, r] of rows) {
   }
 }
 render();
+
+// ---- the .xlsx download: each row once (where it first appears), under its section's h2
+const plain = (h) => h.replace(/<sup>(.*?)<\/sup>/g, '^$1').replace(/<sub>(.*?)<\/sub>/g, '_$1').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+export function sheetXml() {
+  const now = current(), at = new Map(), out = [];
+  let sec = null;
+  for (const el of document.querySelectorAll('h2, .cellsheet tr')) {
+    if (el.tagName === 'H2') { sec = el.textContent; continue; }
+    const name = el.cells[0]?.className === 'nm' && el.cells[0].innerHTML;
+    if (!name || rows.get(name).trs[0] !== el) continue;
+    if (sec) { out.push({ sec }); sec = null; }
+    out.push({ name, tr: el });
+    at.set(name, out.length + 1);
+  }
+  const str = (ref, t, st = 0) => `<c r="${ref}" t="inlineStr"${st ? ` s="${st}"` : ''}><is><t xml:space="preserve">${xesc(t)}</t></is></c>`;
+  const xf = (fx) => fx.replace(/<i>[\s\S]*?<\/i>/g, '').replace(/<b[^>]*>([\s\S]*?)<\/b>/g, (_, n) => `C${at.get(n)}`)
+    .replace(/10<sup>(\d+)<\/sup>/g, '1E+$1').replace(/(\d),(?=\d{3})/g, '$1')
+    .replace(/·/g, '*').replace(/−/g, '-').replace(/⌈/g, 'CEILING(').replace(/⌉/g, ',1)').replace(/\s+/g, '');
+  const body = out.map((e, i) => {
+    const r = i + 2;
+    if (e.sec) return `<row r="${r}">${str('A' + r, e.sec, 1)}</row>`;
+    const { name, tr } = e, fx = tr.cells[5].innerHTML, v = now.get(name), st = tr.classList.contains('hl') ? 1 : 0;
+    const val = rows.get(name).leaf ? `<c r="C${r}"><v>${fmtKnob(v).replace(/,/g, '')}</v></c>`
+      : `<c r="C${r}"><f>${xesc(xf(fx))}</f><v>${num(v)}</v></c>`;
+    const note = [...fx.matchAll(/<i>([\s\S]*?)<\/i>/g)].map((m) => plain(m[1])).join(' ');
+    return `<row r="${r}">${str('A' + r, plain(name), st)}${str('B' + r, tr.cells[1].textContent, st)}${val}`
+      + `<c r="D${r}" s="5"><f>C${r}</f><v>${num(v)}</v></c>${rows.get(name).leaf ? '' : str('E' + r, plain(fx.replace(/<i>[\s\S]*?<\/i>/g, '')))}${note ? str('F' + r, note, 4) : ''}</row>`;
+  });
+  const head = `<row r="1">${['cell', 'quantity', 'value', 'scientific', 'formula', 'note'].map((h, i) => str('ABCDEF'[i] + '1', h, 1)).join('')}</row>`;
+  return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    + '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+    + '<cols>' + [9, 44, 22, 11, 40, 50].map((w, i) => `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`).join('') + '</cols>'
+    + `<sheetData>${head}${body.join('')}</sheetData></worksheet>`;
+}
+for (const th of document.querySelectorAll('.cellsheet tr:first-child th:last-child')) {
+  const b = Object.assign(document.createElement('button'), { className: 'cs-dl', textContent: '⤓ .xlsx',
+    title: 'download every sheet on this page as one .xlsx with live formulas (cell names become cell references), at the current knob values' });
+  b.addEventListener('click', (ev) => { ev.stopPropagation(); downloadXlsx('dsv3-roofline-sheet.xlsx', 'DSv3 roofline', sheetXml()); });
+  th.append(b);
+}
 
 describe(KEY, () => Object.entries(KNOBS).filter(([, k]) => edits[k]).map(([name, k]) => ({
   html: `<b>${name}</b> ${fmtKnob(PUB.get(name))} → ${fmtKnob(edits[k])}`,
