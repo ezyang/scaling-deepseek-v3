@@ -1,6 +1,9 @@
 // One-sheet .xlsx downloads (02's <dsv3-sheet>, 03's cell sheets): a
 // store-only ZIP around the minimal OOXML parts. Cell styles (s=): 1 bold ·
-// 2 #,##0.##### · 3 #,##0.0## grey · 4 grey text · 5 0.00E+00.
+// 2 #,##0.##### · 3 #,##0.0## grey · 4 grey text · 5 0.00E+00; a caller may
+// append more (s = 6, 7, …) as { fmt: format code, font: 0 plain · 1 bold ·
+// 2 grey · 3 heading · 4 blue · 5 blue bold, fill: 2 tint · 3 header band,
+// border: 1 underline }.
 export const xesc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const CRC_T = (() => {
   const t = new Uint32Array(256);
@@ -30,7 +33,12 @@ function zipStore(files) {   // files: [name, string][] → Blob (method 0, no c
   return new Blob([...parts, ...central, eocd], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
 }
 
-export function downloadXlsx(filename, name, sheetXml) {
+export function downloadXlsx(filename, name, sheetXml, xfs = []) {
+  const codes = [...new Set(xfs.map((x) => x.fmt).filter(Boolean))];
+  const xf = ({ fmt, font = 0, fill = 0, border = 0 }) => `<xf numFmtId="${fmt ? 166 + codes.indexOf(fmt) : 0}" fontId="${font}" fillId="${fill}" borderId="${border}"`
+    + `${fmt ? ' applyNumberFormat="1"' : ''}${font ? ' applyFont="1"' : ''}${fill ? ' applyFill="1"' : ''}${border ? ' applyBorder="1"' : ''}/>`;
+  const font = (b, sz, rgb) => `<font>${b ? '<b/>' : ''}<sz val="${sz}"/>${rgb ? `<color rgb="FF${rgb}"/>` : ''}<name val="Calibri"/></font>`;
+  const fill = (rgb) => `<fill><patternFill patternType="solid"><fgColor rgb="FF${rgb}"/></patternFill></fill>`;
   const XMLNS = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
   const files = [
     ['[Content_Types].xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
@@ -52,13 +60,14 @@ export function downloadXlsx(filename, name, sheetXml) {
       + '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>'],
     ['xl/styles.xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
       + `<styleSheet xmlns="${XMLNS}">`
-      + '<numFmts count="2"><numFmt numFmtId="164" formatCode="#,##0.#####"/><numFmt numFmtId="165" formatCode="#,##0.0##"/></numFmts>'
-      + '<fonts count="3"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font>'
-      + '<font><sz val="11"/><color rgb="FF898781"/><name val="Calibri"/></font></fonts>'
-      + '<fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>'
-      + '<borders count="1"><border/></borders><cellStyleXfs count="1"><xf/></cellStyleXfs>'
-      + '<cellXfs count="6"><xf/><xf fontId="1" applyFont="1"/><xf numFmtId="164" applyNumberFormat="1"/>'
-      + '<xf numFmtId="165" applyNumberFormat="1" fontId="2" applyFont="1"/><xf fontId="2" applyFont="1"/><xf numFmtId="11" applyNumberFormat="1"/></cellXfs></styleSheet>'],
+      + `<numFmts count="${2 + codes.length}"><numFmt numFmtId="164" formatCode="#,##0.#####"/><numFmt numFmtId="165" formatCode="#,##0.0##"/>`
+      + codes.map((c, i) => `<numFmt numFmtId="${166 + i}" formatCode="${xesc(c).replace(/"/g, '&quot;')}"/>`).join('') + '</numFmts>'
+      + `<fonts count="6">${font(0, 11)}${font(1, 11)}${font(0, 11, '898781')}${font(1, 13)}${font(0, 11, '2A78D6')}${font(1, 11, '2A78D6')}</fonts>`
+      + `<fills count="4"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>${fill('FFF8EA')}${fill('F0EFE9')}</fills>`
+      + '<borders count="2"><border/><border><bottom style="thin"><color rgb="FFBDBBB4"/></bottom></border></borders><cellStyleXfs count="1"><xf/></cellStyleXfs>'
+      + `<cellXfs count="${6 + xfs.length}"><xf/><xf fontId="1" applyFont="1"/><xf numFmtId="164" applyNumberFormat="1"/>`
+      + '<xf numFmtId="165" applyNumberFormat="1" fontId="2" applyFont="1"/><xf fontId="2" applyFont="1"/><xf numFmtId="11" applyNumberFormat="1"/>'
+      + xfs.map(xf).join('') + '</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>'],
     ['xl/worksheets/sheet1.xml', sheetXml],
   ];
   const url = URL.createObjectURL(zipStore(files));

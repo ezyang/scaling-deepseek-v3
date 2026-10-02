@@ -116,12 +116,19 @@ export function fmtExact([n, d], places = 9) {
 const fmtKnob = (q) => fmtExact(q, Infinity);
 const fmtSci = (x) => { const [m, e] = x.toExponential(2).split('e'); return `${m} × 10<sup>${(+e).toString().replace('-', '−')}</sup>`; };
 const PFX = ['', 'K', 'M', 'G', 'T', 'P', 'E'];
-function fmtSI(x, unit) {
+// → [scaled value, prefix, base unit, power of ten applied] (the .xlsx's SI column reuses it)
+function siScale(x, unit) {
   const base = unit === 'ms' || unit === 'µs' ? 's' : unit === '%' || unit === 's' || !PFX.includes(unit[0]) ? unit : unit.slice(1);
-  let v = base === '%' ? x * 100 : x, p = 0, pf = '';
-  if (unit === 'µs') { v *= 1e6; pf = 'µ'; }   // per-kernel rows stay in µs, the trace's unit
-  else if (base === 's') { if (Math.abs(v) < 1) { v *= 1000; pf = 'm'; } }
-  else if (base !== '%') { while (p < 6 && Math.abs(v) >= 1000) { v /= 1000; p++; } pf = PFX[p]; }
+  let v = base === '%' ? x * 100 : x, p = 0, pf = '', e = base === '%' ? 2 : 0;
+  if (unit === 'µs') { v *= 1e6; pf = 'µ'; e = 6; }   // per-kernel rows stay in µs, the trace's unit
+  else if (base === 's') { if (Math.abs(v) < 1) { v *= 1000; pf = 'm'; e = 3; } }
+  else if (base !== '%') { while (p < 6 && Math.abs(v) >= 1000) { v /= 1000; p++; } pf = PFX[p]; e = -3 * p; }
+  return [v, pf, base, e];
+}
+// decimals in three significant figures (none for integers and from 1,000 up)
+const sigDec = (v) => Number.isInteger(v) || Math.abs(v) >= 1000 ? 0 : Math.max(0, 2 - Math.floor(Math.log10(Math.abs(v))));
+function fmtSI(x, unit) {
+  const [v, pf, base] = siScale(x, unit);
   const t = Number.isInteger(v) ? String(v) : Math.abs(v) >= 1000 ? v.toLocaleString('en-US', { maximumSignificantDigits: 3 }) : v.toPrecision(3);
   const [ip, fp] = t.split('.');
   return `${ip}<span class="d">${fp ? '.' + fp : ''}</span><span class="u"> ${pf}${base}</span>`;
@@ -255,9 +262,11 @@ for (const [name, r] of rows) {
 }
 render();
 
-// ---- the .xlsx download: each row once (where it first appears), under its section's h2
+// ---- the .xlsx download: each row once (where it first appears), under its
+// section's h2, with the page's three value columns (exact · scientific · SI)
+// as number formats over live formulas; xfs collects the cell styles it uses
 const plain = (h) => h.replace(/<sup>(.*?)<\/sup>/g, '^$1').replace(/<sub>(.*?)<\/sub>/g, '_$1').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
-export function sheetXml() {
+export function sheetXml(xfs = []) {
   const now = current(), at = new Map(), out = [];
   let sec = null;
   for (const el of document.querySelectorAll('h2, .cellsheet tr')) {
@@ -268,27 +277,41 @@ export function sheetXml() {
     out.push({ name, tr: el });
     at.set(name, out.length + 1);
   }
-  const str = (ref, t, st = 0) => `<c r="${ref}" t="inlineStr"${st ? ` s="${st}"` : ''}><is><t xml:space="preserve">${xesc(t)}</t></is></c>`;
+  const sid = (x) => { const k = JSON.stringify(x), i = xfs.findIndex((y) => JSON.stringify(y) === k); return 6 + (i < 0 ? xfs.push(x) - 1 : i); };
+  const str = (ref, t, x) => `<c r="${ref}" t="inlineStr" s="${sid(x)}"><is><t xml:space="preserve">${xesc(t)}</t></is></c>`;
   const xf = (fx) => fx.replace(/<i>[\s\S]*?<\/i>/g, '').replace(/<b[^>]*>([\s\S]*?)<\/b>/g, (_, n) => `C${at.get(n)}`)
     .replace(/10<sup>(\d+)<\/sup>/g, '1E+$1').replace(/(\d),(?=\d{3})/g, '$1')
     .replace(/·/g, '*').replace(/−/g, '-').replace(/⌈/g, 'CEILING(').replace(/⌉/g, ',1)').replace(/max\(/g, 'MAX(').replace(/\s+/g, '');
+  const dec = (n) => n ? '.' + '0'.repeat(n) : '';
   const body = out.map((e, i) => {
     const r = i + 2;
-    if (e.sec) return `<row r="${r}">${str('A' + r, e.sec, 1)}</row>`;
-    const { name, tr } = e, fx = tr.cells[5].innerHTML, v = now.get(name), st = tr.classList.contains('hl') ? 1 : 0;
-    const val = rows.get(name).leaf ? `<c r="C${r}"><v>${fmtKnob(v).replace(/,/g, '')}</v></c>`
-      : `<c r="C${r}"><f>${xesc(xf(fx))}</f><v>${num(v)}</v></c>`;
+    if (e.sec) return `<row r="${r}" ht="24" customHeight="1">${str('A' + r, e.sec, { font: 3 })}</row>`;
+    const { name, tr } = e, fx = tr.cells[5].innerHTML, v = now.get(name), x = num(v), leaf = rows.get(name).leaf;
+    const hl = tr.classList.contains('hl');   // the page's tinted bold rows
+    const st = (o, font = 0) => (hl ? { ...o, font: [1, 1, 2, 3, 5, 5][font], fill: 2 } : font ? { ...o, font } : o);
+    const vc = (col, f, fmt, font) => `<c r="${col}${r}" s="${sid(st({ fmt }, font))}">${f ? `<f>${xesc(f)}</f>` : ''}<v>${x}</v></c>`;
+    const exact = leaf ? `<c r="C${r}" s="${sid(st({ fmt: Number.isInteger(x) ? '#,##0' : '#,##0.0########' }))}"><v>${fmtKnob(v).replace(/,/g, '')}</v></c>`
+      : vc('C', xf(fx), Number.isInteger(x) ? '#,##0' : '#,##0.0########');
+    const unit = tr._unit;
+    let si = str('E' + r, '', st({}));
+    if (unit) {
+      const [sv, pf, base, p] = siScale(x, unit);
+      si = vc('E', base === '%' || !p ? `C${r}` : `C${r}${p > 0 ? '*' : '/'}1E${Math.abs(p)}`,
+        base === '%' ? `#,##0${dec(sigDec(sv))}%` : `#,##0${dec(sigDec(sv))}${pf + base ? `" ${pf}${base}"` : ''}`, 2);
+    }
     const note = [...fx.matchAll(/<i>([\s\S]*?)<\/i>/g)].map((m) => plain(m[1])).join(' ');
-    return `<row r="${r}">${str('A' + r, plain(name), st)}${str('B' + r, tr.cells[1].textContent, st)}${val}`
-      + `<c r="D${r}" s="5"><f>C${r}</f><v>${num(v)}</v></c>${rows.get(name).leaf ? '' : str('E' + r, plain(fx.replace(/<i>[\s\S]*?<\/i>/g, '')))}${note ? str('F' + r, note, 4) : ''}</row>`;
+    return `<row r="${r}">${str('A' + r, plain(name), st({}, 4))}${str('B' + r, tr.cells[1].textContent, st({}))}${exact}`
+      + vc('D', `C${r}`, '0.00E+00', 2) + si
+      + str('F' + r, leaf ? '' : plain(fx.replace(/<i>[\s\S]*?<\/i>/g, '')), st({})) + str('G' + r, note, st({}, 2)) + '</row>';
   });
-  const head = `<row r="1">${['cell', 'quantity', 'value', 'scientific', 'formula', 'note'].map((h, i) => str('ABCDEF'[i] + '1', h, 1)).join('')}</row>`;
+  const head = `<row r="1">${['cell', 'quantity', 'value (exact)', 'scientific', 'SI', 'formula', 'note'].map((h, i) => str('ABCDEFG'[i] + '1', h, { font: 1, fill: 3, border: 1 })).join('')}</row>`;
   return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
     + '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
-    + '<cols>' + [9, 44, 22, 11, 40, 50].map((w, i) => `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`).join('') + '</cols>'
+    + '<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>'
+    + '<cols>' + [10, 44, 28, 11, 16, 44, 60].map((w, i) => `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`).join('') + '</cols>'
     + `<sheetData>${head}${body.join('')}</sheetData></worksheet>`;
 }
-for (const b of document.querySelectorAll('.sheet-dl')) b.addEventListener('click', () => downloadXlsx(...PAGE.xlsx, sheetXml()));
+for (const b of document.querySelectorAll('.sheet-dl')) b.addEventListener('click', () => { const xfs = []; downloadXlsx(...PAGE.xlsx, sheetXml(xfs), xfs); });
 
 describe(KEY, () => Object.entries(KNOBS).filter(([, k]) => edits[k]).map(([name, k]) => ({
   html: `<b>${name}</b> ${fmtKnob(PUB.get(name))} → ${fmtKnob(edits[k])}`,
