@@ -210,7 +210,7 @@
     so we just use the full spec sheet 50 GB/s.  However, DeepSeek reported themselves
     in their paper that they measured only 160 GB/s unidirectional bandwidth on H800's NVLink,
     so we will adopt that for our calculations (this won't matter much, except for mostly
-    arguing that NVLink is still not the bottleneck, even with the nerfed H800 NVLink.)</p>
+    arguing that NVLink is still not the bottleneck, even with the nerfed H800 NVLink).</p>
 
     <div class="cellsheet"><table>
     <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
@@ -361,7 +361,7 @@
     <p>
     So you derive 6ND by multiplying N (the parameter count<span class="mn-ref"></span><span class="mn">Strictly, we shouldn't include non-matmul params like the RMSNorm parameters or the router bias in the parameter count, but these parameters are proportionally very small and don't make a big difference either way.</span>) by D (number of tokens)
     and then scaling it by 6 (two FLOPs per matmul times three matmuls total: one in forwards,
-    two in backwards computing the gradient of the input and the gradient of the weight.)</p>
+    two in backwards computing the gradient of the input and the gradient of the weight).</p>
 
     <svg class="roof wf" width="596" height="214" viewBox="0 0 596 214" role="img"
       aria-label="The three matmuls of one weight matrix W in training. Forward runs top down: the input x, from the previous layer, times W gives y, sent to the next layer. Backward runs bottom up beside it: the output gradient dy, from the next layer, times W transposed gives the input gradient dx, sent to the previous layer. The weight gradient dW = x transposed times dy reads the saved input x and dy, and goes to the optimizer. Each is a matmul the size of W: 2 FLOPs per weight per token, 6 in all.">
@@ -479,7 +479,7 @@
         is non-negligible and we need to account for it.</li>
 
         <li>We are doing some recompute to help us fit the activations
-        in memory.  We need to add these recompute FLOPs our FLOP count.</li>
+        in memory.  We need to add these recompute FLOPs to our FLOP count.</li>
 
         <li>Not all matrix multiplies in DSv3 are FP8; notably attention,
         router and LM head are in BF16.  We have a different speed of light
@@ -678,7 +678,7 @@
     <h2>ZeRO-1</h2>
 
     <p>In our memory analysis, we determined that we would need to shard our
-    optimizer states (including the FP32 master parameters.)  When we do
+    optimizer states (including the FP32 master parameters).  When we do
     this, we need to do a reduce-scatter to get each GPU the summed gradients
     for its shard, and then after the (sharded) optimizer step, an all-gather
     that sends the updated BF16 parameters back to every GPU.  Calculating the cost of these
@@ -1071,7 +1071,7 @@
     </table></div>
 
     <p>This is already massively better than our FSDP exposed time.  But it
-    gets even better.  If we use a DualPipeV<span class="mn-ref"></span><span class="mn">In the original <a href="https://hackmd.io/@ufotalent/r1lVXsa9Jg">DualPipeV article, Table 1</a>, you can see the tradeoffs DualPipeV has compared to DeepSeek's original DualPipe schedule: at equal device count, it uses half the parameter memory, but twice the PP communication and a slightly larger bubble, (d − 1)/2 versus d/2 − 1 in common time units.</span>, we can reduce the bubble even further: (PP − 1)(F&amp;B + B −
+    gets even better.  If we use a DualPipeV schedule<span class="mn-ref"></span><span class="mn">In the original <a href="https://hackmd.io/@ufotalent/r1lVXsa9Jg">DualPipeV article, Table 1</a>, you can see the tradeoffs DualPipeV has compared to DeepSeek's original DualPipe schedule: at equal device count, it uses half the parameter memory, but twice the PP communication and a slightly larger bubble, (d − 1)/2 versus d/2 − 1 in common time units.</span>, we can reduce the bubble even further: (PP − 1)(F&amp;B + B −
     3W), where F, B and W are one chunk's times, W is the weight-gradient half of the backward (W ≈ F) and F&amp;B
     is a forward and a backward run overlapped.</p>
 
@@ -1138,7 +1138,7 @@
     <h2>Comparing against the DeepSeek trace</h2>
 
     <p>
-    DeepSeek published <a href="https://github.com/deepseek-ai/profile-data">a profiling trace of one rank</a> of a 64-GPU H800 profiling run of their EP64 setup.  It captures four repeats of one layer's forward for a 4,096-token microbatch, overlapped with one layer's backward for another.  Routing is simulated as perfectly balanced and PP communication is left out.  We can use this to localize some of the difference between the real run and SOL, by going through each kernel in the profile one by one and compare it with what
+    DeepSeek published <a href="https://github.com/deepseek-ai/profile-data">a profiling trace of one rank</a> of a 64-GPU H800 profiling run of their EP64 setup.  It captures four repeats of one layer's forward for a 4,096-token microbatch, overlapped with one layer's backward for another.  Routing is simulated as perfectly balanced and PP communication is left out.  We can use this to localize some of the difference between the real run and SOL, by going through each kernel in the profile one by one and comparing it with what
     our SOL says it should be:<span class="mn-ref"></span><span class="mn">Trace times are averaged over the capture's four cycles.  The routed-expert GEMMs are additionally normalized to 32,768 routed rows (the capture delivered slightly fewer: 32,512 forward, 32,128 backward), and their weight-gradient entries are the elapsed span of four concurrent expert kernels rather than a per-kernel mean, so the totals are not raw wall times.</span></p>
 
     <details class="fold"><summary>the per-kernel speed-of-light sheet</summary>
@@ -1207,7 +1207,7 @@
     our speed of light analysis assumes that overlapping compute with communications
     is free, but it's not; DeepSeek's DeepEP kernel requires 20 SMs to handle
     the communication, which implies our SOL time should grow by 18% (you
-    can toggle this on the chart).  We can also see that in reality, ignoring
+    can toggle this on the table).  We can also see that in reality, ignoring
     all non-matmul compute cost us <span data-trace="everything else (not a matmul)" data-col="0">2.7 ms</span> of
     the forward's <span data-trace="total" data-col="0">9.3 ms</span>, and <span data-trace="everything else (not a matmul)" data-col="1">5.3 ms</span> of
     the backward's <span data-trace="total" data-col="1">14.9 ms</span>.</p>
@@ -1249,9 +1249,9 @@
     closely as possible!
     </p>
 
+    <h2>Conclusion</h2>
 
-
-    <p>By carefully reasoning out the mechanics of how our distributed
+    <p>We have come a long way.  By carefully reasoning out the mechanics of how our distributed
     training works, we can put together a simple set of formulas that let us
     model how our system will behave, even if we don't actually have a cluster
     of 2048 H800s.  The obvious benefit of this is that we can now make predictions
@@ -1261,16 +1261,6 @@
     may in fact do rooflines that are wrong, that fail to predict behavior in
     reality, but the clarity of a simple model means that we can figure out
     what went wrong (either in the model, or in our implementation).</p>
-
-    <p>Let's recap: we have come a long way.  We have carefully studied every
-    aspect of how DeepSeek put together their training run, from the comfort of
-    our GPU-poor armchair.  By calculation alone, we have discovered that FSDP
-    is a bad idea for DSv3 on Hopper, and we also see empirical evidence that
-    the SOL roofline gives directionally correct quantities when you run
-    the real job.  SOL isn't a magic wand: it won't tell you the real performance
-    when you run on a big cluster (that's why you do scaling tests).  But
-    its simplicity makes it a great tool for understanding how a system <em>should</em>
-    behave.</p>
 
   </main>
   <script type="module">
