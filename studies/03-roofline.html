@@ -1242,8 +1242,9 @@
     here, as the DeepEP notify handshake is quite variable, since it blocks on remote ranks.  You can also see that SOL
     systematically overestimated our network performance, but that the proportions are correct.
     In fact, the DeepSeek trace reveals that their compute and comms are
-    balanced on a knife's edge: <mark class="flag">technically, their steady-state profile is compute bound,
-    but only up to a few milliseconds.</mark> <span class="flag-why">[[FLAG: raw kernel interval unions support near-1:1 occupancy (mean compute 31.063 ms, communication 28.630 ms), but occupancy alone does not establish the critical-path bottleneck. The fourth cycle has 30.330 ms compute versus 32.280 ms communication, and notification kernels include remote-rank waits. Qualify this as a near balance in this single-rank profiling capture, rather than proof that the training run is compute-bound.]]</span> <span class="ai">[[AI: suggested: in this single-rank capture, compute and communication occupy the GPU almost equally (about 31 ms against 29 ms per cycle, and one of the four cycles tips the other way), so it is at best narrowly compute bound.]]</span>  This is unlikely to be an accident; they
+    balanced on a knife's edge: in this single-rank capture, compute and communication occupy
+    the GPU almost equally (about 31 ms against 29 ms per cycle, and one of the four cycles tips
+    the other way), so it is at best narrowly compute bound.  This is unlikely to be an accident; they
     probably tuned their system based on real-world profiles to balance it as
     closely as possible!
     </p>
