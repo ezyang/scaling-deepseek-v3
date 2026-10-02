@@ -1,16 +1,17 @@
 // 03's static cell sheets, made live. The published values stay in the HTML
 // (the page reads right before, and without, this module); the formula
 // column IS the program: each formula's HTML compiles to exact rational
-// arithmetic, so editing a real knob (B, S, GPUs, EP, NVL and the rates the model runs at: π^sol_bf16, π^sol_fp8, β_IB;
+// arithmetic, so editing a real knob (B, S, GPUs, EP, NVL, n_c and the rates the model runs at: π^sol_bf16, π^sol_fp8, β_IB;
 // the spec compute peaks are fixed)
 // recomputes every dependent row, wherever it's repeated. Rows that drift
 // from the published value turn amber. Edits live in the hash (departures
 // only), so the floating reset (reset.js) lists and undoes them. Prose numbers
-// that quote a cell (data-cellref = the row's name) follow along.
+// that quote a cell (data-cellref = the row's name) follow along; each render
+// fires 'dsv3-cells' so page scripts can follow too (current(), setKnob()).
 import { describe } from './reset.js';
 
-const KNOBS = { B: 'B', S: 'S', GPUs: 'GPUs', 'π<sup>sol</sup><sub>bf16</sub>': 'sol', 'π<sup>sol</sup><sub>fp8</sub>': 'sol8', EP: 'EP', NVL: 'NVL', 'β<sub>IB</sub>': 'IB' };
-const COUNTS = new Set(['B', 'S', 'GPUs', 'EP', 'NVL']);
+const KNOBS = { B: 'B', S: 'S', GPUs: 'GPUs', 'π<sup>sol</sup><sub>bf16</sub>': 'sol', 'π<sup>sol</sup><sub>fp8</sub>': 'sol8', EP: 'EP', NVL: 'NVL', 'β<sub>IB</sub>': 'IB', 'n<sub>c</sub>': 'SMc' };
+const COUNTS = new Set(['B', 'S', 'GPUs', 'EP', 'NVL', 'SMc']);
 const KEY = 'c:cells';
 
 // ---- exact rationals: [num, den] BigInts, den > 0, reduced ----------------
@@ -76,9 +77,10 @@ const fmtKnob = (q) => fmtExact(q, Infinity);
 const fmtSci = (x) => { const [m, e] = x.toExponential(2).split('e'); return `${m} × 10<sup>${(+e).toString().replace('-', '−')}</sup>`; };
 const PFX = ['', 'K', 'M', 'G', 'T', 'P', 'E'];
 function fmtSI(x, unit) {
-  const base = unit === 'ms' ? 's' : unit === '%' || unit === 's' || !PFX.includes(unit[0]) ? unit : unit.slice(1);
+  const base = unit === 'ms' || unit === 'µs' ? 's' : unit === '%' || unit === 's' || !PFX.includes(unit[0]) ? unit : unit.slice(1);
   let v = base === '%' ? x * 100 : x, p = 0, pf = '';
-  if (base === 's') { if (Math.abs(v) < 1) { v *= 1000; pf = 'm'; } }
+  if (unit === 'µs') { v *= 1e6; pf = 'µ'; }   // per-kernel rows stay in µs, the trace's unit
+  else if (base === 's') { if (Math.abs(v) < 1) { v *= 1000; pf = 'm'; } }
   else if (base !== '%') { while (p < 6 && Math.abs(v) >= 1000) { v /= 1000; p++; } pf = PFX[p]; }
   const t = Number.isInteger(v) ? String(v) : Math.abs(v) >= 1000 ? v.toLocaleString('en-US', { maximumSignificantDigits: 3 }) : v.toPrecision(3);
   const [ip, fp] = t.split('.');
@@ -111,7 +113,7 @@ const evalAll = (edits) => {
   return memo;
 };
 const PUB = evalAll({});
-export { PUB as published, evalAll };
+export { PUB as published, evalAll, set as setKnob };
 
 // cross-row rules a knob edit must keep (else a leaf like M = 4 goes false)
 function invalid(edits) {
@@ -124,6 +126,8 @@ function invalid(edits) {
   if (G % E) return `EP must divide GPUs (${G.toLocaleString('en-US')})`;
   if (E % N) return `NVL must divide EP (${E.toLocaleString('en-US')})`;
   if (E < 4n * N) return 'EP must span at least 4 nodes (EP ≥ 4 · NVL): M = 4 assumes a token can reach 4 nodes';
+  const sms = PUB.get('n<sub>SM</sub>')?.[0];
+  if (edits.SMc?.[0] > sms) return `an H800 has ${sms} SMs`;
   return null;
 }
 
@@ -140,8 +144,9 @@ function save() {
   if (Object.keys(o).length) p.set(KEY, JSON.stringify(o)); else p.delete(KEY);
   history.replaceState(null, '', p.size ? '#' + p : location.pathname + location.search);
 }
+export const current = () => evalAll(edits);
 function render() {
-  const now = evalAll(edits);
+  const now = current();
   for (const [name, r] of rows) {
     const v = now.get(name), off = !eq(v, PUB.get(name));
     for (const tr of r.trs) {
@@ -163,6 +168,7 @@ function render() {
     q.innerHTML = off ? fmtSI(num(v), rows.get(name).trs[0]._unit) : q._pub;
     q.classList.toggle('off', off);
   }
+  document.dispatchEvent(new CustomEvent('dsv3-cells', { detail: now }));
 }
 function set(k, q) {
   if (q && !eq(q, PUB.get(Object.keys(KNOBS).find((n) => KNOBS[n] === k)))) edits[k] = q; else delete edits[k];

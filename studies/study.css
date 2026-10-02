@@ -169,3 +169,6 @@ body.mfocus .mfull-top * { overscroll-behavior: auto !important; }
    find-in-page and grep both hit "[[FLAG:". Never on a live page */
 mark.flag { background: var(--c-fdefe8); color: inherit; text-decoration: underline wavy var(--c-d03b3b); text-underline-offset: 3px; }
 .flag-why { font: 600 0.8em system-ui, sans-serif; color: var(--c-d03b3b); }
+/* AI-drafted text awaiting the author's edit pass (CLAUDE.md): red, keeping
+   its "[[AI:" brackets so grep still finds it. Never on a live page */
+.ai, .ai p, .ai li { color: var(--c-d03b3b); }

@@ -46,10 +46,21 @@
     .tally th:last-child, .tally td:last-child { padding-right: 2px; }
     .tally td.n .d { display: inline-block; width: 1.4em; text-align: left; }   /* fixed fraction slot: 8.0 and 5.42 share a decimal point */
     .tally tr.hl td:not(.rs) { background: var(--c-fff8ea); font-weight: 600; }
-    .tally td.fx { font: 11px ui-monospace, monospace; color: var(--c-52514e); }   /* the sheet cell each number comes from */
-    .tally td.fx b { color: var(--c-2a78d6); font-weight: 600; }
-    .tally td.fx b.ref { cursor: pointer; }
     .tally sup, .tally sub { line-height: 0; font-size: 0.8em; }
+    .tally th.g { text-align: center; padding-right: 16px; border-bottom: 1px solid var(--c-e1e0d9); }
+    .tally th[rowspan] { vertical-align: bottom; }
+    .tally [data-cellref] .u { display: none; }   /* the kernel table's header carries the unit (µs) */
+    /* the kernel table's SM toggle: sets n_c (sheetedit knob); the SOL cells and the ratios follow */
+    .tally td.off { color: var(--c-b05f00); }
+    details.fold > summary { margin: 14px 0; font-size: 12px; color: var(--c-898781); cursor: pointer; }
+    details.fold[open] > summary { margin-bottom: 0; }
+    .smtog { margin: 0 0 6px 2px; font-size: 11.5px; color: var(--c-898781); }
+    .smtog button { font: inherit; color: var(--c-52514e); background: none; border: 1px solid var(--c-e1e0d9); padding: 1px 8px; cursor: pointer; }
+    .smtog button + button { border-left: none; }
+    .smtog button:first-of-type { margin-left: 4px; border-radius: 3px 0 0 3px; }
+    .smtog button:last-of-type { border-radius: 0 3px 3px 0; }
+    .smtog button[aria-pressed="true"] { color: var(--c-0b0b0b); background: var(--c-eef4fc); border-color: var(--c-2a78d6); }
+    .smtog button + button[aria-pressed="true"] { border-left: 1px solid var(--c-2a78d6); }
     /* static formula sheet in <dsv3-sheet>'s look (02's closing sheet) */
     .cellsheet { max-width: 760px; box-sizing: border-box; margin: 14px 0; font: 12px system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--c-0b0b0b);
       border: 1px solid var(--c-e1e0d9); border-radius: 6px; background: var(--c-fcfcfb); padding: 8px 12px; }
@@ -138,7 +149,8 @@
     approximations we will use in this analysis.  For example, the 6ND formula is really
     useful, but it can also feel a bit like magic the first time you encounter it.
     I want to explain it in enough detail that you could derive it from first principles
-    and also tell when you <em>shouldn't</em> use it.</p>
+    and also tell when you <em>shouldn't</em> use it.  (MN: We are going continue
+    to omit MTP from this analysis for simplicity.)</p>
 
     <h2>What's speed of light?</h2>
 
@@ -164,11 +176,11 @@
         loop.  You have to load data from memory and the cache hierarchy,
         issue non-tensor core bookkeeping instructions and come up with
         a good schedule for all of this.  Now, it is absolutely possible for
-        a GEMM to be poorly optimized for sizes--you should roofline your
-        GEMMs too--but a well optimized GEMM will still have a gap.</li>
+        a GEMM to be poorly optimized for sizes—you should roofline your
+        GEMMs too—but a well optimized GEMM will still have a gap.</li>
 
         <li>Even when you are issuing wgmma in a loop, if you running it
-        on non-zero data, you quickly run into thermal limits of the GPU
+        on non-zero data, you quickly run into power limits of the GPU
         which will reduce your clock speed.  This leads to the surprising
         phenomenon where the performance of your GEMM depends on what kind of
         data is in the input tensors (better not tune on zero tensors!)  It's
@@ -352,12 +364,13 @@
         these FLOPs.</li>
     </ol>
 
-    <p>Let's take these in order. Classically, attention FLOPs are 4S^2d (where S is the sequence length
-    and d is the total attention width across all heads), but if you have causal
+    <p>Let's take these in order. Classically, attention FLOPs are 4<b>S</b><sup>2</sup><i>d</i> (where <b>S</b> is the sequence length
+    and <i>d</i> is the total attention width across all heads), but if you have causal
     masking, this halves the number of FLOPs.<span class="mn-ref"></span><span class="mn">Technically,
     a causal query at position <i>i</i> attends to <i>i</i> keys, itself included,
     so the average is (<b>S</b> + 1)/2 keys rather than <b>S</b>/2.  But that's only 0.02% more
-    so we keep the simpler formula.</p>
+    so we keep the simpler formula.</span>  We're also going to assume a FlashAttention
+    style kernel implementation, which implies some built-in recompute in the backwards.</p>
 
     <div class="cellsheet"><table>
     <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
@@ -367,9 +380,11 @@
     <tr><td class="nm">n<sub>h</sub></td><td>attention heads</td><td class="vl">128</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(architecture)</i></td></tr>
     <tr><td class="nm">d<sub>h</sub></td><td>head dim · qk nope, v</td><td class="vl">128</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(architecture)</i></td></tr>
     <tr><td class="nm">d<sup>R</sup><sub>h</sub></td><td>head dim · qk rope</td><td class="vl">64</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(architecture)</i></td></tr>
-    <tr><td class="nm">c<sub>attn</sub></td><td>attention FLOPs · one layer, one sequence, fwd</td><td class="vl">687,194,767,360</td><td class="vl sc ap">6.87 × 10<sup>11</sup></td><td class="vl si ap">687<span class="d"></span><span class="u"> GFLOP</span></td><td class="fx">2 · <b>n<sub>h</sub></b> · (<b>d<sub>h</sub></b> + <b>d<sup>R</sup><sub>h</sub></b> + <b>d<sub>h</sub></b>) · <b>S</b> · <b>S</b> / 2 <i>(QKᵀ contracts <b>d<sub>h</sub></b> + <b>d<sup>R</sup><sub>h</sub></b>, AV contracts <b>d<sub>h</sub></b>; 2 FLOPs per multiply-add; causal keeps half the <b>S</b> · <b>S</b> pairs)</i></td></tr>
-    <tr><td class="nm">C<sub>attn</sub></td><td>attention FLOPs per step</td><td class="vl">1,931,622,027,676,876,800</td><td class="vl sc ap">1.93 × 10<sup>18</sup></td><td class="vl si ap">1<span class="d">.93</span><span class="u"> EFLOP</span></td><td class="fx">3 · <b>L</b> · <b>B</b> · <b>c<sub>attn</sub></b> <i>(fwd+bwd = 3× fwd, every layer, every sequence)</i></td></tr>
-    <tr class="hl"><td class="nm">T<sub>attn</sub></td><td>attention core time, BF16 (s)</td><td class="vl"></td><td class="vl sc ap">1.24 × 10<sup>0</sup></td><td class="vl si ap">1<span class="d">.24</span><span class="u"> s</span></td><td class="fx"><b>C<sub>attn</sub></b> / (<b>GPUs</b> · <b>π<sup>sol</sup><sub>bf16</sub></b>)</td></tr>
+    <tr><td class="nm">c<sub>qk</sub></td><td>QKᵀ-shaped FLOPs · one layer, one sequence</td><td class="vl">412,316,860,416</td><td class="vl sc ap">4.12 × 10<sup>11</sup></td><td class="vl si ap">412<span class="d"></span><span class="u"> GFLOP</span></td><td class="fx">2 · <b>n<sub>h</sub></b> · (<b>d<sub>h</sub></b> + <b>d<sup>R</sup><sub>h</sub></b>) · <b>S</b> · <b>S</b> / 2 <i>(contracts <b>d<sub>h</sub></b> + <b>d<sup>R</sup><sub>h</sub></b>; 2 FLOPs per multiply-add; causal keeps half the <b>S</b> · <b>S</b> pairs)</i></td></tr>
+    <tr><td class="nm">c<sub>pv</sub></td><td>PV-shaped FLOPs · one layer, one sequence</td><td class="vl">274,877,906,944</td><td class="vl sc ap">2.75 × 10<sup>11</sup></td><td class="vl si ap">275<span class="d"></span><span class="u"> GFLOP</span></td><td class="fx">2 · <b>n<sub>h</sub></b> · <b>d<sub>h</sub></b> · <b>S</b> · <b>S</b> / 2 <i>(contracts <b>d<sub>h</sub></b>)</i></td></tr>
+    <tr><td class="nm">c<sub>attn</sub></td><td>attention FLOPs · one layer, one sequence, fwd</td><td class="vl">687,194,767,360</td><td class="vl sc ap">6.87 × 10<sup>11</sup></td><td class="vl si ap">687<span class="d"></span><span class="u"> GFLOP</span></td><td class="fx"><b>c<sub>qk</sub></b> + <b>c<sub>pv</sub></b> <i>(QKᵀ, then PV)</i></td></tr>
+    <tr><td class="nm">C<sub>attn</sub></td><td>attention FLOPs per step</td><td class="vl">2,317,946,433,212,252,160</td><td class="vl sc ap">2.32 × 10<sup>18</sup></td><td class="vl si ap">2<span class="d">.32</span><span class="u"> EFLOP</span></td><td class="fx"><b>L</b> · <b>B</b> · (4 · <b>c<sub>qk</sub></b> + 3 · <b>c<sub>pv</sub></b>) <i>(QKᵀ-shaped matmuls run 4×: forward, FlashAttention's backward recompute, dQ, dK; PV-shaped run 3×: forward, dV, dP; every layer, every sequence)</i></td></tr>
+    <tr class="hl"><td class="nm">T<sub>attn</sub></td><td>attention core time, BF16 (s)</td><td class="vl"></td><td class="vl sc ap">1.49 × 10<sup>0</sup></td><td class="vl si ap">1<span class="d">.49</span><span class="u"> s</span></td><td class="fx"><b>C<sub>attn</sub></b> / (<b>GPUs</b> · <b>π<sup>sol</sup><sub>bf16</sub></b>)</td></tr>
     </table></div>
 
     <p>Next, we need to account for recompute.  Our chosen recompute policy from
@@ -419,10 +434,10 @@
     <div class="cellsheet"><table>
     <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
     <tr><td class="nm">T<sub>fp8</sub></td><td>FP8 GEMM time (s)</td><td class="vl"></td><td class="vl sc ap">4.50 × 10<sup>0</sup></td><td class="vl si ap">4<span class="d">.50</span><span class="u"> s</span></td><td class="fx"><b>C<sub>fp8</sub></b> / (<b>GPUs</b> · <b>π<sup>sol</sup><sub>fp8</sub></b>)</td></tr>
-    <tr><td class="nm">T<sub>attn</sub></td><td>attention core time, BF16 (s)</td><td class="vl"></td><td class="vl sc ap">1.24 × 10<sup>0</sup></td><td class="vl si ap">1<span class="d">.24</span><span class="u"> s</span></td><td class="fx"><b>C<sub>attn</sub></b> / (<b>GPUs</b> · <b>π<sup>sol</sup><sub>bf16</sub></b>)</td></tr>
+    <tr><td class="nm">T<sub>attn</sub></td><td>attention core time, BF16 (s)</td><td class="vl"></td><td class="vl sc ap">1.49 × 10<sup>0</sup></td><td class="vl si ap">1<span class="d">.49</span><span class="u"> s</span></td><td class="fx"><b>C<sub>attn</sub></b> / (<b>GPUs</b> · <b>π<sup>sol</sup><sub>bf16</sub></b>)</td></tr>
     <tr><td class="nm">T<sub>rc</sub></td><td>recompute time, FP8 (s)</td><td class="vl"></td><td class="vl sc ap">1.40 × 10<sup>−1</sup></td><td class="vl si ap">140<span class="d"></span><span class="u"> ms</span></td><td class="fx"><b>C<sub>rc</sub></b> / (<b>GPUs</b> · <b>π<sup>sol</sup><sub>fp8</sub></b>)</td></tr>
     <tr><td class="nm">T<sub>bf16</sub></td><td>BF16 GEMM time, head + routers (s)</td><td class="vl"></td><td class="vl sc ap">2.51 × 10<sup>−1</sup></td><td class="vl si ap">251<span class="d"></span><span class="u"> ms</span></td><td class="fx"><b>C<sub>bf16</sub></b> / (<b>GPUs</b> · <b>π<sup>sol</sup><sub>bf16</sub></b>)</td></tr>
-    <tr class="hl"><td class="nm">T<sup>+</sup><sub>c</sub></td><td>step time, all corrections (s)</td><td class="vl"></td><td class="vl sc ap">6.14 × 10<sup>0</sup></td><td class="vl si ap">6<span class="d">.14</span><span class="u"> s</span></td><td class="fx"><b>T<sub>fp8</sub></b> + <b>T<sub>bf16</sub></b> + <b>T<sub>attn</sub></b> + <b>T<sub>rc</sub></b></td></tr>
+    <tr class="hl"><td class="nm">T<sup>+</sup><sub>c</sub></td><td>step time, all corrections (s)</td><td class="vl"></td><td class="vl sc ap">6.39 × 10<sup>0</sup></td><td class="vl si ap">6<span class="d">.39</span><span class="u"> s</span></td><td class="fx"><b>T<sub>fp8</sub></b> + <b>T<sub>bf16</sub></b> + <b>T<sub>attn</sub></b> + <b>T<sub>rc</sub></b></td></tr>
     </table></div>
 
     <h3>What about the non-matmuls?</h3>
@@ -651,27 +666,36 @@
 
     <div class="cellsheet"><table>
     <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
-    <tr class="hl"><td class="nm">T<sup>+</sup><sub>c</sub></td><td>step time, all corrections (s)</td><td class="vl"></td><td class="vl sc ap">6.14 × 10<sup>0</sup></td><td class="vl si ap">6<span class="d">.14</span><span class="u"> s</span></td><td class="fx"><b>T<sub>fp8</sub></b> + <b>T<sub>bf16</sub></b> + <b>T<sub>attn</sub></b> + <b>T<sub>rc</sub></b></td></tr>
-    <tr class="hl"><td class="nm">f<sub>EP</sub></td><td>EP time, share of compute</td><td class="vl"></td><td class="vl sc ap">8.83 × 10<sup>−1</sup></td><td class="vl si ap">88<span class="d">.3</span><span class="u"> %</span></td><td class="fx"><b>T<sup>+</sup><sub>EP</sub></b> / <b>T<sup>+</sup><sub>c</sub></b></td></tr>
+    <tr class="hl"><td class="nm">T<sup>+</sup><sub>c</sub></td><td>step time, all corrections (s)</td><td class="vl"></td><td class="vl sc ap">6.39 × 10<sup>0</sup></td><td class="vl si ap">6<span class="d">.39</span><span class="u"> s</span></td><td class="fx"><b>T<sub>fp8</sub></b> + <b>T<sub>bf16</sub></b> + <b>T<sub>attn</sub></b> + <b>T<sub>rc</sub></b></td></tr>
+    <tr class="hl"><td class="nm">f<sub>EP</sub></td><td>EP time, share of compute</td><td class="vl"></td><td class="vl sc ap">8.48 × 10<sup>−1</sup></td><td class="vl si ap">84<span class="d">.8</span><span class="u"> %</span></td><td class="fx"><b>T<sup>+</sup><sub>EP</sub></b> / <b>T<sup>+</sup><sub>c</sub></b></td></tr>
     </table></div>
 
-    <p>We can see that at speed of light, EP communication alone uses up <span data-cellref="f<sub>EP</sub>">88.3 %</span> of our compute time.</p>
+    <p>We can see that at speed of light, EP communication alone uses up <span data-cellref="f<sub>EP</sub>">84.8 %</span> of our compute time.</p>
 
     <h2>ZeRO-1</h2>
 
-    <p><span class="flag-why">[[FLAG: new section, needs a lead-in and a title of your choosing: the once-per-step sync every data-parallel layout pays (ZeRO-3 at every microbatch, PP on its stages' slice). The FSDP section's opener below was the EP → here transition.]]</span></p>
+    <p>In our memory analysis, we determined that we would need to shard our
+    optimizer states (including the FP32 master parameters.)  When we do
+    this, we need to do a reduce-scatter to get each GPU the summed gradients
+    for its shard, and then after the (sharded) optimizer step, an all-gather
+    that sends the updated BF16 parameters back to every GPU.  Calculating the cost of these
+    collectives is a little nontrivial due to the need to reason about
+    hierarchical all-gather in the presence of EP, so we'll take a detour to
+    explain this.  We'll then reuse these numbers later when we analyze
+    FSDP/ZeRO-3.</p>
 
     <h3>Accounting for hierarchical all-gather over IB and NVLink</h3>
 
     <p>To get accurate numbers for how long our all-gathers take, we need to reason
     about whether the all-gather for a parameter happens entirely over InfiniBand, or if some
-    communications can be handled in NVLink.  Suppose we are doing FSDP communications
-    over the entire cluster (DP2048).  We don't actually need to send the
-    unsharded parameters to 2048 GPUs over IB: we can use a hierarchical collective.
+    communications can be handled in NVLink.  Suppose we are doing an all-gather
+    over the entire cluster (DP2048).  We don't actually need to send our
+    parameters to 2048 GPUs over IB: we can use a hierarchical collective.
     First, each GPU all-gathers over IB with only the GPUs that share its local rank
     on the other 255 nodes, which gets it one eighth of the parameters.  Then the eight
     GPUs on a node all-gather their eighths over NVLink.  This nets out to an eight-fold reduction
-    on IB comms compared to the full parameters.</p>
+    on IB comms compared to the full parameters.  In the diagram below, mouse over
+    a GPU to see the route its shard takes to arrive at our GPU.</p>
 
     <dsv3-mesh id="mesh-dp" views="fsdp" style="min-height: 572px"></dsv3-mesh>
 
@@ -692,7 +716,11 @@
 
     <dsv3-anatomy style="min-height:847px" tally experttint lens="params" squares="matrix" layer="fsdp-params" detail controls="static" nocaption></dsv3-anatomy>
 
-    <p>OK, we can get out the calculator now.  First, the non-experts, which
+    <p>Let's write the spreadsheet.  We will carefully denominate our values
+    as parameters (not bytes), because the comms dtype differs depending on
+    what we are doing: we reduce-scatter FP32 gradients, but we all-gather BF16
+    updated weights.
+    First, the non-experts, which
     communicate with IB over all ranks modulo NVLink:</p>
 
     <div class="cellsheet"><table>
@@ -707,7 +735,7 @@
     all of Ψ!  We don't need to do IB communications for the slice that lives
     on our node, so we only need to communicate (1 − 1/<b>IBDP</b>).  It's
     worth noting that besides
-    this factor, the amount of data we need to transmit in FSDP isn't affected by how many nodes we are
+    this factor, the amount of data we need to transmit in an all-gather isn't affected by how many nodes we are
     sharded to.
     </p>
 
@@ -723,7 +751,7 @@
     <tr><td class="nm">V<sub>exp</sub></td><td>IB params/GPU per move</td><td class="vl">9,898,033,152</td><td class="vl sc ap">9.90 × 10<sup>9</sup></td><td class="vl si ap">9<span class="d">.90</span><span class="u"> G</span></td><td class="fx"><b>Ψ<sub>exp</sub></b> · (1 − 1 / <b>EDP</b>)</td></tr>
     </table></div>
 
-    <p>This gives us the following costs for all-gather and reduce-scatter:</p>
+    <p>This gives us the following costs for ZeRO-1's all-gather and reduce-scatter:</p>
 
     <div class="cellsheet"><table>
     <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
@@ -733,7 +761,8 @@
     <tr class="hl"><td class="nm">T<sub>rs</sub></td><td>RS time (s)</td><td class="vl"></td><td class="vl sc ap">9.62 × 10<sup>−1</sup></td><td class="vl si ap">962<span class="d"></span><span class="u"> ms</span></td><td class="fx"><b>V<sub>rs</sub></b> / <b>β<sub>IB</sub></b></td></tr>
     </table></div>
 
-    <p><span class="flag-why">[[FLAG: lead-in for the once-per-step sync: ZeRO-1 pays one BF16 all-gather and one FP32 reduce-scatter of the slice above per step. Worth saying: next to T⁺EP (5.42 s) on the same links, this floor alone puts IB past T⁺c (6.14 s) at PP1, even fully overlapped.]]</span></p>
+    <p>Leading to the following total cost.  In fact, we are now already comms bound,
+    without even having considered FSDP.</p>
 
     <div class="cellsheet"><table>
     <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
@@ -741,15 +770,14 @@
     <tr class="hl"><td class="nm">T<sub>sync</sub></td><td>ZeRO-1 time per step (s)</td><td class="vl"></td><td class="vl sc ap">1.44 × 10<sup>0</sup></td><td class="vl si ap">1<span class="d">.44</span><span class="u"> s</span></td><td class="fx"><b>V<sub>sync</sub></b> / <b>β<sub>IB</sub></b></td></tr>
     </table></div>
 
-    <h2>ZeRO/FSDP</h2>
+    <h2>ZeRO-3/FSDP</h2>
 
-    <p>The fact that EP is using most of our InfiniBand bandwidth is bad news
-    for doing FSDP, which would also compete for IB bandwidth.  However, we
+    <p>ZeRO-3, aka FSDP, requires more all-gathers (as we now need to all-gather
+    our parameters for both forwards and backwards).  The fact that EP and ZeRO-1 is using all of our InfiniBand bandwidth is bad news
+    for doing FSDP, whose extra parameter all-gathers and reduce-scatters would also compete for IB bandwidth.  However, we
     could imagine that it might be acceptable to have some <em>exposed</em>
     FSDP comms, so long as they were less than the bubble we'd introduce if we
-    used PP.  Let's do the numbers.  In the discussion below, we're going to
-    assume that the routed expert parameters have already been sharded per EP64
-    and then further sharded with the remaining EFSDP mesh dim.</p>
+    used PP.</p>
 
     <h3>Non-PP microbatching with gradient accumulation</h3>
 
@@ -767,7 +795,7 @@
     per layer.<span class="mn-ref"></span><span class="mn">We covered this in the previous part, but it bears repeating: although PP implies microbatching, since you must have more
     than one microbatch to cover up pipeline bubbles, the additional memory savings you
     would get from running microbatches are used up by the fact that our PP schedule
-    will have multiple microbatches in flight at once--this is the 8.5 microbatches
+    will have multiple microbatches in flight at once—this is the 8.5 microbatches
     factor.</span>  However, FSDP doesn't reduce our activation
     memory (compared with ZeRO-1, it only shards parameters and gradients). We cannot fit on a Hopper without doing something about the activation memory!<span class="mn-ref"></span><span class="mn">Technically, you can get the activations to fit without
     microbatching if you adopt a full recompute policy (recompute every
@@ -793,19 +821,24 @@
     to utilize all of the hardware.</span> (computation is conserved!)
     but the number of collectives increases.  This is the cost of microbatching: the
     more finely we split our local batch, the less compute there is to overlap the
-    comms with.  Eventually, there is not enough compute and our comms are exposed:</p>
+    comms with.  <span class="mn-ref"></span><span class="mn">You might also wonder why we have to reduce-scatter over every
+    microbatch: the problem (once again), is memory—without reduce-scattering,
+    you are forced to hold onto the gradients of <em>all</em> parameters, not just
+    your local FSDP shard!</span>  Eventually, there is not enough compute and our comms are exposed:</p>
 
     <dsv3-fsdpsched id="fsdpsched-fit" bars style="min-height: 419px"></dsv3-fsdpsched>
 
     <p>We can see intuitively from the diagrams above that eight microbatches is
     comms bound.  Of course, the exact breaking point depends on the wall times
-    of our compute and comms.  How can we estimate these? A
-    speed-of-light analysis!</p>
+    of our compute and comms.  We've already computed the cost of all-gather and
+    reduce-scatter when we analyzed ZeRO-1, so we simply need to apply them to the
+    communication pattern for FSDP.</p>
 
     <h3>Computing the cost of FSDP</h3>
 
-    <p>And we can sum these up to figure out how long our FSDP comms take in total (we've put
-    a separate row for each choice of how many microbatches we run):</p>
+    <p>In full FSDP, we do two BF16 all-gathers (one for forward, and one for backward) and one
+    FP32 reduce-scatter on the parameters for <em>every</em> microbatch, replacing the
+    single per-step collectives that the ZeRO-1 requires.</p>
 
     <div class="cellsheet"><table>
     <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
@@ -820,7 +853,7 @@
 
     <div class="cellsheet"><table>
     <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
-    <tr class="hl"><td class="nm">T<sup>+</sup><sub>c</sub></td><td>step time, all corrections (s)</td><td class="vl"></td><td class="vl sc ap">6.14 × 10<sup>0</sup></td><td class="vl si ap">6<span class="d">.14</span><span class="u"> s</span></td><td class="fx"><b>T<sub>fp8</sub></b> + <b>T<sub>bf16</sub></b> + <b>T<sub>attn</sub></b> + <b>T<sub>rc</sub></b></td></tr>
+    <tr class="hl"><td class="nm">T<sup>+</sup><sub>c</sub></td><td>step time, all corrections (s)</td><td class="vl"></td><td class="vl sc ap">6.39 × 10<sup>0</sup></td><td class="vl si ap">6<span class="d">.39</span><span class="u"> s</span></td><td class="fx"><b>T<sub>fp8</sub></b> + <b>T<sub>bf16</sub></b> + <b>T<sub>attn</sub></b> + <b>T<sub>rc</sub></b></td></tr>
     <tr class="hl"><td class="nm">T<sup>+</sup><sub>EP</sub></td><td>EP time per step (s)</td><td class="vl"></td><td class="vl sc ap">5.42 × 10<sup>0</sup></td><td class="vl si ap">5<span class="d">.42</span><span class="u"> s</span></td><td class="fx"><b>V<sup>+</sup><sub>EP</sub></b> / <b>β<sub>IB</sub></b></td></tr>
     </table></div>
 
@@ -848,10 +881,11 @@
 
     <div class="cellsheet"><table>
     <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
-    <tr><td class="nm">PP</td><td>pipeline stages</td><td class="vl">16</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(DeepSeek's layout)</i></td></tr>
-    <tr><td class="nm">D<sub>PP</sub></td><td>tokens per replica·step</td><td class="vl">491,520</td><td class="vl sc ap">4.92 × 10<sup>5</sup></td><td class="vl si ap">492<span class="d"></span><span class="u"> K</span></td><td class="fx"><b>D</b> · <b>PP</b> / <b>GPUs</b></td></tr>
+    <tr><td class="nm">PP</td><td>pipeline ranks</td><td class="vl">8</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(the previous post's DualPipeV layout; DeepSeek's own run used DualPipe on 16)</i></td></tr>
+    <tr><td class="nm">s<sub>GPU</sub></td><td>chunks per GPU</td><td class="vl">2</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(DualPipeV: 16 stages folded onto the 8 ranks)</i></td></tr>
+    <tr><td class="nm">D<sub>PP</sub></td><td>tokens per replica·step</td><td class="vl">245,760</td><td class="vl sc ap">2.46 × 10<sup>5</sup></td><td class="vl si ap">246<span class="d"></span><span class="u"> K</span></td><td class="fx"><b>D</b> · <b>PP</b> / <b>GPUs</b></td></tr>
     <tr><td class="nm">V<sub>res</sub></td><td>residual bytes per token</td><td class="vl">14,336</td><td class="vl sc ap">1.43 × 10<sup>4</sup></td><td class="vl si ap">14<span class="d">.3</span><span class="u"> KB</span></td><td class="fx"><b>d</b> · 2 <i>(BF16)</i></td></tr>
-    <tr><td class="nm">V<sub>PP</sub></td><td>PP IB bytes per GPU·step</td><td class="vl">14,092,861,440</td><td class="vl sc ap">1.41 × 10<sup>10</sup></td><td class="vl si ap">14<span class="d">.1</span><span class="u"> GB</span></td><td class="fx">2 · <b>V<sub>res</sub></b> · <b>D<sub>PP</sub></b></td></tr>
+    <tr><td class="nm">V<sub>PP</sub></td><td>PP IB bytes per GPU·step</td><td class="vl">14,092,861,440</td><td class="vl sc ap">1.41 × 10<sup>10</sup></td><td class="vl si ap">14<span class="d">.1</span><span class="u"> GB</span></td><td class="fx">2 · <b>s<sub>GPU</sub></b> · <b>V<sub>res</sub></b> · <b>D<sub>PP</sub></b> <i>(an interior rank: each token passes through it once per chunk, sending its activation forward and its gradient back)</i></td></tr>
     <tr class="hl"><td class="nm">T<sub>PP</sub></td><td>PP time per step (s)</td><td class="vl"></td><td class="vl sc ap">2.82 × 10<sup>−1</sup></td><td class="vl si ap">282<span class="d"></span><span class="u"> ms</span></td><td class="fx"><b>V<sub>PP</sub></b> / <b>β<sub>IB</sub></b></td></tr>
     </table></div>
 
@@ -1020,49 +1054,52 @@
     schedule bubbles, but a standard 1F1B schedule would have a bubble of
     (PP − 1)(F + B), where F and B are one stage's forward and backward time for one microbatch.
     Each stage does <i>m</i> microbatches of F + B work per step, so the bubble's share of
-    compute is just (PP − 1)/<i>m</i>:</p>
+    compute is just (PP − 1)/<i>m</i>:<span class="mn-ref"></span><span class="mn">Notice this depends only on
+    the number of stages and microbatches, not on the model's size.  In general, you can
+    reduce your pipeline bubble by having more microbatches (at the cost of worse
+    GEMM utilization at smaller microbatch size), but once you run out of local
+    batch size you cannot increase the microbatch count any more.</span></p>
 
     <div class="cellsheet"><table>
     <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
-    <tr><td class="nm">m</td><td>microbatches per replica·step</td><td class="vl">120</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><b>D<sub>PP</sub></b> / <b>S</b> <i>(one sequence each)</i></td></tr>
-    <tr class="hl"><td class="nm">b<sub>1F1B</sub></td><td>1F1B bubble, share of compute</td><td class="vl">0.125</td><td class="vl sc ap">1.25 × 10<sup>−1</sup></td><td class="vl si ap">12<span class="d">.5</span><span class="u"> %</span></td><td class="fx">(<b>PP</b> − 1) / <b>m</b> <i>(F + B cancels)</i></td></tr>
+    <tr><td class="nm">m</td><td>microbatches per replica·step</td><td class="vl">60</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><b>D<sub>PP</sub></b> / <b>S</b> <i>(one sequence each)</i></td></tr>
+    <tr class="hl"><td class="nm">b<sub>1F1B</sub></td><td>1F1B bubble, share of compute</td><td class="vl"></td><td class="vl sc ap">1.17 × 10<sup>−1</sup></td><td class="vl si ap">11<span class="d">.7</span><span class="u"> %</span></td><td class="fx">(<b>PP</b> − 1) / <b>m</b> <i>(F + B cancels)</i></td></tr>
     </table></div>
 
     <p>This is already massively better than our FSDP exposed time.  But it
-    gets even better.  DeepSeek-V3 uses DualPipe, intuitively feeding microbatches from "both" sides
-    of the pipeline at the same time, thereby reducing the startup bubble.  Its bubble is (PP/2 − 1)(F&amp;B + B −
-    3W), where W is the weight-gradient half of the backward (W ≈ F) and F&amp;B
-    is a forward and a backward run overlapped.</p>
+    gets even better.  If we use a DualPipe-style schedule (we'll use DualPipeV
+    for the analysis below, as it is strictly better than the DualPipe DeepSeek-V3 was
+    trained with),  we can reduce the bubble even further: (PP − 1)(F&amp;B + B −
+    3W), where F, B and W are one chunk's times, W is the weight-gradient half of the backward (W ≈ F) and F&amp;B
+    is a forward and a backward run overlapped.</span></p>
 
     <div class="cellsheet"><table>
     <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
     <tr><td class="nm">t<sub>B</sub></td><td>backward time, in units of F</td><td class="vl">2</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(B ≈ 2F)</i></td></tr>
     <tr><td class="nm">t<sub>W</sub></td><td>weight-gradient time, in F</td><td class="vl">1</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(W ≈ F)</i></td></tr>
     <tr><td class="nm">t<sub>F&amp;B</sub></td><td>overlapped F&amp;B time, in F</td><td class="vl">3</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx">1 + <b>t<sub>B</sub></b> <i>(compute-bound: F + B)</i></td></tr>
-    <tr class="hl"><td class="nm">b<sub>Dual</sub></td><td>DualPipe bubble, share of compute</td><td class="vl"></td><td class="vl sc ap">3.89 × 10<sup>−2</sup></td><td class="vl si ap">3<span class="d">.89</span><span class="u"> %</span></td><td class="fx">(<b>PP</b> / 2 − 1) · (<b>t<sub>F&amp;B</sub></b> + <b>t<sub>B</sub></b> − 3 · <b>t<sub>W</sub></b>) / (<b>m</b> · (1 + <b>t<sub>B</sub></b>))</td></tr>
+    <tr class="hl"><td class="nm">b<sub>Dual</sub></td><td>DualPipeV bubble, share of compute</td><td class="vl"></td><td class="vl sc ap">3.89 × 10<sup>−2</sup></td><td class="vl si ap">3<span class="d">.89</span><span class="u"> %</span></td><td class="fx">(<b>PP</b> − 1) · (<b>t<sub>F&amp;B</sub></b> + <b>t<sub>B</sub></b> − 3 · <b>t<sub>W</sub></b>) / (<b>s<sub>GPU</sub></b> · <b>m</b> · (1 + <b>t<sub>B</sub></b>))</td></tr>
     </table></div>
 
-    <p>Notice this depends only on
-    the number of stages and microbatches, not on the model's size.  In general, you can
-    reduce your pipeline bubble by having more microbatches (at the cost of worse
-    GEMM utilization at smaller microbatch size), but once you run out of local
-    batch size you cannot increase the microbatch count any more.</p>
-
-    <p>[[AI: DualPipe has one more cost, which shows up in ZeRO-1's
-    once-per-step sync.  Each GPU holds two stages, one from each end of the
-    pipeline, so it keeps an eighth of the parameters rather than a
-    sixteenth, and shares them with the 256 GPUs that hold the same pair: 32
-    nodes for the non-experts, 4 replicas of each expert slice.  That's
-    still tiny next to the FSDP section's every-layer gathers.]]</p>
+    <p>One final note!  If you do PP, you still need to do your ZeRO-1 collectives, but
+    you only need to do them for the parameters on your pipeline stage,
+    reducing the comms by a factor of PP.</p>
 
     <div class="cellsheet"><table>
     <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
-    <tr><td class="nm">s<sub>GPU</sub></td><td>stages per GPU</td><td class="vl">2</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(DualPipe: one from each end)</i></td></tr>
-    <tr><td class="nm">V<sup>PP</sup><sub>ne</sub></td><td>IB non-expert params/GPU per move</td><td class="vl">259,105,029.25</td><td class="vl sc ap">2.59 × 10<sup>8</sup></td><td class="vl si ap">259<span class="d"></span><span class="u"> M</span></td><td class="fx"><b>Ψ<sub>ne</sub></b> · <b>s<sub>GPU</sub></b> / <b>PP</b> · (1 − <b>PP</b> / (<b>s<sub>GPU</sub></b> · <b>IBDP</b>)) <i>(32 nodes hold our stages)</i></td></tr>
-    <tr><td class="nm">V<sup>PP</sup><sub>exp</sub></td><td>IB expert params/GPU per move</td><td class="vl">957,874,176</td><td class="vl sc ap">9.58 × 10<sup>8</sup></td><td class="vl si ap">958<span class="d"></span><span class="u"> M</span></td><td class="fx"><b>Ψ<sub>exp</sub></b> · <b>s<sub>GPU</sub></b> / <b>PP</b> · (1 − <b>PP</b> / (<b>s<sub>GPU</sub></b> · <b>EDP</b>)) <i>(4 replicas of our slice)</i></td></tr>
+    <tr><td class="nm">V<sup>PP</sup><sub>ne</sub></td><td>IB non-expert params/GPU per move</td><td class="vl">259,105,029.25</td><td class="vl sc ap">2.59 × 10<sup>8</sup></td><td class="vl si ap">259<span class="d"></span><span class="u"> M</span></td><td class="fx"><b>Ψ<sub>ne</sub></b> / <b>PP</b> · (1 − <b>PP</b> / <b>IBDP</b>) <i>(32 nodes hold our rank's chunks)</i></td></tr>
+    <tr><td class="nm">V<sup>PP</sup><sub>exp</sub></td><td>IB expert params/GPU per move</td><td class="vl">957,874,176</td><td class="vl sc ap">9.58 × 10<sup>8</sup></td><td class="vl si ap">958<span class="d"></span><span class="u"> M</span></td><td class="fx"><b>Ψ<sub>exp</sub></b> / <b>PP</b> · (1 − <b>PP</b> / <b>EDP</b>) <i>(4 replicas of our slice)</i></td></tr>
     <tr><td class="nm">V<sup>PP</sup><sub>sync</sub></td><td>ZeRO-1 bytes/GPU per step</td><td class="vl">7,301,875,231.5</td><td class="vl sc ap">7.30 × 10<sup>9</sup></td><td class="vl si ap">7<span class="d">.30</span><span class="u"> GB</span></td><td class="fx">(<b>V<sup>PP</sup><sub>ne</sub></b> + <b>V<sup>PP</sup><sub>exp</sub></b>) · (2 + 4) <i>(BF16 AG + FP32 RS; average rank, the one with the embedding and head moves more)</i></td></tr>
     <tr class="hl"><td class="nm">T<sup>PP</sup><sub>sync</sub></td><td>ZeRO-1 time per step (s)</td><td class="vl"></td><td class="vl sc ap">1.46 × 10<sup>−1</sup></td><td class="vl si ap">146<span class="d"></span><span class="u"> ms</span></td><td class="fx"><b>V<sup>PP</sup><sub>sync</sub></b> / <b>β<sub>IB</sub></b></td></tr>
     </table></div>
+
+    <p>We can plot our idle time and see that our bubble decreases as we increase
+    the number of microbatches.<span class="mn-ref"></span><span class="mn">Why
+    does the activation memory usage fall as we increase the number of microbatches?  Increasing
+    the number of microbatches indeed doesn't affect the number of microbatches in
+    flight for a given schedule (always 8.5, in the DualPipeV schedule).  But if
+    we keep our local batch size fixed, it will decrease the size of our microbatches,
+    thereby also decreasing memory.</span></p>
 
     <dsv3-ppcurve style="min-height: 464px"></dsv3-ppcurve>
 
@@ -1074,124 +1111,134 @@
     of 2048 H800s.  The obvious benefit of this is that we can now make predictions
     about our system performance (for example, we see that FSDP will be hopelessly
     comms bound above).  But to me, the more important takeaway is that the act
-    of rooflining forces us to truly understand what it is our system is doing--we
+    of rooflining forces us to truly understand what it is our system is doing—we
     may in fact do rooflines that are wrong, that fail to predict behavior in
     reality, but the clarity of a simple model means that we can figure out
     what went wrong (either in the model, or in our implementation.)</p>
 
     <p>In fact, let's do this exercise right now.
-    With publicly available data, we can compare our findings with what
-    DeepSeek publicly reported in both their technical report as well as
-    their published profiling traces.</p>
+    DeepSeek published a profiling trace of one rank of their EP64 H800 run. It
+    captured one layer's forward for one 4,096-token
+    microbatch, overlapped with one layer's backward for another.  We can go
+    through each kernel in the profile one by one and compare it with what
+    our speed of light computation says it should be:</p>
 
-    <ul>
-        <li>GEMMs: DeepGEMM's H800 benchmarks at the exact DSv3 shapes
-        (751 to 1,426 TFLOP/s for the attention projections; 1,346 and
-        1,214 for the routed experts' gate/up and down, at four experts of
-        8,192 tokens each, which is precisely the per-GPU training shape).
-        [[AI: That's 52 to 98% of π<sup>sol</sup><sub>fp8</sub>, Smol's
-        best-shape FP8 rate; the routed experts run at 92% and 83%.]]  These
-        are forward-pass shapes; we assume the backward GEMMs do as well.</li>
-        <li>Attention: FlashAttention-3's best BF16 forward, 75% of [[AI: the
-        BF16 spec peak (742 TFLOP/s, 98% of
-        π<sup>sol</sup><sub>bf16</sub>).]]  DeepSeek runs attention in BF16,
-        not FP8.  The backward is slower still, so this is generous.</li>
-        <li>The output head and router, also kept in BF16: 80% of [[AI: the
-        spec peak]], the bottom of FlashAttention-3's "80–90%" for optimized
-        GEMMs.  [[AI: That's 791 TFLOP/s, 4% <em>above</em>
-        π<sup>sol</sup><sub>bf16</sub>: Smol's torch.matmul lands a little
-        under FA3's floor.]]</li>
-        <li>IB: DeepEP's measured 46 GB/s dispatch and 45 GB/s combine at EP64
-        on H800, in the DSv3 pretraining setting, out of 50 GB/s.  We reuse
-        45 GB/s for the PP and ZeRO-1 traffic.</li>
-    </ul>
+    <details class="fold"><summary>the per-kernel speed-of-light sheet</summary>
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">N<sup>dn</sup><sub>q</sub></td><td>q down-projection params, per layer</td><td class="vl">11,010,048</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(read off the diagram)</i></td></tr>
+    <tr><td class="nm">N<sup>dn</sup><sub>kv</sub></td><td>kv down-projection params, per layer</td><td class="vl">4,128,768</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(read off the diagram)</i></td></tr>
+    <tr><td class="nm">N<sub>o</sub></td><td>attention output projection params, per layer</td><td class="vl">117,440,512</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(read off the diagram)</i></td></tr>
+    <tr><td class="nm">N<sub>r</sub></td><td>router params, per layer</td><td class="vl">1,835,008</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(read off the diagram)</i></td></tr>
+    <tr><td class="nm">N<sub>13</sub></td><td>gate + up params, one expert</td><td class="vl">29,360,128</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(read off the diagram)</i></td></tr>
+    <tr><td class="nm">N<sub>2</sub></td><td>down params, one expert</td><td class="vl">14,680,064</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(read off the diagram)</i></td></tr>
+    <tr><td class="nm">k</td><td>routed experts per token</td><td class="vl">8</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(architecture)</i></td></tr>
+    <tr><td class="nm">n<sub>SM</sub></td><td>SMs per H800</td><td class="vl">132</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(hardware spec)</i></td></tr>
+    <tr><td class="nm">n<sub>c</sub></td><td>SMs running compute</td><td class="vl">132</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(model input; DeepSeek's run gives 20 to communication, leaving 112)</i></td></tr>
+    <tr><td class="nm">π<sup>c</sup><sub>fp8</sub></td><td>FP8 GEMM rate on <b>n<sub>c</sub></b> SMs (FLOP/s)</td><td class="vl">1,456,600,000,000,000</td><td class="vl sc ap">1.46 × 10<sup>15</sup></td><td class="vl si ap">1<span class="d">.46</span><span class="u"> PFLOP/s</span></td><td class="fx"><b>π<sup>sol</sup><sub>fp8</sub></b> · <b>n<sub>c</sub></b> / <b>n<sub>SM</sub></b></td></tr>
+    <tr><td class="nm">π<sup>c</sup><sub>bf16</sub></td><td>BF16 GEMM rate on <b>n<sub>c</sub></b> SMs (FLOP/s)</td><td class="vl">757,700,000,000,000</td><td class="vl sc ap">7.58 × 10<sup>14</sup></td><td class="vl si ap">758<span class="d"></span><span class="u"> TFLOP/s</span></td><td class="fx"><b>π<sup>sol</sup><sub>bf16</sub></b> · <b>n<sub>c</sub></b> / <b>n<sub>SM</sub></b></td></tr>
+    <tr><td class="nm">t<sup>dn</sup><sub>q</sub></td><td>Q down projection (s)</td><td class="vl"></td><td class="vl sc ap">6.19 × 10<sup>−5</sup></td><td class="vl si ap">61<span class="d">.9</span><span class="u"> µs</span></td><td class="fx">2 · <b>N<sup>dn</sup><sub>q</sub></b> · <b>S</b> / <b>π<sup>c</sup><sub>fp8</sub></b></td></tr>
+    <tr><td class="nm">t<sup>dn</sup><sub>kv</sub></td><td>KV down projection (s)</td><td class="vl"></td><td class="vl sc ap">2.32 × 10<sup>−5</sup></td><td class="vl si ap">23<span class="d">.2</span><span class="u"> µs</span></td><td class="fx">2 · <b>N<sup>dn</sup><sub>kv</sub></b> · <b>S</b> / <b>π<sup>c</sup><sub>fp8</sub></b></td></tr>
+    <tr><td class="nm">t<sup>up</sup><sub>q</sub></td><td>Q up projection (s)</td><td class="vl"></td><td class="vl sc ap">2.12 × 10<sup>−4</sup></td><td class="vl si ap">212<span class="d"></span><span class="u"> µs</span></td><td class="fx">2 · <b>N<sup>up</sup><sub>q</sub></b> · <b>S</b> / <b>π<sup>c</sup><sub>fp8</sub></b></td></tr>
+    <tr><td class="nm">t<sup>up</sup><sub>kv</sub></td><td>KV up projection (s)</td><td class="vl"></td><td class="vl sc ap">9.44 × 10<sup>−5</sup></td><td class="vl si ap">94<span class="d">.4</span><span class="u"> µs</span></td><td class="fx">2 · <b>N<sup>up</sup><sub>kv</sub></b> · <b>S</b> / <b>π<sup>c</sup><sub>fp8</sub></b></td></tr>
+    <tr><td class="nm">t<sub>attn</sub></td><td>attention core, forward (s)</td><td class="vl"></td><td class="vl sc ap">9.07 × 10<sup>−4</sup></td><td class="vl si ap">907<span class="d"></span><span class="u"> µs</span></td><td class="fx"><b>c<sub>attn</sub></b> / <b>π<sup>c</sup><sub>bf16</sub></b></td></tr>
+    <tr><td class="nm">t<sup>B</sup><sub>attn</sub></td><td>attention core, backward (s)</td><td class="vl"></td><td class="vl sc ap">2.36 × 10<sup>−3</sup></td><td class="vl si ap">2,360<span class="d"></span><span class="u"> µs</span></td><td class="fx">(3 · <b>c<sub>qk</sub></b> + 2 · <b>c<sub>pv</sub></b>) / <b>π<sup>c</sup><sub>bf16</sub></b> <i>(recomputed QKᵀ, dQ, dK; dV, dP)</i></td></tr>
+    <tr><td class="nm">t<sub>o</sub></td><td>attention output projection (s)</td><td class="vl"></td><td class="vl sc ap">6.60 × 10<sup>−4</sup></td><td class="vl si ap">660<span class="d"></span><span class="u"> µs</span></td><td class="fx">2 · <b>N<sub>o</sub></b> · <b>S</b> / <b>π<sup>c</sup><sub>fp8</sub></b></td></tr>
+    <tr><td class="nm">t<sub>r</sub></td><td>router (s)</td><td class="vl"></td><td class="vl sc ap">1.98 × 10<sup>−5</sup></td><td class="vl si ap">19<span class="d">.8</span><span class="u"> µs</span></td><td class="fx">2 · <b>N<sub>r</sub></b> · <b>S</b> / <b>π<sup>c</sup><sub>bf16</sub></b></td></tr>
+    <tr><td class="nm">t<sup>sh</sup><sub>13</sub></td><td>shared expert gate/up (s)</td><td class="vl"></td><td class="vl sc ap">1.65 × 10<sup>−4</sup></td><td class="vl si ap">165<span class="d"></span><span class="u"> µs</span></td><td class="fx">2 · <b>N<sub>13</sub></b> · <b>S</b> / <b>π<sup>c</sup><sub>fp8</sub></b></td></tr>
+    <tr><td class="nm">t<sup>sh</sup><sub>2</sub></td><td>shared expert down (s)</td><td class="vl"></td><td class="vl sc ap">8.26 × 10<sup>−5</sup></td><td class="vl si ap">82<span class="d">.6</span><span class="u"> µs</span></td><td class="fx">2 · <b>N<sub>2</sub></b> · <b>S</b> / <b>π<sup>c</sup><sub>fp8</sub></b></td></tr>
+    <tr><td class="nm">t<sup>rt</sup><sub>13</sub></td><td>routed experts gate/up (s)</td><td class="vl"></td><td class="vl sc ap">1.32 × 10<sup>−3</sup></td><td class="vl si ap">1,320<span class="d"></span><span class="u"> µs</span></td><td class="fx">2 · <b>N<sub>13</sub></b> · <b>k</b> · <b>S</b> / <b>π<sup>c</sup><sub>fp8</sub></b> <i>(each GPU gets <b>k</b> · <b>S</b> routed rows on average)</i></td></tr>
+    <tr><td class="nm">t<sup>rt</sup><sub>2</sub></td><td>routed experts down (s)</td><td class="vl"></td><td class="vl sc ap">6.60 × 10<sup>−4</sup></td><td class="vl si ap">660<span class="d"></span><span class="u"> µs</span></td><td class="fx">2 · <b>N<sub>2</sub></b> · <b>k</b> · <b>S</b> / <b>π<sup>c</sup><sub>fp8</sub></b></td></tr>
+    <tr class="hl"><td class="nm">t<sup>Σ</sup><sub>F</sub></td><td>F: forward (s)</td><td class="vl"></td><td class="vl sc ap">4.21 × 10<sup>−3</sup></td><td class="vl si ap">4,210<span class="d"></span><span class="u"> µs</span></td><td class="fx"><b>t<sup>dn</sup><sub>q</sub></b> + <b>t<sup>dn</sup><sub>kv</sub></b> + <b>t<sup>up</sup><sub>q</sub></b> + <b>t<sup>up</sup><sub>kv</sub></b> + <b>t<sub>attn</sub></b> + <b>t<sub>o</sub></b> + <b>t<sub>r</sub></b> + <b>t<sup>sh</sup><sub>13</sub></b> + <b>t<sup>sh</sup><sub>2</sub></b> + <b>t<sup>rt</sup><sub>13</sub></b> + <b>t<sup>rt</sup><sub>2</sub></b></td></tr>
+    <tr class="hl"><td class="nm">t<sup>Σ</sup><sub>B</sub></td><td>B: input gradients (s)</td><td class="vl"></td><td class="vl sc ap">5.97 × 10<sup>−3</sup></td><td class="vl si ap">5,970<span class="d"></span><span class="u"> µs</span></td><td class="fx"><b>t<sup>Σ</sup><sub>F</sub></b> − <b>t<sub>attn</sub></b> + <b>t<sup>B</sup><sub>attn</sub></b> + <b>t<sup>up</sup><sub>q</sub></b> + <b>t<sup>up</sup><sub>kv</sub></b> <i>(each GEMM's input gradient costs its forward, the attention core its own backward, plus the replayed up-projections)</i></td></tr>
+    <tr class="hl"><td class="nm">t<sup>Σ</sup><sub>W</sub></td><td>W: weight gradients (s)</td><td class="vl"></td><td class="vl sc ap">3.30 × 10<sup>−3</sup></td><td class="vl si ap">3,300<span class="d"></span><span class="u"> µs</span></td><td class="fx"><b>t<sup>Σ</sup><sub>F</sub></b> − <b>t<sub>attn</sub></b> <i>(each weight gradient costs its GEMM's forward; the attention core has no weights)</i></td></tr>
+    </table></div>
+    </details>
 
-    <div class="tally"><table>
-        <thead><tr><th>resource</th><th>what</th><th>cell</th><th class="n">theoretical (s)</th><th class="n">effective (s)</th></tr></thead>
+    <div class="tally kern">
+    <div class="smtog">speed of light on <button type="button" data-sm="132" aria-pressed="true">all 132 SMs</button><button type="button" data-sm="112" aria-pressed="false">112 SMs, as DeepSeek runs it</button></div>
+    <table>
+        <thead><tr><th rowspan="2">kernel</th><th colspan="3" class="g">F · forward</th><th colspan="3" class="g">B · input gradients</th><th colspan="3" class="g">W · weight gradients</th></tr>
+        <tr><th class="n">SOL</th><th class="n">trace</th><th class="n">×</th><th class="n">SOL</th><th class="n">trace</th><th class="n">×</th><th class="n">SOL</th><th class="n">trace</th><th class="n">×</th></tr></thead>
         <tbody>
-        <tr class="hl"><td class="rs">tensor cores</td><td>6ND + attention core + recompute</td><td class="fx"><b>T<sup>+</sup><sub>c</sub></b></td><td class="n">6<span class="d">.1</span></td><td class="n">6<span class="d">.9</span></td></tr>
+        <tr><td>Q down projection (FP8)</td><td class="n"><span data-cellref="t<sup>dn</sup><sub>q</sub>">61<span class="d">.9</span><span class="u"> µs</span></span></td><td class="n" data-us="103.5">104<span class="d"></span></td><td class="n">1<span class="d">.67</span></td><td class="n"><span data-cellref="t<sup>dn</sup><sub>q</sub>">61<span class="d">.9</span><span class="u"> µs</span></span></td><td class="n" data-us="111">111<span class="d"></span></td><td class="n">1<span class="d">.79</span></td><td class="n"><span data-cellref="t<sup>dn</sup><sub>q</sub>">61<span class="d">.9</span><span class="u"> µs</span></span></td><td class="n" data-us="136.25">136<span class="d"></span></td><td class="n">2<span class="d">.20</span></td></tr>
+        <tr><td>KV down projection (FP8)</td><td class="n"><span data-cellref="t<sup>dn</sup><sub>kv</sub>">23<span class="d">.2</span><span class="u"> µs</span></span></td><td class="n" data-us="53.25">53<span class="d">.3</span></td><td class="n">2<span class="d">.29</span></td><td class="n"><span data-cellref="t<sup>dn</sup><sub>kv</sub>">23<span class="d">.2</span><span class="u"> µs</span></span></td><td class="n" data-us="64.75">64<span class="d">.8</span></td><td class="n">2<span class="d">.79</span></td><td class="n"><span data-cellref="t<sup>dn</sup><sub>kv</sub>">23<span class="d">.2</span><span class="u"> µs</span></span></td><td class="n" data-us="69.75">69<span class="d">.8</span></td><td class="n">3<span class="d">.00</span></td></tr>
+        <tr><td>Q up projection (FP8)</td><td class="n"><span data-cellref="t<sup>up</sup><sub>q</sub>">212<span class="d"></span><span class="u"> µs</span></span></td><td class="n" data-us="371.5">372<span class="d"></span></td><td class="n">1<span class="d">.75</span></td><td class="n"><span data-cellref="t<sup>up</sup><sub>q</sub>">212<span class="d"></span><span class="u"> µs</span></span></td><td class="n" data-us="332">332<span class="d"></span></td><td class="n">1<span class="d">.56</span></td><td class="n"><span data-cellref="t<sup>up</sup><sub>q</sub>">212<span class="d"></span><span class="u"> µs</span></span></td><td class="n" data-us="462">462<span class="d"></span></td><td class="n">2<span class="d">.18</span></td></tr>
+        <tr><td>KV up projection (FP8)</td><td class="n"><span data-cellref="t<sup>up</sup><sub>kv</sub>">94<span class="d">.4</span><span class="u"> µs</span></span></td><td class="n" data-us="244.25">244<span class="d"></span></td><td class="n">2<span class="d">.59</span></td><td class="n"><span data-cellref="t<sup>up</sup><sub>kv</sub>">94<span class="d">.4</span><span class="u"> µs</span></span></td><td class="n" data-us="220">220<span class="d"></span></td><td class="n">2<span class="d">.33</span></td><td class="n"><span data-cellref="t<sup>up</sup><sub>kv</sub>">94<span class="d">.4</span><span class="u"> µs</span></span></td><td class="n" data-us="221.5">222<span class="d"></span></td><td class="n">2<span class="d">.35</span></td></tr>
+        <tr><td>FlashAttention (BF16)</td><td class="n"><span data-cellref="t<sub>attn</sub>">907<span class="d"></span><span class="u"> µs</span></span></td><td class="n" data-us="1237">1,237<span class="d"></span></td><td class="n">1<span class="d">.36</span></td><td class="n"><span data-cellref="t<sup>B</sup><sub>attn</sub>">2,360<span class="d"></span><span class="u"> µs</span></span></td><td class="n" data-us="3778.75">3,779<span class="d"></span></td><td class="n">1<span class="d">.60</span></td><td class="n"></td><td class="n"></td><td class="n"></td></tr>
+        <tr><td>attention output projection (FP8)</td><td class="n"><span data-cellref="t<sub>o</sub>">660<span class="d"></span><span class="u"> µs</span></span></td><td class="n" data-us="900.75">901<span class="d"></span></td><td class="n">1<span class="d">.36</span></td><td class="n"><span data-cellref="t<sub>o</sub>">660<span class="d"></span><span class="u"> µs</span></span></td><td class="n" data-us="927">927<span class="d"></span></td><td class="n">1<span class="d">.40</span></td><td class="n"><span data-cellref="t<sub>o</sub>">660<span class="d"></span><span class="u"> µs</span></span></td><td class="n" data-us="1499">1,499<span class="d"></span></td><td class="n">2<span class="d">.27</span></td></tr>
+        <tr><td>router (BF16)</td><td class="n"><span data-cellref="t<sub>r</sub>">19<span class="d">.8</span><span class="u"> µs</span></span></td><td class="n" data-us="46.5">46<span class="d">.5</span></td><td class="n">2<span class="d">.34</span></td><td class="n"><span data-cellref="t<sub>r</sub>">19<span class="d">.8</span><span class="u"> µs</span></span></td><td class="n" data-us="47.25">47<span class="d">.3</span></td><td class="n">2<span class="d">.38</span></td><td class="n"><span data-cellref="t<sub>r</sub>">19<span class="d">.8</span><span class="u"> µs</span></span></td><td class="n" data-us="40.5">40<span class="d">.5</span></td><td class="n">2<span class="d">.04</span></td></tr>
+        <tr><td>shared expert gate/up (FP8)</td><td class="n"><span data-cellref="t<sup>sh</sup><sub>13</sub>">165<span class="d"></span><span class="u"> µs</span></span></td><td class="n" data-us="259">259<span class="d"></span></td><td class="n">1<span class="d">.57</span></td><td class="n"><span data-cellref="t<sup>sh</sup><sub>13</sub>">165<span class="d"></span><span class="u"> µs</span></span></td><td class="n" data-us="240.5">241<span class="d"></span></td><td class="n">1<span class="d">.46</span></td><td class="n"><span data-cellref="t<sup>sh</sup><sub>13</sub>">165<span class="d"></span><span class="u"> µs</span></span></td><td class="n" data-us="370.25">370<span class="d"></span></td><td class="n">2<span class="d">.24</span></td></tr>
+        <tr><td>shared expert down (FP8)</td><td class="n"><span data-cellref="t<sup>sh</sup><sub>2</sub>">82<span class="d">.6</span><span class="u"> µs</span></span></td><td class="n" data-us="138">138<span class="d"></span></td><td class="n">1<span class="d">.67</span></td><td class="n"><span data-cellref="t<sup>sh</sup><sub>2</sub>">82<span class="d">.6</span><span class="u"> µs</span></span></td><td class="n" data-us="126.25">126<span class="d"></span></td><td class="n">1<span class="d">.53</span></td><td class="n"><span data-cellref="t<sup>sh</sup><sub>2</sub>">82<span class="d">.6</span><span class="u"> µs</span></span></td><td class="n" data-us="181">181<span class="d"></span></td><td class="n">2<span class="d">.19</span></td></tr>
+        <tr><td>routed experts gate/up (FP8)</td><td class="n"><span data-cellref="t<sup>rt</sup><sub>13</sub>">1,320<span class="d"></span><span class="u"> µs</span></span></td><td class="n" data-us="1876.57">1,877<span class="d"></span></td><td class="n">1<span class="d">.42</span></td><td class="n"><span data-cellref="t<sup>rt</sup><sub>13</sub>">1,320<span class="d"></span><span class="u"> µs</span></span></td><td class="n" data-us="2004.47">2,004<span class="d"></span></td><td class="n">1<span class="d">.52</span></td><td class="n"><span data-cellref="t<sup>rt</sup><sub>13</sub>">1,320<span class="d"></span><span class="u"> µs</span></span></td><td class="n" data-us="2710.38">2,710<span class="d"></span></td><td class="n">2<span class="d">.05</span></td></tr>
+        <tr><td>routed experts down (FP8)</td><td class="n"><span data-cellref="t<sup>rt</sup><sub>2</sub>">660<span class="d"></span><span class="u"> µs</span></span></td><td class="n" data-us="1042.91">1,043<span class="d"></span></td><td class="n">1<span class="d">.58</span></td><td class="n"><span data-cellref="t<sup>rt</sup><sub>2</sub>">660<span class="d"></span><span class="u"> µs</span></span></td><td class="n" data-us="882.02">882<span class="d"></span></td><td class="n">1<span class="d">.34</span></td><td class="n"><span data-cellref="t<sup>rt</sup><sub>2</sub>">660<span class="d"></span><span class="u"> µs</span></span></td><td class="n" data-us="1303.92">1,304<span class="d"></span></td><td class="n">1<span class="d">.97</span></td></tr>
+        <tr><td>Q up projection, replayed (FP8)</td><td class="n"></td><td class="n"></td><td class="n"></td><td class="n"><span data-cellref="t<sup>up</sup><sub>q</sub>">212<span class="d"></span><span class="u"> µs</span></span></td><td class="n" data-us="373.5">374<span class="d"></span></td><td class="n">1<span class="d">.76</span></td><td class="n"></td><td class="n"></td><td class="n"></td></tr>
+        <tr><td>KV up projection, replayed (FP8)</td><td class="n"></td><td class="n"></td><td class="n"></td><td class="n"><span data-cellref="t<sup>up</sup><sub>kv</sub>">94<span class="d">.4</span><span class="u"> µs</span></span></td><td class="n" data-us="244.25">244<span class="d"></span></td><td class="n">2<span class="d">.59</span></td><td class="n"></td><td class="n"></td><td class="n"></td></tr>
         </tbody><tbody>
-        <tr><td class="rs" rowspan="4">IB</td><td>EP dispatch + combine, forward and backward</td><td class="fx"><b>T<sup>+</sup><sub>EP</sub></b></td><td class="n">5<span class="d">.42</span></td><td class="n">5<span class="d">.98</span></td></tr>
-        <tr><td>PP activations and gradients</td><td class="fx"><b>T<sub>PP</sub></b></td><td class="n">0<span class="d">.28</span></td><td class="n">0<span class="d">.31</span></td></tr>
-        <tr><td>ZeRO-1 gradient reduce-scatter + parameter all-gather</td><td class="fx"><b>T<sup>PP</sup><sub>sync</sub></b></td><td class="n">0<span class="d">.15</span></td><td class="n">0<span class="d">.16</span></td></tr>
-        <tr class="hl"><td>total</td><td class="fx"><b>T<sup>+</sup><sub>EP</sub></b> + <b>T<sub>PP</sub></b> + <b>T<sup>PP</sup><sub>sync</sub></b></td><td class="n">5<span class="d">.8</span></td><td class="n">6<span class="d">.5</span></td></tr>
+        <tr><td>everything else (not a matmul)</td><td class="n">0<span class="d"></span></td><td class="n" data-us="2713.25">2,713<span class="d"></span></td><td class="n"></td><td class="n">0<span class="d"></span></td><td class="n" data-us="5307.25">5,307<span class="d"></span></td><td class="n"></td><td class="n">0<span class="d"></span></td><td class="n" data-us="577.75">578<span class="d"></span></td><td class="n"></td></tr>
+        <tr><td>idle (not waiting on communication)</td><td class="n">0<span class="d"></span></td><td class="n" data-us="280.75">281<span class="d"></span></td><td class="n"></td><td class="n">0<span class="d"></span></td><td class="n" data-us="263">263<span class="d"></span></td><td class="n"></td><td class="n">0<span class="d"></span></td><td class="n" data-us="20.5">21<span class="d"></span></td><td class="n"></td></tr>
+        <tr class="hl"><td>total</td><td class="n"><span data-cellref="t<sup>Σ</sup><sub>F</sub>">4,210<span class="d"></span><span class="u"> µs</span></span></td><td class="n" data-us="9267.23">9,267<span class="d"></span></td><td class="n">2<span class="d">.20</span></td><td class="n"><span data-cellref="t<sup>Σ</sup><sub>B</sub>">5,970<span class="d"></span><span class="u"> µs</span></span></td><td class="n" data-us="14921.99">14,922<span class="d"></span></td><td class="n">2<span class="d">.50</span></td><td class="n"><span data-cellref="t<sup>Σ</sup><sub>W</sub>">3,300<span class="d"></span><span class="u"> µs</span></span></td><td class="n" data-us="7592.79">7,593<span class="d"></span></td><td class="n">2<span class="d">.30</span></td></tr>
         </tbody>
     </table></div>
 
-    <div>
-    <p><em>Related, same table: backward rates.</em>  The source list assumes
-    backward GEMMs run at forward rates.  In DeepSeek's trace, the forward
-    ops match our effective rates to within about 10% (with the 20-SM tax),
-    but backward is 1.4× slower than that assumption.  Weight-gradient GEMMs
-    run about 1.5× slower than forward (MoE 4.3 vs 2.8 ms, attention
-    projections 2.51 vs 1.65 ms per microbatch), and FlashAttention backward
-    is 1.44× its 2×-forward share.  Net: effective compute is about 27%
-    optimistic, so the effective DualPipe step moves from ≈ 8.4 s toward
-    10 s.  Using the trace as the input would be fitting to the answer; the
-    fix is a third-party backward/wgrad benchmark (DeepGEMM has since added
-    k-grouped wgrad kernels — check whether they publish rates), or at
-    minimum a prominent caveat with this size on it.]]</p>
-    </div>
+    <p>Times are in µs, trace times are averaged over all instances of
+    the kernel in the profile.  You can see that our speed of light uniformly overestimates our GEMM
+    performance, which is not surprising because on real sizes it can be
+    difficult to achieve microbenchmark performance in optimal conditions.
+    Actually, there is also another issue which is reducing GEMM performance:
+    our speed of light analysis assumes that overlapping compute with communications
+    is free, but it's not; DeepSeek's DeepEP kernel requires 20 SMs to handle
+    the communication, which implies our SOL time should grow by 18% (you
+    can toggle this on the chart.)  We can also see that in reality, ignoring
+    all non-matmul compute cost us <mark class="flag">2.7 µs of 9.2 µs</mark> <span class="flag-why">[[FLAG: the table's numbers are 2,713 µs of 9,267 µs, i.e. 2.7 ms of 9.3 ms, and that is the forward column only]]</span> overall compute time.
+    </p>
 
-    <p>The effective numbers move the two sides in opposite directions: IB
-    loses 10%, but <mark class="flag">compute <em>gains</em> 14%, because the FP8 GEMMs beat the
-    BF16 peak by more than attention and the head fall short of it.  At the
-    BF16 peak the step is compute-bound (8.0 s against 5.8 s);</mark> <span class="flag-why">[[FLAG: theoretical compute is now Smol's measured rates (6.1 s), so compute no longer gains: it loses 12% (6.1 → 6.9), the same direction as IB (5.8 → 6.5, 10%). In theory the step is compute-bound 6.1 s against 5.8 s]]</span> in practice
-    it's roughly balanced, and still slightly compute-bound (6.9 s against
-    6.5 s).  That's close to the 1:1 the technical report describes, and we
-    got there without tuning anything to hit it.</p>
+    <p>We should also take a look at the actual comms performance compared to SOL:</p>
 
-    <h4>What overlap buys</h4>
-
-    <p>Now we can use the roofline to make a decision.  DualPipe overlaps
-    communication with compute, but not for free: DeepSeek dedicates 20 of the
-    H800's 132 SMs to communication, so compute runs 132/112 = 1.18× slower
-    while it's overlapped.  It also keeps two copies of the parameters.  Is
-    it worth it?</p>
-
-    <table>
-        <tr><th></th><th>no overlap, 1F1B</th><th>DualPipe</th></tr>
-        <tr><td>theoretical</td><td><mark class="flag">8.0 + 5.8 + 12.5% bubble = 14.8 s</mark> <span class="flag-why">[[FLAG: at T⁺c = 6.1 s: 6.1 + 5.8 + 12.5% bubble ≈ 12.8 s]]</span></td><td><mark class="flag">max(8.0 × 1.18, 5.8) + 3.9% bubble ≈ 9.8 s</mark> <span class="flag-why">[[FLAG: max(6.1 × 1.18, 5.8) + 3.9% bubble ≈ 7.5 s]]</span></td></tr>
-        <tr><td>effective</td><td>6.9 + 6.5 + 12.5% bubble ≈ 14.2 s</td><td>max(6.9 × 1.18, 6.5) + 3.9% bubble ≈ 8.4 s</td></tr>
-    </table>
-
-    <p>Both versions say overlap wins by a wide margin, and they agree about
-    what to do next.  Compute is the binding side, so the 20 SMs cost real
-    time (<mark class="flag">1.4 s per step at the BF16 peak</mark> <span class="flag-why">[[FLAG: 0.18 × 6.14 = 1.1 s at the measured rates]]</span>, 1.2 s effective) while IB sits
-    idle part of the time, and a communication kernel that used fewer SMs
-    would be worth more than one that moved fewer bytes.  What the effective
-    numbers change is how much room there is: IB's slack is <mark class="flag">3.6 s at the
-    peaks</mark> <span class="flag-why">[[FLAG: 7.24 − 5.85 = 1.4 s at the measured rates, so theory and practice (1.7 s) now nearly agree; "but only" may not survive]]</span> but only 1.7 s in practice, so the bytes can't grow much before
-    the advice flips.</p>
-
-    <p>Looking back, each of the three tools did one job.  <strong>Speed of
-    light</strong> ruled out FSDP without any engineering: even at IB's full
-    line rate, no ZeRO flavor gets the step under about 9 s, <mark class="flag">a third over its
-    compute at the BF16 peak</mark> <span class="flag-why">[[FLAG: at the measured compute rates ZeRO-3 at 8 microbatches, the only count that fits, is 20.8 s, 3.4× compute (6.14 s)]]</span>, so no amount of clever overlap could rescue it.  <strong>Conservation</strong> let us price each
-    piece without committing to a full parallel layout, and it also tells us
-    which side we can negotiate with.  The compute is fixed; the IB time is
-    the product of our choices, and those choices swing it enormously (0.15 s
-    for ZeRO-1 against 15.4 s for ZeRO-3).  That's why we always try to hide
-    communication under compute and never the other way round.
-    <strong>Asymptotics</strong> told us which costs matter as models grow:
-    matmul FLOPs grow quadratically with width while PP and EP traffic grow
-    linearly, so a bigger model of the same shape gets relatively
-    <em>cheaper</em> to communicate.  (For EP, only if the experts grow
-    too.)</p>
-
-    <p>Even the effective roofline, 8.4 s, is well short of DeepSeek's
-    reported 19.9 s step.
-    [TODO: the profile comparison, and where the rest goes.]]]</p>
-
+    <details class="fold"><summary>the communication speed-of-light sheet</summary>
     <div class="cellsheet"><table>
     <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
-    <tr><td class="nm">Y1</td><td>GPU-hours per 10<sup>12</sup> tokens</td><td class="vl">180,000</td><td class="vl sc ap">1.80 × 10<sup>5</sup></td><td class="vl si ap">180<span class="d"></span><span class="u"> K</span></td><td class="fx"><i>(DeepSeek-V3 report, pretraining)</i></td></tr>
-    <tr><td class="nm">Y2</td><td>reported step time (s)</td><td class="vl">19.90656</td><td class="vl sc ap">1.99 × 10<sup>1</sup></td><td class="vl si ap">19<span class="d">.9</span><span class="u"> s</span></td><td class="fx"><b>Y1</b> · 3,600 · <b>D<sub>GPU</sub></b> / 10<sup>12</sup></td></tr>
-    <tr><td class="nm">P17</td><td>seqs per GPU per step (avg)</td><td class="vl">7.5</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><b>D<sub>GPU</sub></b> / <b>S</b></td></tr>
-    <tr><td class="nm">Y3</td><td>steady-state step time, measured (s)</td><td class="vl">12.2019675</td><td class="vl sc ap">1.22 × 10<sup>1</sup></td><td class="vl si ap">12<span class="d">.2</span><span class="u"> s</span></td><td class="fx"><b>P17</b> · (<b>L<sub>moe</sub></b> / 4) · 0.112202 <i>(DeepSeek's profile-data trace: one DualPipe forward + backward chunk pair of 4 MoE layers, 112.202 ms; balanced routing, no PP comm)</i></td></tr>
-    <tr class="hl"><td class="nm">Y4</td><td>model FLOPs utilization</td><td class="vl"></td><td class="vl sc ap">3.43 × 10<sup>−1</sup></td><td class="vl si ap">34<span class="d">.3</span><span class="u"> %</span></td><td class="fx"><b>C</b> / (<b>GPUs</b> · <b>π<sub>bf16</sub></b> · <b>Y2</b>) <i>(MFU is priced at the spec peak)</i></td></tr>
+    <tr><td class="nm">t<sub>disp</sub></td><td>dispatch, one layer and microbatch (s)</td><td class="vl"></td><td class="vl sc ap">2.12 × 10<sup>−3</sup></td><td class="vl si ap">2,120<span class="d"></span><span class="u"> µs</span></td><td class="fx"><b>S</b> · <b>V<sup>+</sup><sub>disp</sub></b> / <b>β<sub>IB</sub></b></td></tr>
+    <tr><td class="nm">t<sub>comb</sub></td><td>combine, one layer and microbatch (s)</td><td class="vl"></td><td class="vl sc ap">4.11 × 10<sup>−3</sup></td><td class="vl si ap">4,110<span class="d"></span><span class="u"> µs</span></td><td class="fx"><b>S</b> · <b>V<sub>comb</sub></b> / <b>β<sub>IB</sub></b></td></tr>
+    <tr class="hl"><td class="nm">t<sup>Σ</sup><sub>EP</sub></td><td>EP, one direction (s)</td><td class="vl"></td><td class="vl sc ap">6.23 × 10<sup>−3</sup></td><td class="vl si ap">6,230<span class="d"></span><span class="u"> µs</span></td><td class="fx"><b>t<sub>disp</sub></b> + <b>t<sub>comb</sub></b> <i>(the forward and the backward each send one dispatch and one combine)</i></td></tr>
+    </table></div>
+    </details>
+
+    <div class="tally comm">
+    <table>
+        <thead><tr><th rowspan="2">kernel</th><th colspan="3" class="g">F · forward</th><th colspan="3" class="g">B · backward</th></tr>
+        <tr><th class="n">SOL</th><th class="n">trace</th><th class="n">×</th><th class="n">SOL</th><th class="n">trace</th><th class="n">×</th></tr></thead>
+        <tbody>
+        <tr><td>dispatch (FP8, with scales)</td><td class="n"><span data-cellref="t<sub>disp</sub>">2,120<span class="d"></span><span class="u"> µs</span></span></td><td class="n" data-us="4345.75">4,346<span class="d"></span></td><td class="n">2<span class="d">.05</span></td><td class="n"><span data-cellref="t<sub>disp</sub>">2,120<span class="d"></span><span class="u"> µs</span></span></td><td class="n" data-us="3405.25">3,405<span class="d"></span></td><td class="n">1<span class="d">.61</span></td></tr>
+        <tr><td>combine (BF16)</td><td class="n"><span data-cellref="t<sub>comb</sub>">4,110<span class="d"></span><span class="u"> µs</span></span></td><td class="n" data-us="5993.75">5,994<span class="d"></span></td><td class="n">1<span class="d">.46</span></td><td class="n"><span data-cellref="t<sub>comb</sub>">4,110<span class="d"></span><span class="u"> µs</span></span></td><td class="n" data-us="6368.25">6,368<span class="d"></span></td><td class="n">1<span class="d">.55</span></td></tr>
+        </tbody><tbody>
+        <tr><td>notify (the handshake before each transfer)</td><td class="n">0<span class="d"></span></td><td class="n" data-us="4932.25">4,932<span class="d"></span></td><td class="n"></td><td class="n">0<span class="d"></span></td><td class="n" data-us="3212.25">3,212<span class="d"></span></td><td class="n"></td></tr>
+        <tr><td>dispatch layout and FP8 casts</td><td class="n">0<span class="d"></span></td><td class="n" data-us="102.5">103<span class="d"></span></td><td class="n"></td><td class="n">0<span class="d"></span></td><td class="n" data-us="270.25">270<span class="d"></span></td><td class="n"></td></tr>
+        <tr><td>idle (not waiting on compute)</td><td class="n">0<span class="d"></span></td><td class="n" data-us="76">76<span class="d">.0</span></td><td class="n"></td><td class="n">0<span class="d"></span></td><td class="n" data-us="178.75">179<span class="d"></span></td><td class="n"></td></tr>
+        <tr class="hl"><td>total</td><td class="n"><span data-cellref="t<sup>Σ</sup><sub>EP</sub>">6,230<span class="d"></span><span class="u"> µs</span></span></td><td class="n" data-us="15450.25">15,450<span class="d"></span></td><td class="n">2<span class="d">.48</span></td><td class="n"><span data-cellref="t<sup>Σ</sup><sub>EP</sub>">6,230<span class="d"></span><span class="u"> µs</span></span></td><td class="n" data-us="13434.75">13,435<span class="d"></span></td><td class="n">2<span class="d">.16</span></td></tr>
+        </tbody>
     </table></div>
 
+    <p>Times are in µs, trace times are averaged over all instances of the kernel
+    in the profile (this might be somewhat misleading here, as the DeepEP notify handshake
+    is quite variable, since it blocks on remote ranks).  You can also see that SOL
+    systematically overestimated our network performance, but that the proportions are correct.
+    In fact, the DeepSeek trace reveals that their compute and comms are
+    balanced on a knife's edge: technically, their steady-state profile is compute bound,
+    but only up to a few milliseconds.  This is unlikely to be an accident; they
+    probably tuned their system based on real world profiles to balance it as
+    closely as possible!
+    </p>
+
+    <p>Let's recap: we have come a long way.  We have carefully studied every
+    aspect of how DeepSeek put together their training run, from the comfort of
+    our GPU poor armchair.  By calculation alone, we have discovered that FSDP
+    is a bad idea for DSv3 on Hopper, and we also see empirical evidence that
+    the SOL roofline gives directionally correct quantities when you run
+    the real job.  SOL isn't a magic wand: it won't tell you the real performance
+    when you run on a big cluster (that's why you do scaling tests).  But
+    it's simplicity makes it a great tool for understanding how a system <em>should</em>
+    behave.</p>
 
   </main>
   <script type="module">
@@ -1214,13 +1261,14 @@
     // clicking it jumps to the row that defines it (any sheet on the page)
     // and selects that row; clicking a row selects it (again to clear)
     import { attachTip } from '../src/tip.js';
+    import { current, setKnob } from './sheetedit.js';
     const def = new Map();   // name (innerHTML) → its first row
     for (const tr of document.querySelectorAll('.cellsheet tr')) {
       const nm = tr.querySelector('td.nm')?.innerHTML;
       if (nm && !def.has(nm)) def.set(nm, tr);
     }
     const rowOf = (b) => def.get(b?.dataset.cellref ?? b?.innerHTML);
-    for (const b of document.querySelectorAll('.cellsheet td.fx b, .tally td.fx b')) if (rowOf(b)) b.classList.add('ref');
+    for (const b of document.querySelectorAll('.cellsheet td.fx b')) if (rowOf(b)) b.classList.add('ref');
     const card = (tr) => {
       const [nm, lb, vl, , si, fx] = tr.cells;
       const leaf = !fx.querySelector('b') && fx.children.length === 1 && fx.firstElementChild.tagName === 'I';
@@ -1233,25 +1281,42 @@
     };
     let sel = null, fuse;
     const select = (tr) => { sel?.classList.remove('sel'); sel = tr; tr?.classList.add('sel'); };
-    // the closing tally's cell column links into the sheets the same way (its rows don't select)
-    for (const sheet of document.querySelectorAll('.cellsheet, .tally:has(td.fx)')) {
+    const jump = (tr) => { const d = tr.closest('details'); if (d) d.open = true; select(tr); tr.scrollIntoView({ block: 'center' }); };   // a folded sheet opens
+    for (const sheet of document.querySelectorAll('.cellsheet')) {
       attachTip(sheet, (ev) => { const tr = rowOf(ev.target.closest?.('b.ref')); return tr ? card(tr) : null; },
         { parent: document.body, cls: 'cs-tip', pinnable: (ev) => !ev.target.closest('b.ref') });
       sheet.addEventListener('click', (ev) => {
         const tr = rowOf(ev.target.closest?.('b.ref'));
-        if (tr) { select(tr); tr.scrollIntoView({ block: 'center' }); return; }
+        if (tr) { jump(tr); return; }
         const row = ev.target.closest?.('tr');
-        if (!row?.querySelector('td') || !sheet.matches('.cellsheet')) return;
+        if (!row?.querySelector('td')) return;
         // a click that ends a drag-select or starts a double-click is a selection gesture, not a row click
         clearTimeout(fuse);
         if (ev.detail > 1 || !getSelection().isCollapsed) return;
         fuse = setTimeout(() => select(sel === row ? null : row), 250);
       });
     }
+    // the kernel table's SM toggle sets n_c; both tables' ratios follow the SOL cells (data-us = the exact trace time)
+    const kern = document.querySelector('.tally.kern');
+    const follow = (now) => {
+      const [n, d] = now.get('n<sub>c</sub>');
+      for (const b of kern.querySelectorAll('button')) b.setAttribute('aria-pressed', BigInt(b.dataset.sm) * d === n);
+      for (const tr of document.querySelectorAll('.tally.kern tbody tr, .tally.comm tbody tr')) for (let g = 1; g < tr.cells.length; g += 3) {
+        const [sol, us, x] = [...tr.cells].slice(g, g + 3), q = sol.querySelector('[data-cellref]');
+        if (!q) continue;
+        const [a, b] = now.get(q.dataset.cellref), r = us.dataset.us / (1e6 * Number(a) / Number(b));
+        const [i, f] = r.toFixed(2).split('.');
+        x.innerHTML = `${i}<span class="d">.${f}</span>`;
+        x.classList.toggle('off', q.classList.contains('off'));
+      }
+    };
+    follow(current());
+    document.addEventListener('dsv3-cells', (ev) => follow(ev.detail));
+    kern.addEventListener('click', (ev) => { const b = ev.target.closest('button'); if (b) setKnob('SMc', [BigInt(b.dataset.sm), 1n]); });
     // prose numbers quoting a cell: the same card on hover, the same jump on click
     for (const q of document.querySelectorAll('main [data-cellref]')) {
       attachTip(q, () => card(rowOf(q)), { parent: document.body, cls: 'cs-tip', pinnable: () => false });
-      q.addEventListener('click', () => { const tr = rowOf(q); select(tr); tr.scrollIntoView({ block: 'center' }); });
+      q.addEventListener('click', () => jump(rowOf(q)));
     }
   </script>
 </body>

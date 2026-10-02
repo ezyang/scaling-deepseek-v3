@@ -2,7 +2,8 @@
 // Every op of the 61-layer stack (+ head) is priced at ONE rate — the GPU's
 // FP8 tensor peak (the ops that really run bf16/fp32, attention core and
 // router, are a later negotiation) — forward + backward (2× forward) +
-// whatever the recompute policy replays, and the pieces are SUMMED. Compute is conserved
+// whatever the recompute policy replays (+ the QKᵀ FlashAttention's backward
+// always recomputes), and the pieces are SUMMED. Compute is conserved
 // under any parallelism, so no parallelism knob exists here: the per-GPU
 // step is the whole batch's compute divided by the cluster. <dsv3-sol> draws
 // the sum as stacked rows (forward / backward / recompute / total) by op
@@ -155,6 +156,9 @@ export function solFlops(cfg) {
         add('bwd', g, 2 * f * frac);
         if (ana.replayed.has(n.id)) add('replay', g, f * frac);
       }
+      // FlashAttention's backward recomputes S = QKᵀ (contracts qk, of the
+      // forward's qk + vHead) on top of any policy replay
+      if (n.id === 'attn') add('replay', 'attn', f * (a.qkNope + a.qkRope) / (a.qkNope + a.qkRope + a.vHead));
     }
   }
   for (const op of HEAD_OPS(a)) {   // the loss is forward-only

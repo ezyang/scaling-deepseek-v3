@@ -428,7 +428,8 @@ overlap, no communication, ONE rate. Every op of the 61-layer stack plus
 the head is priced at the GPU's FP8 tensor peak (the ops that really run
 bf16/fp32 — attention core, router — are a later negotiation), forward +
 backward (2× forward, the loss forward-only) + whatever the recompute
-policy replays, and summed. Compute is conserved under any parallelism, so
+policy replays + the QKᵀ FlashAttention's backward always recomputes
+(booked in the recompute row), and summed. Compute is conserved under any parallelism, so
 there is no parallelism knob: the per-GPU step is tokens/GPU (gbs·seq/gpus)
 × Σ FLOP/token ÷ peak. The GPU knob (Hopper only: H800 · H100) carries its
 TECH SHEET — FP8 TFLOP/s, NVLink GB/s, InfiniBand GB/s per GPU per

@@ -13,7 +13,7 @@ const pubHTML = trs.map((tr) => tr.innerHTML);
 const bad = trs.filter((tr) => fmtExact(published.get(tr.cells[0].innerHTML)) !== tr.cells[2].textContent);
 T.check('every formula reproduces its published exact value', bad.length === 0, bad.map((tr) => tr.cells[0].textContent).join(' '));
 const edv = [...document.querySelectorAll('.cellsheet td.vl.edv')].map((td) => td.parentElement.cells[0].textContent);
-T.check('editable: exactly the real knobs', edv.join(' ') === 'πsolbf16 πsolfp8 βIB B S GPUs EP NVL', edv.join(' '));
+T.check('editable: exactly the real knobs', edv.join(' ') === 'πsolbf16 πsolfp8 βIB B S GPUs EP NVL nc', edv.join(' '));
 T.check('untouched: no hash, nothing amber', location.hash === '' && !document.querySelector('.cellsheet tr.off'), location.hash);
 
 const type = (txt, s, key = 'Enter') => {

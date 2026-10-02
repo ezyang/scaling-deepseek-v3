@@ -13,7 +13,10 @@ generality.
   changes (shared src/ is easy to regress).
 - AI-drafted prose is allowed in unpublished posts but must carry an explicit
   disclosure footnote and expects a human edit pass. Site text is assumed
-  human-written unless disclosed otherwise.
+  human-written unless disclosed otherwise. Mark every AI-drafted passage
+  red, keeping its brackets so grep finds it: `<span class="ai">[[AI:
+  …]]</span>` inline, or `class="ai"` on a whole `<p>`/`<div>` (study.css).
+  The author edits it and removes the marker. Never on a live page.
 - Prose is author-owned: coordinate before editing it; text below a
   "SLOP BELOW" marker is placeholder — don't edit or polish it. The author
   edits files mid-session: check `git status` before committing so unrelated

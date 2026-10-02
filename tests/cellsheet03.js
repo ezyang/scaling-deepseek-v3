@@ -1,15 +1,16 @@
 // @page studies/03-roofline.html
 // 03's static cell sheets behave like 02's <dsv3-sheet>: hovering a formula
 // name shows its cell card; clicking it jumps to (and selects) the row that
-// defines it, across sheets (the closing tally's cell column too); clicking
+// defines it, across sheets; clicking
 // a row selects it, again clears; a click on a name never pins the card
 await T.tick(100);
 const at = (el, type, o = {}) => { const q = el.getBoundingClientRect(); el.dispatchEvent(new MouseEvent(type, { bubbles: true, clientX: q.left + 2, clientY: q.top + 2, ...o })); };
 const sheets = [...document.querySelectorAll('.cellsheet')];
 const refs = [...document.querySelectorAll('.cellsheet td.fx b')];
 T.check('every formula name resolves to a defining row', refs.every((b) => b.classList.contains('ref')), refs.filter((b) => !b.classList.contains('ref')).map((b) => b.innerHTML).join(' '));
-const tal = [...document.querySelectorAll('.tally td.fx b')];
-T.check('the closing tally cites a sheet cell on every row', tal.length === 7 && tal.every((b) => b.classList.contains('ref')), tal.filter((b) => !b.classList.contains('ref')).map((b) => b.innerHTML).join(' ') || tal.length);
+const kern = [...document.querySelectorAll('.tally.kern [data-cellref]')];
+const named = new Set([...document.querySelectorAll('.cellsheet td.nm')].map((td) => td.innerHTML));
+T.check('the kernel table links every SOL number to a sheet cell', kern.length === 37 && kern.every((q) => named.has(q.dataset.cellref)), kern.filter((q) => !named.has(q.dataset.cellref)).map((q) => q.dataset.cellref).join(' ') || kern.length);
 // T_fp8 = (C − C_bf16) / (GPUs · π^sol_fp8), in the precision sheet: hover GPUs (defined in the 6ND sheet; the Smol sheet precedes it)
 const si = sheets.findIndex((sh) => [...sh.querySelectorAll('tr')].some((tr) => tr.cells[0]?.innerHTML === 'N<sub>bf16</sub>'));
 const t2 = [...sheets[si].querySelectorAll('tr')].find((tr) => tr.cells[0]?.innerHTML === 'T<sub>fp8</sub>');
