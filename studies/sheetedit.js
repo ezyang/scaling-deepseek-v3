@@ -32,8 +32,9 @@ const PAGES = {
     },
   },
   k3: {
-    knobs: { B: 'B', S: 'S', GPUs: 'GPUs', 'π<sup>sol</sup><sub>bf16</sub>': 'sol', 'π<sup>sol</sup><sub>fp8</sub>': 'sol8', 'β<sub>NV</sub>': 'NV', 'β<sub>IB</sub>': 'IB', NVL: 'NVL', PP: 'PP', EP: 'EP', 'V<sub>pp</sub>': 'Vpp', 'r<sub>res</sub>': 'rres', 'g<sub>B</sub>': 'gB', 'o<sub>B</sub>': 'oB', 'β<sub>host</sub>': 'host' },
-    counts: ['B', 'S', 'GPUs', 'NVL', 'PP', 'EP', 'Vpp', 'rres', 'gB', 'oB'],
+    knobs: { B: 'B', S: 'S', GPUs: 'GPUs', 'π<sup>sol</sup><sub>bf16</sub>': 'sol', 'π<sup>sol</sup><sub>fp8</sub>': 'sol8', 'β<sub>NV</sub>': 'NV', 'β<sub>IB</sub>': 'IB', NVL: 'NVL', PP: 'PP', EP: 'EP', 'V<sub>pp</sub>': 'Vpp', 'r<sub>res</sub>': 'rres', ovl: 'ovl', 'μ': 'mu', 'g<sub>B</sub>': 'gB', 'o<sub>B</sub>': 'oB', 'β<sub>host</sub>': 'host' },
+    counts: ['B', 'S', 'GPUs', 'NVL', 'PP', 'EP', 'Vpp', 'rres', 'ovl', 'gB', 'oB'],
+    zero: ['ovl', 'mu'],   // knobs that may be 0 (a 0/1 switch, a share)
     xlsx: ['kimi-k3-roofline-sheet.xlsx', 'Kimi K3 roofline'],
     rules(v, edits, pub) {
       const [G, P, E, N] = ['GPUs', 'PP', 'EP', 'NVL'].map((k) => v(k)[0]);
@@ -65,10 +66,11 @@ const dec = (s) => { const [i, f = ''] = s.replace(/,/g, '').split('.'); return 
 const num = ([n, d]) => Number(n) / Number(d);
 
 // the formula cell's HTML → (get) => Q. <i>…</i> is commentary; <b>X</b> is a
-// reference to the row named X; 10<sup>k</sup> is a literal
+// reference to the row named X; 10<sup>k</sup> is a literal; ⌈…⌉ and max(…, …)
+// are the only functions (both have Excel spellings for the .xlsx)
 function compile(html) {
   const s = html.replace(/<i>[\s\S]*?<\/i>/g, '').replace(/10<sup>(\d+)<\/sup>/g, (_, e) => '1' + '0'.repeat(+e)).trim();
-  const re = /\s*(?:<b>([\s\S]*?)<\/b>|(\d[\d,]*(?:\.\d+)?)|([·/+−()⌈⌉]))/y;
+  const re = /\s*(?:<b>([\s\S]*?)<\/b>|(\d(?:[\d,]*\d)?(?:\.\d+)?)|(max\(|[·/+−(),⌈⌉]))/y;
   const toks = [];
   while (re.lastIndex < s.length) {
     const at = re.lastIndex, m = re.exec(s);
@@ -84,6 +86,7 @@ function compile(html) {
     if (t?.ref != null) return (get) => get(t.ref);
     if (t?.op === '(') { const e = expr(); want(')'); return e; }
     if (t?.op === '⌈') { const e = expr(); want('⌉'); return (get) => ceil(e(get)); }
+    if (t?.op === 'max(') { const x = expr(); want(','); const y = expr(); want(')'); return (get) => { const a = x(get), b = y(get); return a[0] * b[1] >= b[0] * a[1] ? a : b; }; }
     throw new Error(`sheetedit: unexpected token in "${s}"`);
   };
   const chain = (sub, ops) => () => {
@@ -155,7 +158,7 @@ export { PUB as published, evalAll, set as setKnob };
 function invalid(edits) {
   const v = (k) => edits[k] ?? PUB.get(Object.keys(KNOBS).find((n) => KNOBS[n] === k));
   for (const k of Object.keys(edits)) {
-    if (edits[k][0] <= 0n) return `${k} must be positive`;
+    if (edits[k][0] < 0n || (edits[k][0] === 0n && !PAGE.zero?.includes(k))) return `${k} must be positive`;
     if (COUNTS.has(k) && edits[k][1] !== 1n) return `${k} must be a whole number`;
   }
   return PAGE.rules(v, edits, PUB);
@@ -267,7 +270,7 @@ export function sheetXml() {
   const str = (ref, t, st = 0) => `<c r="${ref}" t="inlineStr"${st ? ` s="${st}"` : ''}><is><t xml:space="preserve">${xesc(t)}</t></is></c>`;
   const xf = (fx) => fx.replace(/<i>[\s\S]*?<\/i>/g, '').replace(/<b[^>]*>([\s\S]*?)<\/b>/g, (_, n) => `C${at.get(n)}`)
     .replace(/10<sup>(\d+)<\/sup>/g, '1E+$1').replace(/(\d),(?=\d{3})/g, '$1')
-    .replace(/·/g, '*').replace(/−/g, '-').replace(/⌈/g, 'CEILING(').replace(/⌉/g, ',1)').replace(/\s+/g, '');
+    .replace(/·/g, '*').replace(/−/g, '-').replace(/⌈/g, 'CEILING(').replace(/⌉/g, ',1)').replace(/max\(/g, 'MAX(').replace(/\s+/g, '');
   const body = out.map((e, i) => {
     const r = i + 2;
     if (e.sec) return `<row r="${r}">${str('A' + r, e.sec, 1)}</row>`;

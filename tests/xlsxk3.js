@@ -9,11 +9,11 @@ const names = new Set([...document.querySelectorAll('.cellsheet td.nm')].map((td
 const check = (label) => {
   const doc = new DOMParser().parseFromString(sheetXml(), 'application/xml');
   const cell = new Map([...doc.querySelectorAll('c')].map((c) => [c.getAttribute('r'), c]));
-  const v = new Map(), CEILING = (x, s) => Math.ceil(x / s) * s;
+  const v = new Map(), CEILING = (x, s) => Math.ceil(x / s) * s, MAX = Math.max;
   const val = (r) => {
     if (!v.has(r)) {
       const c = cell.get('C' + r), f = c.querySelector('f')?.textContent;
-      if (f && !/^[\d+\-*/().,]*$/.test(f.replace(/CEILING|C\d+|E\+\d+/g, ''))) throw new Error(`odd formula C${r}: ${f}`);
+      if (f && !/^[\d+\-*/().,]*$/.test(f.replace(/CEILING|MAX|C\d+|E\+\d+/g, ''))) throw new Error(`odd formula C${r}: ${f}`);
       v.set(r, f ? eval(f.replace(/C(\d+)/g, (_, k) => `val(${k})`)) : +c.querySelector('v').textContent);
     }
     return v.get(r);
