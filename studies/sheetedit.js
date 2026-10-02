@@ -32,8 +32,8 @@ const PAGES = {
     },
   },
   k3: {
-    knobs: { B: 'B', S: 'S', GPUs: 'GPUs', 'η': 'eta', 'β<sub>NV</sub>': 'NV', 'β<sub>IB</sub>': 'IB', NVL: 'NVL', PP: 'PP', EP: 'EP', 'r<sub>res</sub>': 'rres', 'g<sub>B</sub>': 'gB', 'o<sub>B</sub>': 'oB' },
-    counts: ['B', 'S', 'GPUs', 'NVL', 'PP', 'EP', 'rres', 'gB', 'oB'],
+    knobs: { B: 'B', S: 'S', GPUs: 'GPUs', 'η': 'eta', 'β<sub>NV</sub>': 'NV', 'β<sub>IB</sub>': 'IB', NVL: 'NVL', PP: 'PP', EP: 'EP', 'V<sub>pp</sub>': 'Vpp', 'r<sub>res</sub>': 'rres', 'g<sub>B</sub>': 'gB', 'o<sub>B</sub>': 'oB', 'β<sub>host</sub>': 'host' },
+    counts: ['B', 'S', 'GPUs', 'NVL', 'PP', 'EP', 'Vpp', 'rres', 'gB', 'oB'],
     xlsx: ['kimi-k3-roofline-sheet.xlsx', 'Kimi K3 roofline'],
     rules(v, edits, pub) {
       const [G, P, E, N] = ['GPUs', 'PP', 'EP', 'NVL'].map((k) => v(k)[0]);
