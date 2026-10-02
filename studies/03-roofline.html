@@ -860,7 +860,7 @@
     <p>Our EP and FSDP traffic at one microbatch alone would make us comms bound;
     the fact that we have to do multiple microbatches to make activations fit
     in memory is added insult to injury.  We can in fact plot the percentage of
-    how much exposed time we have as we increase the number of microbatches.<span class="mn-ref"></span><span class="mn">The graph interpolates between the actual physically possible microbatch counts.  You could in fact achieve these effective microbatch sizes by tweaking your global batch size!</span></p>
+    <mark class="flag">how much exposed time we have as we increase the number of microbatches.</mark> <span class="flag-why">[[FLAG: both this curve and the PP curve below use src/fsdpsched.js STEP.comp = 6.14032 s, rather than the sheet's 6.38928 s. They omit FlashAttention's backward QKᵀ replay (0.24896 s). At eight microbatches the FSDP idle share should be 69.31%, not 70.50%; the PP60 step should be 6.63775 s, not 6.37911 s. The FSDP-versus-PP conclusion is unchanged.]]</span><span class="mn-ref"></span><span class="mn">The graph interpolates between the actual physically possible microbatch counts.  You could in fact achieve these effective microbatch sizes by tweaking your global batch size!</span></p>
 
     <dsv3-fsdpcurve style="min-height: 464px"></dsv3-fsdpcurve>
 
@@ -1117,9 +1117,9 @@
     what went wrong (either in the model, or in our implementation.)</p>
 
     <p>In fact, let's do this exercise right now.
-    DeepSeek published a profiling trace of one rank of their EP64 H800 run. It
+    <mark class="flag">DeepSeek published a profiling trace of one rank of their EP64 H800 run. It
     captured one layer's forward for one 4,096-token
-    microbatch, overlapped with one layer's backward for another.  We can go
+    microbatch, overlapped with one layer's backward for another.</mark> <span class="flag-why">[[FLAG: cite <a href="https://github.com/deepseek-ai/profile-data">DeepSeek's profile-data</a>. The capture has four repeated per-layer F/B cycles, not one, with rank 0/world size 64. Its documented setup uses simulated balanced routing and excludes PP communication; it is a profiling experiment, not a full 2,048-GPU training-step trace. The table averages those four cycles.]]</span>  We can go
     through each kernel in the profile one by one and compare it with what
     our speed of light computation says it should be:</p>
 
@@ -1181,8 +1181,8 @@
         </tbody>
     </table></div>
 
-    <p>Times are in µs, trace times are averaged over all instances of
-    the kernel in the profile.  You can see that our speed of light uniformly overestimates our GEMM
+    <p>Times are in µs, <mark class="flag">trace times are averaged over all instances of
+    the kernel in the profile.</mark> <span class="flag-why">[[FLAG: the table generator additionally scales routed-expert GEMM times by 32,768 / observed routed rows in each cycle (mean observed rows: 32,512 forward, 32,128 backward). Routed weight-gradient entries use the elapsed span of four concurrent expert kernels, not an individual-kernel mean. Disclose this normalization and grouping: the totals mix normalized GEMMs with unscaled other/idle times and are not raw measured wall times.]]</span>  You can see that our speed of light uniformly overestimates our GEMM
     performance, which is not surprising because on real sizes it can be
     difficult to achieve microbenchmark performance in optimal conditions.
     Actually, there is also another issue which is reducing GEMM performance:
@@ -1224,8 +1224,8 @@
     is quite variable, since it blocks on remote ranks).  You can also see that SOL
     systematically overestimated our network performance, but that the proportions are correct.
     In fact, the DeepSeek trace reveals that their compute and comms are
-    balanced on a knife's edge: technically, their steady-state profile is compute bound,
-    but only up to a few milliseconds.  This is unlikely to be an accident; they
+    balanced on a knife's edge: <mark class="flag">technically, their steady-state profile is compute bound,
+    but only up to a few milliseconds.</mark> <span class="flag-why">[[FLAG: raw kernel interval unions support near-1:1 occupancy (mean compute 31.063 ms, communication 28.630 ms), but occupancy alone does not establish the critical-path bottleneck. The fourth cycle has 30.330 ms compute versus 32.280 ms communication, and notification kernels include remote-rank waits. Qualify this as a near balance in this single-rank profiling capture, rather than proof that the training run is compute-bound.]]</span>  This is unlikely to be an accident; they
     probably tuned their system based on real world profiles to balance it as
     closely as possible!
     </p>
