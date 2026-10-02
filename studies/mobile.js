@@ -14,9 +14,10 @@
 // One-way: runs once when the viewport first matches; widening afterwards
 // keeps the mobile framing (a reload restores the desktop layout).
 const MQ = matchMedia('(max-width: 860px)');
+// (static sheets — .cellsheet, .tally — are not previewed: they scroll
+// sideways in place at natural width, study.css)
 const W = 'dsv3-anatomy, dsv3-layer, dsv3-pp-schedule, dsv3-pp-fold, dsv3-beat-deck, dsv3-sheet, dsv41-anatomy, dsv41-layer, '
-  + 'dsv3-mmfig, dsv3-ladder, dsv3-epsim, dsv3-mesh, dsv3-fsdpsched, dsv3-fsdpcurve, dsv3-ppcurve, dsv3-bwd, '
-  + '.cellsheet, .tally';   // 03's static sheets: fixed column grids that crush below their natural width
+  + 'dsv3-mmfig, dsv3-ladder, dsv3-epsim, dsv3-mesh, dsv3-fsdpsched, dsv3-fsdpcurve, dsv3-ppcurve, dsv3-bwd';
 
 // footnote hops follow the toc convention: scroll, NEVER touch the hash —
 // location.hash is widget-state territory. A real #mnote anchor would
@@ -175,15 +176,9 @@ function previews(main) {
     // (knob rows unwrap and content re-seats). Renderers bake pixel widths
     // at render time, so each width change needs an explicit re-render.
     el.classList.add('mwide');   // free viewport-capped internals (see study.css)
-    const fold = el.closest('details:not([open])');   // a folded sheet measures as zero: open it for the probe
-    if (fold) fold.open = true;
     const w0 = el.style.width;
     let cw = PROBE, u;
-    if (el.matches('.cellsheet, .tally')) {      // static tables: the desktop box IS the natural width (the
-      // sheet's 760px cap, the tally's max-content); leaf extents miss cell padding, a few px short re-wraps cells
-      el.style.width = el.matches('.tally') ? 'max-content' : PROBE + 'px';
-      u = { over: 0, w: Math.ceil(el.getBoundingClientRect().width) };   // offsetWidth rounds down: same hazard
-    } else for (let pass = 0; pass < 2; pass++) {
+    for (let pass = 0; pass < 2; pass++) {
       el.style.width = cw + 'px';
       for (const w of [el, ...el.querySelectorAll(W)]) w.render?.();
       u = extent(el);
@@ -191,7 +186,6 @@ function previews(main) {
       cw = u.w;
     }
     if (u.w <= avail + 8) {                      // genuinely fits: restore the live in-flow layout
-      if (fold) fold.open = false;
       el.classList.remove('mwide');
       el.style.width = w0;
       for (const w of [el, ...el.querySelectorAll(W)]) w.render?.();
@@ -212,8 +206,7 @@ function previews(main) {
     el.style.transform = `scale(${k})`;
     el.style.marginLeft = Math.ceil(over * k) + 'px';
     const h = el.offsetHeight;                   // layout height (transform-independent)
-    if (fold) fold.open = false;
-    el.style.marginBottom = `${Math.round(26 - h * (1 - k))}px`;
+    el.style.marginBottom = `${Math.round(26 - h * (1 - k))}px`;   // 26: study.css's .mopen offset leans on it
     const saved = { transform: el.style.transform, mb: el.style.marginBottom, ml: el.style.marginLeft, over };
     const btn = document.createElement('button');
     btn.type = 'button'; btn.className = 'mopen';

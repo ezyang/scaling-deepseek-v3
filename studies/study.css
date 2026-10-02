@@ -87,11 +87,27 @@ dsv3-layer, dsv3-trace, dsv3-anatomy, dsv3-beat-deck, dsv3-pp-schedule, dsv3-pp-
    viewport-based breakouts (the anatomy grid's 100vw cap) must follow the
    host's width instead of the 430px viewport */
 .mwide .anat-grid { width: 100% !important; left: 0 !important; transform: none !important; }
-.mopen { display: block; margin: -12px 0 26px; font: 12px ui-monospace, Menlo, monospace;
-  padding: 6px 12px; border: 1px solid var(--c-c3c2b7); border-radius: 6px;
-  background: var(--c-ffffff); color: var(--c-52514e); cursor: pointer; }
+/* the explore pill floats over the preview's bottom-right corner and takes
+   no space: mobile.js ends each preview's margin box 26px below its visual
+   bottom, where the pill's flow slot starts — top lifts it 26 + 8 (inset) +
+   its 24px height, and the -24px bottom margin hands the slot back */
+.mopen { display: block; position: relative; z-index: 1; top: -58px; box-sizing: border-box;
+  height: 24px; margin: 0 8px -24px auto; padding: 0 10px; font: 600 11.5px/22px system-ui, -apple-system, sans-serif;
+  border: 1px solid color-mix(in srgb, var(--c-2a78d6) 50%, transparent); border-radius: 999px;
+  background: color-mix(in srgb, var(--c-ffffff) 70%, transparent); color: var(--c-2a78d6);
+  -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);
+  box-shadow: 0 1px 4px rgba(11, 11, 11, 0.15); cursor: pointer; }
 body.mfocus main > :not(.mfull-top) { display: none !important; }
-body.mfocus .mopen { display: none; }   /* a preview inside a wrapper (a folded sheet's <details>) keeps its button in the focused subtree */
+body.mfocus .mopen { display: none; }   /* a preview inside a wrapper keeps its pill in the focused subtree */
+/* static sheets (.cellsheet: the pages' fixed column grid, capped at 760px;
+   .tally) don't preview: their box stays in the column and the table
+   scrolls sideways inside it at its desktop width (760 − 2·12 padding −
+   2·1 border = 734), so rows wrap exactly as on desktop */
+@media (max-width: 860px) {
+  .cellsheet:not(dsv3-sheet *), .tally { max-width: 100%; overflow-x: auto; overscroll-behavior-x: none; }
+  .cellsheet:not(dsv3-sheet *) table { min-width: 734px; }
+  .tally table { width: max-content; }
+}
 /* floating reset (reset.js): the dot marks a page that's off its defaults;
    focus mode's ✕ owns the corner, so it steps aside there */
 .resetb { position: fixed; top: 12px; right: 12px; z-index: 900; font: 17px/1 system-ui;
