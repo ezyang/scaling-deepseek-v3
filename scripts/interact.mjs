@@ -67,14 +67,14 @@ const srv = createServer(async (req, res) => {
     res.end(body);
   } catch { res.writeHead(404); res.end(); }
 });
-await new Promise(r => srv.listen(0, r));
-const url = `http://localhost:${srv.address().port}/${page}`;
+await new Promise(r => srv.listen(0, '127.0.0.1', r));
+const url = `http://127.0.0.1:${srv.address().port}/${page}`;
 
 const args = ['--headless', '--disable-gpu', '--hide-scrollbars', '--virtual-time-budget=40000', `--window-size=${width},4000`];
 const dom = await new Promise((res2, rej) => execFile(CHROME, [...args, '--dump-dom', url],
-  { maxBuffer: 64 * 1024 * 1024 }, (err, stdout) => err ? rej(err) : res2(stdout)));
+  { maxBuffer: 64 * 1024 * 1024, timeout: 60_000 }, (err, stdout) => err ? rej(err) : res2(stdout)));
 if (shot) await new Promise((res2, rej) => execFile(CHROME, [...args, `--screenshot=${shot}`, url],
-  { maxBuffer: 64 * 1024 * 1024 }, (err) => err ? rej(err) : res2()));
+  { maxBuffer: 64 * 1024 * 1024, timeout: 60_000 }, (err) => err ? rej(err) : res2()));
 srv.close();
 
 const m = dom.match(/<pre id="interact-out">([\s\S]*?)<\/pre>/);

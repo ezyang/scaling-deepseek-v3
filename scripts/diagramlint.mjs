@@ -23,12 +23,12 @@ const srv = createServer(async (req, res) => {
     res.end(body);
   } catch { res.writeHead(404); res.end(); }
 });
-await new Promise(r => srv.listen(0, r));
-const url = `http://localhost:${srv.address().port}/scripts/diagramlint.html`;
+await new Promise(r => srv.listen(0, '127.0.0.1', r));
+const url = `http://127.0.0.1:${srv.address().port}/scripts/diagramlint.html`;
 
 const dom = await new Promise((resolve, reject) => {
   execFile(CHROME, ['--headless', '--disable-gpu', '--hide-scrollbars', '--virtual-time-budget=12000',
-    '--window-size=1500,4000', '--dump-dom', url], { maxBuffer: 64 * 1024 * 1024 },
+    '--window-size=1500,4000', '--dump-dom', url], { maxBuffer: 64 * 1024 * 1024, timeout: 60_000 },
     (err, stdout) => err ? reject(err) : resolve(stdout));
 });
 srv.close();
