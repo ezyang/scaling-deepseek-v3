@@ -300,9 +300,9 @@ export const EP_TOK = M_IB * (A.hidden + 4 * A.hidden / 128) + M_IB * A.hidden *
 const TOK = 15360 * SEQ / GPUS;                     // D_GPU
 export const STEP = {
   // T⁺c: 6N + the recompute policy's replay of the MLA up-projections at FP8 (the page's C⁺fp8), the head,
-  // routers and causal attention core at BF16 (C⁺bf16)
+  // routers and causal attention core at BF16 (C⁺bf16; QKᵀ-shaped matmuls 4× with FlashAttention's backward replay, PV-shaped 3×)
   comp: ((6 * (PARAMS.activeTotal - N_BF16) + 2 * A.layers * (A.qRank * A.heads * (A.qkNope + A.qkRope) + A.kvRank * A.heads * (A.qkNope + A.vHead))) / PEAK
-    + (6 * N_BF16 + 3 * A.layers * A.heads * (A.qkNope + A.qkRope + A.vHead) * SEQ) / PEAK16) * TOK,
+    + (6 * N_BF16 + A.layers * A.heads * (4 * (A.qkNope + A.qkRope) + 3 * A.vHead) * SEQ) / PEAK16) * TOK,
   ep: 2 * EP_TOK * L_MOE * TOK / IB,                                                                          // T⁺EP
   mb: (N_NE / NODE * (1 - NODE / GPUS) + N_EXP / EP * (1 - EP / GPUS)) * (2 + 2 + 4) / IB,                   // Tmb
 };

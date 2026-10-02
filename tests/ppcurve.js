@@ -12,7 +12,7 @@ T.check('PP8 × DP256, 60 sequences per pipeline, MBs states 20 · 30 · 60', M.
 T.check('compute and EP are the FSDP chart\'s', M.PSTEP.comp === M.STEP.comp && M.PSTEP.ep === M.STEP.ep, '');
 T.check('PP sends: 15/8 boundaries × 60 × 4,096 tokens × 2 ways × BF16 7,168 over 50 GB/s = 0.2642 s', near(M.PSTEP.pp, 15 / 8 * 60 * 4096 * 2 * 7168 * 2 / 50e9, 1e-12), M.PSTEP.pp);
 T.check('ZeRO-1 sync 0.146 s', near(M.PSTEP.z1, 0.1460375046, 1e-9), M.PSTEP.z1);
-T.check('comms 5.83 s, flat in m (under compute, 6.14 s)', M.PMS.every((m) => near(M.atP(m).comms, 5.83, 0.005)), M.atP(20).comms);
+T.check('comms 5.83 s, flat in m (under compute, 6.39 s)', M.PMS.every((m) => near(M.atP(m).comms, 5.83, 0.005)), M.atP(20).comms);
 T.check('bubble = 7/(3m) of compute', M.PMS.every((m) => near(M.atP(m).bubble, M.PSTEP.comp * 7 / (3 * m), 1e-12)), '');
 const pct = (m) => (100 * M.atP(m).bubble / M.atP(m).step).toFixed(1);
 T.check('bubble shares of the step: 10.4 · 7.2 · 3.7 %', M.PMS.map(pct).join(' ') === '10.4 7.2 3.7', M.PMS.map(pct).join(' '));
@@ -45,7 +45,7 @@ const c = q('circle[data-m="30"]'), b = c.getBoundingClientRect();
 c.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: b.x + b.width / 2, clientY: b.y + b.height / 2 }));
 await T.tick(30);
 const tip = w.querySelector('.dsv3-tip')?.textContent ?? '';
-T.check('tip prices the point', /^30 microbatches of 2 sequences/.test(tip) && /bubble 7\.2% of the step: 0\.48 s of 6\.62 s/.test(tip) && /= 7 ÷ \(3 × 30\) of compute 6\.14 s; comms 5\.83 s stay under it/.test(tip) && /1F1B: bubble 18\.9% of 7\.57 s, 7 ÷ 30 of compute \(comms assumed hidden\)/.test(tip) && /memory 102\.52 GiB on rank 1: 22\.52 GiB over/.test(tip), tip);
+T.check('tip prices the point', /^30 microbatches of 2 sequences/.test(tip) && /bubble 7\.2% of the step: 0\.50 s of 6\.89 s/.test(tip) && /= 7 ÷ \(3 × 30\) of compute 6\.39 s; comms 5\.83 s stay under it/.test(tip) && /1F1B: bubble 18\.9% of 7\.88 s, 7 ÷ 30 of compute \(comms assumed hidden\)/.test(tip) && /memory 102\.52 GiB on rank 1: 22\.52 GiB over/.test(tip), tip);
 const G = q('[data-guide]'), gx = () => +/translate\(([\d.]+)/.exec(G.getAttribute('transform'))[1];
 T.check('the dot\'s guide: bubble point down through memory', G.getAttribute('display') === 'inline' && near(gx(), px(30), 0.006)
   && near(+G.querySelector('[data-g=t]').getAttribute('cy'), cy(sh(30)), 0.006) && near(+G.querySelector('[data-g=t1]').getAttribute('cy'), cy(sh1(30)), 0.006)

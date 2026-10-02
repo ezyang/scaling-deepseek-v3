@@ -9,13 +9,13 @@
 const M = await import('/src/fsdpsched.js');
 const w = document.querySelector('dsv3-fsdpcurve'), q = (s) => w.querySelector(s), qa = (s) => [...w.querySelectorAll(s)];
 const near = (a, b, e = 1e-9) => Math.abs(a - b) < e;
-T.check('T⁺c = 6.140319945 s (6N + MLA up-projection replay at π^sol_fp8; head, routers, attention core at π^sol_bf16)', near(M.STEP.comp, 6.140319945, 1e-9), M.STEP.comp);
+T.check('T⁺c = 6.389277268 s (6N + MLA up-projection replay at π^sol_fp8; head, routers, attention core with FlashAttention QKᵀ replay at π^sol_bf16)', near(M.STEP.comp, 6.389277268, 1e-9), M.STEP.comp);
 T.check('T⁺EP = 5.419971379 s', near(M.STEP.ep, 5.419971379, 1e-9), M.STEP.ep);
 T.check('Tmb = 1.924700956 s', near(M.STEP.mb, 1.924700956, 1e-9), M.STEP.mb);
-T.check('crossover: comms = compute at m = 0.37, off the axis (below one microbatch)', near(M.at(M.CROSS).comms, M.STEP.comp, 1e-12) && near(M.CROSS, 0.374265, 1e-6) && !q('circle[data-cross]'), M.CROSS);
+T.check('crossover: comms = compute at m = 0.50, off the axis (below one microbatch)', near(M.at(M.CROSS).comms, M.STEP.comp, 1e-12) && near(M.CROSS, 0.503614, 1e-6) && !q('circle[data-cross]'), M.CROSS);
 const pct = (m) => Math.round(100 * M.at(m).exposed / M.at(m).step);
-T.check('exposed shares: 16 · 34 · 53 · 71 %', [1, 2, 4, 8].map(pct).join(' ') === '16 34 53 71', [1, 2, 4, 8].map(pct).join(' '));
-T.check('labels follow', qa('text[data-pct]').map((t) => t.textContent).join(' ') === '16% 34% 53% 71%', qa('text[data-pct]').map((t) => t.textContent).join(' '));
+T.check('exposed shares: 13 · 31 · 51 · 69 %', [1, 2, 4, 8].map(pct).join(' ') === '13 31 51 69', [1, 2, 4, 8].map(pct).join(' '));
+T.check('labels follow', qa('text[data-pct]').map((t) => t.textContent).join(' ') === '13% 31% 51% 69%', qa('text[data-pct]').map((t) => t.textContent).join(' '));
 T.check('one Tmb per microbatch', [1, 2, 4, 8].every((m) => near(M.at(m).fsdp, m * M.STEP.mb, 1e-12) && M.at(m).ep === M.STEP.ep), '');
 // geometry: the exposed share as a curve, the dots on it, the crossover at 0
 const cx = (m) => 52 + (570 - 52) * (m - 1) / 7, cy = (s) => 236 - 200 * s / 0.8, sh = (m) => M.at(m).exposed / M.at(m).step;
@@ -40,7 +40,7 @@ const c = q('circle[data-m="4"]'), b = c.getBoundingClientRect();
 c.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: b.x + b.width / 2, clientY: b.y + b.height / 2 }));
 await T.tick(30);
 const tip = w.querySelector('.dsv3-tip')?.textContent ?? '';
-T.check('tip prices the point', /4 microbatches of 1\.875 sequences/.test(tip) && /exposed 53% of the step: 6\.98 s of 13\.12 s/.test(tip) && /comms 13\.12 s = EP 5\.42 s \+ 4 × Tmb 1\.92 s; compute 6\.14 s/.test(tip) && /memory 86\.62 GiB on the busiest GPU: 6\.62 GiB over/.test(tip), tip);
+T.check('tip prices the point', /4 microbatches of 1\.875 sequences/.test(tip) && /exposed 51% of the step: 6\.73 s of 13\.12 s/.test(tip) && /comms 13\.12 s = EP 5\.42 s \+ 4 × Tmb 1\.92 s; compute 6\.39 s/.test(tip) && /memory 86\.62 GiB on the busiest GPU: 6\.62 GiB over/.test(tip), tip);
 const G = q('[data-guide]'), gx = () => +/translate\(([\d.]+)/.exec(G.getAttribute('transform'))[1];
 T.check('the dot\'s guide: exposed point down through memory to the axis', G.getAttribute('display') === 'inline' && near(gx(), cx(4), 0.006)
   && near(+G.querySelector('[data-g=t]').getAttribute('cy'), cy(sh(4)), 0.006) && near(+G.querySelector('[data-g=m]').getAttribute('cy'), my(r(4).total), 0.006) && +G.querySelector('line').getAttribute('y2') === 454, G.outerHTML);
