@@ -657,6 +657,90 @@
 
     <p>We can see that at speed of light, EP communication alone uses up <span data-cellref="f<sub>EP</sub>">88.3 %</span> of our compute time.</p>
 
+    <h2>ZeRO-1</h2>
+
+    <p><span class="flag-why">[[FLAG: new section, needs a lead-in and a title of your choosing: the once-per-step sync every data-parallel layout pays (ZeRO-3 at every microbatch, PP on its stages' slice). The FSDP section's opener below was the EP → here transition.]]</span></p>
+
+    <h3>Accounting for hierarchical all-gather over IB and NVLink</h3>
+
+    <p>To get accurate numbers for how long our all-gathers take, we need to reason
+    about whether the all-gather for a parameter happens entirely over InfiniBand, or if some
+    communications can be handled in NVLink.  Suppose we are doing FSDP communications
+    over the entire cluster (DP2048).  We don't actually need to send the
+    unsharded parameters to 2048 GPUs over IB: we can use a hierarchical collective.
+    First, each GPU all-gathers over IB with only the GPUs that share its local rank
+    on the other 255 nodes, which gets it one eighth of the parameters.  Then the eight
+    GPUs on a node all-gather their eighths over NVLink.  This nets out to an eight-fold reduction
+    on IB comms compared to the full parameters.</p>
+
+    <dsv3-mesh id="mesh-dp" views="fsdp" style="min-height: 572px"></dsv3-mesh>
+
+    <p>However, the routed expert parameters are handled differently.  With
+    EP, nodes on the same NVLink domain already have different experts
+    and don't need to all gather across NVLink (we use the NVLink to do the EP all-to-all
+    comms).  These parameters only all-gather over IB and don't use NVLink in
+    their all-gather at all, thus we have to pay their full cost on IB.</p>
+
+    <dsv3-mesh id="mesh-ep" views="efsdp,ep" style="min-height: 594px"></dsv3-mesh>
+
+    <p>The upshot is that we have to split the parameters in our
+    model into two categories: the non-expert parameters (sharded over
+    DP2048) and the expert parameters (sharded over EDP32) and charge
+    them differently for Infiniband usage.  This split is pretty
+    intuitive, but here it is on the architecture diagram (green boxes are the routed
+    experts and blue boxes are everything else that holds parameters):</p>
+
+    <dsv3-anatomy style="min-height:847px" tally experttint lens="params" squares="matrix" layer="fsdp-params" detail controls="static" nocaption></dsv3-anatomy>
+
+    <p>OK, we can get out the calculator now.  First, the non-experts, which
+    communicate with IB over all ranks modulo NVLink:</p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">N<sub>ne</sub></td><td>non-expert params</td><td class="vl">17,117,648,384</td><td class="vl sc ap">1.71 × 10<sup>10</sup></td><td class="vl si ap">17<span class="d">.1</span><span class="u"> G</span></td><td class="fx"><i>(checkpoint tally: attention, shared experts, dense FFNs, norms, routers, embedding, head)</i></td></tr>
+    <tr><td class="nm">Ψ<sub>ne</sub></td><td>params/GPU over IB</td><td class="vl">2,139,706,048</td><td class="vl sc ap">2.14 × 10<sup>9</sup></td><td class="vl si ap">2<span class="d">.14</span><span class="u"> G</span></td><td class="fx"><b>N<sub>ne</sub></b> / <b>NVL</b> <i>(NVLink gathers the other ⅞)</i></td></tr>
+    <tr><td class="nm">IBDP</td><td>IB all-gather group</td><td class="vl">256</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><b>GPUs</b> / <b>NVL</b> <i>(one GPU per node)</i></td></tr>
+    <tr><td class="nm">V<sub>ne</sub></td><td>IB params/GPU per move</td><td class="vl">2,131,347,821.25</td><td class="vl sc ap">2.13 × 10<sup>9</sup></td><td class="vl si ap">2<span class="d">.13</span><span class="u"> G</span></td><td class="fx"><b>Ψ<sub>ne</sub></b> · (1 − 1 / <b>IBDP</b>)</td></tr>
+    </table></div>
+
+    <p>Note there's one small corrective factor above: we don't communicate
+    all of Ψ!  We don't need to do IB communications for the slice that lives
+    on our node, so we only need to communicate (1 − 1/<b>IBDP</b>).  It's
+    worth noting that besides
+    this factor, the amount of data we need to transmit in FSDP isn't affected by how many nodes we are
+    sharded to.
+    </p>
+
+    <p>Continuing with experts, where our whole EDP slice crosses IB:<span class="mn-ref"></span><span class="mn">An interesting observation is that the experts (after EP sharding) are actually less
+    parameters than the non-expert parameters, but they still end up taking up more
+    IB communications because none of them can be communicated over NVLink.</span></p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">N<sub>exp</sub></td><td>routed-expert params</td><td class="vl">653,908,770,816</td><td class="vl sc ap">6.54 × 10<sup>11</sup></td><td class="vl si ap">654<span class="d"></span><span class="u"> G</span></td><td class="fx"><i>(checkpoint tally: 58 MoE layers × 256 experts × 3 × 7,168 × 2,048)</i></td></tr>
+    <tr><td class="nm">Ψ<sub>exp</sub></td><td>params/GPU over IB</td><td class="vl">10,217,324,544</td><td class="vl sc ap">1.02 × 10<sup>10</sup></td><td class="vl si ap">10<span class="d">.2</span><span class="u"> G</span></td><td class="fx"><b>N<sub>exp</sub></b> / <b>EP</b> <i>(our EP slice, all of it)</i></td></tr>
+    <tr><td class="nm">EDP</td><td>IB all-gather group</td><td class="vl">32</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><b>GPUs</b> / <b>EP</b> <i>(replicas of our slice)</i></td></tr>
+    <tr><td class="nm">V<sub>exp</sub></td><td>IB params/GPU per move</td><td class="vl">9,898,033,152</td><td class="vl sc ap">9.90 × 10<sup>9</sup></td><td class="vl si ap">9<span class="d">.90</span><span class="u"> G</span></td><td class="fx"><b>Ψ<sub>exp</sub></b> · (1 − 1 / <b>EDP</b>)</td></tr>
+    </table></div>
+
+    <p>This gives us the following costs for all-gather and reduce-scatter:</p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">V<sub>ag</sub></td><td>BF16 AG bytes/GPU</td><td class="vl">24,058,761,946.5</td><td class="vl sc ap">2.41 × 10<sup>10</sup></td><td class="vl si ap">24<span class="d">.1</span><span class="u"> GB</span></td><td class="fx">(<b>V<sub>ne</sub></b> + <b>V<sub>exp</sub></b>) · 2 <i>(BF16)</i></td></tr>
+    <tr class="hl"><td class="nm">T<sub>ag</sub></td><td>AG time (s)</td><td class="vl"></td><td class="vl sc ap">4.81 × 10<sup>−1</sup></td><td class="vl si ap">481<span class="d"></span><span class="u"> ms</span></td><td class="fx"><b>V<sub>ag</sub></b> / <b>β<sub>IB</sub></b></td></tr>
+    <tr><td class="nm">V<sub>rs</sub></td><td>FP32 RS bytes/GPU</td><td class="vl">48,117,523,893</td><td class="vl sc ap">4.81 × 10<sup>10</sup></td><td class="vl si ap">48<span class="d">.1</span><span class="u"> GB</span></td><td class="fx">(<b>V<sub>ne</sub></b> + <b>V<sub>exp</sub></b>) · 4 <i>(FP32)</i></td></tr>
+    <tr class="hl"><td class="nm">T<sub>rs</sub></td><td>RS time (s)</td><td class="vl"></td><td class="vl sc ap">9.62 × 10<sup>−1</sup></td><td class="vl si ap">962<span class="d"></span><span class="u"> ms</span></td><td class="fx"><b>V<sub>rs</sub></b> / <b>β<sub>IB</sub></b></td></tr>
+    </table></div>
+
+    <p><span class="flag-why">[[FLAG: lead-in for the once-per-step sync: ZeRO-1 pays one BF16 all-gather and one FP32 reduce-scatter of the slice above per step. Worth saying: next to T⁺EP (5.42 s) on the same links, this floor alone puts IB past T⁺c (6.14 s) at PP1, even fully overlapped.]]</span></p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">V<sub>sync</sub></td><td>ZeRO-1 bytes/GPU per step</td><td class="vl">72,176,285,839.5</td><td class="vl sc ap">7.22 × 10<sup>10</sup></td><td class="vl si ap">72<span class="d">.2</span><span class="u"> GB</span></td><td class="fx"><b>V<sub>ag</sub></b> + <b>V<sub>rs</sub></b></td></tr>
+    <tr class="hl"><td class="nm">T<sub>sync</sub></td><td>ZeRO-1 time per step (s)</td><td class="vl"></td><td class="vl sc ap">1.44 × 10<sup>0</sup></td><td class="vl si ap">1<span class="d">.44</span><span class="u"> s</span></td><td class="fx"><b>V<sub>sync</sub></b> / <b>β<sub>IB</sub></b></td></tr>
+    </table></div>
+
     <h2>ZeRO/FSDP</h2>
 
     <p>The fact that EP is using most of our InfiniBand bandwidth is bad news
@@ -718,87 +802,13 @@
     of our compute and comms.  How can we estimate these? A
     speed-of-light analysis!</p>
 
-    <h3>Accounting for hierarchical all-gather over IB and NVLink</h3>
-
-    <p>To get accurate numbers for how long our all-gathers take, we need to reason
-    about whether the all-gather for a parameter happens entirely over InfiniBand, or if some
-    communications can be handled in NVLink.  Suppose we are doing FSDP communications
-    over the entire cluster (DP2048).  We don't actually need to send the
-    unsharded parameters to 2048 GPUs over IB: we can use a hierarchical collective.
-    First, each GPU all-gathers over IB with only the GPUs that share its local rank
-    on the other 255 nodes, which gets it one eighth of the parameters.  Then the eight
-    GPUs on a node all-gather their eighths over NVLink.  This nets out to an eight-fold reduction
-    on IB comms compared to the full parameters.</p>
-
-    <dsv3-mesh id="mesh-dp" views="fsdp" style="min-height: 572px"></dsv3-mesh>
-
-    <p>However, the routed expert parameters are handled differently.  With
-    EP, nodes on the same NVLink domain already have different experts
-    and don't need to all gather across NVLink (we use the NVLink to do the EP all-to-all
-    comms).  These parameters only all-gather over IB and don't use NVLink in
-    their all-gather at all, thus we have to pay their full cost on IB.</p>
-
-    <dsv3-mesh id="mesh-ep" views="efsdp,ep" style="min-height: 594px"></dsv3-mesh>
-
-    <p>The upshot is that we have to split the parameters in our
-    model into two categories: the non-expert parameters (sharded over
-    DP2048) and the expert parameters (sharded over EDP32) and charge
-    them differently for Infiniband usage.  This split is pretty
-    intuitive, but here it is on the architecture diagram (green boxes are the routed
-    experts and blue boxes are everything else that holds parameters):</p>
-
-    <dsv3-anatomy style="min-height:847px" tally experttint lens="params" squares="matrix" layer="fsdp-params" detail controls="static" nocaption></dsv3-anatomy>
-
     <h3>Computing the cost of FSDP</h3>
-
-    <p>OK, we can get out the calculator now.  First, the non-experts, which
-    communicate with IB over all ranks modulo NVLink:</p>
-
-    <div class="cellsheet"><table>
-    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
-    <tr><td class="nm">N<sub>ne</sub></td><td>non-expert params</td><td class="vl">17,117,648,384</td><td class="vl sc ap">1.71 × 10<sup>10</sup></td><td class="vl si ap">17<span class="d">.1</span><span class="u"> G</span></td><td class="fx"><i>(checkpoint tally: attention, shared experts, dense FFNs, norms, routers, embedding, head)</i></td></tr>
-    <tr><td class="nm">Ψ<sub>ne</sub></td><td>params/GPU over IB</td><td class="vl">2,139,706,048</td><td class="vl sc ap">2.14 × 10<sup>9</sup></td><td class="vl si ap">2<span class="d">.14</span><span class="u"> G</span></td><td class="fx"><b>N<sub>ne</sub></b> / <b>NVL</b> <i>(NVLink gathers the other ⅞)</i></td></tr>
-    <tr><td class="nm">IBDP</td><td>IB all-gather group</td><td class="vl">256</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><b>GPUs</b> / <b>NVL</b> <i>(one GPU per node)</i></td></tr>
-    <tr><td class="nm">V<sub>ne</sub></td><td>IB params/GPU per move</td><td class="vl">2,131,347,821.25</td><td class="vl sc ap">2.13 × 10<sup>9</sup></td><td class="vl si ap">2<span class="d">.13</span><span class="u"> G</span></td><td class="fx"><b>Ψ<sub>ne</sub></b> · (1 − 1 / <b>IBDP</b>)</td></tr>
-    </table></div>
-
-    <p>Note there's one small corrective factor above: we don't communicate
-    all of Ψ!  We don't need to do IB communications for the slice that lives
-    on our node, so we only need to communicate (1 − 1/<b>IBDP</b>).  It's
-    worth noting that besides
-    this factor, the amount of data we need to transmit in FSDP isn't affected by how many nodes we are
-    sharded to.
-    </p>
-
-    <p>Continuing with experts, where our whole EDP slice crosses IB:<span class="mn-ref"></span><span class="mn">An interesting observation is that the experts (after EP sharding) are actually less
-    parameters than the non-expert parameters, but they still end up taking up more
-    IB communications because none of them can be communicated over NVLink.</span></p>
-
-    <div class="cellsheet"><table>
-    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
-    <tr><td class="nm">N<sub>exp</sub></td><td>routed-expert params</td><td class="vl">653,908,770,816</td><td class="vl sc ap">6.54 × 10<sup>11</sup></td><td class="vl si ap">654<span class="d"></span><span class="u"> G</span></td><td class="fx"><i>(checkpoint tally: 58 MoE layers × 256 experts × 3 × 7,168 × 2,048)</i></td></tr>
-    <tr><td class="nm">Ψ<sub>exp</sub></td><td>params/GPU over IB</td><td class="vl">10,217,324,544</td><td class="vl sc ap">1.02 × 10<sup>10</sup></td><td class="vl si ap">10<span class="d">.2</span><span class="u"> G</span></td><td class="fx"><b>N<sub>exp</sub></b> / <b>EP</b> <i>(our EP slice, all of it)</i></td></tr>
-    <tr><td class="nm">EDP</td><td>IB all-gather group</td><td class="vl">32</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><b>GPUs</b> / <b>EP</b> <i>(replicas of our slice)</i></td></tr>
-    <tr><td class="nm">V<sub>exp</sub></td><td>IB params/GPU per move</td><td class="vl">9,898,033,152</td><td class="vl sc ap">9.90 × 10<sup>9</sup></td><td class="vl si ap">9<span class="d">.90</span><span class="u"> G</span></td><td class="fx"><b>Ψ<sub>exp</sub></b> · (1 − 1 / <b>EDP</b>)</td></tr>
-    </table></div>
-
-    <p>This gives us the following costs for all-gather and reduce-scatter:</p>
-
-    <div class="cellsheet"><table>
-    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
-    <tr><td class="nm">V<sub>ag</sub></td><td>BF16 AG bytes/GPU</td><td class="vl">24,058,761,946.5</td><td class="vl sc ap">2.41 × 10<sup>10</sup></td><td class="vl si ap">24<span class="d">.1</span><span class="u"> GB</span></td><td class="fx">(<b>V<sub>ne</sub></b> + <b>V<sub>exp</sub></b>) · 2 <i>(BF16)</i></td></tr>
-    <tr class="hl"><td class="nm">T<sub>ag</sub></td><td>AG time (s)</td><td class="vl"></td><td class="vl sc ap">4.81 × 10<sup>−1</sup></td><td class="vl si ap">481<span class="d"></span><span class="u"> ms</span></td><td class="fx"><b>V<sub>ag</sub></b> / <b>β<sub>IB</sub></b></td></tr>
-    <tr><td class="nm">V<sub>rs</sub></td><td>FP32 RS bytes/GPU</td><td class="vl">48,117,523,893</td><td class="vl sc ap">4.81 × 10<sup>10</sup></td><td class="vl si ap">48<span class="d">.1</span><span class="u"> GB</span></td><td class="fx">(<b>V<sub>ne</sub></b> + <b>V<sub>exp</sub></b>) · 4 <i>(FP32)</i></td></tr>
-    <tr class="hl"><td class="nm">T<sub>rs</sub></td><td>RS time (s)</td><td class="vl"></td><td class="vl sc ap">9.62 × 10<sup>−1</sup></td><td class="vl si ap">962<span class="d"></span><span class="u"> ms</span></td><td class="fx"><b>V<sub>rs</sub></b> / <b>β<sub>IB</sub></b></td></tr>
-    </table></div>
 
     <p>And we can sum these up to figure out how long our FSDP comms take in total (we've put
     a separate row for each choice of how many microbatches we run):</p>
 
     <div class="cellsheet"><table>
     <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
-    <tr><td class="nm">V<sub>sync</sub></td><td>ZeRO-1 bytes/GPU per step</td><td class="vl">72,176,285,839.5</td><td class="vl sc ap">7.22 × 10<sup>10</sup></td><td class="vl si ap">72<span class="d">.2</span><span class="u"> GB</span></td><td class="fx"><b>V<sub>ag</sub></b> + <b>V<sub>rs</sub></b></td></tr>
-    <tr class="hl"><td class="nm">T<sub>sync</sub></td><td>ZeRO-1 time per step (s)</td><td class="vl"></td><td class="vl sc ap">1.44 × 10<sup>0</sup></td><td class="vl si ap">1<span class="d">.44</span><span class="u"> s</span></td><td class="fx"><b>V<sub>sync</sub></b> / <b>β<sub>IB</sub></b></td></tr>
     <tr><td class="nm">V<sub>mb</sub></td><td>ZeRO-3 bytes/GPU per mb</td><td class="vl">96,235,047,786</td><td class="vl sc ap">9.62 × 10<sup>10</sup></td><td class="vl si ap">96<span class="d">.2</span><span class="u"> GB</span></td><td class="fx">2 · <b>V<sub>ag</sub></b> + <b>V<sub>rs</sub></b></td></tr>
     <tr class="hl"><td class="nm">T<sub>mb</sub></td><td>ZeRO-3 time per mb (s)</td><td class="vl"></td><td class="vl sc ap">1.92 × 10<sup>0</sup></td><td class="vl si ap">1<span class="d">.92</span><span class="u"> s</span></td><td class="fx"><b>V<sub>mb</sub></b> / <b>β<sub>IB</sub></b></td></tr>
     <tr class="hl"><td class="nm">T<sub>2mb</sub></td><td>ZeRO-3 time, 2 mbs (s)</td><td class="vl"></td><td class="vl sc ap">3.85 × 10<sup>0</sup></td><td class="vl si ap">3<span class="d">.85</span><span class="u"> s</span></td><td class="fx">2 · <b>T<sub>mb</sub></b></td></tr>
@@ -1079,13 +1089,18 @@
         (751 to 1,426 TFLOP/s for the attention projections; 1,346 and
         1,214 for the routed experts' gate/up and down, at four experts of
         8,192 tokens each, which is precisely the per-GPU training shape).
-        That's 0.76 to 1.44× the BF16 peak.  These are forward-pass shapes; we
-        assume the backward GEMMs do as well.</li>
-        <li>Attention: FlashAttention-3's best BF16 forward, 75% of peak.
-        DeepSeek runs attention in BF16, not FP8.  The backward is slower
-        still, so this is generous.</li>
-        <li>The output head and router, also kept in BF16: 80% of peak, the
-        bottom of FlashAttention-3's "80–90%" for optimized GEMMs.</li>
+        [[AI: That's 52 to 98% of π<sup>sol</sup><sub>fp8</sub>, Smol's
+        best-shape FP8 rate; the routed experts run at 92% and 83%.]]  These
+        are forward-pass shapes; we assume the backward GEMMs do as well.</li>
+        <li>Attention: FlashAttention-3's best BF16 forward, 75% of [[AI: the
+        BF16 spec peak (742 TFLOP/s, 98% of
+        π<sup>sol</sup><sub>bf16</sub>).]]  DeepSeek runs attention in BF16,
+        not FP8.  The backward is slower still, so this is generous.</li>
+        <li>The output head and router, also kept in BF16: 80% of [[AI: the
+        spec peak]], the bottom of FlashAttention-3's "80–90%" for optimized
+        GEMMs.  [[AI: That's 791 TFLOP/s, 4% <em>above</em>
+        π<sup>sol</sup><sub>bf16</sub>: Smol's torch.matmul lands a little
+        under FA3's floor.]]</li>
         <li>IB: DeepEP's measured 46 GB/s dispatch and 45 GB/s combine at EP64
         on H800, in the DSv3 pretraining setting, out of 50 GB/s.  We reuse
         45 GB/s for the PP and ZeRO-1 traffic.</li>
@@ -1104,25 +1119,6 @@
     </table></div>
 
     <div>
-    <p><strong>[[AI TODO: theoretical is now Smol's measured GEMM rates, dtype-aware.</strong>
-    FP8 GEMMs at π<sup>sol</sup><sub>fp8</sub>; the attention core, head
-    and router at π<sup>sol</sup><sub>bf16</sub>; IB stays at its 50 GB/s
-    spec, β<sub>IB</sub>, as in DeepSeek's report.  Both columns are
-    compute-bound: theory 6.1 s against 5.8 s, effective (DeepGEMM, FA3,
-    DeepEP's 45 GB/s) 6.9 s against 6.5 s.  The prose below still prices
-    theory at the BF16 peak.  MFU (Y4) alone stays on the spec BF16 peak.</p>
-
-    <p><em>Why this suggests more low-precision text.</em>  The effective
-    GEMM rates say FP8 on Hopper buys much less than 2×.  DeepGEMM's DSv3
-    shapes run at 751–1,426 TFLOP/s, which is 0.76–1.44× the BF16
-    <em>peak</em>, or roughly 0.95–1.8× a good BF16 GEMM at 80% of peak.
-    02 already says the 2× is optimistic on Hopper (fine-grained scaling
-    spends some of it outside the MMA, plus quantization).  03 is where
-    that gets a number.  With the theoretical column dtype-aware,
-    theoretical → effective is the kernel tax alone: Smol's best-shape
-    rates against DeepGEMM's at the DSv3 shapes and FA3's.  The precision
-    choice would be a BF16-only column beside it.</p>
-
     <p><em>Related, same table: backward rates.</em>  The source list assumes
     backward GEMMs run at forward rates.  In DeepSeek's trace, the forward
     ops match our effective rates to within about 10% (with the 20-SM tax),
