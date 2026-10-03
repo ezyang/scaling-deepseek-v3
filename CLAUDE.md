@@ -51,7 +51,7 @@ generality.
   pairs fresh HTML with stale JS. Rerun after editing any src/ or studies/
   module; the battery's `stamp` job fails while stale.
 - `node scripts/goldens.mjs` — numeric goldens (tests/goldens.json): stash
-  rates, FLOP counts, sim step times, memory watermarks, story-config cell
+  rates, FLOP counts, the kernel and sweep tables, story-config cell
   totals. Changing a number is fine; changing one invisibly is not — on
   drift, `--update` and review the git diff. Also emits the sheet as TEXT
   (tests/goldens-sheet.txt: every cell's label, exact value, formula at the

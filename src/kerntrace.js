@@ -22,6 +22,12 @@
 import { LAUNCHES, ROUTED_ROWS } from './kerndata.js';
 import { DSV3 } from './model.js';
 
+// DeepSeek's reported training rate: 180K H800-hours per trillion pretraining
+// tokens (the paper's 2.664M of 2.788M GPU-hours; nothing published for H100).
+export const REPORTED = {
+  h800: { rate: 1e12 / (180e3 * 3600), src: 'implied by DeepSeek’s GPU-hours' },
+};
+
 // ---- the shapes --------------------------------------------------------------
 const a = DSV3;
 export const S = 4096;                       // tokens per microbatch (the profile's)

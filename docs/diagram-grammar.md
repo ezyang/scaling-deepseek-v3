@@ -28,10 +28,10 @@ the rest are conventions to uphold when editing the renderer.
    point at / sit beside a label — the block's entry and exit markers)
 5a. **Junction circles (`+`) are ops, not crossings.** Nothing passes through
    one; wires meeting it stop at the rim, arrowhead on. ✓ (`wire-through-junction`)
-   (Rules 4–5a were worked out on the backward-unrolled scratch diagram,
-   `studies/scratch-bwd.html`, which is in the lint matrix; there they also
-   mean: identity and fan-out backwards are junctions rather than boxes, and a
-   forward fan-out becomes a `+` accumulation in backward.)
+   (Rules 4–5a were worked out on a backward-unrolled diagram, since
+   retired; there they also meant: identity and fan-out backwards are
+   junctions rather than boxes, and a forward fan-out becomes a `+`
+   accumulation in backward.)
 6. **Related boxes align by row** across columns/kinds: the shared-expert
    boxes align with the grouped-GEMM rows; the dense FFN boxes align with
    their MoE counterparts (enforced by advancing through MoE row arithmetic

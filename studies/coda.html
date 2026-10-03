@@ -143,7 +143,7 @@
     import '../src/kernels.js';
     import './series.js';
     import { priced, tally } from '../src/kerntrace.js';
-    import { REPORTED } from '../src/sol.js';
+    import { REPORTED } from '../src/kerntrace.js';
 
     const P = priced(), T = tally();
     const n = (x, d = 0) => x.toLocaleString('en-US', { maximumFractionDigits: d, minimumFractionDigits: d });

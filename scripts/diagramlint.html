@@ -28,7 +28,6 @@
   <div data-widget="local-dense-stage0"><dsv3-layer id="w19" detail controls="static" tabs lens="param-bytes" local recipe="bf16" kind="dense" scope="block" nocaption></dsv3-layer></div>
   <div data-widget="anatomy-wrapper"><dsv3-anatomy layer="w13" detail controls="static" nocaption></dsv3-anatomy></div>
   <div data-widget="anatomy-plan"><dsv3-anatomy-plan id="wp"></dsv3-anatomy-plan></div>
-  <div data-widget="bwd-scratch"><dsv3-bwd></dsv3-bwd></div>
   <div data-widget="v41-full2"><dsv41-layer id="v1" detail></dsv41-layer></div>
   <div data-widget="v41-full1"><dsv41-layer id="v2" detail kind="full1"></dsv41-layer></div>
   <div data-widget="v41-reindex-flat"><dsv41-layer id="v3" detail kind="reindex" flat></dsv41-layer></div>
@@ -42,7 +41,6 @@
 <script type="module">
 import '../src/viewer.js';
 import '../src/anatomy.js';
-import '../src/bwd.js';
 import '../src/dsv41.js';
 
 const out = [];
@@ -224,8 +222,8 @@ function lintWidget(name, host) {
 async function lintPlaceholders() {
   const PAGES = ['/index.html', '/studies/01-deepseek-diagram.html', '/studies/02-hopper-memory.html',
     '/studies/blackwell-memory.html', '/studies/dsv41-flash.html', '/studies/fsdp.html', '/studies/03-roofline.html',
-    '/studies/scratch-bars.html', '/studies/scratch-globals.html', '/studies/scratch-fold.html', '/studies/scratch-04.html'];
-  const WTAGS = 'dsv3-anatomy, dsv3-layer, dsv3-trace, dsv3-param-tally, dsv3-pp-schedule, dsv3-pp-fold, dsv3-beat-deck, dsv3-sheet, dsv41-anatomy, dsv41-layer, dsv3-fsdp, dsv3-ladder, dsv3-mmfig, dsv3-epsim, dsv3-epscale, dsv3-mesh, dsv3-fsdpsched, dsv3-fsdpcurve, dsv3-ppcurve';
+    '/studies/scratch-bars.html', '/studies/scratch-globals.html', '/studies/scratch-fold.html'];
+  const WTAGS = 'dsv3-anatomy, dsv3-layer, dsv3-param-tally, dsv3-pp-schedule, dsv3-pp-fold, dsv3-beat-deck, dsv3-sheet, dsv41-anatomy, dsv41-layer, dsv3-fsdp, dsv3-ladder, dsv3-mmfig, dsv3-epsim, dsv3-epscale, dsv3-mesh, dsv3-fsdpsched, dsv3-fsdpcurve, dsv3-ppcurve';
   // two widths: 1366 is the SUPPORTED MINIMUM viewport (the anatomy grid
   // saturates its 1330px cap at ~1362; every container is width-capped, so
   // layout must be IDENTICAL at any width ≥ 1366 — checking a wide viewport

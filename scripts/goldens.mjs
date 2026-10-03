@@ -3,25 +3,20 @@
 // fails on any drift, and `--update` + the git diff of the golden file is the
 // review artifact. Taste: sanity.mjs already PROVES the shard-assembly math
 // (96-config independent replay, ===), so goldens pin what that proof takes
-// as input — per-token stash rates, FLOP counts, sim step times, the memory
-// model — plus a few configs with narrative meaning in 02, not the
+// as input — per-token stash rates, FLOP counts, the kernel, ladder and
+// sweep tables — plus a few configs with narrative meaning in 02, not the
 // combinatorial product.
 //
 //   node scripts/goldens.mjs           # compare (battery job)
 //   node scripts/goldens.mjs --update  # rewrite tests/goldens.json
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { simulate, LEVELS } from '../src/sim.js';
 import { modelFlopsPerToken, DSV3, HARDWARE } from '../src/model.js';
 import { PARAMS } from '../src/params.js';
-import { memoryUsage } from '../src/memory.js';
 import { resolveMatmuls, RECIPES } from '../src/recipes.js';
 import { blockGraph, analyze, RECOMPUTE_PRESETS, DTYPE_BYTES } from '../src/blockgraph.js';
-import { defaultConfig } from '../src/sim.js';
 import { buildCells, cellsEnv } from '../src/cells.js';
 import { fsdpSweep } from '../src/fsdp.js';
-import { solStep, anchors } from '../src/sol.js';
-import { gemm, SHAPES } from '../src/gemm.js';
 import { ladderPoint, LOG_C_DSV3 } from '../src/ladder.js';
 import { simulate as epSimulate, EXACT as EP_EXACT } from '../src/epsim.js';
 import { tally as kernTally, priced as kernPriced } from '../src/kerntrace.js';
@@ -59,15 +54,6 @@ for (const [name, cfg] of [['dsv3-z3', {}], ['dsv3-z1', { zero: 1 }], ['dense-z3
     rows: Object.fromEntries(S.rows.map((r) => [r.G, { mem: r.memTotal, sync: r.sync, rs: r.rs, ar: r.ar, ag: r.ag }])) };
 }
 
-// the summed step (studies/03-roofline.html): per pass × op group seconds at the story configs
-G.sol = {};
-for (const [name, cfg] of [['h800-dsv3', {}], ['h800-none', { recompute: 'none' }],
-  ['h800-attn-replay', { recompute: 'attn-replay' }], ['h800-full', { recompute: 'full' }]]) {
-  const S = solStep(cfg);
-  G.sol[name] = { total: S.total, reported: S.reported, flopsTok: S.flopsTok, rows: S.rows,
-    cells: Object.fromEntries(S.cells.map((c) => [`${c.pass}·${c.group}`, c.s])) };
-}
-
 // the scaling ladder (studies/03-roofline.html): FLOP/token by op class up the DSv3 family
 G.ladder = {};
 for (const [name, lc, seq] of [['dsv3-4k', LOG_C_DSV3, 4096], ['dsv3-32k', LOG_C_DSV3, 32768], ['dsv3-128k', LOG_C_DSV3, 131072],
@@ -79,44 +65,6 @@ for (const [name, lc, seq] of [['dsv3-4k', LOG_C_DSV3, 4096], ['dsv3-32k', LOG_C
 // the EP routing sim (studies/03-roofline.html): IB/NVLink copies per token after 10,000 seeded tokens, both routings
 G.epsim = { exact: EP_EXACT };
 for (const mode of ['sheet', 'dsv3']) { const T = epSimulate(10000, mode); G.epsim[mode + '-10k'] = { ib: T.ib, nv: T.nv, hist: T.hist }; }
-
-// the first picture (studies/03-roofline.html): one GEMM on both meters, every shape × dtype at the story sizes
-G.gemm = {};
-for (const shape of Object.keys(SHAPES)) for (const dtype of ['bf16', 'fp8']) for (const tokens of [128, 4096]) {
-  const g = gemm({ shape, dtype, tokens });
-  G.gemm[`${shape}-${dtype}-${tokens}`] = { flops: g.flops, bytes: g.total, compute: g.compute, mem: g.mem, intensity: g.intensity, bound: g.bound };
-}
-
-// the anchors table (exchange rates + per-token budget) per Hopper GPU, as displayed strings
-G.anchors = Object.fromEntries(['h800', 'h100'].map((hw) => [hw, Object.fromEntries(anchors(hw).map((r) => [r.label, r.value]))]));
-
-// trace sim: step time + MFU per refinement level (seeded — deterministic),
-// plus the two calibration anchors
-G.sim = {};
-for (let level = 0; level < LEVELS.length; level++) {
-  const { stats } = simulate({ level });
-  G.sim[`L${level}-${LEVELS[level].id}`] = { stepUs: stats.stepUs, mfu: stats.mfu };
-}
-for (const [name, cfg] of [
-  ['anchor-dsv3-h800', { level: 6, dtype: 'mxfp8', microbatches: 120, gpus: 2048, ep: 64 }],
-  ['anchor-nemo-gb300', { level: 5, hardware: 'gb300', dtype: 'mxfp8', gpus: 256, pp: 2, ep: 32, microbatches: 32 }],
-]) {
-  const { stats } = simulate(cfg);
-  G.sim[name] = { stepUs: stats.stepUs, tokPerSecPerGpu: stats.tokPerSecPerGpu };
-}
-
-// memoryUsage (the sim's memory model — a separate code path from the cells)
-G.memory = {};
-for (const [name, cfg] of [
-  ['gb300-ddp', { hardware: 'gb300', pp: 1, ep: 1, zero: 0, recompute: 'none' }],
-  ['gb300-dsv3', { hardware: 'gb300', pp: 16, ep: 16, zero: 1, recompute: 'selective' }],
-  ['gb300-mbs4-norecompute', { hardware: 'gb300', pp: 16, ep: 16, zero: 1, recompute: 'none', mbs: 4 }],
-  ['h100-prod', { hardware: 'h100', gpus: 2048, pp: 8, ep: 64, zero: 1, recompute: 'attn-replay', recipe: 'dsv3-fp8' }],
-  ['h100-prod-T', { hardware: 'h100', gpus: 2048, pp: 8, ep: 64, zero: 1, recompute: 'attn-replay', recipe: 'dsv3-fp8', transposedStash: true }],
-]) {
-  const m = memoryUsage(defaultConfig(cfg));
-  G.memory[name] = { worstGiB: m.worst.total, fits: m.fits, stage0GiB: m.perStage[0].total };
-}
 
 // the cell graph at story configs (assembly identity is sanity's job; these
 // pin the assembled headline numbers for configs 02's narrative stands on).

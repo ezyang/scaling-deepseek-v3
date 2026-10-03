@@ -390,90 +390,6 @@ G, its link, sync vs SOL vs realized); on row hover the exact terms.
 with `data-true`, `text[data-memval|data-syncval]`, `rect[data-first]`,
 `line[data-comp|data-real]`.
 
-## `<dsv3-gemm hw=… dtype=… shape=… tokens=…>` — one matmul on both meters (src/gemm.js, post 03 draft)
-
-The first picture of studies/03-roofline.html, before any model: a GEMM
-Y = X · W (X = tokens × K, W = K × N, one of DeepSeek-V3's own projections)
-priced on the tensor cores (2·M·K·N FLOP ÷ the dtype's tensor peak) and on
-HBM (X + W + Y bytes ÷ bandwidth; inputs at the dtype, Y always bf16), the
-two on one µs axis that autoscales to the longer (labels snap, positions
-tween). The GPU group carries the 1 µs sheet — FLOP at the dtype's peak, HBM
-bytes and numbers, and their ratio, FLOP per HBM byte (the roofline ridge).
-The tokens knob walks a shape from weight-read-bound (128 tokens through an
-expert: 240 FLOP/B, memory-bound ×2.5) to compute-bound (a 4,096-token
-microbatch: 2,607 FLOP/B, ×4.4); the dtype knob halves X and W and doubles
-the peak at once. The HBM row is X, then W (lighter), then Y (grey), end to
-end (one pipe); the shaded band at the origin is the 1 µs window.
-
-| attr | kind | values | meaning |
-|---|---|---|---|
-| `hw` | attr | `h800` (default) · `h100` | fixed; no knob |
-| `dtype` | state | `bf16` · `fp8` | GEMM input bytes (2 · 1) and tensor peak |
-| `shape` | state | `q_down` · `kv_down` · `q_up` · `kv_up` · `o_proj` · `expert_up` (default) · `expert_down` · `dense_up` · `head` | W = K → N from DSV3 |
-| `tokens` | state | 16 … 32768 | M, rows of X |
-| state | | `#g:<id>={hw,dtype,shape,tokens}` | URL hash, when the element has an id |
-
-Readout (`.ro`, height reserved): every term, the intensity vs the ridge,
-the verdict and its ratio. `gemm(cfg)` is node-importable (goldens
-`gemm.*`, every shape × dtype at 128 and 4,096 tokens); test affordances:
-`rect[data-bar=compute]` with `data-true` (seconds), `rect[data-bar=X|W|Y]`
-with `data-true` (bytes), `text[data-val=compute|mem]`,
-`[data-sheet="tensor cores"|HBM|"FLOP per HBM byte"]`, `select[data-knob=shape]`,
-`rect[data-window]`.
-
-## `<dsv3-sol hw=… recompute=… gpus=… gbs=… seq=…>` — the summed step (src/sol.js, post 03 draft)
-
-The stupidest step-time model (studies/03-roofline.html): no timeline, no
-overlap, no communication, ONE rate. Every op of the 61-layer stack plus
-the head is priced at the GPU's FP8 tensor peak (the ops that really run
-bf16/fp32 — attention core, router — are a later negotiation), forward +
-backward (2× forward, the loss forward-only) + whatever the recompute
-policy replays + the QKᵀ FlashAttention's backward always recomputes
-(booked in the recompute row), and summed. Compute is conserved under any parallelism, so
-there is no parallelism knob: the per-GPU step is tokens/GPU (gbs·seq/gpus)
-× Σ FLOP/token ÷ peak. The GPU knob (Hopper only: H800 · H100) carries its
-TECH SHEET — FP8 TFLOP/s, NVLink GB/s, InfiniBand GB/s per GPU per
-direction — the data-sheet numbers the whole post runs on. Rows = forward /
-backward / recompute / total, each a stack by op group (attention core ·
-MLA projections · routed experts · shared expert · dense FFN · router ·
-norms/RoPE/SwiGLU · lm head/loss); a linear seconds axis that autoscales to
-the longest thing on it (labels snap, positions tween); on the total row a
-dashed tick where the step would end with nothing recomputed; and a dashed
-"reported step" line = tokens/GPU ÷ the throughput implied by DeepSeek's
-pretraining GPU-hours (1,543 tok/s/GPU; H800 only).
-
-| attr | kind | values | meaning |
-|---|---|---|---|
-| `hw` | state | `h800` · `h100` | the tech sheet + the reported line |
-| `recompute` | state | `none` · `dsv3` · `attn-replay` · `full` | RECOMPUTE_PRESETS key: what replays in backward |
-| `gpus` | state | 8 … 4096 | cluster size |
-| `gbs` · `seq` | state | 1920 … 30720 · 2048 … 32768 | sequences per step × tokens per sequence (attention is quadratic in seq) |
-| state | | `#s:<id>={hw,recompute,gpus,gbs,seq}` | URL hash, when the element has an id |
-
-Readout (`.ro`, height reserved): at rest the sum and its terms; row hover
-the row's pieces; segment hover the piece's FLOP/token × tokens ÷ peak and
-share. `solStep(cfg)` / `solFlops(cfg)` are node-importable (goldens
-`sol.*`); test affordances: `g[data-row=fwd|bwd|replay|total]`,
-`rect[data-seg=<group>]` with `data-true`, `text[data-rowval]`,
-`[data-sheet=FP8|NVLink|InfiniBand]`, `line[data-ghost]`, `line[data-rep]`.
-
-## `<dsv3-anchors for=… | hw=…>` — the tech sheet as exchange rates (src/sol.js, post 03 draft)
-
-The intuition table under the summed step: latency numbers are the wrong
-anchor for a kernel-pipelined step (nothing waits on a round trip;
-everything waits on bytes ÷ bandwidth traded against FLOPs ÷ peak), so the
-anchors are RATIOS of the tech sheet. Three sections: exchange rates
-(FLOPs the tensor cores finish while one byte moves over HBM / NVLink /
-InfiniBand — the roofline ridge points); one token (its fwd+bwd compute in
-GFLOP and µs at peak, the bytes that time buys over each link, and the
-expert dispatch+combine traffic it needs, undeduplicated); objects (a
-hidden vector over each link, one layer's forward for a 4,096-token
-microbatch, one expert and the whole model through a NIC, one pass over
-HBM). `for=<id>` follows that `<dsv3-sol>`'s GPU knob (its `dsv3-sol`
-change event); `hw=` stands alone. Rows carry their formula as a `data-tip` (the shared tooltip).
-`anchors(hwKey)` is node-importable (goldens `anchors.*`); cells are
-`td[data-anchor=<label>]`.
-
 ## `<dsv3-ladder seq=…>` — the scaling ladder vs 6ND (src/ladder.js, post 03 draft)
 
 DeepSeek-V3 as one rung of a family, each rung spending its compute budget
@@ -766,25 +682,6 @@ unmodeled. Node-importable: `PPR`, `PDP`, `PLB`, `PMIN`, `PMS`, `PSTEP`,
 `<dsv3-fsdpcurve>`, with `polygon[data-area=bubble]` for the area, and for
 1F1B `polyline[data-idle1]`, `circle[data-m1]`, `text[data-pct1]` and the
 guide's second ring `circle[data-g=t1]` (tests/ppcurve.js).
-
-## `<dsv3-epscale>caption</dsv3-epscale>` — EP ÷ compute up the ladder (src/epscale.js, studies/scratch-04.html)
-
-A static log-log line: EP's speed-of-light time ÷ 6ND's at BF16 peak per
-step on H800s, across `<dsv3-ladder>`'s family and x axis (C with N under
-it). The EP group stays DSv3's (EP64 = 8 nodes, R = 3.5 remote nodes per
-token; FP8 dispatch with its 1×128 scales, BF16 combine), so the ratio
-falls as 1/s ∝ C^(−1/6), with a hump at the small end where the
-fixed-vocabulary lm head pads 6N. Marks: the break-even line at 1× (EP-bound
-above, compute-bound below), its crossing on the falling side, DSv3's point
-(exactly the sheets' T_EP′ ÷ T). No attributes; text content becomes the
-caption; the page declares `dsv3-epscale { display: block; … }`.
-`epRatio(ladderPoint(…))` is node-importable; test affordances
-`circle[data-dsv3]` / `circle[data-cross]` with `data-true` (the ratio; the
-crossing's log10 C), `polyline[data-curve]` (tests/epscale.js).
-
-## Other elements (unchanged conventions)
-- `<dsv3-trace level height title config>` — the canvas trace viewer over the
-  simulator (not yet on a published page; the timing posts' widget).
 
 ## Tooltips (src/tip.js)
 
