@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script data-theme>document.documentElement.classList.toggle('dark', (localStorage.getItem('dsv3-theme') ?? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')) === 'dark');</script>
+  <title>What CODA would do to a DeepSeek-V3 layer (draft)</title>
+  <meta name="robots" content="noindex">
+  <meta name="description" content="Every kernel launch of one DeepSeek-V3 MoE layer from DeepSeek's own profile, priced on the tensor cores and on HBM, and where a GEMM-epilogue programming model (CODA) would put each one — including the r statistic that has to cross the all-to-all.">
+  <link rel="stylesheet" href="./study.css">
+  <style>
+    dsv3-kernels { display: block; margin: 14px 0 26px; }
+    /* 03's summary-table look, for the per-launch roofline and the savings table */
+    .tally { width: fit-content; max-width: 100%; box-sizing: border-box; margin: 14px 0; font: 12px system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--c-0b0b0b);
+      border: 1px solid var(--c-e1e0d9); border-radius: 6px; background: var(--c-fcfcfb); padding: 8px 12px; overflow-x: auto; }
+    .tally table { border-collapse: collapse; }
+    .tally th { text-align: left; font-size: 10.5px; color: var(--c-898781); font-weight: 600; padding: 1px 12px 3px 2px; white-space: nowrap; }
+    .tally td { padding: 2px 12px 2px 2px; border-top: 1px solid var(--c-f0efe9); vertical-align: baseline; font-size: 11.5px; }
+    .tally tbody + tbody tr:first-child td { border-top-color: var(--c-e1e0d9); }
+    .tally th.n, .tally td.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .tally th:last-child, .tally td:last-child { padding-right: 2px; }
+    .tally tr.hl td { background: var(--c-fff8ea); font-weight: 600; }
+    .tally tr.sub td { color: var(--c-52514e); }
+    .tally tr.sub td:first-child { padding-left: 14px; }
+    .tally td.lab { max-width: 330px; }
+    .tally td.lab i { color: var(--c-898781); font-style: normal; }
+    .tally td.k { font: 10px ui-monospace, Menlo, monospace; color: var(--c-898781); }
+    .tally td.how { color: var(--c-52514e); white-space: nowrap; }
+    .tally td.how.gone { color: var(--c-7a5200); }
+    .tally td.how.keep { color: var(--c-898781); }
+    .tally td.dim { color: var(--c-898781); }
+    .tally td.mem { color: var(--c-8c5a19); font-weight: 600; }
+    .tally td.cmp { color: var(--c-d6408b); font-weight: 600; }
+    .tally .pass { font: 600 11px system-ui; color: var(--c-52514e); padding: 8px 0 2px; }
+    details.fold > summary { margin: 14px 0; font-size: 12px; color: var(--c-898781); cursor: pointer; }
+    details.fold[open] > summary { margin-bottom: 0; }
+    .eq { font: 13px ui-monospace, Menlo, monospace; color: var(--c-1c1c1a); background: var(--c-f3f2ee); padding: 8px 12px; border-radius: 5px; margin: 10px 0; overflow-x: auto; white-space: pre; }
+    .srcs td { vertical-align: top; }
+    .ai .eq { color: var(--c-1c1c1a); }
+    .ai .tally, .ai dsv3-kernels, .ai .eq { color: var(--c-0b0b0b); }   /* widgets and tables keep their own ink inside the AI-drafted body */
+  </style>
+</head>
+
+<body>
+  <main>
+    <h1>What CODA would do to a DeepSeek-V3 layer</h1>
+    <p class="sub">Every kernel launch of one MoE layer, priced on both meters, and where a GEMM-epilogue programming model would put each one.</p>
+
+    <p class="note ai">[[AI: DRAFT, unlisted. Every paragraph on this page is AI-drafted (Fable/Claude) from the CODA paper, DeepSeek's published profile and this series' models, and awaits a human edit pass; the per-launch model is in <code>src/kerntrace.js</code>, where each inferred shape is marked. See the disclosure footnote.<sup><a id="fnref1" href="#fn1">1</a></sup>]]</p>
+
+    <div class="ai">
+
+    <p><a href="https://arxiv.org/abs/2605.19269">CODA</a> (Guo, Zhang, Menon, Guessous, Thakkar, Kim, Dao; May 2026) is a kernel abstraction with one idea in it: almost everything in a Transformer block that is not a matmul or attention can be rewritten to run inside the <em>epilogue</em> of an adjacent GEMM, on the output tile while it is still on chip, instead of as its own kernel that reads and writes the whole activation through HBM. The <a href="./03-roofline.html">roofline post</a> priced DeepSeek-V3 as if those other kernels were free and then found, in DeepSeek's own profile, that they are not: <span data-kt="F.other.trace" data-fmt="ms">2.71 ms</span> of a <span data-kt="F.total" data-fmt="ms">9.0 ms</span> forward and <span data-kt="B.other.trace" data-fmt="ms">5.31 ms</span> of a <span data-kt="B.total" data-fmt="ms">14.6 ms</span> backward go to "everything else (not a matmul)".<span class="mn-ref"></span><span class="mn">03's table counts idle separately; these are kernel sums. The totals here are the sums of the per-pass launch durations, so they differ slightly from 03's wall-clock spans.</span> This study opens that bucket. It takes the 240 kernel launches of one steady-state layer from the trace, says what tensor each one moves, prices each on the tensor cores and on HBM, and then asks the CODA question of each: whose epilogue would you be?</p>
+
+    <p>Two things make DeepSeek-V3 a harder case than the paper's LLaMA block. The GEMM that follows the MoE-input RMSNorm is on another GPU, behind an all-to-all, so the normalization statistic the paper delays into the next GEMM has to travel. And the FFN is a grouped GEMM over experts with per-token routing weights, which the paper's primitives do not mention. Both turn out to be tractable, and the second half of this page works through them. The first half is just the inventory.</p>
+
+    <h2>The paper in one paragraph</h2>
+
+    <p>A pre-norm block has the pattern GEMM → residual add → RMSNorm → GEMM at every sublayer boundary. Written out, with <i>z</i> the residual stream, <i>γ</i> the norm weight and <i>r</i> the per-row inverse RMS:</p>
+    <div class="eq">y = RMSNorm(xW₀ + z, γ) W₁ = ( r · (xW₀ + z) ⊙ γ ) W₁ = r · ( ((xW₀ + z) ⊙ γ) W₁ )</div>
+    <p>The residual add and the γ multiply are tile-local, so they fit in the first GEMM's epilogue. The per-row scale <i>r</i> needs a reduction across the whole hidden dimension, wider than a tile, so the first epilogue emits per-tile partial sums of squares and a small kernel reduces them. And because <i>r</i> is one number per row, it commutes with the second GEMM, so it is applied in the <em>second</em> GEMM's epilogue instead of before it. The standalone norm kernel, which read and wrote the full activation, becomes a few bytes of partials per tile. The same move handles SwiGLU and RoPE (they act on adjacent pairs of output columns, which the Hopper accumulator layout already puts in one thread's registers), cross-entropy (tile-local max and sum-exp, reduced after), and, with one identity, the backward. RMSNorm's backward needs the row statistic <i>s</i> = Σ<sub>cols</sub> ∇h₂ ⊙ h₂, which is not available until the next GEMM back has run; the paper notes that Σ ∇y ⊙ y, one GEMM boundary later, is the same number, so it can be accumulated as a partial in the epilogue that already has <i>y</i> and ∇<i>y</i>. The paper measures single-H100 kernels and blocks against cuBLAS + torch.compile, Liger and FlashInfer; it says nothing about MoE, distribution or FP8 block scaling. That is what this page adds.</p>
+
+    <h2>One layer, every launch</h2>
+
+    <p>DeepSeek published <a href="https://github.com/deepseek-ai/profile-data">a profile of one rank</a> of a 64-GPU H800 run of their EP64 training setup (03 describes it: a forward chunk and a backward chunk of different microbatches, interleaved, four MoE layers each, routing simulated as balanced). Averaging the four layer cycles gives <span data-kt="launches" data-fmt="n">240</span> launches per layer: <span data-kt="F.launches">84</span> in the forward, <span data-kt="B.launches">129</span> in the input-gradient backward, <span data-kt="W.launches">17</span> weight gradients, and <span data-kt="comm">10</span> DeepEP kernels on the communication stream. The figure draws them in the block diagram's language, one row per launch, with a two-bar meter beside each: the traced time in grey over the kernel's speed of light, bronze where HBM binds and the precision color where the tensor cores do, on a log axis. Hover any row for the kernel, its operands, both meters and where CODA would put it.<span class="mn-ref"></span><span class="mn">Rates are 03's: the measured FP8 and BF16 GEMM peaks (1,456.6 and 757.7 TFLOP/s) and the H800's 3.35 TB/s of HBM. Bytes count every operand at its storage format, including DeepSeek's fp32 block scales (one per 128 FP8 values). GEMM rows reproduce 03's speed-of-light cells exactly.</span></p>
+
+    <dsv3-kernels id="kern" style="min-height:834px"></dsv3-kernels>
+
+    <p>Reading the forward column top to bottom is reading the layer. The attention sub-layer starts with a fused residual-add-plus-RMSNorm, quantizes its output to FP8 <em>twice</em> (once for each of the two down-projections that consume it), runs the two down-projections, normalizes the two latents, quantizes them, runs the two up-projections, spends four launches on RoPE and the layout copies around it, runs FlashAttention, writes its output twice more (once as the E5M6 stash the backward will need, once as FP8 for the output projection), runs the output projection, and lands in the second fused residual-add-plus-RMSNorm. Then the router: one small GEMM and <span data-kt="routerF">33</span> launches of PyTorch glue, most of them a few microseconds, two of them 70 µs sorts. The MoE sub-layer, after the dispatch, is six real kernels around four GEMMs: the token-to-expert-row expansion, two transposes of the local experts' <em>weights</em>, a fused SwiGLU-times-routing-weight-to-FP8, the local sum of each token's expert copies before the combine, and two re-quantizations of the SwiGLU outputs for the weight gradients.</p>
+
+    <p>Three groups stand out once the launches are priced. First, the memory-bound kernels do run near their HBM floor: the forward's <span data-kt="F.other.kept+gone" data-fmt="n">73</span> non-GEMM launches take <span data-kt="F.other.trace" data-fmt="ms">2.71 ms</span> against a floor of <span data-kt="F.other.hbm" data-fmt="ms">1.34 ms</span>, ×<span data-kt="F.other.eff" data-fmt="x">2.0</span>, and the backward's ×<span data-kt="B.other.eff" data-fmt="x">1.6</span>; the big casts, norms and SwiGLU kernels individually sit at 1.3–2× their bytes. There is no efficiency miracle waiting in these kernels. The way to make them cheaper is to not move the bytes. Second, the GEMMs are nowhere near memory-bound: every bronze marker sits far left of its pink bar. An epilogue can take on a lot of traffic before a GEMM notices. Third, the biggest single non-GEMM items are not the ones CODA targets. The two expansions and two local reductions around the all-to-all, plus the two routing bookkeeping kernels, are <span data-kt="a2aglue" data-fmt="ms">1.28 ms</span> per layer; they move whole routed tensors (32,768 rows × 7,168) by construction and no GEMM is adjacent to them.</p>
+
+    <h2>The per-launch roofline</h2>
+
+    <p>The table is the prerequisite the figure draws from: for each launch, the bytes it moves and the FLOPs it does, the time each meter implies, the traced time, the ratio, and its CODA disposition. Operands come from kernel names, template arguments (the norm kernels carry their width, the FP8 casts their block size) and grid sizes (an FP8 transpose kernel launches one block per 128 × 128 tile, which identifies <em>which</em> weight is being transposed to the byte). Where only the grid identifies the operand, the row is marked ~.</p>
+
+    <details class="fold" open><summary>every launch of the forward</summary><div class="tally" data-pass="F"></div></details>
+    <details class="fold"><summary>every launch of the backward (input gradients)</summary><div class="tally" data-pass="B"></div></details>
+    <details class="fold"><summary>every launch of the weight gradients, and the communication stream</summary><div class="tally" data-pass="W"></div><div class="tally" data-pass="comm"></div></details>
+
+    <h2>Where the kernels go</h2>
+
+    <p>DeepSeek-V3's layer has the paper's pattern at three places, plus two more the paper does not have. Taking them in forward order:</p>
+
+    <h3>The input norm → the MLA down-projections</h3>
+
+    <p>The layer begins with the residual add and RMSNorm that precede the Q and KV down-projections. In the paper this norm would ride the previous sublayer's last GEMM. Here the previous sublayer's last GEMM is the expert down-projection on some other rank, and what arrives on this rank is the <em>combine</em>: DeepEP sums each token's eight expert outputs across ranks and writes the result. There is no GEMM to host the epilogue, but there is something better: the combine kernel assembles each token's complete 7,168-wide row, so it can add the residual, compute the <em>exact</em> row RMS (no partials, no auxiliary kernel), multiply by γ and emit the FP8 copy the down-projections want, with <i>r</i> folded into the FP8 scales (next section). That is not a GEMM epilogue; it is the same idea applied to a communication kernel, and it is a DeepEP change rather than a CODA one. It removes the fused norm, both FP8 casts and both scale transposes: <span data-kt="inputnorm" data-fmt="us">215 µs</span> of launches per layer, replaced by two extra tensor writes inside a kernel that is bandwidth-bound on the network, not on HBM.</p>
+
+    <p>The down-projections then host the latent norms. The Q down-projection's output is 1,536 wide, twelve 128-column tiles, so its epilogue emits twelve partial sums of squares per row and the Q up-projection applies <i>r<sub>q</sub></i> in its own epilogue, exactly the paper's GEMM–RMSNorm–GEMM. The KV down-projection emits the kv latent's partials the same way and, since its last 64 columns are k<sub>rope</sub>, applies RoPE to them pairwise in the same epilogue. The two latent norms, two layout copies, two FP8 casts and two scale transposes between the down- and up-projections all fold; the two auxiliary reductions that remain read 12 and 4 partials per row.</p>
+
+    <h3>The up-projections → FlashAttention</h3>
+
+    <p>The Q up-projection's epilogue applies <i>r<sub>q</sub></i>, rotates the 64 rope columns of each of the 128 heads (pairwise again; the pair is adjacent in the accumulator) and writes Q in the layout FlashAttention reads. Today that is a GEMM, a RoPE kernel, two layout copies and another RoPE kernel, <span data-kt="ropeF" data-fmt="us">314 µs</span>, of which the copies alone move 400 MB. The KV up-projection likewise applies <i>r<sub>kv</sub></i> and writes K and V. FlashAttention itself is out of CODA's scope (it is its own fused kernel), but its output tile is one head wide, which is exactly one 128-value FP8 scale block, so the two casts that follow it (the E5M6 stash and the FP8 operand for the output projection: <span data-kt="ocast" data-fmt="us">293 µs</span>) could be written from FlashAttention's output tile instead of re-read. That is a FlashAttention epilogue rather than a GEMM one; this page counts the writes as staying and only drops the re-reads.</p>
+
+    <h3>The output projection → the MoE input norm → three consumers</h3>
+
+    <p>This is the boundary the paper's identity was made for, and the one where DeepSeek-V3 departs from it. The output projection's epilogue adds the residual, multiplies by γ, emits partial sums of squares and writes <i>x</i> ⊙ <i>γ</i>; a small reduction produces <i>r</i>. So far the paper. But the normed MoE input has <em>three</em> consumers rather than one: the router GEMM (BF16, on this rank), the shared expert's gate/up GEMM (FP8, on this rank), and the routed experts' gate/up GEMMs, on up to four other nodes, behind the dispatch all-to-all. Each has to apply <i>r</i> in its own epilogue. For the router and the shared expert that is the paper's Kernel 5 and Kernel 6 (<i>r</i> is applied before the sigmoid and before the SwiGLU respectively, as it must be). For the routed experts, <i>r</i> has to cross the all-to-all with the token.</p>
+
+    <p>It can cross for free. DeepSeek's FP8 recipe quantizes activations in 1 × 128 blocks with one fp32 scale each: the dispatch already carries 56 scales per token alongside the 7,168 FP8 values. Quantizing <i>x</i> ⊙ <i>γ</i> and quantizing <i>r</i> · <i>x</i> ⊙ <i>γ</i> give the same FP8 mantissas, because a per-block scale absorbs any per-row factor; only the 56 scales differ, by the common factor <i>r</i>. So the output projection's epilogue quantizes the unscaled tensor, the auxiliary reduction multiplies each token's 56 scales by its <i>r</i> (a pass over 0.9 MB), and the dispatch sends what it sends today. The grouped GEMM on the far side dequantizes with the scales it was always going to read; it never knows a norm was delayed. Zero extra bytes on the network, zero changes to the expert GEMM's mainloop, and the numerics are the paper's delayed-scale numerics up to one fp32 rounding of each scale.<span class="mn-ref"></span><span class="mn">If the per-row factor is kept separate instead, it is 4 bytes per dispatched token copy against the 7,392 the copy already costs: 0.05% more dispatch traffic. Either way it is cheap; folding it into the scales is simply free.</span></p>
+
+    <p>On the far side, the routed gate/up GEMM's epilogue is where DeepSeek already fused the most: their <code>swiglu_forward_with_weight_and_per_token_cast_to_fp8</code> kernel does SwiGLU, multiplies by the routing weight and quantizes, in one pass. CODA moves that pass into the GEMM: the pairwise SwiGLU on the adjacent gate and up columns, the routing weight as a per-row vector load, the 128-block quantization tile-local. What disappears is not a kernel's worth of arithmetic but the 268 MB bf16 gate/up intermediate, written by the GEMM and read back by the fused kernel: the GEMM's output shrinks from 268 MB to 67 MB of FP8. The same holds for the shared expert at one eighth the size. The expert down-projection's epilogue has nothing to absorb in the forward; what follows it is the local sum over each token's expert copies and the combine, neither of which is tile-local.</p>
+
+    <h3>The backward: the statistic rides the combine</h3>
+
+    <p>Backward, the fusion direction flips: each local backward rule attaches to the GEMM that produces the gradient of its output. The expert down-projection's input-gradient GEMM hosts SwiGLU's backward, reads the FP8 gate/up stash tile instead of a separately dequantized bf16 copy, and emits d(gate/up) in FP8 in both scale layouts (the row layout its own next GEMM wants, the column layout the weight gradient wants). The routing-weight gradient is a row dot product of the SwiGLU output with its gradient, a tile reduction with an auxiliary sum. That one host absorbs seven launches today worth <span data-kt="fc2bwd" data-fmt="us">1.1 ms</span>: the dequantization, the fused forward-backward SwiGLU, the dot product, two re-quantizations, a cast and a copy.</p>
+
+    <p>The MoE-input norm's backward is where the all-to-all enters again. Its statistic is <i>s</i> = Σ<sub>cols</sub> ∇h₂ ⊙ h₂ over the normed input and its total gradient, and the total gradient is the sum of three GEMM outputs: the router's, the shared expert's and the routed experts', the last of which arrives through the backward combine. The paper's identity moves <i>s</i> one GEMM boundary later, to Σ ∇y ⊙ y over each consumer's <em>output</em>, and this sum is linear across consumers: each of the three input-gradient GEMMs can emit its own partial. For the routed experts the partial is per routed row and is computed on the rank that holds the expert; it has to be summed per token across the backward combine, 4 bytes per routed row against the 14,336 of gradient the combine already carries for that row. The host that finally applies the norm backward is whichever of the three input-gradient GEMMs runs last (the figure picks the shared expert's), with the other two gradients accumulated through a tile load. That epilogue replaces the recompute of the norm, the standalone norm backward, the accumulation adds and the FP8 casts of the gradient that follows: eight launches.</p>
+
+    <p>The MLA backward is the paper's chain with nothing distributed about it. The dQ postprocess (FlashAttention's own) hosts RoPE's backward and emits dQ in FP8 in both layouts; the Q up-projection's input-gradient GEMM applies <i>r<sub>q</sub></i>, hosts the q-latent norm's backward and emits the partials of <i>s</i> for the <em>input</em> norm one boundary earlier; the KV side mirrors it, with one genuine reduction left over, the sum of dk<sub>rope</sub> over the 128 heads it was broadcast to. The Q down-projection's input-gradient GEMM accumulates the KV down-projection's output through a tile load, applies the input norm's backward and adds the residual gradient. Nineteen of the attention backward's launches are the recompute of the up-projections and RoPE under DeepSeek's checkpointing policy; the GEMM replays stay, and everything around them folds into their epilogues, as in the forward.</p>
+
+    <h3>What stays</h3>
+
+    <p>Honest accounting needs the list of what CODA does not touch. In order of size per layer: the four expansion and reduction kernels around the all-to-all and the two routing bookkeeping kernels (<span data-kt="a2aglue" data-fmt="ms">1.28 ms</span>, floor <span data-kt="a2agluefloor" data-fmt="us">850 µs</span>): these are DeepEP's shape, and if they are to go anywhere it is into DeepEP's dispatch and combine, which already read the rows. FlashAttention's backward preprocess and dQ conversion (<span data-kt="fapp" data-fmt="us">476 µs</span>), which are FlashAttention's own epilogues. The router's <span data-kt="routerglue" data-fmt="n">58</span> small launches across forward and backward (<span data-kt="routergluet" data-fmt="us">333 µs</span>): their HBM floor is a few microseconds; they are launch-latency bound, and the fix is one hand-written routing kernel, which CODA's primitives do not express (a group-limited top-k over 256 columns is two tiles wide). The E5M6 stash round trip in the backward: no GEMM produces the attention output there, so one pass from E5M6 to FP8-transposed remains, though today it is three. The head-sum of dk<sub>rope</sub>. And the DeepEP kernels themselves, which 03 prices on the network.</p>
+
+    <p>Two things that are not CODA at all fall out of pricing the launches and are worth saying. DeepSeek's FP8 GEMM transposes its weight operand on every call: nine weight transposes per layer per microbatch, <span data-kt="cache" data-fmt="us">329 µs</span>, on tensors that do not change within the step. And the same activation is quantized twice for two consumers in four places (the normed input for the two down-projections, forward and backward), and the MoE input and the gate/up stash are dequantized to bf16 only to be re-quantized in the other scale layout (<span data-kt="requant" data-fmt="us">322 µs</span>). None of this needs a new programming model; it needs the kernel that produces a tensor to know who will read it. That is also, put differently, the whole of CODA's argument.</p>
+
+    <h2>HBM: bandwidth now, bytes later</h2>
+
+    <p>The table sums the figure. Per pass, for the non-GEMM launches: the traced time, its HBM floor, the floor of what remains under CODA, and that remaining floor scaled by today's traced-to-floor ratio, which is the fairest single number for "what you would actually see". The host GEMMs' added epilogue traffic is checked separately: in every case but one it stays well under the GEMM's tensor-core time. The exception is the Q down-projection's input-gradient GEMM in the backward, which has only <span data-kt="qdn.flop" data-fmt="us">62 µs</span> of tensor-core work (K = 1,536) and would host the input norm's backward, an epilogue that reads three 59 MB tensors: its HBM time becomes <span data-kt="qdn.hbmAfter" data-fmt="us">75 µs</span>, exposed by <span data-kt="qdn.exposed" data-fmt="us">13 µs</span>. That is still a fraction of the <span data-kt="qdn.replaced" data-fmt="us">170 µs</span> of standalone kernels it replaces; it is just not free, and a small GEMM is a thin shadow to hide under.</p>
+
+    <div class="tally savings"></div>
+
+    <p>Per layer and microbatch that is <span data-kt="layer.other.trace" data-fmt="ms">8.60 ms</span> of non-GEMM kernel time today, <span data-kt="layer.other.projected" data-fmt="ms">2.54 ms</span> projected, against <span data-kt="layer.gemm.trace" data-fmt="ms">23.8 ms</span> of GEMMs and attention that do not change. DeepSeek's step runs each GPU through 7.5 such microbatches of 58 MoE layers, so the saving is <span data-kt="step.saved" data-fmt="s">2.6 s</span> of kernel time on a <span data-kt="step.reported" data-fmt="s">20.8 s</span> step, about <span data-kt="step.pct" data-fmt="pct">13%</span>, as an upper bound.<span class="mn-ref"></span><span class="mn">Upper bound because 03's trace shows compute and communication on a knife's edge: the comm stream is busy for about as long as the compute stream. Shortening compute by 6 ms per layer exposes communication unless the all-to-all gets faster too, and the all-to-all's own packing kernels are the largest thing CODA leaves behind.</span> In bytes, the forward's non-GEMM launches move <span data-kt="F.other.bytes" data-fmt="gb">4.5 GB</span> through HBM per layer and microbatch and would move <span data-kt="F.other.bytesAfter" data-fmt="gb">1.8 GB</span>; the backward goes from <span data-kt="B.other.bytes" data-fmt="gb">11.4 GB</span> to <span data-kt="B.other.bytesAfter" data-fmt="gb">3.1 GB</span>.</p>
+
+    <p>HBM <em>capacity</em> is a smaller story, and mostly a transient one. CODA does not change what the backward needs: the paper's SwiGLU backward reads the saved interleaved pre-activation, which is exactly the FP8 gate/up stash DeepSeek keeps, so the <a href="./02-hopper-memory.html">memory post</a>'s stash accounting stands. What changes is what is live <em>between</em> kernels: today the routed gate/up GEMM writes a 268 MB bf16 intermediate that exists until the SwiGLU kernel has consumed it, the attention output exists in bf16, E5M6 and FP8 at once, and the backward dequantizes a 134 MB stash into a 268 MB bf16 copy before using it. Under CODA those intermediates are tiles. Against that, the stash grows where the forward now writes operands the backward used to recompute or re-quantize: the normed input and the MoE input in the transposed FP8 layout (+29 MB each per layer), in exchange for dropping the bf16 latents (−16 MB) and three recompute kernels. Net, a few tens of MB per layer and microbatch either way; the bandwidth, not the capacity, is where CODA pays.</p>
+
+    <h2>Caveats</h2>
+
+    <p>The trace is one rank of a 64-GPU profiling run with balanced routing, four layers averaged; the routed-row-proportional kernels are normalized to 32,768 rows as in 03. The roofline rates are 03's measured GEMM peaks and the data-sheet HBM bandwidth, so "×2.0 above its floor" is relative to a floor no real kernel reaches; the comparison that matters is between kernels on the same meter. The CODA dispositions assume a grouped FP8 GEMM whose epilogue can take per-row vector loads (the routing weight, <i>r</i>), tile loads (the residual, the gate/up stash) and tile reductions, and can write FP8 with 128-block scales in both layouts; the paper's prototype is a dense BF16 CuTeDSL GEMM on Hopper, so this is the paper's primitives applied to DeepGEMM's shape, not something the paper measured. The all-to-all plumbing (<i>r</i> in the scales forward, <i>ŝ</i> partials on the backward combine, the residual and norm in the combine) is a DeepEP change, argued here only at the level of bytes. And nothing here models overlap: the figure prices kernels, and 03 is the place where the kernels meet the network.</p>
+
+    <h2>Sources</h2>
+    <table class="xcheck srcs">
+      <tr><th>what</th><th>where</th></tr>
+      <tr><td>the paper</td><td>Guo et al., <a href="https://arxiv.org/abs/2605.19269">CODA: Rewriting Transformer Blocks as GEMM-Epilogue Programs</a>, arXiv:2605.19269v2; code at github.com/HanGuo97/coda-kernels</td></tr>
+      <tr><td>the trace</td><td><a href="https://github.com/deepseek-ai/profile-data">deepseek-ai/profile-data</a>, the training profile; the four steady-state layer cycles and their alignment are in the refs directory (<code>coda/launches.json</code>)</td></tr>
+      <tr><td>the per-launch model</td><td><code>src/kerntrace.js</code>: one entry per launch, bytes and FLOPs from the architecture constants of <code>src/model.js</code>, CODA dispositions; <code>src/kerndata.js</code> is generated from the trace</td></tr>
+      <tr><td>the rates</td><td>post 03's sheet: π<sup>sol</sup><sub>fp8</sub>, π<sup>sol</sup><sub>bf16</sub>, and the H800 HBM figure of <code>src/model.js</code></td></tr>
+    </table>
+
+    </div>
+
+    <div class="fnotes">
+      <p class="note ai" id="fn1"><sup>1</sup> [[AI: Disclosure: this draft study — the prose, the per-launch model (<code>src/kerntrace.js</code>), the figure (<code>src/kernels.js</code>) and the tables — was generated by Fable (Claude) from the CODA paper, DeepSeek's published profile and the series' existing models, at the author's request, and has not yet had a human edit pass. It is not part of the published series. Operand identifications marked ~ rest on launch shapes alone.]] <a href="#fnref1">↩</a></p>
+    </div>
+  </main>
+  <script type="module">
+    import '../src/viewer.js';
+    import '../src/kernels.js';
+    import './series.js';
+    import { priced, tally } from '../src/kerntrace.js';
+    import { REPORTED } from '../src/sol.js';
+
+    const P = priced(), T = tally();
+    const n = (x, d = 0) => x.toLocaleString('en-US', { maximumFractionDigits: d, minimumFractionDigits: d });
+    const us = (s) => s >= 1e-3 ? `${n(s * 1e3, 2)} ms` : s >= 1e-4 ? `${n(s * 1e6)} µs` : s > 0 ? `${n(s * 1e6, 1)} µs` : '—';
+    const by = (b) => b >= 1e9 ? `${n(b / 1e9, 2)} GB` : b >= 1e6 ? `${n(b / 1e6, 1)} MB` : b >= 1e3 ? `${n(b / 1e3, 1)} KB` : b > 0 ? `${n(b)} B` : '—';
+    const fl = (f) => f >= 1e12 ? `${n(f / 1e12, 2)} TFLOP` : f >= 1e9 ? `${n(f / 1e9, 1)} GFLOP` : f > 0 ? `${n(f / 1e6)} MFLOP` : '—';
+    const HOW = { epilogue: 'epilogue of', aux: 'aux reduction', fa: 'FlashAttention', a2a: 'DeepEP', cache: 'once per step', stash: 'stashed instead', keep: 'stays' };
+
+    // ---- the per-launch tables -------------------------------------------------
+    const row = (e) => {
+      const host = typeof e.host === 'number' ? ` <i>${P[e.host].lab.replace(/ \(.*$/, '')}</i>` : e.host ? ` <i>${e.host}</i>` : '';
+      const how = e.comm ? '' : e.kind === 'gemm' || e.kind === 'attn' || e.i === 175 ? (e.epi?.length ? `host: ${e.epi.join(' · ')}` : 'host') : `${HOW[e.how]}${e.how === 'epilogue' ? host : ''}${e.after > 0 && e.how !== 'keep' ? ` (${by(e.after)} remains)` : ''}`;
+      const cls = e.comm ? '' : e.gone && !e.aux ? 'gone' : e.how === 'keep' ? 'keep' : '';
+      const shape = e.kind === 'gemm' ? `${n(e.M)} × ${n(e.Kd)} → ${n(e.N)}${e.groups > 1 ? ` ×${e.groups}` : ''}` : `grid ${e.grid.join('×')}`;
+      return `<tr data-i="${e.i}"><td class="dim n">${e.i}</td><td class="lab">${e.inf ? '~ ' : ''}${e.lab}${e.rows ? ' <i>(normalized)</i>' : ''}</td><td class="k">${e.k.replace(/^.*::/, '')}</td><td class="dim">${shape}</td>` +
+        `<td class="n">${e.comm ? '' : by(e.b)}</td><td class="n">${fl(e.f ?? 0)}</td><td class="n ${e.comm ? '' : e.bound === 'memory' && e.b ? 'mem' : ''}">${e.comm ? '' : us(e.hbm)}</td><td class="n ${e.bound === 'compute' ? 'cmp' : ''}">${e.flop ? us(e.flop) : ''}</td>` +
+        `<td class="n">${us(e.us * 1e-6)}</td><td class="n">${e.x && !e.comm ? (e.x >= 100 ? '≫' : n(e.x, e.x >= 10 ? 0 : 1)) : ''}</td><td class="how ${cls}">${how}</td></tr>`;
+    };
+    const head = '<thead><tr><th class="n">#</th><th>launch</th><th>kernel</th><th>shape</th><th class="n">HBM bytes</th><th class="n">FLOP</th><th class="n">HBM floor</th><th class="n">tensor-core floor</th><th class="n">traced</th><th class="n">×</th><th>under CODA</th></tr></thead>';
+    for (const div of document.querySelectorAll('.tally[data-pass]')) {
+      const pass = div.dataset.pass;
+      const es = pass === 'comm' ? P.filter((e) => e.comm) : P.filter((e) => e.pass === pass && !e.comm);
+      const groups = [];
+      for (const e of es) { const g = groups.at(-1); if (g && g.op === e.op && g.col === e.col) g.es.push(e); else groups.push({ op: e.op, col: e.col, es: [e] }); }
+      const body = groups.map((g) => {
+        const tr = g.es.reduce((t, e) => t + e.us, 0) * 1e-6, hb = g.es.reduce((t, e) => t + (e.kind === 'gemm' || e.kind === 'attn' ? 0 : e.hbm), 0);
+        return `<tbody><tr class="sub"><td></td><td colspan="7"><b>${g.col === 'comm' ? 'communication stream' : g.col === 'attn' ? 'attention' : 'MoE'} · ${g.op}</b> — ${g.es.length} launch${g.es.length > 1 ? 'es' : ''}${hb ? `, non-GEMM HBM floor ${us(hb)}` : ''}</td><td class="n">${us(tr)}</td><td></td><td></td></tr>${g.es.map(row).join('')}</tbody>`;
+      }).join('');
+      const t = T[pass];
+      const foot = pass === 'comm' ? '' : `<tbody><tr class="hl"><td></td><td colspan="5">GEMMs and attention: ${t.gemm.trace >= 0 ? '' : ''}${n(t.launches - t.other.kept - t.other.gone - t.other.aux)} launches</td><td class="n">${us(t.gemm.hbm)}</td><td class="n">${us(t.gemm.flop)}</td><td class="n">${us(t.gemm.trace * 1e-6)}</td><td class="n">${n(t.gemm.trace * 1e-6 / t.gemm.sol, 2)}</td><td class="how">epilogue traffic after CODA ${us(t.gemm.hbmAfter)}${t.gemm.over.length ? `; ${t.gemm.over.length} host tips HBM-bound (+${us(t.gemm.exposed)})` : ', under the tensor cores'}</td></tr>` +
+        `<tr class="hl"><td></td><td colspan="5">everything else: ${t.other.kept + t.other.gone + t.other.aux} launches</td><td class="n">${us(t.other.hbm)}</td><td></td><td class="n">${us(t.other.trace * 1e-6)}</td><td class="n">${n(t.other.eff, 1)}</td><td class="how">${t.other.gone} fold away, ${t.other.aux} become reductions over partials, ${t.other.kept} stay: floor ${us(t.other.hbmAfter)}</td></tr></tbody>`;
+      div.innerHTML = `<table>${head}${body}${foot}</table>`;
+    }
+
+    // ---- the savings table -----------------------------------------------------
+    const sv = document.querySelector('.tally.savings');
+    const L = { other: { trace: 0, hbm: 0, hbmAfter: 0, projected: 0, bytes: 0, bytesAfter: 0, kept: 0, gone: 0, aux: 0 }, gemm: { trace: 0, flop: 0, hbm: 0, hbmAfter: 0, exposed: 0 } };
+    for (const p of 'FBW') { for (const k in L.other) L.other[k] += T[p].other[k]; for (const k in L.gemm) L.gemm[k] += T[p].gemm[k]; }
+    L.other.eff = L.other.trace * 1e-6 / L.other.hbm;
+    const PASSN = { F: 'forward', B: 'backward (input gradients)', W: 'weight gradients' };
+    sv.innerHTML = `<table><thead><tr><th>pass</th><th class="n">non-GEMM launches</th><th class="n">traced</th><th class="n">HBM floor</th><th class="n">traced ÷ floor</th><th class="n">launches after</th><th class="n">floor after CODA</th><th class="n">at today's ratio</th><th class="n">GEMM epilogue traffic</th><th class="n">tensor-core time</th><th class="n">exposed</th></tr></thead><tbody>` +
+      ['F', 'B', 'W'].map((p) => { const t = T[p]; return `<tr><td>${PASSN[p]}</td><td class="n">${t.other.kept + t.other.gone + t.other.aux}</td><td class="n">${us(t.other.trace * 1e-6)}</td><td class="n">${us(t.other.hbm)}</td><td class="n">×${n(t.other.eff, 1)}</td><td class="n">${t.other.kept + t.other.aux}</td><td class="n">${us(t.other.hbmAfter)}</td><td class="n">${us(t.other.projected)}</td><td class="n">${us(t.gemm.hbmAfter)}</td><td class="n">${us(t.gemm.flop)}</td><td class="n">${t.gemm.exposed ? us(t.gemm.exposed) : '—'}</td></tr>`; }).join('') +
+      `<tr class="hl"><td>one layer, one microbatch</td><td class="n">${L.other.kept + L.other.gone + L.other.aux}</td><td class="n">${us(L.other.trace * 1e-6)}</td><td class="n">${us(L.other.hbm)}</td><td class="n">×${n(L.other.eff, 1)}</td><td class="n">${L.other.kept + L.other.aux}</td><td class="n">${us(L.other.hbmAfter)}</td><td class="n">${us(L.other.projected)}</td><td class="n">${us(L.gemm.hbmAfter)}</td><td class="n">${us(L.gemm.flop)}</td><td class="n">${us(L.gemm.exposed)}</td></tr></tbody></table>`;
+
+    // ---- prose numbers (data-kt) -----------------------------------------------
+    const MB_PER_GPU = 15360 * 4096 / 2048 / 4096, MOE_LAYERS = 58;
+    const step = { reported: 15360 * 4096 / 2048 / REPORTED.h800.rate };
+    step.saved = (L.other.trace * 1e-6 - L.other.projected - L.gemm.exposed) * MB_PER_GPU * MOE_LAYERS;
+    step.pct = step.saved / step.reported;
+    const sumUs = (f) => P.filter(f).reduce((t, e) => t + e.us, 0) * 1e-6;
+    const sumHbm = (f) => P.filter(f).reduce((t, e) => t + e.hbm, 0);
+    const K = {
+      launches: P.length, comm: P.filter((e) => e.comm).length,
+      'F.total': (T.F.gemm.trace + T.F.other.trace) * 1e-6, 'B.total': (T.B.gemm.trace + T.B.other.trace) * 1e-6,
+      routerF: P.filter((e) => e.op === 'router' && e.kind !== 'gemm').length,
+      a2aglue: sumUs((e) => [104, 105, 106, 115, 73, 85].includes(e.i)), a2agluefloor: sumHbm((e) => [104, 105, 106, 115, 73, 85].includes(e.i)),
+      inputnorm: sumUs((e) => [0, 1, 2, 4, 5].includes(e.i)), ropeF: sumUs((e) => [19, 20, 21, 22].includes(e.i)), ocast: sumUs((e) => [24, 25].includes(e.i)),
+      fc2bwd: sumUs((e) => [72, 76, 77, 78, 82, 83, 86].includes(e.i)), fapp: sumUs((e) => [173, 175].includes(e.i)),
+      routerglue: P.filter((e) => /^router( bwd)?$/.test(e.op) && e.kind !== 'gemm').length, routergluet: sumUs((e) => /^router( bwd)?$/.test(e.op) && e.kind !== 'gemm'),
+      cache: sumUs((e) => e.how === 'cache'), requant: sumUs((e) => [65, 72, 87, 89, 93].includes(e.i)),
+      'layer.other.trace': L.other.trace * 1e-6, 'layer.other.projected': L.other.projected, 'layer.gemm.trace': L.gemm.trace * 1e-6,
+      'step.saved': step.saved, 'step.reported': step.reported, 'step.pct': step.pct,
+      'qdn.flop': P[214].flop, 'qdn.hbmAfter': P[214].hbmAfter, 'qdn.exposed': P[214].hbmAfter - P[214].flop, 'qdn.replaced': sumUs((e) => [217, 218].includes(e.i)),
+    };
+    const get = (path) => {
+      if (path in K) return K[path];
+      const m = path.match(/^([FBW])\.(gemm|other)\.(\w+)(?:\+(\w+))?$/);
+      if (m) { const t = T[m[1]][m[2]]; let v = m[3] === 'trace' ? t.trace * 1e-6 : t[m[3]]; if (m[4]) v += t[m[4]] + (m[4] === 'gone' ? t.aux : 0); return v; }
+      const l = path.match(/^([FBW])\.launches$/); if (l) return T[l[1]].launches;
+      return null;
+    };
+    const FMT = { ms: (v) => `${n(v * 1e3, 2)} ms`, us: (v) => us(v), s: (v) => `${n(v, 1)} s`, x: (v) => n(v, 1), n: (v) => n(v), pct: (v) => `${n(v * 100)}%`, gb: (v) => `${n(v / 1e9, 1)} GB` };
+    for (const q of document.querySelectorAll('[data-kt]')) { const v = get(q.dataset.kt); if (v != null) q.textContent = (FMT[q.dataset.fmt ?? 'n'])(v); }
+  </script>
+</body>
+
+</html>

@@ -858,3 +858,40 @@ prefers-color-scheme overridden by the fixed ◐ toggle (localStorage
 blocks, both spliced by stamp.mjs from theme.js. Pixel goldens exist for
 both themes (`<name>-dark.png`); og images stay light. Dark accents were
 contrast-checked ≥4.3:1 against both dark surfaces.
+
+## `<dsv3-kernels pass=F|B|W mode=trace|coda>` — one layer at kernel-launch granularity (src/kernels.js, studies/coda.html, unlisted draft)
+
+Every kernel launch of one steady-state MoE layer cycle of DeepSeek's EP64
+profile (src/kerndata.js, generated from the trace by
+`~/Dev/scaling-dsv3-refs/coda/gen-kerndata.mjs`; 240 launches, four cycles
+aligned per stream, routed-row-proportional launches normalized to 32,768
+rows as in 03), drawn in the block diagram's grammar: a spine per column
+(attention sub-layer left, MoE sub-layer right), GEMMs and FlashAttention as
+`.box`, memory-bound kernels as `.op` pills, DeepEP kernels `.comm`,
+consecutive tiny launches of one op collapsed into one `.micro` row (the tip
+lists them). Beside each row a two-bar meter on a log µs axis (1 µs … 4 ms):
+traced (grey) over its speed of light — bronze when HBM binds, the precision
+color (fp8 pink · bf16 ink) when the tensor cores do, with a bronze marker
+at a GEMM's HBM time. src/kerntrace.js is the model: one spec per launch
+(operand, bytes at storage format incl. fp32 block scales, FLOPs, dtype) and
+its CODA disposition (`how`: epilogue of `host` · aux · fa · a2a · cache ·
+stash · keep; `add` = traffic a host epilogue takes on). Rates are 03's
+measured GEMM peaks + 3.35 TB/s HBM; the GEMM rows reproduce 03's cells.
+
+| attr | kind | values | meaning |
+|---|---|---|---|
+| `pass` | state | `F` (default) · `B` · `W` | which pass's launches |
+| `mode` | state | `trace` (default) · `coda` | as traced, or with CODA: folded launches ghost IN PLACE (anchors preserved; opacity .3, or .6 with a bar where a reduction over tile partials remains), hosts grow an amber epilogue tag, HBM markers move, the footer re-sums |
+| `fixed` | view | present | no knobs |
+| state | | `#k:<id>={pass,mode}` | URL hash, when the element has an id |
+
+Footer: the pass's GEMM+attention vs everything-else traced sums, the
+everything-else HBM floor, and under CODA the remaining floor and host
+check (epilogue HBM under tensor-core time). `priced()` / `tally()` /
+`rowsFor(pass)` are node-importable (goldens `kern.*`). Test affordances:
+`g[data-row="<i>|<i>+<j>…"][data-kind][data-gone]`, `rect[data-bar=trace|sol|hbm]`,
+`rect[data-hit]`, `.epibox`/`.epi`, `text[data-foot=trace|floor]`,
+`[data-knob=pass|mode] [data-v]`. Tests: tests/coda.js. The page also
+renders the per-launch roofline tables (`.tally[data-pass]`, one `tr[data-i]`
+per launch, `~` = operand inferred from the launch shape) and live prose
+numbers (`[data-kt]`) from the same module.

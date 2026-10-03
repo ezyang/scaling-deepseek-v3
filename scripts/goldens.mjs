@@ -24,7 +24,11 @@ import { solStep, anchors } from '../src/sol.js';
 import { gemm, SHAPES } from '../src/gemm.js';
 import { ladderPoint, LOG_C_DSV3 } from '../src/ladder.js';
 import { simulate as epSimulate, EXACT as EP_EXACT } from '../src/epsim.js';
+import { tally as kernTally, priced as kernPriced } from '../src/kerntrace.js';
 
+// the CODA study (studies/coda.html): every launch of the DeepSeek profile's
+// layer cycle priced on both meters, per-pass sums today and under CODA
+const KERN = kernTally();
 const FILE = fileURLToPath(new URL('../tests/goldens.json', import.meta.url));
 const G = {};
 
@@ -33,6 +37,7 @@ G.arch = DSV3;
 G.dtypeBytes = DTYPE_BYTES;
 G.hardware = HARDWARE;
 G.flopsPerToken = { seq4096: modelFlopsPerToken(DSV3, 4096), seq8192: modelFlopsPerToken(DSV3, 8192) };
+G.kern = { passes: KERN, launches: kernPriced().map((e) => [e.i, e.b, e.f ?? 0, +e.us.toFixed(3), e.how ?? 'host', e.bAfter]) };
 
 // per-token stash rates: every kind × recipe × policy (× fp8ᵀ dual) — these
 // are the blockgraph outputs the cell graph and fit charts price from
