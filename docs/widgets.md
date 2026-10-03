@@ -868,20 +868,31 @@ aligned per stream, routed-row-proportional launches normalized to 32,768
 rows as in 03), drawn in the block diagram's grammar as a GRAPH, not a
 timeline: one node per launch (GEMMs and FlashAttention `.box`, memory-bound
 kernels `.op` pills, consecutive tiny launches of one op collapsed into one
-`.micro`, DeepEP `.comm`), one `.wire` per tensor a launch writes for another
-launch to read (arrowhead at the consumer; a 2.5px dot where one tensor forks
-to several readers), stubs where a tensor crosses the pass boundary (amber
-`.stash`: forward → backward, backward → weight gradients) or the layer
-boundary / a weight (grey). Two columns (attention lanes 0–1: q, kv; MoE
-lanes 2–3: routed + DeepEP, shared), 212px nodes with 38px gutters that
-carry the rails. Lanes stack launches in trace order (`seq`); rows are the
-longest dependency path within the column; wires leave a node's bottom (the
-k-th consumed output 14px further right), the lane predecessor's wire enters
-the top, every other wire enters the left edge from a rail in the consumer's
-gutter (farther rail = lower entry, so last legs never cross), horizontal
-runs live in the gaps between rows, and cross-column wires go down the
-producer's gutter to a basement below both columns and up the consumer's
-gutter (01's residual rail). Inside each node a two-bar meter on a log µs
+`.micro`, DeepEP `.comm`), one `.wire` per ACTIVATION a launch writes for
+another launch to read (arrowhead at the consumer; a 2.5px dot where one
+tensor forks to several readers), stubs where a tensor crosses the pass
+boundary (amber `.stash`: forward → backward, backward → weight gradients)
+or the layer boundary / a weight (grey). SIDE tensors (`SIDE(t)`: block
+scales and their transposes, DeepEP layout/ready handles, row maps, counts,
+positions, transposed weights, the zeroed dQ accumulator) stay in the graph
+and its checks but draw no wire of their own; a launch whose every output is
+side (a scales transpose, a weight transpose, an arange, DeepEP's
+layout/notify) is a PEARL: indented 26px off the spine (`data-side="1"`),
+tapped from the tensor flowing past it (`data-wire="tap"`, a dot on the
+spine), its output dropping back onto the spine just above its reader
+(`data-wire="rejoin"`, drawn only where a spine wire enters that reader).
+Two columns (attention lanes 0–1: q, kv; MoE lanes 2–3: routed + DeepEP,
+shared), 186px nodes with 64px gutters that carry the rails. Lanes order by
+dependency (topological, ties by trace order `seq`; a pearl whose readers are
+all in its lane moves to just above its first reader); rows are the longest
+dependency path within the column; wires leave a node's bottom (the k-th
+drawn output 14px further right); a wire from the producer above in the lane
+with only pearls between enters the top (`data-wire="spine"`, once per node);
+every other wire is a rail (`data-wire="rail"`): it enters the left edge from
+a rail in the consumer's gutter (farther rail = lower entry, so last legs
+never cross), horizontal runs live in the gaps between rows, and cross-column
+wires go down the producer's gutter to a basement below both columns and up
+the consumer's gutter (01's residual rail). Inside each node a two-bar meter on a log µs
 axis (1 µs … 4 ms across the node, axis in the legend): traced (grey) over
 its speed of light — bronze when HBM binds, the precision color (fp8 pink ·
 bf16 ink) when the tensor cores do, with a bronze marker at a GEMM's HBM
@@ -906,9 +917,9 @@ measured GEMM peaks + 3.35 TB/s HBM; the GEMM nodes reproduce 03's cells.
 Footer: the pass's GEMM+attention vs everything-else traced sums, the
 everything-else HBM floor, and under CODA the remaining floor and host
 check (epilogue HBM under tensor-core time). `priced()` / `tally()` /
-`graph(pass)` / `nodesFor(pass)` are node-importable (goldens `kern.*`).
-Test affordances: `g[data-node="<i>|<i>+<j>…"][data-kind][data-lane][data-row][data-gone]`,
-`path[data-edge="<p>><c>"][data-t]`, `circle[data-dot]`,
+`graph(pass)` are node-importable (goldens `kern.*`); `nodesFor(pass)` (edges carry `kind`) imports in the browser.
+Test affordances: `g[data-node="<i>|<i>+<j>…"][data-kind][data-lane][data-row][data-side][data-gone]`,
+`path[data-edge="<p>><c>"][data-t][data-wire=spine|rail|tap|rejoin]`, `circle[data-dot]`,
 `path[data-stub=in|out][data-t]` (`.stash` = amber), `rect[data-bar=trace|sol|hbm]`,
 `.epibox`/`.epi`/`.fate`, `text[data-foot=trace|floor]`, `[data-knob=pass|mode] [data-v]`.
 Tip: kernel, grid, traced, both meters, `reads:` / `writes:` with each
