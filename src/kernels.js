@@ -80,7 +80,9 @@ export function nodesFor(pass) {
     const key = new Map(lane.map((n) => {
       const readers = edges.filter((e) => e.p === n).map((e) => e.c);
       const helper = n.sideOnly && readers.length && readers.every((c) => inLane.has(c));
-      return [n, helper ? Math.min(...readers.map((c) => c.seq)) - 0.5 : n.seq];
+      const feeders = edges.filter((e) => e.c === n && inLane.has(e.p)).map((e) => e.p);
+      const sinkish = !readers.length && feeders.length;   // a launch nothing in the pass reads (a stash, a weight-gradient operand): sits under what feeds it
+      return [n, helper ? Math.min(...readers.map((c) => c.seq)) - 0.5 : sinkish ? Math.max(...feeders.map((f) => f.seq)) + 0.5 : n.seq];
     }));
     const placed = new Set(), order = [];
     while (order.length < lane.length) {
@@ -98,15 +100,19 @@ export function nodesFor(pass) {
   for (const e of edges) {
     const sameLane = e.p.lane === e.c.lane && e.p.laneIdx < e.c.laneIdx;
     const between = sameLane ? byLane[e.p.lane].slice(e.p.laneIdx + 1, e.c.laneIdx) : null;
-    e.kind = e.c.sideOnly ? (sameLane ? 'tap' : 'rail') : !e.side ? (sameLane && between.every((n) => n.sideOnly) ? 'spine' : 'rail') : (e.p.sideOnly && sameLane && between.every((n) => n.sideOnly) ? 'rejoin' : 'none');
+    const adjacent = sameLane && between.every((n) => n.sideOnly);   // only pearls between producer and reader
+    e.kind = e.c.sideOnly ? (adjacent ? 'tap' : 'rail') : !e.side ? (adjacent ? 'spine' : 'rail') : (e.p.sideOnly && adjacent ? 'rejoin' : 'none');
   }
   for (const n of nodes) n.outs = [...new Set(edges.filter((e) => e.p === n && (e.kind === 'spine' || e.kind === 'rail' || e.kind === 'tap')).map((e) => e.t))];
   return { nodes, edges, byLane };
 }
 
 // ---- geometry ----------------------------------------------------------------
-const NW = 186, GUT = 64, LANE = NW + GUT, W = 4 * LANE + 12, PH = 22, BH = 34, GAP = 12, TOP = 68, FOOT = 48, BASE = 10, IND = 26;   // IND: side-only pearls indent off the spine
-const laneX = (l) => l * LANE + GUT;
+// the figure fits the 940px text column: four 172px lanes, gutters sized for the rails they carry
+// (the outer-left and inter-column gutters host the cross-column rails), pearls indented IND off the spine
+const NW = 172, GUTS = [56, 44, 64, 44], PH = 22, BH = 34, GAP = 12, TOP = 68, FOOT = 48, BASE = 10, IND = 26;
+const laneX = (l) => GUTS.slice(0, l + 1).reduce((t, g) => t + g, 0) + l * NW;
+const W = laneX(3) + NW + 12;
 const SPX = 12;                                                   // the spine: a node's first output leaves, and its lane predecessor's wire arrives, 12px in from its left edge
 const LOG0 = 1e-6, DOUBLINGS = 12, MW = NW - 12, PXD = MW / DOUBLINGS;   // one scale for every node; pearls clip   // the meter: 1 µs … 4,096 µs across the node
 const mx = (s) => Math.max(0, Math.min(MW, Math.log2(Math.max(s, LOG0) / LOG0) * PXD));
@@ -320,8 +326,8 @@ class Dsv3Kernels extends (typeof HTMLElement === 'undefined' ? class {} : HTMLE
     B.push(`<defs><marker id="kn-arr" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 8 4 L 0 8 z" fill="${C(GREY)}"/></marker>` +
       `<marker id="kn-arrs" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M 0 0 L 8 4 L 0 8 z" fill="${C(AMBER)}"/></marker></defs>`);
     // legend: the grammar, then the meter's axis at the nodes' own scale
-    B.push(`<text class="legend" x="${laneX(0)}" y="12">one node per launch: <tspan font-weight="600">GEMM</tspan> boxes · memory-bound pills · <tspan font-style="italic">glue</tspan> · DeepEP violet · a wire per activation (dot = fork) · scales, handles, maps: indented pearls off the spine · stubs: <tspan fill="${C(AMBER)}">▸ another pass</tspan> · ▸ the layer / a weight</text>`);
-    const lx = laneX(2) + 20;
+    B.push(`<text class="legend" x="${laneX(0)}" y="12">one node per launch: <tspan font-weight="600">GEMM</tspan> boxes · pills · <tspan font-style="italic">glue</tspan> · DeepEP violet · wires: activations (dot = fork) · indented pearls: scales, handles, maps · stubs: <tspan fill="${C(AMBER)}">▸ another pass</tspan> · ▸ layer / weight</text>`);
+    const lx = laneX(2) + 40;
     B.push(`<text class="legend" x="${laneX(0)}" y="27">in each node, traced <tspan fill="${C(GREY)}">▬</tspan> over its floor: <tspan fill="${C(BRONZE)}">▬</tspan> HBM · <tspan fill="${C(DT.fp8)}">▬</tspan> tensor cores fp8 · <tspan fill="${C(DT.bf16)}">▬</tspan> bf16, on a log axis:</text>`);
     for (const us of [1, 10, 100, 1000]) { const x = lx + mx(us * 1e-6); B.push(`<line class="tick" x1="${f1(x)}" y1="29" x2="${f1(x)}" y2="34"/><text class="dims" x="${f1(x)}" y="27" text-anchor="middle">${us >= 1000 ? '1 ms' : us + ' µs'}</text>`); }
     B.push(`<line class="tick" x1="${lx}" y1="34" x2="${f1(lx + MW)}" y2="34"/>`);
