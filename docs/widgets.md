@@ -859,39 +859,61 @@ blocks, both spliced by stamp.mjs from theme.js. Pixel goldens exist for
 both themes (`<name>-dark.png`); og images stay light. Dark accents were
 contrast-checked ≥4.3:1 against both dark surfaces.
 
-## `<dsv3-kernels pass=F|B|W mode=trace|coda>` — one layer at kernel-launch granularity (src/kernels.js, studies/coda.html, unlisted draft)
+## `<dsv3-kernels pass=F|B|W mode=trace|coda>` — one layer at kernel-launch granularity, as a dataflow graph (src/kernels.js, studies/coda.html, unlisted draft)
 
 Every kernel launch of one steady-state MoE layer cycle of DeepSeek's EP64
 profile (src/kerndata.js, generated from the trace by
 `~/Dev/scaling-dsv3-refs/coda/gen-kerndata.mjs`; 240 launches, four cycles
 aligned per stream, routed-row-proportional launches normalized to 32,768
-rows as in 03), drawn in the block diagram's grammar: a spine per column
-(attention sub-layer left, MoE sub-layer right), GEMMs and FlashAttention as
-`.box`, memory-bound kernels as `.op` pills, DeepEP kernels `.comm`,
-consecutive tiny launches of one op collapsed into one `.micro` row (the tip
-lists them). Beside each row a two-bar meter on a log µs axis (1 µs … 4 ms):
-traced (grey) over its speed of light — bronze when HBM binds, the precision
-color (fp8 pink · bf16 ink) when the tensor cores do, with a bronze marker
-at a GEMM's HBM time. src/kerntrace.js is the model: one spec per launch
-(operand, bytes at storage format incl. fp32 block scales, FLOPs, dtype) and
-its CODA disposition (`how`: epilogue of `host` · aux · fa · a2a · cache ·
-stash · keep; `add` = traffic a host epilogue takes on). Rates are 03's
-measured GEMM peaks + 3.35 TB/s HBM; the GEMM rows reproduce 03's cells.
+rows as in 03), drawn in the block diagram's grammar as a GRAPH, not a
+timeline: one node per launch (GEMMs and FlashAttention `.box`, memory-bound
+kernels `.op` pills, consecutive tiny launches of one op collapsed into one
+`.micro`, DeepEP `.comm`), one `.wire` per tensor a launch writes for another
+launch to read (arrowhead at the consumer; a 2.5px dot where one tensor forks
+to several readers), stubs where a tensor crosses the pass boundary (amber
+`.stash`: forward → backward, backward → weight gradients) or the layer
+boundary / a weight (grey). Two columns (attention lanes 0–1: q, kv; MoE
+lanes 2–3: routed + DeepEP, shared), 212px nodes with 38px gutters that
+carry the rails. Lanes stack launches in trace order (`seq`); rows are the
+longest dependency path within the column; wires leave a node's bottom (the
+k-th consumed output 14px further right), the lane predecessor's wire enters
+the top, every other wire enters the left edge from a rail in the consumer's
+gutter (farther rail = lower entry, so last legs never cross), horizontal
+runs live in the gaps between rows, and cross-column wires go down the
+producer's gutter to a basement below both columns and up the consumer's
+gutter (01's residual rail). Inside each node a two-bar meter on a log µs
+axis (1 µs … 4 ms across the node, axis in the legend): traced (grey) over
+its speed of light — bronze when HBM binds, the precision color (fp8 pink ·
+bf16 ink) when the tensor cores do, with a bronze marker at a GEMM's HBM
+time. src/kerntrace.js is the model: one spec per launch (lane, `in`/`out`
+tensor names, operand bytes at storage format incl. fp32 block scales,
+FLOPs, dtype) and its CODA disposition (`how`: epilogue of `host` · aux ·
+fa · a2a · cache · stash · keep; `add` = traffic a host epilogue takes on,
+`out8` = the change in its output bytes). `graph(pass)` joins producers to
+consumers by name and THROWS if the accounting does not close (a tensor read
+with no producer in this or an earlier pass or `LAYER_IN`; a tensor written
+with no reader here, in a later pass or `LAYER_OUT`; a CODA fold whose host
+is not reachable through folded launches along the wires). Rates are 03's
+measured GEMM peaks + 3.35 TB/s HBM; the GEMM nodes reproduce 03's cells.
 
 | attr | kind | values | meaning |
 |---|---|---|---|
-| `pass` | state | `F` (default) · `B` · `W` | which pass's launches |
-| `mode` | state | `trace` (default) · `coda` | as traced, or with CODA: folded launches ghost IN PLACE (anchors preserved; opacity .3, or .6 with a bar where a reduction over tile partials remains), hosts grow an amber epilogue tag, HBM markers move, the footer re-sums |
+| `pass` | state | `F` (default) · `B` · `W` | which pass's launches (the pass's DeepEP launches included) |
+| `mode` | state | `trace` (default) · `coda` | as traced, or with CODA: folded launches ghost IN PLACE (anchors and wires preserved; opacity .3, or .6 with a bar where a reduction over tile partials remains) and name their fate in amber (`.fate`: "→ Q down epilogue", "→ DeepEP combine", "once per step"…), hosts swap their dims line for an amber epilogue tag, wires into ghosts fade, meters move, the footer re-sums |
 | `fixed` | view | present | no knobs |
 | state | | `#k:<id>={pass,mode}` | URL hash, when the element has an id |
 
 Footer: the pass's GEMM+attention vs everything-else traced sums, the
 everything-else HBM floor, and under CODA the remaining floor and host
 check (epilogue HBM under tensor-core time). `priced()` / `tally()` /
-`rowsFor(pass)` are node-importable (goldens `kern.*`). Test affordances:
-`g[data-row="<i>|<i>+<j>…"][data-kind][data-gone]`, `rect[data-bar=trace|sol|hbm]`,
-`rect[data-hit]`, `.epibox`/`.epi`, `text[data-foot=trace|floor]`,
-`[data-knob=pass|mode] [data-v]`. Tests: tests/coda.js. The page also
+`graph(pass)` / `nodesFor(pass)` are node-importable (goldens `kern.*`).
+Test affordances: `g[data-node="<i>|<i>+<j>…"][data-kind][data-lane][data-row][data-gone]`,
+`path[data-edge="<p>><c>"][data-t]`, `circle[data-dot]`,
+`path[data-stub=in|out][data-t]` (`.stash` = amber), `rect[data-bar=trace|sol|hbm]`,
+`.epibox`/`.epi`/`.fate`, `text[data-foot=trace|floor]`, `[data-knob=pass|mode] [data-v]`.
+Tip: kernel, grid, traced, both meters, `reads:` / `writes:` with each
+tensor's producer / consumers (or its origin / destination outside the pass),
+the CODA line, the note, the mangled name. Tests: tests/coda.js. The page also
 renders the per-launch roofline tables (`.tally[data-pass]`, one `tr[data-i]`
 per launch, `~` = operand inferred from the launch shape) and live prose
 numbers (`[data-kt]`) from the same module.

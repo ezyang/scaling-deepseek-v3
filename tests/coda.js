@@ -1,12 +1,17 @@
 // @page studies/coda.html
 // The CODA study: every launch of the DeepSeek EP64 profile's layer cycle is
-// modeled (240, one spec each), the non-GEMM sums reproduce 03's kernel table
-// to the microsecond, the GEMM speed-of-light cells reproduce 03's, every
-// launch is a row of the figure or the table, the CODA flip keeps anchors
-// (host rows do not move; folded rows ghost in place) and rides the hash,
-// tips name the kernel, and the prose numbers are live.
+// modeled (240, one spec each, with the tensors it reads and writes), the
+// non-GEMM sums reproduce 03's kernel table to the microsecond, the GEMM
+// speed-of-light cells reproduce 03's, the dependency graph closes in every
+// pass (every tensor read has a producer, every tensor written a reader) and
+// every CODA fold reaches its host along the wires; the figure draws every
+// launch as a node and every tensor as a wire (forks dotted, cross-pass
+// tensors stubbed), the CODA flip keeps anchors (nodes do not move; folded
+// nodes ghost in place and name their fate) and rides the hash, tips name the
+// kernel and its operands, and the prose numbers are live.
 const M = await import('/src/kerntrace.js');
 const KD = await import('/src/kerndata.js');
+const KN = await import('/src/kernels.js');
 const near = (a, b, e = 1e-9) => Math.abs(a - b) < e;
 const P = M.priced(), TT = M.tally();
 T.check('240 launches, all specified', KD.LAUNCHES.length === 240 && P.length === 240 && P.every((e) => e.lab && e.kind), P.length);
@@ -22,40 +27,63 @@ T.check('after CODA every host hides its epilogue but the Q-down input gradient'
 T.check('bytes shrink under CODA, in every pass', ['F', 'B', 'W'].every((p) => TT[p].other.bytesAfter < TT[p].other.bytes), '');
 T.check('inferred shapes are marked', P.filter((e) => e.inf).length > 10 && P.filter((e) => e.inf).every((e) => !e.kind || e.kind !== 'gemm'), P.filter((e) => e.inf).length);
 
+// the dependency graph: closes in every pass (graph() throws otherwise), every launch a node, the stash falls out of it
+const G = Object.fromEntries(['F', 'B', 'W'].map((p) => [p, M.graph(p)]));
+T.check('graph closes: 89 + 134 + 17 = 240 launches, 113 / 155 / 8 tensor edges', G.F.nodes.length + G.B.nodes.length + G.W.nodes.length === 240 && G.F.edges.length === 113 && G.B.edges.length === 155 && G.W.edges.length === 8, `${G.F.edges.length} ${G.B.edges.length} ${G.W.edges.length}`);
+const stash = new Set(G.B.nodes.flatMap((e) => e.sources.filter((s) => s.from === 'F').map((s) => s.t)));
+T.check('the forward → backward stash falls out of the wiring (latents, E5M6 attention out, lse, rstds, the FP8 gate/up)', ['q latent', 'kv latent ‖ k_rope', 'attn out e5m6', 'lse', 'r₁', 'r_q', 'r_kv', 'r₂', 'gu_r fp8 (stash)', 'gu_sh fp8 (stash)', 'h₁', 'o′'].every((t) => stash.has(t)) && !stash.has('n₂ fp8'), [...stash].join(' · '));
+T.check('every weight-gradient operand is a backward (or forward) output', G.W.nodes.every((e) => e.sources.every((s) => s.from === 'B' || s.from === 'F')) && G.W.nodes.filter((e) => e.kind === 'gemm').every((e) => e.in.length === 2), '');
+T.check('the SwiGLU-input stash: forward casts 119/120 feed backward dequantizes 72/65', P[119].out.includes('gu_r fp8 (stash)') && P[72].in.includes('gu_r fp8 (stash)') && P[120].out.includes('gu_sh fp8 (stash)') && P[65].in.includes('gu_sh fp8 (stash)'), '');
+T.check('every numeric CODA host is in the folded launch\'s pass and wired to it', P.filter((e) => typeof e.host === 'number').every((e) => P[e.host].pass === e.pass || (e.comm)), '');
+
 // the figure
 const w = document.getElementById('kern');
 const q = (s) => w.querySelector(s), qa = (s) => [...w.querySelectorAll(s)];
-const launchesDrawn = () => qa('g[data-row]').flatMap((g) => g.dataset.row.split('+')).length;
-T.check('forward: every compute + comm launch of the pass is a row', launchesDrawn() === TT.F.launches + P.filter((e) => e.comm && /\(F\)/.test(e.ann)).length, launchesDrawn());
+const launchesDrawn = () => qa('g[data-node]').flatMap((g) => g.dataset.node.split('+')).length;
+const NF = KN.nodesFor('F');
+T.check('forward: every launch of the pass (DeepEP included) is a node', launchesDrawn() === G.F.nodes.length && qa('g[data-node]').length === NF.nodes.length, launchesDrawn());
+T.check('forward: every node-level tensor edge is a wire, with an arrowhead', qa('path[data-edge]').length === NF.edges.length && qa('path[data-edge]').every((p) => p.getAttribute('marker-end')), qa('path[data-edge]').length);
+T.check('forks are dotted: n₁ to both quantizes, attn out to the stash and the cast, X_e, row map', qa('circle[data-dot]').length >= 8 && qa('path[data-edge][data-t="n₁"]').length === 2 && qa('path[data-edge][data-t="attn out"]').length === 2, qa('circle[data-dot]').length);
+T.check('stubs: layer inputs grey, the stash for the backward amber', qa('path[data-stub="in"]:not(.stash)').length >= 2 && qa('path[data-stub="out"].stash').length >= 8 && qa('path[data-stub="out"][data-t="attn out e5m6"].stash').length === 1, `${qa('path[data-stub="in"]').length} in, ${qa('path[data-stub="out"]').length} out`);
+T.check('wires run right-angled, downhill within a column: the router GEMM sits below the MoE norm, the dispatch below the router glue', +q('g[data-node="30"]').dataset.row > +q('g[data-node="29"]').dataset.row && +q('g[data-node="231"]').dataset.row > +q('g[data-node="41"]').dataset.row && qa('path[data-edge]').every((p) => /^M [\d.]+ [\d.]+( [VH] [\d.]+)+$/.test(p.getAttribute('d'))), '');
+T.check('attention left (lanes 0–1), MoE right (2–3): the O proj is in lane 0, the MoE norm in lane 2, the shared expert in lane 3', q('g[data-node="27"]').dataset.lane === '0' && q('g[data-node="29"]').dataset.lane === '2' && q('g[data-node="103"]').dataset.lane === '3', '');
 T.check('resting: as traced, no ghosts', !q('[data-knob=mode] [data-v=coda]').classList.contains('on') && qa('g[data-gone="1"]').length === 0, '');
-const yOf = () => Object.fromEntries(qa('g[data-row]').map((g) => [g.dataset.row, g.querySelector('rect').getAttribute('y')]));
-const y0 = yOf();
+const yOf = () => Object.fromEntries(qa('g[data-node]').map((g) => [g.dataset.node, g.querySelector('rect').getAttribute('y') + ',' + g.querySelector('rect').getAttribute('x')]));
+const dOf = () => qa('path[data-edge]').map((p) => p.getAttribute('d')).join('|');
+const y0 = yOf(), d0 = dOf();
 q('[data-knob=mode] [data-v=coda]').click();
 await T.tick(400);
 const y1 = yOf();
-T.check('CODA flip preserves every anchor', Object.keys(y0).every((k) => y0[k] === y1[k]) && Object.keys(y0).length === Object.keys(y1).length, '');
-T.check('CODA: folded rows ghost in place', qa('g[data-gone="1"]').length === TT.F.other.gone + TT.F.other.aux - 0 || qa('g[data-gone="1"]').length > 20, qa('g[data-gone="1"]').length);
-T.check('CODA: hosts wear an epilogue tag', qa('.epibox').length >= 6 && q('g[data-row="27"] .epi'), qa('.epibox').length);
+T.check('CODA flip preserves every anchor and every wire', Object.keys(y0).every((k) => y0[k] === y1[k]) && Object.keys(y0).length === Object.keys(y1).length && dOf() === d0, '');
+T.check('CODA: folded nodes ghost in place and name their fate', qa('g[data-gone="1"]').length === TF_ghosts() && /Q down epilogue/.test(q('g[data-node="13"] .fate')?.textContent) && /DeepEP combine/.test(q('g[data-node="1"] .fate')?.textContent), qa('g[data-gone="1"]').length);
+function TF_ghosts() { return NF.nodes.filter((n) => n.gone).length; }
+T.check('CODA: hosts wear an epilogue tag', qa('.epibox').length >= 6 && q('g[data-node="27"] .epi'), qa('.epibox').length);
 T.check('hash state', decodeURIComponent(location.hash).includes('k:kern={"pass":"F","mode":"coda"}'), location.hash);
 const foot = q('text[data-foot=floor]').textContent;
-T.check('footer: floor → CODA floor', /1\.34 ms → with CODA 0\.54 ms in 41 launches/.test(foot), foot);
+T.check('footer: floor → CODA floor', /1\.40 ms → with CODA 0\.54 ms in 41 launches/.test(foot), foot);
 // tip: hover the output projection
-const r = q('g[data-row="27"] rect[data-hit]'), b = r.getBoundingClientRect();
+const r = q('g[data-node="27"] rect'), b = r.getBoundingClientRect();
 r.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: b.x + 40, clientY: b.y + b.height / 2 }));
 await T.tick(30);
 const tip = w.querySelector('.dsv3-tip')?.textContent ?? '';
-T.check('tip: kernel, both meters, the epilogue', /attention output projection/.test(tip) && /4,096 × 16,384 → 7,168/.test(tip) && /compute-bound/.test(tip) && /CODA epilogue: × c · \+ residual/.test(tip) && /fp8_ptp128c/.test(tip), tip.slice(0, 160));
+T.check('tip: kernel, both meters, reads / writes, the epilogue', /attention output projection/.test(tip) && /4,096 × 16,384 → 7,168/.test(tip) && /compute-bound/.test(tip) && /reads: attn out fp8 \(from #25/.test(tip) && /writes: o \(→ #28/.test(tip) && /CODA epilogue: × c · \+ residual/.test(tip) && /fp8_ptp128c/.test(tip), tip.slice(0, 200));
 // the backward pass
 q('[data-knob=pass] [data-v=B]').click();
 await T.tick(200);
-T.check('backward: every launch of the pass is a row', launchesDrawn() === TT.B.launches + P.filter((e) => e.comm && /\(B\)/.test(e.ann)).length, launchesDrawn());
-T.check('backward: the router\'s 25 glue launches collapse to one row', q('g[data-row^="121+"]')?.dataset.row.split('+').length === 25, q('g[data-row^="121+"]')?.dataset.row);
-T.check('backward: FlashAttention backward is a box', q('g[data-row="174"] rect.box') && /FlashAttention backward/.test(q('g[data-row="174"] text').textContent), '');
+T.check('backward: every launch of the pass is a node', launchesDrawn() === G.B.nodes.length, launchesDrawn());
+T.check('backward: the router\'s 25 glue launches collapse to one node', q('g[data-node^="121+"]')?.dataset.node.split('+').length === 25, q('g[data-node^="121+"]')?.dataset.node);
+T.check('backward: FlashAttention backward is a box reading the recomputed Q, K, V', q('g[data-node="174"] rect.box') && /FlashAttention backward/.test(q('g[data-node="174"] text').textContent) && qa('path[data-edge$=">174"]').length >= 6, qa('path[data-edge$=">174"]').length);
+T.check('backward: d(x₁) leaves the MoE column for the attention column (the scale backward and the input-norm backward)', qa('path[data-edge][data-t="d(x₁)"]').length === 2 && q('g[data-node="149"]').dataset.lane === '3' && q('g[data-node="152"]').dataset.lane === '0', '');
+T.check('backward: weight-gradient operands leave by amber stubs', qa('path[data-stub="out"].stash').length >= 14, qa('path[data-stub="out"].stash').length);
+// the weight gradients
+q('[data-knob=pass] [data-v=W]').click();
+await T.tick(200);
+T.check('weight gradients: 17 nodes, every operand an amber stub in, every dW a grey stub out', launchesDrawn() === 17 && qa('path[data-stub="in"].stash').length >= 24 && qa('path[data-stub="out"]:not(.stash)').length === 15, `${qa('path[data-stub="in"].stash').length} in`);
 
 // the page: tables and live prose
 T.check('per-launch tables: 240 rows', document.querySelectorAll('.tally[data-pass] tr[data-i]').length === 240, '');
 T.check('inferred rows marked ~', [...document.querySelectorAll('.tally[data-pass] tr[data-i] td.lab')].filter((td) => td.textContent.startsWith('~')).length === P.filter((e) => e.inf).length, '');
 T.check('savings table: layer row', /one layer, one microbatch/.test(document.querySelector('.tally.savings tr.hl')?.textContent), '');
-T.check('prose numbers live', document.querySelector('[data-kt="F.other.trace"]').textContent === '2.71 ms' && document.querySelector('[data-kt="B.other.trace"]').textContent === '5.31 ms' && /%$/.test(document.querySelector('[data-kt="step.pct"]').textContent), '');
+T.check('prose numbers live', document.querySelector('[data-kt="F.other.trace"]').textContent === '2.71 ms' && document.querySelector('[data-kt="F.other.hbm"]').textContent === '1.40 ms' && document.querySelector('[data-kt="B.other.trace"]').textContent === '5.31 ms' && /%$/.test(document.querySelector('[data-kt="step.pct"]').textContent), '');
 T.check('AI disclosure present', document.getElementById('fn1')?.textContent.includes('Disclosure'), '');
 T.done();
