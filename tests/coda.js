@@ -57,5 +57,5 @@ T.check('per-launch tables: 240 rows', document.querySelectorAll('.tally[data-pa
 T.check('inferred rows marked ~', [...document.querySelectorAll('.tally[data-pass] tr[data-i] td.lab')].filter((td) => td.textContent.startsWith('~')).length === P.filter((e) => e.inf).length, '');
 T.check('savings table: layer row', /one layer, one microbatch/.test(document.querySelector('.tally.savings tr.hl')?.textContent), '');
 T.check('prose numbers live', document.querySelector('[data-kt="F.other.trace"]').textContent === '2.71 ms' && document.querySelector('[data-kt="B.other.trace"]').textContent === '5.31 ms' && /%$/.test(document.querySelector('[data-kt="step.pct"]').textContent), '');
-T.check('AI disclosure present', document.querySelector('p.note.ai')?.textContent.includes('[[AI:') && document.querySelector('main > div.ai'), '');
+T.check('AI disclosure present', document.getElementById('fn1')?.textContent.includes('Disclosure'), '');
 T.done();
