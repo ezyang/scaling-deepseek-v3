@@ -786,8 +786,9 @@ dependency path within the column; wires leave a node's bottom (the k-th
 drawn output 14px further right); a wire from the producer above in the lane
 with only pearls between enters the top (`data-wire="spine"`, once per node);
 every other wire is a rail (`data-wire="rail"`): it enters the left edge from
-a rail in the consumer's gutter (farther rail = lower entry, so last legs
-never cross), horizontal runs live in the gaps between rows, and cross-column
+a rail in the consumer's gutter, or — when the producer's lane lies to the
+right — the RIGHT edge from the gutter on that side (01's k_rope / top-k
+weights rails), farther rail = lower entry so last legs never cross, horizontal runs live in the gaps between rows, and cross-column
 wires go down the producer's gutter to a basement below both columns and up
 the consumer's gutter (01's residual rail). Inside each node a two-bar meter on a log µs
 axis (1 µs … 4 ms across the node, axis in the legend): traced (grey) over

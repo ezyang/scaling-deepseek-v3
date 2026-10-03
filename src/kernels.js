@@ -110,7 +110,7 @@ export function nodesFor(pass) {
 // ---- geometry ----------------------------------------------------------------
 // the figure fits the 940px text column: four 172px lanes, gutters sized for the rails they carry
 // (the outer-left and inter-column gutters host the cross-column rails), pearls indented IND off the spine
-const NW = 172, GUTS = [56, 44, 64, 44], PH = 22, BH = 34, GAP = 12, TOP = 68, FOOT = 48, BASE = 10, IND = 26;
+const NW = 172, GUTS = [56, 44, 64, 44, 12], PH = 22, BH = 34, GAP = 12, TOP = 68, FOOT = 48, BASE = 10, IND = 26;
 const laneX = (l) => GUTS.slice(0, l + 1).reduce((t, g) => t + g, 0) + l * NW;
 const W = laneX(3) + NW + 12;
 const SPX = 12;                                                   // the spine: a node's first output leaves, and its lane predecessor's wire arrives, 12px in from its left edge
@@ -245,7 +245,7 @@ class Dsv3Kernels extends (typeof HTMLElement === 'undefined' ? class {} : HTMLE
     // arrives at the left edge from a rail in the consumer's gutter; farther rails enter lower so none crosses
     // another's last leg. Taps leave the spine sideways into a pearl; rejoins drop from a pearl onto the spine.
     const chans = new Map();    // `${col}:${row}` → [{x1, x2, k}]  horizontal runs in the gap below a row
-    const rails = [[], [], [], []];   // per gutter: [{y1, y2, slot}]
+    const rails = [[], [], [], [], []];   // per gutter (lane 4 = the right margin): [{y1, y2, slot}]
     const bases = [];           // basement runs: [{x1, x2, k}]
     const chan = (col, r, x1, x2) => { const key = `${col}:${r}`, used = chans.get(key) ?? []; chans.set(key, used); const lo = Math.min(x1, x2) - 2, hi = Math.max(x1, x2) + 2; let k = 0; while (used.some((u) => u.k === k && u.x1 < hi && u.x2 > lo)) k++; used.push({ x1: lo, x2: hi, k }); return rowY[col][r] + rowH[col][r] + 2 + 3 * Math.min(k, 3); };
     const rail = (g, y1, y2) => { const lo = Math.min(y1, y2) - 3, hi = Math.max(y1, y2) + 3; let s = 0; while (rails[g].some((u) => u.slot === s && u.y1 < hi && u.y2 > lo)) s++; rails[g].push({ y1: lo, y2: hi, slot: s }); return laneX(g) - 8 - 6 * s; };
@@ -266,8 +266,11 @@ class Dsv3Kernels extends (typeof HTMLElement === 'undefined' ? class {} : HTMLE
         if (ex !== w.enX) { w.chY = chan(p.col, p.row, ex, w.enX); w.turns.push(w.chY); }
         w.endY = c.y;
       } else if (c.col === p.col) {
-        w.chY = chan(p.col, p.row, ex, laneX(c.lane) - 8); w.turns.push(w.chY);
-        w.railX = rail(c.lane, w.chY, c.y + c.h / 2);
+        // a producer to the right rails down the gutter on the consumer's right and enters its right edge
+        w.right = e.p.lane > e.c.lane;
+        const g = w.right ? e.c.lane + 1 : e.c.lane;
+        w.chY = chan(p.col, p.row, ex, laneX(g) - 8); w.turns.push(w.chY);
+        w.railX = rail(g, w.chY, c.y + c.h / 2);
         (side.get(c) ?? side.set(c, []).get(c)).push(w);
       } else {   // across the columns: down this column's gutter to the basement, along it, up the destination's gutter
         w.chY = chan(p.col, p.row, ex, laneX(p.lane) - 8); w.turns.push(w.chY);
@@ -281,13 +284,16 @@ class Dsv3Kernels extends (typeof HTMLElement === 'undefined' ? class {} : HTMLE
     // side entries, sources (stubs in) and sinks (stubs out) share each node's left/right edge
     const offsets = (h, k) => { const span = Math.min(h - 8, 4 * (k - 1)); return Array.from({ length: k }, (_, i) => k === 1 ? 0 : -span / 2 + span * i / (k - 1)); };
     for (const q of L.nodes) {
-      const ws = (side.get(q) ?? []).sort((a, b) => b.railX - a.railX);   // nearest rail first (enters highest)
+      const all = side.get(q) ?? [];
+      const ws = all.filter((w) => !w.right).sort((a, b) => b.railX - a.railX);   // left edge: nearest rail first (enters highest)
+      const wr = all.filter((w) => w.right).sort((a, b) => a.railX - b.railX);    // right edge: likewise
       const srcs = q.sources;
       const offs = offsets(q.h, ws.length + srcs.length);
       ws.forEach((w, i) => { w.endY = q.y + q.h / 2 + offs[srcs.length + i]; });
       srcs.forEach((s, i) => L.stubs.push({ key: `${q.key}<${s.t}`, dir: 'in', x: q.x, y: q.y + q.h / 2 + offs[i], stash: s.from === 'F' || s.from === 'B', a: q.a, t: s.t, node: q }));
-      const so = offsets(q.h, q.sinks.length);
-      q.sinks.forEach((s, i) => L.stubs.push({ key: `${q.key}>${s.t}`, dir: 'out', x: q.x + q.w, y: q.y + q.h / 2 + so[i], stash: s.to === 'B' || s.to === 'W', a: q.a, t: s.t, node: q }));
+      const so = offsets(q.h, q.sinks.length + wr.length);
+      wr.forEach((w, i) => { w.endY = q.y + q.h / 2 + so[i]; });
+      q.sinks.forEach((s, i) => L.stubs.push({ key: `${q.key}>${s.t}`, dir: 'out', x: q.x + q.w, y: q.y + q.h / 2 + so[wr.length + i], stash: s.to === 'B' || s.to === 'W', a: q.a, t: s.t, node: q }));
     }
     for (const w of plan) {
       const { e, p, c } = w;
@@ -295,7 +301,7 @@ class Dsv3Kernels extends (typeof HTMLElement === 'undefined' ? class {} : HTMLE
       if (w.tap) d += ` V ${f1(w.endY)} H ${f1(w.enX)}`;
       else if (w.rejoin) d += ` V ${f1(w.endY)} H ${f1(w.enX)}`;
       else if (w.top) d += w.chY != null ? ` V ${f1(w.chY)} H ${f1(w.enX)} V ${f1(w.endY)}` : ` V ${f1(w.endY)}`;
-      else if (w.rail1X == null) d += ` V ${f1(w.chY)} H ${f1(w.railX)} V ${f1(w.endY)} H ${f1(c.x)}`;
+      else if (w.rail1X == null) d += ` V ${f1(w.chY)} H ${f1(w.railX)} V ${f1(w.endY)} H ${f1(w.right ? c.x + c.w : c.x)}`;
       else d += ` V ${f1(w.chY)} H ${f1(w.rail1X)} V ${f1(w.baseY)} H ${f1(w.railX)} V ${f1(w.endY)} H ${f1(c.x)}`;
       L.edges.push({ key: `${p.key}>${c.key}`, t: e.t, kind: e.kind, d, a: Math.min(p.a, c.a), ex: w.ex, top: !!w.top, turnY: w.rejoin ? w.endY : (w.top && w.chY == null) ? w.endY : (w.tap ? w.endY : w.chY), p, c });
     }
