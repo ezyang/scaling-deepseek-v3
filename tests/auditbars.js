@@ -1,8 +1,8 @@
-// @page studies/scratch-bars.html
+// @page studies/02-hopper-memory.html
 // visual audit after INTERACTIONS: save a baseline, turn knobs, then audit
 // the badges/ghosts/geometry the interactive state produced
 const { auditFitCharts } = await import('/src/audit.js');
-const L = () => document.getElementById('bars-all');
+const L = () => document.getElementById('local-diagram');
 const stp = (k) => L().querySelector(`.stp[data-knob="${k}"]`);
 
 T.check('clean page audits clean', auditFitCharts(document).findings.length === 0,

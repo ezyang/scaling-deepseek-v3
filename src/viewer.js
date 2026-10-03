@@ -408,8 +408,8 @@ export class Dsv3Layer extends HTMLElement {
 
     this.detail = st?.detail ?? this.hasAttribute('detail');
     this.flatDims = st?.flatDims ?? false;
-    // optim/consolidated lenses: which byte components are visible (strips AND
-    // numbers follow — the numbers always total exactly what the squares show)
+    // local lens: which byte components are visible (strips AND numbers
+    // follow — the numbers always total exactly what the squares show)
     this.showWeights = st?.showWeights ?? true;
     this.showOptim = st?.showOptim ?? true;
     this.showGrads = st?.showGrads ?? true;
@@ -462,7 +462,6 @@ export class Dsv3Layer extends HTMLElement {
       // Static by design: no knobs, no URL state, no chart interactions.
       const from = JSON.parse(this.getAttribute('from') ?? '{}');
       const to = JSON.parse(this.getAttribute('to') ?? '{}');
-      this._snapCfg = { from, to };
       // which components the beat shows: solo= (one comp, stacked total,
       // breakdown open) or comps= (a visible subset — the additive-tally
       // beats); both dim the rest to name-only rows
@@ -628,8 +627,7 @@ export class Dsv3Layer extends HTMLElement {
   // legend clicks SOLO a component (the useful filter: "show me only the
   // weights"); soloing the already-solo component brings everything back
   _compProps() {
-    const cons = this.hasAttribute('consolidated') || this.hasAttribute('local');
-    return cons ? ['showWeights', 'showGrads', 'showOptim', 'showActs'] : ['showWeights', 'showOptim'];
+    return ['showWeights', 'showGrads', 'showOptim', 'showActs'];
   }
   soloComp(prop) {
     this.partSel = null;   // the part filter lives inside a solo
@@ -658,7 +656,7 @@ export class Dsv3Layer extends HTMLElement {
       label: `EP${this.ep}·PP${this.pp}${(this.tp ?? 1) > 1 ? `·TP${this.tp}` : ''}·rank ${this.stage}·ZeRO-${this.zero ? this.zero : 'off'}·${schedName(this)}${this.gbs ? `·m ${this.mb}` : ''}·${this.world} GPUs${this.hw && this.hw !== 'h100' ? '·' + HW_SHORT[this.hw] : ''}`,
     };
   }
-  // apply an authored config patch (snapshot 'from'/'to', sandbox jumps):
+  // apply an authored config patch (snapshot 'from'/'to'):
   // plain state keys plus recipe/recompute presets
   _applyCfg(patch) {
     const { recipe, recompute, stage, ...rest } = patch;
@@ -672,18 +670,9 @@ export class Dsv3Layer extends HTMLElement {
       this.world ?? LOCAL_PAR.world, this.sched, this.vpp, this.fold, this.layout, this.a2a, this.tp ?? 1);
     this._syncMb(patch.mb == null);   // authored configs are complete by fiat: no mb = the PP default
   }
-  // jump target for snapshots' "open in the full widget" links: land on the
-  // snapshot's exact story — its 'from' as the save, its 'to' live, tweened
-  _loadScenario(from, to) {
-    this._applyCfg({ ...CFG_DEFAULTS, ...from }); this.render(); this._saveBaseline();
-    const prev = this._snapLocal();
-    this._applyCfg({ ...CFG_DEFAULTS, ...from, ...to });
-    this._tweenLocal(prev);
-    this.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }
   // ---- fit-chart interaction wiring: ONE seam for every view ---------------
-  // Capabilities compose per view, so mixed pages (full sim + barsonly panels
-  // + snapshot figures) each get exactly the interactions that make sense:
+  // Capabilities compose per view, so mixed pages (full diagrams + snapshot
+  // figures) each get exactly the interactions that make sense:
   //   measure — the scrub cursor + drag ruler (READ-ONLY: a span on a log
   //             axis is a factor); every view has it, snapshots included
   //   mutate  — solo/part clicks on the gutter legend; off in snapshots,
@@ -994,11 +983,7 @@ export class Dsv3Layer extends HTMLElement {
         }
         this.cumulative = !this.cumulative;
         this.changed(true);
-        if (this.getAttribute('strips') === 'absolute' && this.getAttribute('lens') === 'param-bytes') {
-          const from = this._tween ?? (this.cumulative ? 0 : 1);
-          const to = this.cumulative ? 1 : 0;
-          this._frames((t) => { this._tween = from + (to - from) * t; }, () => { this._tween = undefined; });
-        } else this.render();
+        this.render();
       };
       return b;
     };
@@ -1211,10 +1196,8 @@ export class Dsv3Layer extends HTMLElement {
       const mini2 = this.hasAttribute('local') ? el('div', 'lv-head') : mini;
       // param-bytes always shows sizes multiplied out — no toggle to offer
       const sizeCtl = this.getAttribute('lens') === 'param-bytes' ? [] : ['sizes:', mkDimsBtn()];
-      // the optim variant is pinned per block; consolidated allows ×N (long!);
       // local is pinned cumulative (the stage total — what the fit bar prices)
-      const cumCtl = (this.hasAttribute('optim') && !this.hasAttribute('consolidated')) || LOCALKNOBS
-        ? [] : [mkCumBtn()];
+      const cumCtl = LOCALKNOBS ? [] : [mkCumBtn()];
       // no kind select when MLA-only (kind-independent) or when the tabs carry the flip
       if (KN('blocks')) {
         if (SCOPE === 'mla' || this.hasAttribute('tabs')) mini2.append(...sizeCtl, ...cumCtl);
@@ -1401,10 +1384,8 @@ export class Dsv3Layer extends HTMLElement {
         // the strip unit rescales with the ×N toggle — label it so the jump
         // reads as a unit change, not a glitch (▫ = nonzero but sub-square)
         const KM2 = this.kind === 'dense' ? (DSV3.denseLayers ?? 3) : DSV3.layers - (DSV3.denseLayers ?? 3);
-        // fixed unit whenever the strips GROW instead of renormalizing
-        // (strips=absolute and the local variant)
-        const absP = this.getAttribute('strips') === 'absolute' || this.hasAttribute('local');
-        const unit = PARAMS.largestOp.moe * (this.cumulative && !absP ? KM2 : 1) / 32 * 2;
+        // the local variant keeps a fixed unit (its strips grow instead of renormalizing)
+        const unit = PARAMS.largestOp.moe * (this.cumulative && !this.hasAttribute('local') ? KM2 : 1) / 32 * 2;
         const leg = el('span');
         leg.style.cssText = 'color:var(--c-52514e);margin-left:10px;font-size:11px;white-space:nowrap;';
         // the swatch is a real 5×4 rect — the same size as the strip squares
@@ -1412,9 +1393,8 @@ export class Dsv3Layer extends HTMLElement {
         // inline-block + zero margin: the .lv svg{display:block;margin:0 auto}
         // rule for the main diagram would otherwise stack the swatch on its own line
         const sw = (c) => `<svg width="5" height="4" style="display:inline-block;margin:0;vertical-align:baseline"><rect width="5" height="4" fill="${c}"/></svg>`;
-        const cons2 = this.hasAttribute('consolidated') || this.hasAttribute('local');
-        if (this.hasAttribute('marginlegend')) { /* the anatomy margin hosts the legend */ }
-        else if (this.hasAttribute('optim') || cons2) {
+        if (this.hasAttribute('marginlegend')) { /* local's legend lives on the fit chart rows */ }
+        else if (this.hasAttribute('local')) {
           // the legend entries ARE the visibility toggles: the squares pour
           // in/out (per-block-tween style, boxes reflow with the filled rows)
           // and the numbers snap to exactly what's shown
@@ -1430,11 +1410,8 @@ export class Dsv3Layer extends HTMLElement {
             lab.append(c, t);
             return lab;
           };
-          const comps2 = cons2 ? BYTE_COMPS : [BYTE_COMPS[0], BYTE_COMPS[2]];
-          leg.append(...comps2.map((c) => cb(compLabel(c, this.gradB), C(c.color), c.prop)));
-          if (cons2) leg.append(cb(this.hasAttribute('local')
-            ? `saved activations (bf16, ×${TOK * (this.mbs ?? 1)} tok × ${fmtIF(inflightOf(this.sched ?? '1f1b', this.stage ?? 1, this.pp ?? LOCAL_PAR.pp, this.vpp, this.fold, this.layout, this.kind))} in flight)`
-            : `saved activations (bf16, ×${TOK} tokens)`, C('#eda100'), 'showActs'));
+          leg.append(...BYTE_COMPS.map((c) => cb(compLabel(c, this.gradB), C(c.color), c.prop)));
+          leg.append(cb(`saved activations (bf16, ×${TOK * (this.mbs ?? 1)} tok × ${fmtIF(inflightOf(this.sched ?? '1f1b', this.stage ?? 1, this.pp ?? LOCAL_PAR.pp, this.vpp, this.fold, this.layout, this.kind))} in flight)`, C('#eda100'), 'showActs'));
           const u = el('span');
           u.style.cssText = 'display:inline-flex;align-items:center;gap:3px;';   // swatch centers regardless of baseline
           u.innerHTML = `· ${sw(C('#898781'))} <span>= ${fmtBytes(unit)}</span>`;
@@ -1532,22 +1509,8 @@ export class Dsv3Layer extends HTMLElement {
         ht.textContent = this.getAttribute('hypothetical') || 'hypothetical — not what DSv3 did';
         barSlot.before(ht);
       }
-      const sb = this.hasAttribute('snapshot') && this.getAttribute('sandbox');
-      if (sb) {
-        const a = document.createElement('a');
-        a.textContent = 'play with this scenario in the full widget ↗';
-        a.href = '#'; a.style.cssText = 'font-size:11.5px;';
-        // resolve the target lazily: anatomy-wrapped layers don't exist yet
-        // when snapshots upgrade (bare layers upgrade first)
-        a.onclick = (ev) => {
-          ev.preventDefault();
-          document.getElementById(sb)?._loadScenario?.(this._snapCfg.from, this._snapCfg.to);
-        };
-        const nd = el('div', 'lv-note'); nd.append(a);
-        barSlot.after(nd);
-      }
     }
-    if (!this.hasAttribute('barsonly') && !this.hasAttribute('snapshot')) root.append(scroller);
+    if (!this.hasAttribute('snapshot')) root.append(scroller);
     const note = el('div', 'lv-note');
     const M2 = this.view === 'combined' ? this.dispLayers * this.dispInflight * TOK : 1;
     const parts = [
@@ -1644,20 +1607,16 @@ export class Dsv3Layer extends HTMLElement {
     // grey (INACTIVE). In the tally's active view the inactive go hollow.
     const PSQ = LENS === 'params' && this.hasAttribute('squares');
     // byte components stacked under each op, colored to match the memory-bars
-    // segments, ONE global unit — the ratios ARE the picture. optim = weights +
-    // optimizer states; consolidated = + fp32 gradients + a saved-activations
-    // band. optim is pinned per block; consolidated allows ×N (with
-    // strips="absolute" the squares grow — a very long diagram). Legend checkboxes
-    // toggle components: the squares pour in/out per-block-tween style and the
-    // numbers always total exactly the squares shown.
+    // segments, ONE global unit — the ratios ARE the picture: weights, the
+    // gradient buffer, optimizer states and a saved-activations band. Legend
+    // toggles pour the squares in/out per-block-tween style and the numbers
+    // always total exactly the squares shown.
     // local: what ONE GPU holds under the fiat parallelism (LOCAL_PAR + the
     // EP/stage selectors). Expert weights divide by EP; optimizer states are
     // ZeRO-1-sharded over each parameter's replication group (dense params
     // /DP, expert params /expert-DP = world/pp/EP); the kind and block
-    // multiplier follow the selected PP stage. Implies consolidated.
+    // multiplier follow the selected PP stage.
     const LOCAL = PBYTES && this.hasAttribute('local');
-    const CONS = LOCAL || (PBYTES && this.hasAttribute('consolidated'));
-    const OPTIM = CONS || (PBYTES && this.hasAttribute('optim'));
     // nostrips (PROTOTYPE): drop the in-box parameter squares entirely — at
     // PP1/EP1 they are enormous and the message is just "this is big" (the
     // log chart carries it); countable squares earn their keep only once
@@ -1724,8 +1683,7 @@ export class Dsv3Layer extends HTMLElement {
       if (!LOCAL || !pin2?.scalars) return '';
       return facBadge(this._scalars[cls], pin2.scalars[cls]);
     };
-    const COMPS = !OPTIM ? [BYTE_COMPS[0]]
-      : CONS ? BYTE_COMPS : [BYTE_COMPS[0], BYTE_COMPS[2]];
+    const COMPS = LOCAL ? BYTE_COMPS : [BYTE_COMPS[0]];
     // tween multiplier for a component: 1 shown, 0 hidden, in between mid-pour
     const cmult = (prop) => this._ctween?.props?.has(prop)
       ? (this[prop] ? this._ctween.t : 1 - this._ctween.t)
@@ -1993,24 +1951,14 @@ export class Dsv3Layer extends HTMLElement {
     // and the byte unit lands exact: largestOp.moe/32 · 2 B = 448 MiB/square
     const FLOP_ROW = 32;
     const CHIP_ROW = 16;   // amber wire-chip squares wrap sooner (chips sit between columns)
-    // strips="absolute": one FIXED unit (the per-block largest op fills a
-    // row); cumulative strips GROW into space reserved for them, so the
-    // toggle neither rescales nor reflows. Costs vertical space; dense/MoE
-    // flips may reflow in this profile.
-    const ABS = PBYTES && this.getAttribute('strips') === 'absolute';
     const PB_BASE = PARAMS.largestOp.moe / FLOP_ROW;
     // squares="matrix": one square = one 7168×2048 expert matrix (a third of
     // an expert) — the routed down-proj box is then exactly 256 squares
     const SQ_UNIT = this.getAttribute('squares') === 'matrix' ? PARAMS.expert / 3 : PARAMS.expert;
-    const PB_UNIT = PSQ ? SQ_UNIT : PB_BASE * (CUM && !ABS && !LOCAL ? KMUL : 1);   // local keeps the fixed 448 MiB unit; squares = one expert
-    // absolute profile: the STRIP grows, not the unit. The ×N toggle tweens
-    // this._tween 0→1: squares pour in and the boxes grow with the filled
-    // rows (compact at per-block, tall at cumulative).
-    const CUMT = this._tween ?? (CUM ? 1 : 0);   // 0 = per block, 1 = ×N (mid-tween in between)
+    const PB_UNIT = PSQ ? SQ_UNIT : PB_BASE * (CUM && !LOCAL ? KMUL : 1);   // local keeps the fixed 448 MiB unit; squares = one expert
+    const CUMT = CUM ? 1 : 0;   // 0 = per block, 1 = ×N
     // local hides the tabs in BOTH views (the kind follows the stage)
     const HIDT = LOCAL ? 1 : CUMT;
-    const T_ = ABS ? CUMT : 0;
-    const stripMul = ABS ? 1 + (KMUL - 1) * T_ : 1;
     // per-component cells for one op, at the current tween state: a toggled
     // component's squares pour in/out (count scales with t) and everything
     // downstream reflows smoothly — the per-block-tween style, not a fade.
@@ -2029,7 +1977,7 @@ export class Dsv3Layer extends HTMLElement {
       const m = cmult(c.prop);
       if (!m) return { c, f: 0, n: 0 };
       const pm = LOCAL ? pvis(partOfCls(cls)) : 1;   // sub-part filter (inside a solo)
-      const eff = (LOCAL ? nParams * fT(c, cls) : nParams * bppOf(c, cls) * stripMul) * pm;
+      const eff = (LOCAL ? nParams * fT(c, cls) : nParams * bppOf(c, cls)) * pm;
       const f = eff / 2 / PB_UNIT * m;
       return { c, f, n: Math.floor(f) };
     });
@@ -2049,7 +1997,7 @@ export class Dsv3Layer extends HTMLElement {
     };
     const liveParam = (id) => sqParam(id) - (this.activeView ? 0 : ghostParam(id));   // the blue (active) share
     const stripExtra = (nParams, cls, row = FLOP_ROW, ghost = 0) => {   // box growth beyond the built-in strip row
-      if (NOSTRIPS || !(nParams + ghost) || !(ABS || OPTIM || PSQ)) return 0;
+      if (NOSTRIPS || !(nParams + ghost) || !(LOCAL || PSQ)) return 0;
       return (Math.max(1, Math.ceil((stripCells(nParams, cls) + stripCells(ghost, cls)) / row)) - 1) * 6;
     };
     const paramBlocks = (x, y, nParams, cls, row = FLOP_ROW, ghost = 0) => {
@@ -2189,19 +2137,18 @@ export class Dsv3Layer extends HTMLElement {
       const dualTag = stashTag(ana, ids);
       const name0 = ov?.name ?? n.tensor;
       if (PONLY) {
-        // consolidated/local: the saved activations live ON THE WIRES, like
+        // local: the saved activations live ON THE WIRES, like
         // the AC diagram — amber chips at rank scale (name + bytes, squares
         // at the global unit), carrying the quant tiers' FULL stash language
         // (the union minus the flop pickets, which conflict for space):
         // dtype tags with ᵀ×2 duals, state tooltips, bf16 phantom tails,
         // and hollow ↻ counterfactual grids on recomputed tensors.
-        const m = CONS ? cmult('showActs') : 0;
+        const m = LOCAL ? cmult('showActs') : 0;
         if (!m) return 12;
         const name = esc(name0.replace(' (checkpoint anchor)', ''));
-        const chipF = LOCAL ? actsT : ABS ? stripMul : CUM ? KMUL : 1;
+        const chipF = LOCAL ? actsT : CUM ? KMUL : 1;
         const CROW = ov?.short ? 8 : CHIP_ROW;
-        // dtype tags are the LOCAL sim's union (the consolidated figures are
-        // the earlier bf16 pedagogy — tags there just cross the enclosure)
+        // dtype tags are the LOCAL sim's union
         const dtag = !LOCAL ? () => '' : (A) => {
           const n2 = A.byId[id] ?? n;
           return ` <tspan fill="${C(DT_STYLE[dtOf(n2)])}">${dtOf(n2)}${stashTag(A, ids)}</tspan>`;
@@ -2298,7 +2245,7 @@ export class Dsv3Layer extends HTMLElement {
           const n2 = A.byId[id] ?? n;
           const dtag = stashTag(A, ids);
           // narrow fork/shared columns (ov.short) go TWO lines — one line
-          // runs into the neighbouring column (the CONS chips' pattern)
+          // runs into the neighbouring column (the local chips' pattern)
           if (ov?.short) return `<text class="tensor tsave"${tip} x="${x}" y="${y + 8}">${needDir(ids, ov?.readers)} ${esc(name0)}${s2 === 'pin' ? ' 🔒' : ''}</text>` +
             `<text class="tensor tsave" x="${x}" y="${y + 21}">${fmtMem(bytesA(A))} <tspan fill="${C(DT_STYLE[dtOf(n2)])}">${dtOf(n2)}${dtag}</tspan></text>`;
           return `<text class="tensor tsave"${tip} x="${x}" y="${y + 8}">${needDir(ids, ov?.readers)} ${esc(name0)} · ${fmtMem(bytesA(A))} ` +
@@ -2393,7 +2340,7 @@ export class Dsv3Layer extends HTMLElement {
     // save/recompute or precision never reflows the layout
     const chipSpaceA = (anaX, ids) => {
       if (!this._ctl.quant) {
-        const mA = CONS ? cmult('showActs') : 0;
+        const mA = LOCAL ? cmult('showActs') : 0;
         if (!mA) return 18;                            // one text line
         // amber chip squares below the text: reserve their rows, easing with
         // the acts checkbox tween so the gap never pops. Over a knob tween the
@@ -2620,7 +2567,7 @@ export class Dsv3Layer extends HTMLElement {
         if (!PONLY) P.push(`<text class="tensor tidle" x="${kx + 6}" y="${bypTop - 4}">· k_rope${
           this._ctl.quant ? '' : ` · ${DSV3.qkRope}`}${
           this.getAttribute('controls') === 'dtype' ? ` <tspan fill="${DT_STYLE.bf16}">bf16</tspan>` : ''}</text>`);   // the rail feeds the bf16 attention core
-        else if (CONS) P.push(`<text class="tensor tidle" x="${kx + 6}" y="${bypTop - 4}">· k_rope</text>`);   // named, idle: never saved (RoPE bwd is a rotation)
+        else if (LOCAL) P.push(`<text class="tensor tidle" x="${kx + 6}" y="${bypTop - 4}">· k_rope</text>`);   // named, idle: never saved (RoPE bwd is a rotation)
         // pre-norm latent chips: real graph state (saved at no-AC — the latent
         // norms' backward input; the replay anchor under recompute presets)
         tensorChip(['qkv_down'], SX1 + 14, y + 24,
@@ -2656,8 +2603,8 @@ export class Dsv3Layer extends HTMLElement {
         tensorChip(['qkv_down'], RX + 14, y + 4,
           { name: 'kv latent', tdims: String(DSV3.kvRank), frac: DSV3.kvRank / latTot, short: !this._ctl.quant, readers: ['kv_norm'] });
       }
-      // consolidated: the narrow fork chips are two lines tall (name / bytes)
-      const latGap = Math.max(CONS ? 36 : 26, chipSpace(['qkv_down']) + 8);
+      // local: the narrow fork chips are two lines tall (name / bytes)
+      const latGap = Math.max(LOCAL ? 36 : 26, chipSpace(['qkv_down']) + 8);
       const wireTop = DET ? y - 14 : y;          // span the rstd band too — no spine gap
       wire(SX1, wireTop, y + latGap);
       P.push(`<path class="wire" d="M ${RX} ${wireTop} L ${RX} ${y + latGap}" marker-end="url(#arr)"/>`);
@@ -3101,15 +3048,6 @@ export class Dsv3Layer extends HTMLElement {
     // Segments follow the legend checkboxes and lerp with the knob tween;
     // the total label snaps. Activations approximate mixed-kind stages with
     // the current kind's per-layer stash.
-    // per-comp byte tallies for the margin legend (target values, snap):
-    // local = this rank's whole stage (matches the bar); otherwise the
-    // current view's block ×N
-    if (OPTIM && !LOCAL) {
-      const kindP = this.kind === 'dense' ? PARAMS.denseBlock : PARAMS.moeBlock;
-      const m2 = CUM ? KMUL : 1;
-      this._segTotals = COMPS.map((c) => kindP * c.bpp * m2);
-      if (CONS) this._segTotals.push(ana.savedBytes * TOK * m2);
-    }
     if (LOCAL) {   // the fit bar renders in its own row under the controls (this._barHtml)
       const cap = HARDWARE[HWk].memGB * 2 ** 30;   // the capacity yardstick (GiB) of this rank's GPU
       const moeExp = PARAMS.expert * DSV3.routedExperts;
@@ -3261,7 +3199,7 @@ export class Dsv3Layer extends HTMLElement {
         hdr: PPn === 1 ? 'logarithmic:' : `one GPU, rank ${STG} of PP${PPn} (logarithmic):`,
         axisY, HB: axisY + 38, capPx: px(cap), capLbl: `${HARDWARE[HWk].memGB} GiB (${HW_SHORT[HWk]})`,   // +38: the distances legend band (shared with the save label)
         facs: facsOf(this.getAttribute('facs')),
-        unit: !this.hasAttribute('barsonly') && !SNAP2 ? `= ${fmtBytes(PB_UNIT * 2)} / square` : null,
+        unit: !SNAP2 ? `= ${fmtBytes(PB_UNIT * 2)} / square` : null,
         lbl: SHOWLBL ? `saved: ${pin.label}` : null, rows,
       };
       const F = this._ftween;
@@ -3488,10 +3426,10 @@ export class Dsv3Layer extends HTMLElement {
 
     const H = h + lmH + (this._ctl.quant && this._noKind ? 6 : 14);   // ctx'd quant tiers: tighter tail (laptop vspace; the lint clips-guard patrols)
 
-    // barsonly/snapshot never mount this svg — the string work above already
+    // snapshots never mount this svg — the string work above already
     // produced the fit chart (_barHtml) and totals; parsing thousands of
     // diagram nodes on every tween frame was the animation stutter
-    if (this.hasAttribute('barsonly') || this.hasAttribute('snapshot')) return null;
+    if (this.hasAttribute('snapshot')) return null;
     const DEFS = `<defs><marker id="arr" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto-start-reverse">` +
       `<path d="M 0 0 L 8 4 L 0 8 z" fill="${C('#898781')}"/></marker></defs>`;
     // tween frames PATCH the previous frame's svg: P's pieces are positional

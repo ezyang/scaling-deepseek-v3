@@ -11,7 +11,7 @@ import { DSV3 } from './model.js';
 import { fmtP, fmtBytes, tokensCss, applyHighlight } from './viewer.js';
 import { C } from './theme.js';
 import { attachTip } from './tip.js';
-import { BYTE_COMPS, INACTIVE, LOCAL_PAR, ppStage, inflightOf } from './localmodel.js';
+import { BYTE_COMPS, INACTIVE, LOCAL_PAR, ppStage } from './localmodel.js';
 import { PARAMS } from './params.js';
 
 // named parameter quantities, shared with the diagram's tabs (src/params.js)
@@ -28,16 +28,6 @@ ${tokensCss('.anp')}
 .anp [data-kind] { cursor: pointer; }
 .anp [data-kind].on { cursor: default; }
 .anp svg.hlm > :not(.hl):not(defs) { opacity: 0.3; }
-.anp-leg { margin-top: 12px; display: flex; flex-direction: column; gap: 2px;
-  font-size: 11px; color: var(--c-52514e); width: 166px; }
-.anp-leg .row, .anp-leg .anp-unit { display: flex; align-items: center; gap: 5px;
-  padding: 2px 4px; border-radius: 4px; }
-.anp-leg .row { cursor: pointer; }
-@media (hover: hover) { .anp-leg .row:hover { background: var(--c-f3f2ee); } }
-.anp-leg .row.off { opacity: 0.4; }
-.anp-leg .row .val { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--c-0b0b0b); }
-.anp-leg .row.off .val { color: inherit; }
-.anp-leg svg { display: inline-block; max-width: none; height: 4px; flex: none; }
 /* the plan's tally-highlighted items wear the same save-yellow as the
    active block kind — grey pills alone were too understated */
 .anp g[data-op].hl rect { fill: var(--c-fff8ea); stroke: var(--c-eda100); }
@@ -103,16 +93,14 @@ export class Dsv3AnatomyPlan extends HTMLElement {
     // fills one row (× block count under cumulative). Block boxes get NO
     // strips — their bytes are shown expanded on the right (never double
     // count a byte anywhere in the figure).
-    const ABS = LB && (l?.getAttribute('strips') === 'absolute' || l?.hasAttribute('local'));   // fixed-unit profiles
+    const ABS = LB && l?.hasAttribute('local');   // local keeps a fixed unit
     const UNIT = PARAMS.largestOp.moe * (l?.cumulative && !ABS ? KM : 1) / 32;   // global unit (diagram's FLOP_ROW): a square means the same bytes everywhere
     // (the plan's strips wrap at 30/row — the narrow box's width, unrelated to
     // the unit — but never exceed a few squares in practice)
     // byte components mirror the layer's legend checkboxes exactly: same
     // colors, same tween (squares pour in/out), numbers snap to what's shown
     const LOC = LB && l?.hasAttribute('local');
-    const CONS = LOC || (LB && l?.hasAttribute('consolidated'));
-    const OPT = CONS || (LB && l?.hasAttribute('optim'));
-    const COMPS = !OPT ? [BYTE_COMPS[0]] : CONS ? BYTE_COMPS : [BYTE_COMPS[0], BYTE_COMPS[2]];
+    const COMPS = LOC ? BYTE_COMPS : [BYTE_COMPS[0]];
     const cmult = (prop) => l?._ctween?.props?.has(prop)
       ? (l[prop] ? l._ctween.t : 1 - l._ctween.t)
       : ((l?.[prop] ?? true) ? 1 : 0);
@@ -241,36 +229,10 @@ export class Dsv3AnatomyPlan extends HTMLElement {
     op('softmax / loss', null);
     y += 8;
     const H = y + 44, WD = BX + W + 10;
-    // margin legend: when the layer delegates (marginlegend), the component
-    // checkboxes live HERE — the sticky margin keeps them reachable while
-    // the tall diagram scrolls
-    let lg = '';
-    if (LB && l?.hasAttribute('marginlegend') && OPT && !LOC) {   // local's legend lives ON the fit chart rows
-      // clickable rows (no checkboxes): swatch · name · this view's bytes.
-      // A dimmed row is toggled off; values come from the layer's tallies
-      // (the same math as the fit bar), so numbers and squares stay in step.
-      const sw = (c) => `<svg width="5" height="4"><rect width="5" height="4" fill="${c}"/></svg>`;
-      const META = {
-        showWeights: ['weights', 'bf16 weights, 2 B/param'],
-        showGrads: (l?.gradB ?? 4) === 2 ? ['gradients (bf16)', 'bf16 gradient buffer, 2 B/param'] : ['gradients (fp32)', 'fp32 gradient accumulators, 4 B/param'],
-        showOptim: ['optimizer states', 'fp32 master + two bf16 moments, 8 B/param'],
-      };
-      const rows = COMPS.map((c) => ({ prop: c.prop, color: C(c.color), name: META[c.prop][0], title: META[c.prop][1] }));
-      if (CONS) rows.push({ prop: 'showActs', color: C('#eda100'),
-        name: LOC ? `activations (× ${(() => { const v = inflightOf(l.sched ?? '1f1b', Sg, PPl, l.vpp, l.fold, l.layout, l.kind, { a2a: !!l.a2a }); return Number.isInteger(v * 4) ? v : v.toFixed(2); })()} mb)` : 'activations (×4096 tok)',
-        title: 'saved for backward, bf16, 4096-token microbatches' });
-      const vals = l._segTotals ?? [];
-      lg = `<div class="anp-leg">` + rows.map((r, i) =>
-        `<div class="row${l[r.prop] ? '' : ' off'}" data-prop="${r.prop}" title="${r.title}">` +
-        `${sw(r.color)}<span>${r.name}</span><span class="val">${vals[i] != null ? fmtBytes(vals[i]) : ''}</span></div>`).join('') +
-        `<div class="anp-unit">${sw(C('#898781'))}<span>= ${fmtBytes(UNIT * 2)} / square</span></div></div>`;
-    }
-    this._root.innerHTML = `<svg viewBox="0 0 ${WD} ${H}" width="${WD}" height="${H}">${S.join('')}</svg>` + lg;
+    this._root.innerHTML = `<svg viewBox="0 0 ${WD} ${H}" width="${WD}" height="${H}">${S.join('')}</svg>`;
     if (l?.hasAttribute('experttint'))   // the wholly non-expert plan boxes (the MoE block is mixed)
       for (const g of this._root.querySelectorAll('g[data-op=embed], g[data-op=final_norm], g[data-op=lm_head], g[data-kind=dense]:not(.on)'))
         g.querySelector('rect').classList.add('nxp');
-    for (const r of this._root.querySelectorAll('.anp-leg .row'))
-      r.onclick = () => l.soloComp(r.dataset.prop);   // legend clicks SOLO the component
     for (const g of this._root.querySelectorAll('[data-kind]')) {
       g.onclick = () => {
         const l = this.layerEl();
@@ -312,7 +274,7 @@ dsv3-anatomy dsv3-anatomy-plan { margin-top: 46px; }
 `;
 const FWD = ['controls', 'recipe', 'recipes', 'recompute', 'detail', 'transposed', 'for',
   'world', 'pp', 'vpp', 'ep', 'tp', 'tps', 'sched', 'fold', 'layout', 'a2a', 'grads', 'fp8params', 'hw', 'hws', 'facs', 'recomputes', 'gbs',   // the local lens's page-set parallelism + capacity + chip curation (+ gbs: the microbatch knob)
-  'nocaption', 'kind', 'xlayers', 'xinflight', 'xtag', 'ctx', 'lens', 'squares', 'strips', 'nostrips', 'optim', 'consolidated', 'local', 'cumulative', 'redotint', 'experttint'];
+  'nocaption', 'kind', 'xlayers', 'xinflight', 'xtag', 'ctx', 'lens', 'squares', 'nostrips', 'local', 'cumulative', 'redotint', 'experttint'];
 export class Dsv3Anatomy extends HTMLElement {
   connectedCallback() {
     const lid = this.getAttribute('layer') ?? ((this.id || 'anatomy') + '-layer');
@@ -335,9 +297,8 @@ export class Dsv3Anatomy extends HTMLElement {
     layer.setAttribute('tabs', '');
     layer.setAttribute('scope', 'block');
     for (const a of FWD) if (this.hasAttribute(a)) layer.setAttribute(a, this.getAttribute(a));
-    // byte-component variants: the checkbox legend moves to the sticky margin
-    if (['optim', 'consolidated', 'local'].some((a) => this.hasAttribute(a)))
-      layer.setAttribute('marginlegend', '');
+    // local: no head checkbox legend — the fit chart's rows are the legend
+    if (this.hasAttribute('local')) layer.setAttribute('marginlegend', '');
     grid.append(col1, layer);
     this.append(style, grid);
   }

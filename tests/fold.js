@@ -1,4 +1,4 @@
-// @page studies/scratch-fold.html
+// @page studies/02-hopper-memory.html
 // the V-fold stage map: 16 virtual chunks ↔ 8 physical ranks (animated),
 // exact params, minimap highlighting — rank 0 lights BOTH ends of the model
 const f = document.querySelector('dsv3-pp-fold');

@@ -111,7 +111,7 @@ generality.
   current when the renderer changes.
 - Toggles never cause an abrupt layout jump: either reserve worst-case space
   (including for inline text buttons in prose) or animate the reflow (the
-  strips="absolute" tween). How far animated reflow scales as more diagrams
+  local lens's knob tween). How far animated reflow scales as more diagrams
   arrive is an open question.
 - Kind/detail flips preserve element anchors; byte-strip squares use ONE
   global unit everywhere so views never rescale against each other, and no
