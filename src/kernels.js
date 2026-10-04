@@ -6,11 +6,11 @@
 // italic .micro, DeepEP violet — and every tensor a launch writes for another
 // to read is a wire (producer → consumer, arrowhead at the consumer, a dot
 // where one tensor forks to several readers). Two columns (attention left,
-// MoE right) of two lanes each; a lane stacks its launches in trace order,
-// rows come from the longest dependency path, so launches with no dependency
-// between them sit side by side. Wires that leave a column (the residual, the
-// MoE input, d(x₁)) run down to a basement and up the destination's gutter,
-// as 01's residual rail does. Stubs mark tensors that cross passes (amber:
+// MoE right) of two lanes each; a lane stacks its launches in dependency
+// order, rows come from the longest dependency path, so launches with no
+// dependency between them sit side by side. The sub-layers are sequential,
+// side by side only to fit the page: a tensor crossing them (h₁, o′, d(x₁))
+// is a labeled connector stub at each end, not a wire. Stubs mark tensors that cross passes (amber:
 // a stash the forward writes for the backward, or the backward for the weight
 // gradients) or the layer boundary / weights (grey). Inside each node a two-bar
 // meter on a log µs axis: traced (grey) over its speed of light (bronze when
@@ -41,9 +41,7 @@ const LANE_HEADS = { F: ['q', 'kv', 'router · DeepEP · routed experts', 'share
 // transpose, a weight transpose, an arange, DeepEP's layout/notify) hangs off
 // the spine as an indented pearl, tapped from the tensor flowing past it, and
 // its output rejoins the spine just before the consumer when it sits right
-// above it. Lanes order by dependency (a topological order, ties by trace
-// order; a side-only launch whose readers are all in its lane moves to just
-// above its first reader), so the main path threads node to node.
+// above it. Leaves (stash casts, FP8ᵀ operands) indent the same way.
 export const SIDE = (t) => /scales|^ready|^layout$|^row map$|counts|^recv idx$|^pos \(|^W.*ᵀ|accumulator \(zeroed\)|^unique groups$|^aux-loss/.test(t);
 export function nodesFor(pass) {
   const G = graph(pass);
@@ -74,34 +72,44 @@ export function nodesFor(pass) {
   for (const n of nodes) for (const t of n.out) prod.set(t, n);
   const edges = [];
   for (const c of nodes) for (const t of c.in) { const p = prod.get(t); if (p && p !== c) edges.push({ t, p, c, side: SIDE(t) }); }
-  // lane order: topological, ties by trace order; side-only helpers move up against their first reader
+  // INDENTED: a launch nothing in the pass reads by wire — a side-only pearl, or a leaf whose every output
+  // leaves for another pass or a weight gradient (a stash cast, an FP8ᵀ operand, a dγ accumulation).
+  // It hangs off the spine, tapped from the tensor flowing past; the spine carries only the pass's flow
+  for (const n of nodes) n.indent = !n.host && (n.sideOnly || (!edges.some((e) => e.p === n) && n.sinks.length > 0 && n.sinks.every((s) => s.to !== 'layer')));
+  // lane order: topological; a launch that reads the one just placed comes next (chains run node to node
+  // instead of interleaving in trace order), then by key: trace order, except that side-only helpers move
+  // up against their first reader and leaves down under what feeds them
   for (const lane of byLane) {
     const inLane = new Set(lane);
     const key = new Map(lane.map((n) => {
       const readers = edges.filter((e) => e.p === n).map((e) => e.c);
       const helper = n.sideOnly && readers.length && readers.every((c) => inLane.has(c));
       const feeders = edges.filter((e) => e.c === n && inLane.has(e.p)).map((e) => e.p);
-      const sinkish = !readers.length && feeders.length;   // a launch nothing in the pass reads (a stash, a weight-gradient operand): sits under what feeds it
+      const sinkish = !readers.length && feeders.length;
       return [n, helper ? Math.min(...readers.map((c) => c.seq)) - 0.5 : sinkish ? Math.max(...feeders.map((f) => f.seq)) + 0.5 : n.seq];
     }));
     const placed = new Set(), order = [];
     while (order.length < lane.length) {
+      const last = order.findLast((n) => !n.indent);
       const ready = lane.filter((n) => !placed.has(n) && edges.every((e) => e.c !== n || !inLane.has(e.p) || placed.has(e.p)));
-      const next = ready.sort((a, b) => key.get(a) - key.get(b) || a.seq - b.seq)[0];
+      const cont = (n) => last && edges.some((e) => e.c === n && e.p === last && (!e.side || n.sideOnly)) ? 0 : 1;
+      const next = ready.sort((a, b) => cont(a) - cont(b) || key.get(a) - key.get(b) || a.seq - b.seq)[0];
       if (!next) throw new Error(`kernels: lane ${byLane.indexOf(lane)} of ${pass} has a dependency cycle`);
       placed.add(next); order.push(next);
     }
     lane.splice(0, lane.length, ...order);
   }
   byLane.forEach((lane) => lane.forEach((n, j) => { n.laneIdx = j; n.prev = lane[j - 1] ?? null; }));
-  // what gets drawn: main wires (an activation to a reader that is not side-only), taps (into a side-only
-  // pearl from the producer above it in its lane), rejoins (a pearl's side output into the reader just
-  // below it); every other side edge is tooltip-only
+  // what gets drawn: across the columns a CONNECTOR (a labeled stub at each end — the sub-layers are
+  // sequential, side by side only to fit the page); within a column main wires (an activation to a reader
+  // that is not indented), taps (into an indented launch from the producer above it in its lane), rejoins
+  // (a pearl's side output into the reader just below it); every other side edge is tooltip-only
+  const colOf = (l) => l < 2 ? 0 : 1;
   for (const e of edges) {
     const sameLane = e.p.lane === e.c.lane && e.p.laneIdx < e.c.laneIdx;
     const between = sameLane ? byLane[e.p.lane].slice(e.p.laneIdx + 1, e.c.laneIdx) : null;
-    const adjacent = sameLane && between.every((n) => n.sideOnly);   // only pearls between producer and reader
-    e.kind = e.c.sideOnly ? (adjacent ? 'tap' : 'rail') : !e.side ? (adjacent ? 'spine' : 'rail') : (e.p.sideOnly && adjacent ? 'rejoin' : 'none');
+    const adjacent = sameLane && between.every((n) => n.indent);   // only indented launches between producer and reader
+    e.kind = colOf(e.p.lane) !== colOf(e.c.lane) ? 'xcol' : e.c.indent ? (adjacent && !e.p.indent ? 'tap' : e.side ? 'none' : 'rail') : !e.side ? (adjacent ? 'spine' : 'rail') : (e.p.sideOnly && adjacent ? 'rejoin' : 'none');
   }
   for (const n of nodes) n.outs = [...new Set(edges.filter((e) => e.p === n && (e.kind === 'spine' || e.kind === 'rail' || e.kind === 'tap')).map((e) => e.t))];
   return { nodes, edges, byLane };
@@ -110,9 +118,9 @@ export function nodesFor(pass) {
 // ---- geometry ----------------------------------------------------------------
 // the figure fits the 940px text column: four 172px lanes, gutters sized for the rails they carry
 // (the outer-left and inter-column gutters host the cross-column rails), pearls indented IND off the spine
-const NW = 172, GUTS = [56, 44, 64, 44, 12], PH = 22, BH = 34, GAP = 12, TOP = 68, FOOT = 48, BASE = 10, IND = 26;
+const NW = 172, GUTS = [56, 44, 64, 44, 32], PH = 22, BH = 34, GAP = 12, TOP = 68, FOOT = 48, BASE = 10, IND = 26;
 const laneX = (l) => GUTS.slice(0, l + 1).reduce((t, g) => t + g, 0) + l * NW;
-const W = laneX(3) + NW + 12;
+const W = laneX(4);
 const SPX = 12;                                                   // the spine: a node's first output leaves, and its lane predecessor's wire arrives, 12px in from its left edge
 const LOG0 = 1e-6, DOUBLINGS = 12, MW = NW - 12, PXD = MW / DOUBLINGS;   // one scale for every node; pearls clip   // the meter: 1 µs … 4,096 µs across the node
 const mx = (s) => Math.max(0, Math.min(MW, Math.log2(Math.max(s, LOG0) / LOG0) * PXD));
@@ -122,7 +130,33 @@ const fmtB = (b) => b >= 1e9 ? `${n(b / 1e9, 2)} GB` : b >= 1e6 ? `${n(b / 1e6, 
 const fmtF = (f) => f >= 1e12 ? `${n(f / 1e12, 2)} TFLOP` : f >= 1e9 ? `${n(f / 1e9, 1)} GFLOP` : `${n(f / 1e6)} MFLOP`;
 const DT = { fp8: '#d6408b', bf16: '#52514e' };
 const BRONZE = '#8c5a19', AMBER = '#eda100', GREY = '#898781';
-const ell = (s, k) => s.length > k ? s.slice(0, Math.max(1, k - 1)).trimEnd() + '…' : s;
+// node titles: the launch's name, cut to a verb the output label completes ("quantize → n₁ fp8"); the full
+// name is in the tooltip. First matching rule wins; parentheticals and dtype suffixes always go
+const SHORT = [
+  [/^residual add \+ .*RMSNorm$/, 'residual + RMSNorm'], [/^.*→ FP8ᵀ.*/, 'quantizeᵀ'], [/^quantize\b.*/, 'quantize'], [/^dequantize\b.*/, 'dequantize'],
+  [/^transpose (its )?scales$/, 'transpose'], [/^transpose .*/, 'transpose'], [/^position indices.*/, 'arange'],
+  [/^copy the scales$/, 'copy scales'], [/^copy (\S+) .*/, 'copy $1'], [/^RoPE on .*/, 'RoPE'], [/^RoPE backward.*/, 'RoPE backward'],
+  [/^stash .* as E5M6$/, 'stash as E5M6'], [/^scale the projection output.*/, '× c'], [/^top-8 experts.*/, 'top-8'], [/^load-balance statistics.*/, 'load-balance top-k'],
+  [/^DeepEP: dispatch layout$/, 'layout'], [/^DeepEP: (\S+).*/, '$1'], [/^expand .*/, 'expand to rows'], [/^SwiGLU × routing weight.*/, 'SwiGLU × weight'],
+  [/^SwiGLU forward \+ backward.*/, 'SwiGLU fwd+bwd'], [/^shared SwiGLU.*/, 'SwiGLU'], [/^sum each token's .*/, 'sum copies'], [/^sum (\S+) over .*/, 'sum $1'],
+  [/^routing-weight gradient.*/, 'routing grad'], [/^accumulate .*/, 'accumulate'], [/^add the two .*/, 'add'], [/^(q|kv)-latent RMSNorm backward.*/, '$1 norm bwd'], [/^MoE-input RMSNorm backward.*/, 'MoE norm bwd'], [/^(.*)RMSNorm backward.*/, '$1norm bwd'],
+  [/^FlashAttention backward: preprocess.*/, 'FA bwd preprocess'], [/^(.*): (\d+) small launches$/, '$1 ×$2'],
+];
+// output labels drop the qualifiers the title already says (re-, dequantize, sum, …); the tooltip keeps them
+const OUT = (t) => t.replace(/ \((?:expert \d|shared)\)$/, '').replace(/ \(rowsum[^)]*\)/, '').replace(/\(backward /, '(').replace(/ \((?:recomputed|dequantized|accumulated|summed|RoPE backward|per token)\)/, '').replace(/, recomputed\)/, ')').replace(/ \(recomputed, /, ' (');
+export function short(lab, box) {
+  const re = /^recompute: /.test(lab);
+  let s = lab.replace(/^recompute: /, '');
+  if (!box) { const r = SHORT.find(([rx]) => rx.test(s)); if (r) s = s.replace(r[0], r[1]); }
+  else s = s.replace(/: weight gradient, (expert \d).*/, ' $1').replace(/^FlashAttention backward: /, 'FA backward: ');
+  s = s.replace(/\s*\([^)]*\)/g, '').replace(/ → (FP8|bf16|BF16)$/, '').trim();
+  return re ? (box ? 'recompute: ' : 're-') + s : s;
+}
+// text is fitted by measured width, never by character count
+let ctx2d = null;
+const tw = (s, font) => { ctx2d ??= document.createElement('canvas').getContext('2d'); ctx2d.font = font; return ctx2d.measureText(s).width; };
+const fit = (s, px, font) => { if (tw(s, font) <= px) return s; let k = s.length; while (k > 1 && tw(s.slice(0, k - 1).trimEnd() + '…', font) > px) k--; return s.slice(0, Math.max(1, k - 1)).trimEnd() + '…'; };
+const F_LAB = '10.5px system-ui', F_BOLD = '600 10.5px system-ui', F_DIMS = '9px system-ui', F_MICRO = 'italic 10px system-ui', F_FATE = 'italic 9px system-ui';
 const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
 const fitEase = (p) => 1 - (1 - p) ** 3;
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -154,6 +188,7 @@ ${tokensCss('.kn')}
 .kn .epibox { fill: var(--c-fff3d1); stroke: var(--c-eda100); stroke-width: 0.8; }
 .kn .stash { stroke: var(--c-eda100); }
 .kn .foot { font: 11px system-ui; fill: var(--c-52514e); }
+.kn .xcon { font: 600 9.5px system-ui; fill: var(--c-52514e); }
 .kn .legend { font: 9.5px system-ui; fill: var(--c-52514e); }
 .kn .ro { font-size: 11.5px; color: var(--c-52514e); margin-top: 6px; max-width: ${W}px; line-height: 1.45; min-height: 34px; }
 .kn .ro b { color: var(--c-0b0b0b); font-weight: 600; }
@@ -227,15 +262,14 @@ class Dsv3Kernels extends (typeof HTMLElement === 'undefined' ? class {} : HTMLE
     for (const nd of nodes) { const c = colOf(nd.lane), r = row.get(nd); rowH[c][r] = Math.max(rowH[c][r] ?? 0, nd.host && !nd.comm ? BH : PH); }
     const colH = [0, 0];
     for (const c of [0, 1]) { let y = TOP; for (let r = 0; r < rowH[c].length; r++) { rowY[c][r] = y; y += (rowH[c][r] ?? PH) + GAP; } colH[c] = y - GAP; }
-    const baseY = Math.max(colH[0], colH[1]) + BASE;
-    const L = { coda, pass, nodes: [], edges: [], dots: [], stubs: [], h: baseY, T: tally()[pass], colH, lanes: byLane.map((l) => l.length) };
-    const pos = new Map();
+    const L = { coda, pass, nodes: [], edges: [], dots: [], stubs: [], h: Math.max(colH[0], colH[1]) + BASE, T: tally()[pass], colH, lanes: byLane.map((l) => l.length) };
+    const pos = new Map(), nodeByKey = new Map(nodes.map((nd) => [nd.key, nd]));
     for (const nd of nodes) {
       const c = colOf(nd.lane), r = row.get(nd), h = nd.host && !nd.comm ? BH : PH;
       const ghost = coda && nd.gone;
       const sol = coda && nd.host ? nd.solAfter : nd.sol, hbm = coda ? nd.hbmAfter : nd.hbm;
       const aux = ghost && nd.aux;
-      const ind = nd.sideOnly ? IND : 0, w = NW - ind;
+      const ind = nd.indent ? IND : 0, w = NW - ind;
       const q = { ...nd, x: laneX(nd.lane) + ind, w, y: rowY[c][r], h, row: r, col: c, ghost, a: ghost ? (aux ? 0.6 : 0.3) : 1,
         tx: nd.us ? Math.min(w - 12, mx(nd.us * 1e-6)) : 0, sx: sol > 0 && (!ghost || aux) ? Math.min(w - 12, mx(sol)) : 0, hx: hbm > 0 && !ghost ? Math.min(w - 12, mx(hbm)) : 0, showEpi: coda && nd.host && nd.epi?.length, fate: ghost ? FATE(nd, P) : '' };
       pos.set(nd, q); L.nodes.push(q);
@@ -246,18 +280,20 @@ class Dsv3Kernels extends (typeof HTMLElement === 'undefined' ? class {} : HTMLE
     // another's last leg. Taps leave the spine sideways into a pearl; rejoins drop from a pearl onto the spine.
     const chans = new Map();    // `${col}:${row}` → [{x1, x2, k}]  horizontal runs in the gap below a row
     const rails = [[], [], [], [], []];   // per gutter (lane 4 = the right margin): [{y1, y2, slot}]
-    const bases = [];           // basement runs: [{x1, x2, k}]
     const chan = (col, r, x1, x2) => { const key = `${col}:${r}`, used = chans.get(key) ?? []; chans.set(key, used); const lo = Math.min(x1, x2) - 2, hi = Math.max(x1, x2) + 2; let k = 0; while (used.some((u) => u.k === k && u.x1 < hi && u.x2 > lo)) k++; used.push({ x1: lo, x2: hi, k }); return rowY[col][r] + rowH[col][r] + 2 + 3 * Math.min(k, 3); };
     const rail = (g, y1, y2) => { const lo = Math.min(y1, y2) - 3, hi = Math.max(y1, y2) + 3; let s = 0; while (rails[g].some((u) => u.slot === s && u.y1 < hi && u.y2 > lo)) s++; rails[g].push({ y1: lo, y2: hi, slot: s }); return laneX(g) - 8 - 6 * s; };
-    const base = (x1, x2) => { const lo = Math.min(x1, x2) - 2, hi = Math.max(x1, x2) + 2; let k = 0; while (bases.some((u) => u.k === k && u.x1 < hi && u.x2 > lo)) k++; bases.push({ x1: lo, x2: hi, k }); return baseY + 3 * k; };
     const topTaken = new Set(), side = new Map();   // consumer → [{e, railX}]
-    const drawn = edges.filter((e) => e.kind !== 'none');
+    const drawn = edges.filter((e) => e.kind !== 'none' && e.kind !== 'xcol');
+    const xin = new Map(), xout = new Map();   // connectors: node → tensors arriving from / leaving for the other column
+    for (const e of edges) if (e.kind === 'xcol') {
+      const a = xin.get(e.c) ?? xin.set(e.c, []).get(e.c); if (!a.includes(e.t)) a.push(e.t);
+      const b = xout.get(e.p) ?? xout.set(e.p, []).get(e.p); if (!b.includes(e.t)) b.push(e.t);
+    }
     const E = [...drawn].sort((a, b) => a.p.seq - b.p.seq || a.p.outs.indexOf(a.t) - b.p.outs.indexOf(b.t));
     const plan = [];
     for (const e of [...E.filter((e) => e.kind !== 'rejoin'), ...E.filter((e) => e.kind === 'rejoin')]) {
       const p = pos.get(e.p), c = pos.get(e.c);
-      const spineX = laneX(e.p.lane) + SPX;
-      const ex = e.kind === 'rejoin' ? p.x + 8 : spineX + 14 * Math.max(0, p.outs.indexOf(e.t)), ey = p.y + p.h;
+      const ex = e.kind === 'rejoin' || p.indent ? p.x + 8 : p.x + SPX + 14 * Math.max(0, p.outs.indexOf(e.t)), ey = p.y + p.h;
       const w = { e, p, c, ex, ey, turns: [] };
       if (e.kind === 'tap') { w.tap = true; w.endY = c.y + c.h / 2; w.enX = c.x; w.turns.push(w.endY); }
       else if (e.kind === 'rejoin') { if (!topTaken.has(c)) continue; w.rejoin = true; w.endY = c.y - 5; w.enX = laneX(e.c.lane) + SPX + 1; }   // a pearl's output lands on the spine only where a spine wire enters the reader
@@ -265,18 +301,12 @@ class Dsv3Kernels extends (typeof HTMLElement === 'undefined' ? class {} : HTMLE
         topTaken.add(c); w.top = true; w.enX = c.x + SPX;
         if (ex !== w.enX) { w.chY = chan(p.col, p.row, ex, w.enX); w.turns.push(w.chY); }
         w.endY = c.y;
-      } else if (c.col === p.col) {
+      } else {
         // a producer to the right rails down the gutter on the consumer's right and enters its right edge
         w.right = e.p.lane > e.c.lane;
         const g = w.right ? e.c.lane + 1 : e.c.lane;
         w.chY = chan(p.col, p.row, ex, laneX(g) - 8); w.turns.push(w.chY);
         w.railX = rail(g, w.chY, c.y + c.h / 2);
-        (side.get(c) ?? side.set(c, []).get(c)).push(w);
-      } else {   // across the columns: down this column's gutter to the basement, along it, up the destination's gutter
-        w.chY = chan(p.col, p.row, ex, laneX(p.lane) - 8); w.turns.push(w.chY);
-        w.rail1X = rail(p.lane, w.chY, baseY + 12);
-        w.baseY = base(w.rail1X, laneX(c.lane) - 8);
-        w.railX = rail(c.lane, w.baseY, c.y + c.h / 2);
         (side.get(c) ?? side.set(c, []).get(c)).push(w);
       }
       plan.push(w);
@@ -287,13 +317,14 @@ class Dsv3Kernels extends (typeof HTMLElement === 'undefined' ? class {} : HTMLE
       const all = side.get(q) ?? [];
       const ws = all.filter((w) => !w.right).sort((a, b) => b.railX - a.railX);   // left edge: nearest rail first (enters highest)
       const wr = all.filter((w) => w.right).sort((a, b) => a.railX - b.railX);    // right edge: likewise
-      const srcs = q.sources;
+      const srcs = [...(xin.get(nodeByKey.get(q.key)) ?? []).map((t) => ({ t, from: 'xcol' })), ...q.sources];
       const offs = offsets(q.h, ws.length + srcs.length);
       ws.forEach((w, i) => { w.endY = q.y + q.h / 2 + offs[srcs.length + i]; });
-      srcs.forEach((s, i) => L.stubs.push({ key: `${q.key}<${s.t}`, dir: 'in', x: q.x, y: q.y + q.h / 2 + offs[i], stash: s.from === 'F' || s.from === 'B', a: q.a, t: s.t, node: q }));
-      const so = offsets(q.h, q.sinks.length + wr.length);
+      srcs.forEach((s, i) => L.stubs.push({ key: `${q.key}<${s.t}`, dir: 'in', x: q.x, y: q.y + q.h / 2 + offs[i], stash: s.from === 'F' || s.from === 'B', xcol: s.from === 'xcol', a: q.a, t: s.t, node: q }));
+      const sinks = [...q.sinks, ...(xout.get(nodeByKey.get(q.key)) ?? []).map((t) => ({ t, to: 'xcol' }))];
+      const so = offsets(q.h, sinks.length + wr.length);
       wr.forEach((w, i) => { w.endY = q.y + q.h / 2 + so[i]; });
-      q.sinks.forEach((s, i) => L.stubs.push({ key: `${q.key}>${s.t}`, dir: 'out', x: q.x + q.w, y: q.y + q.h / 2 + so[wr.length + i], stash: s.to === 'B' || s.to === 'W', a: q.a, t: s.t, node: q }));
+      sinks.forEach((s, i) => L.stubs.push({ xcol: s.to === 'xcol', key: `${q.key}>${s.t}`, dir: 'out', x: q.x + q.w, y: q.y + q.h / 2 + so[wr.length + i], stash: s.to === 'B' || s.to === 'W', a: q.a, t: s.t, node: q }));
     }
     for (const w of plan) {
       const { e, p, c } = w;
@@ -301,8 +332,7 @@ class Dsv3Kernels extends (typeof HTMLElement === 'undefined' ? class {} : HTMLE
       if (w.tap) d += ` V ${f1(w.endY)} H ${f1(w.enX)}`;
       else if (w.rejoin) d += ` V ${f1(w.endY)} H ${f1(w.enX)}`;
       else if (w.top) d += w.chY != null ? ` V ${f1(w.chY)} H ${f1(w.enX)} V ${f1(w.endY)}` : ` V ${f1(w.endY)}`;
-      else if (w.rail1X == null) d += ` V ${f1(w.chY)} H ${f1(w.railX)} V ${f1(w.endY)} H ${f1(w.right ? c.x + c.w : c.x)}`;
-      else d += ` V ${f1(w.chY)} H ${f1(w.rail1X)} V ${f1(w.baseY)} H ${f1(w.railX)} V ${f1(w.endY)} H ${f1(c.x)}`;
+      else d += ` V ${f1(w.chY)} H ${f1(w.railX)} V ${f1(w.endY)} H ${f1(w.right ? c.x + c.w : c.x)}`;
       L.edges.push({ key: `${p.key}>${c.key}`, t: e.t, kind: e.kind, d, a: Math.min(p.a, c.a), ex: w.ex, top: !!w.top, turnY: w.rejoin ? w.endY : (w.top && w.chY == null) ? w.endY : (w.tap ? w.endY : w.chY), p, c });
     }
     // forks: wires sharing an exit split at distinct turning heights; a dot marks every split a wire continues past
@@ -345,7 +375,14 @@ class Dsv3Kernels extends (typeof HTMLElement === 'undefined' ? class {} : HTMLE
     // wires first (nodes paint over the spine), then dots, stubs, nodes
     for (const w of L.edges) B.push(`<path class="wire" data-edge="${esc(w.key)}" data-t="${esc(w.t)}" data-wire="${w.kind}" d="${w.d}" marker-end="url(#kn-arr)" opacity="${w.a.toFixed(3)}"/>`);
     for (const d of L.dots) B.push(`<circle data-dot="${esc(d.key)}" cx="${f1(d.x)}" cy="${f1(d.y)}" r="2.5" fill="${C(GREY)}" opacity="${d.a.toFixed(3)}"/>`);
-    for (const s of L.stubs) B.push(`<path class="wire${s.stash ? ' stash' : ''}" data-stub="${s.dir}" data-t="${esc(s.t)}" d="${s.dir === 'in' ? `M ${s.x - 9} ${f1(s.y)} H ${s.x}` : `M ${s.x} ${f1(s.y)} H ${s.x + 9}`}" marker-end="url(#kn-arr${s.stash ? 's' : ''})" opacity="${s.a.toFixed(3)}"/>`);
+    for (const s of L.stubs) B.push(`<path class="wire${s.stash ? ' stash' : ''}" data-stub="${s.dir}"${s.xcol ? ' data-xcol="1"' : ''} data-t="${esc(s.t)}" d="${s.dir === 'in' ? `M ${s.x - 9} ${f1(s.y)} H ${s.x}` : `M ${s.x} ${f1(s.y)} H ${s.x + 9}`}" marker-end="url(#kn-arr${s.stash ? 's' : ''})" opacity="${s.a.toFixed(3)}"/>`);
+    // connector labels: the tensors arriving from the other sub-layer, left of their stubs; where they leave, the destination
+    for (const q of L.nodes) {
+      const ins = L.stubs.filter((s) => s.node === q && s.xcol && s.dir === 'in'), outs = L.stubs.filter((s) => s.node === q && s.xcol && s.dir === 'out');
+      const my = (ss) => ss.reduce((t, s) => t + s.y, 0) / ss.length + 3;
+      if (ins.length) B.push(`<text class="xcon" x="${q.x - 12}" y="${f1(my(ins))}" text-anchor="end" opacity="${q.a.toFixed(3)}">${esc(ins.map((s) => s.t).join(', '))}</text>`);
+      if (outs.length) B.push(`<text class="xcon" x="${q.x + q.w + 12}" y="${f1(my(outs))}" opacity="${q.a.toFixed(3)}">${q.col ? 'attn.' : 'MoE'}</text>`);
+    }
     for (const r of L.nodes) {
       const g = [];
       const { x, y, h, w: nw } = r;
@@ -354,23 +391,26 @@ class Dsv3Kernels extends (typeof HTMLElement === 'undefined' ? class {} : HTMLE
       g.push(`<rect class="${cls}" x="${x}" y="${f1(y)}" width="${nw}" height="${h}" rx="${rx}"${r.ghost ? ' stroke-dasharray="3 2"' : ''}${cls === 'micro' ? ` fill="${C('#f7f6f1')}" stroke="${C('#d8d6cb')}"` : ''}/>`);
       const e0 = r.es[0];
       const tcls = cls === 'micro' ? 'microlabel' : cls === 'box' ? 'lab bold' : 'lab';
-      const right = r.ghost ? r.fate : r.out.length ? `→ ${r.out.join(', ')}` : '';
-      const rightN = Math.min(right.length, 26);
+      const right = r.ghost ? r.fate : r.out.length ? `→ ${r.out.map(OUT).join(', ')}` : '';
+      const fr = r.ghost ? F_FATE : F_DIMS;
       if (cls === 'box') {
-        g.push(`<text class="${tcls}" x="${x + 5}" y="${y + 12}">${esc(ell(r.lab, Math.floor((nw - 10) / 6.2)))}</text>`);
+        g.push(`<text class="${tcls}" x="${x + 5}" y="${y + 12}">${esc(fit(short(r.lab, true), nw - 10, F_BOLD))}</text>`);
         if (r.showEpi) {
-          const txt = ell(r.epi.join(' · '), Math.floor((nw - 16) / 4.7));
+          const txt = fit(r.epi.join(' · '), nw - 14, F_DIMS);
           g.push(`<rect class="epibox" x="${x + 4}" y="${y + 15}" width="${nw - 8}" height="10" rx="3"/>`);
           g.push(`<text class="epi" x="${x + 7}" y="${y + 22.5}">${esc(txt)}</text>`);
         } else {
           const dims = e0.kind === 'gemm' ? `${n(e0.M)}×${n(e0.Kd)}→${n(e0.N)}${e0.groups > 1 ? ` ×${e0.groups}` : ''}` : e0.f ? fmtF(e0.f) : fmtB(e0.b);
           g.push(`<text class="dims" x="${x + 5}" y="${y + 23}">${esc(dims)}</text>`);
-          if (right) g.push(`<text class="dims" x="${x + nw - 5}" y="${y + 23}" text-anchor="end">${esc(ell(right, 20))}</text>`);
+          if (right) g.push(`<text class="dims" x="${x + nw - 5}" y="${y + 23}" text-anchor="end">${esc(fit(right, nw - 16 - tw(dims, F_DIMS), F_DIMS))}</text>`);
         }
       } else {
-        const labN = Math.max(8, Math.floor((nw - 12 - rightN * 4.4) / 5.6));
-        g.push(`<text class="${tcls}" x="${x + 5}" y="${y + 11}">${esc(ell(r.lab, labN))}</text>`);
-        if (right) g.push(`<text class="${r.ghost ? 'fate' : 'dims'}" x="${x + nw - 5}" y="${y + 11}" text-anchor="end">${esc(ell(right, 24))}</text>`);
+        // title and output share the line: each keeps its full width when both fit, else the title keeps at least 45%
+        const fl = cls === 'micro' ? F_MICRO : F_LAB, title = short(r.lab), avail = nw - 16;
+        const a = tw(title, fl), b = right ? tw(right, fr) : 0;
+        const ta = a + b <= avail ? a : Math.max(Math.min(a, avail * 0.45), avail - b);
+        g.push(`<text class="${tcls}" x="${x + 5}" y="${y + 11}">${esc(fit(title, ta + 0.5, fl))}</text>`);
+        if (right) g.push(`<text class="${r.ghost ? 'fate' : 'dims'}" x="${x + nw - 5}" y="${y + 11}" text-anchor="end">${esc(fit(right, avail - ta, fr))}</text>`);
       }
       // the meter: traced over its floor, in the node's bottom band
       const my = y + h - 8, mx0 = x + 6;
@@ -380,7 +420,7 @@ class Dsv3Kernels extends (typeof HTMLElement === 'undefined' ? class {} : HTMLE
         g.push(`<rect data-bar="sol" x="${mx0}" y="${f1(my + 3.4)}" width="${f1(Math.max(0.6, r.sx))}" height="2.6" fill="${fill}"/>`);
         if (r.host && r.flop) g.push(`<rect data-bar="hbm" x="${f1(mx0 + r.hx - 1)}" y="${f1(my + 2.4)}" width="2" height="4.6" fill="${C(BRONZE)}"/>`);
       }
-      B.push(`<g data-node="${r.key}" data-kind="${r.kind}" data-lane="${r.lane}" data-row="${r.row}" data-side="${r.sideOnly ? 1 : 0}" data-gone="${r.ghost ? 1 : 0}" opacity="${r.a.toFixed(3)}">${g.join('')}</g>`);
+      B.push(`<g data-node="${r.key}" data-kind="${r.kind}" data-lane="${r.lane}" data-row="${r.row}" data-side="${r.sideOnly ? 1 : 0}" data-off="${r.indent && !r.sideOnly ? 1 : 0}" data-gone="${r.ghost ? 1 : 0}" opacity="${r.a.toFixed(3)}">${g.join('')}</g>`);
     }
     // the footer: the pass's sums
     const T = L.T, fy = L.h + 18;

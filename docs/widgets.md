@@ -775,20 +775,37 @@ side (a scales transpose, a weight transpose, an arange, DeepEP's
 layout/notify) is a PEARL: indented 26px off the spine (`data-side="1"`),
 tapped from the tensor flowing past it (`data-wire="tap"`, a dot on the
 spine), its output dropping back onto the spine just above its reader
-(`data-wire="rejoin"`, drawn only where a spine wire enters that reader).
-Two columns (attention lanes 0–1: q, kv; MoE lanes 2–3: routed + DeepEP,
-shared), 186px nodes with 64px gutters that carry the rails. Lanes order by
-dependency (topological, ties by trace order `seq`; a pearl whose readers are
-all in its lane moves to just above its first reader); rows are the longest
-dependency path within the column; wires leave a node's bottom (the k-th
-drawn output 14px further right); a wire from the producer above in the lane
-with only pearls between enters the top (`data-wire="spine"`, once per node);
-every other wire is a rail (`data-wire="rail"`): it enters the left edge from
-a rail in the consumer's gutter, or — when the producer's lane lies to the
-right — the RIGHT edge from the gutter on that side (01's k_rope / top-k
-weights rails), farther rail = lower entry so last legs never cross, horizontal runs live in the gaps between rows, and cross-column
-wires go down the producer's gutter to a basement below both columns and up
-the consumer's gutter (01's residual rail). Inside each node a two-bar meter on a log µs
+(`data-wire="rejoin"`, drawn only where a spine wire enters that reader). A
+LEAF — a non-GEMM launch nothing in the pass reads, whose outputs all leave
+for another pass or a weight gradient (a stash cast, an FP8ᵀ operand, a dγ
+accumulation) — indents the same way; indented launches never send a wire
+forward, so the spine carries only the pass's own flow. Two columns
+(attention lanes 0–1: q, kv; MoE lanes 2–3: routed + DeepEP, shared), 172px
+nodes in the 940px text column, per-lane gutters 56/44/64/44 (+32 right
+margin) that carry the rails. Lanes order by dependency (topological; a
+launch reading the last spine launch placed comes next, so chains run node
+to node instead of interleaving in trace order; then trace order `seq`,
+except that a pearl whose readers are all in its lane moves to just above
+its first reader and a leaf to just under what feeds it); rows are the
+longest dependency path within the column; wires leave a node's bottom (the
+k-th drawn output 14px further right); a wire from the producer above in the
+lane with only indented launches between enters the top
+(`data-wire="spine"`, once per node); every other in-column wire is a rail
+(`data-wire="rail"`): it enters the left edge from a rail in the consumer's
+gutter, or — when the producer's lane lies to the right — the RIGHT edge
+from the gutter on that side (01's k_rope / top-k weights rails), farther
+rail = lower entry so last legs never cross, horizontal runs live in the
+gaps between rows. A side tensor into an indented launch draws only as a
+tap. Across the columns there is no wire: the sub-layers are sequential,
+side by side only to fit the page, so a tensor crossing them is a CONNECTOR
+— a grey stub out of the producer labeled with the destination ("MoE",
+"attn.") and a stub into the consumer labeled with the tensors (`.xcon`,
+stubs `data-xcol="1"`; forward h₁ and o′, backward d(x₁)). Node text is
+fitted by MEASURED width (canvas `measureText`): a pill's title is a short
+verb (`short(lab)`: "quantize", "transpose", "re-RoPE" — the full launch
+name is in the tooltip) and its output label drops qualifiers the title
+already says; title and output share the line, the title keeping at least
+45% when both cannot fit. Inside each node a two-bar meter on a log µs
 axis (1 µs … 4 ms across the node, axis in the legend): traced (grey) over
 its speed of light — bronze when HBM binds, the precision color (fp8 pink ·
 bf16 ink) when the tensor cores do, with a bronze marker at a GEMM's HBM
