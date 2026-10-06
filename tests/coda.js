@@ -31,6 +31,17 @@ T.check('epilogue execution: 19 hosts, 5 transcendental, none exposed if overlap
 T.check('bytes shrink under CODA, in every pass', ['F', 'B', 'W'].every((p) => TT[p].other.bytesAfter < TT[p].other.bytes), '');
 T.check('inferred shapes are marked', P.filter((e) => e.inf).length > 10 && P.filter((e) => e.inf).every((e) => !e.kind || e.kind !== 'gemm'), P.filter((e) => e.inf).length);
 
+// the calibration: the paper's benchmarks modeled the same way reproduce its block-level bars within 0.06 (no fitted parameter); kernel-level
+// ceilings say the compiled baselines run 0.9–2.7× their byte floors and CODA's kernels pay 0–26% of the raw GEMM for their epilogues
+const CB = await import('/src/codablock.js');
+const CAL = CB.all(), best = (r) => Math.max(r.meas.llm ?? 0, r.meas.human ?? 0);
+const blk = CAL.filter((r) => r.level === 'block');
+T.check('calibration: 41 cells (10 kernels × 2 + 7 blocks × 3), block predictions within 0.06 of the paper, speedups fall with d', CAL.length === 41 && blk.length === 21 && blk.every((r) => Math.abs(r.pred - best(r)) < 0.06) && blk.filter((r) => r.size === 2048).every((r) => r.pred > CAL.find((q) => q.name === r.name && q.size === 8192).pred),
+  blk.map((r) => `${r.name.replace(/GEMM-Residual-RMS-GEMM/, 'GRRG')}@${r.size} ${r.pred.toFixed(3)}/${best(r).toFixed(3)}`).join(' '));
+const kc = CAL.filter((r) => r.xFloor != null);
+T.check('calibration: kernel ceilings put the compiled baselines at 0.9–2.7× their floors, CODA\'s epilogue cost 0–26% of the raw GEMM, no CODA host HBM-exposed', kc.length === 14 && kc.every((r) => r.xFloor > 0.85 && r.xFloor < 2.7 && r.epiMeas > -0.03 && r.epiMeas < 0.27) && CAL.every((r) => r.exposed === 0), kc.map((r) => `${r.xFloor.toFixed(2)}/${(r.epiMeas * 100).toFixed(0)}%`).join(' '));
+T.check('calibration tables render with the paper\'s bars', document.querySelectorAll('.tally.calib table').length === 2 && document.querySelectorAll('.tally.calib tbody tr').length === 41 && [...document.querySelectorAll('.tally.calib td')].filter((td) => /±/.test(td.textContent)).length > 60, document.querySelectorAll('.tally.calib tbody tr').length);
+
 // the dependency graph: closes in every pass (graph() throws otherwise), every launch a node, the stash falls out of it
 const G = Object.fromEntries(['F', 'B', 'W'].map((p) => [p, M.graph(p)]));
 T.check('graph closes: 89 + 134 + 17 = 240 launches, 113 / 155 / 8 tensor edges', G.F.nodes.length + G.B.nodes.length + G.W.nodes.length === 240 && G.F.edges.length === 113 && G.B.edges.length === 155 && G.W.edges.length === 8, `${G.F.edges.length} ${G.B.edges.length} ${G.W.edges.length}`);

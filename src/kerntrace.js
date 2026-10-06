@@ -383,7 +383,9 @@ export function tally(rates = RATES) {
         over: g.filter((e) => e.hbmAfter > e.hbm && e.hbmAfter > e.flop).map((e) => e.i), exposed: g.reduce((t, e) => t + (e.hbmAfter > e.hbm ? Math.max(0, e.hbmAfter - Math.max(e.flop, e.hbm)) : 0), 0),
         // epilogue execution: added if serialized with the mainloop (DeepGEMM on Hopper) / sticking out if overlapped, at fast-math and precise rates
         epiAddFast: sum(g.filter((e) => e.epx).map((e) => e.epx.epiAdd), 'fast'), epiAddPrecise: sum(g.filter((e) => e.epx).map((e) => e.epx.epiAdd), 'precise'),
-        epiOverFast: sum(g.filter((e) => e.epx).map((e) => e.epx.epiOver), 'fast'), epiOverPrecise: sum(g.filter((e) => e.epx).map((e) => e.epx.epiOver), 'precise') },
+        epiOverFast: sum(g.filter((e) => e.epx).map((e) => e.epx.epiOver), 'fast'), epiOverPrecise: sum(g.filter((e) => e.epx).map((e) => e.epx.epiOver), 'precise'),
+        // the hosts' added epilogue bytes if they serialize with the mainloop instead of hiding under it (what the paper's H100 kernels show: coda.html § calibration)
+        epiBytesSerial: g.reduce((t, e) => t + (e.epi?.length ? Math.max(0, e.hbmAfter - e.hbm) : 0), 0) },
       other: { trace: sum(o, 'raw'), traceNorm: sum(o, 'us'), hbm: sum(o, 'hbm'), bytes: sum(o, 'b'), bytesAfter: sum(o, 'bAfter'), hbmAfter: sum(o, 'hbmAfter'),
         gone: o.filter((e) => e.gone && !e.aux).length, aux: o.filter((e) => e.aux).length, kept: o.filter((e) => !e.gone).length },
     };

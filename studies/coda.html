@@ -135,9 +135,23 @@
 
     <div class="tally hosts"></div>
 
+    <h2 id="calibration">Calibration: the paper's own benchmarks</h2>
+
+    <p>Everything above is prediction. The paper, though, measured: a single H100, BF16, every kernel of its suite against cuBLAS with torch.compile, at kernel level with the raw GEMM as a ceiling and at block level for each sublayer pattern and a full layer, at hidden sizes 2,048, 4,096 and 8,192. Those bars test this page's method on a case where the answer is known. So the method was run on the paper's benchmarks exactly as on DeepSeek's trace: each kernel priced at max(FLOPs ÷ the measured BF16 peak, bytes ÷ HBM) with every operand counted once; the baseline as the compiled reference the paper's code runs (cuBLAS for the matmul, one fused Triton kernel for what follows, so the GEMM output is written once and read back once); CODA as its Kernels 4–10 plus the auxiliary reductions over partials and, in the layer backward, the standalone RoPE-backward kernel its code keeps. The predicted speedup is the ratio of the two sums. The measured bars are digitized from the paper's vector figures (bar tops exact to about ±0.003; the ± is the paper's own error bar over 30 runs). Nothing is fitted.</p>
+
+    <div class="tally calib" data-level="block"></div>
+
+    <p>At block level, which is the level this page works at for DeepSeek, the agreement is about the width of the error bars: across the <span data-kt="calib.blockN">21</span> block × size cells the predicted speedup is within <span data-kt="calib.blockMaxErr" data-fmt="x3">0.05</span> of the better of the paper's two implementations, and within <span data-kt="calib.blockMedErr" data-fmt="x3">0.02</span> for half of them. The shape of the result is the shape the model forces: a fusion saves bytes, bytes grow with d and FLOPs with d², so the speedup falls as 1/d, from 1.22 at d = 2,048 to 1.02–1.06 at 8,192, as the bars do. The layer backward is the one place the model has to know something not on the paper's figure, that CODA's code leaves RoPE's backward as a standalone kernel: with it counted the predicted layer-backward speedup at d = 2,048 is <span data-kt="calib.bwd2048" data-fmt="x3">1.07</span> against a measured 1.02–1.06, and would be <span data-kt="calib.bwd2048ceil" data-fmt="x3">1.13</span> with that kernel fused too.</p>
+
+    <div class="tally calib" data-level="kernel"></div>
+
+    <p>At kernel level the paper gives the raw GEMM as a ceiling, and that splits the error in two. The baseline side is where the method misses: the compiled reference costs <span data-kt="calib.xFloorMin" data-fmt="x1">1.0</span>–<span data-kt="calib.xFloorMax" data-fmt="x1">2.6</span>× its byte floor (the × floor column: the non-GEMM time the measured ceiling implies, over the operand-once floor), worst for the backward kernels and RoPE, whose references promote to fp32 and clone, and best for the plain row scale and the cross-entropy, whose references are one pass over one tensor. That is the same ×1.3–2 the DeepSeek trace shows for its own kernels, and the reason this page scales DeepSeek's floors by the traced ratio instead of quoting them. The CODA side is where the method is nearly right and informatively wrong: CODA's kernels land below the raw GEMM by <span data-kt="calib.epiMin" data-fmt="pct">1%</span>–<span data-kt="calib.epiMax" data-fmt="pct">26%</span> (the epilogue column: ceiling ÷ CODA − 1), and that cost tracks the serialized sum of the epilogue's extra bytes (the next column), not the zero the max() rule gives, with a further few percent where the epilogue holds an exp (SwiGLU, cross-entropy), at about the field guide's fast-math rate. Both are the Hopper schedule of the section before last: the epilogue's loads, stores and math run after the mainloop on the same warps, and are paid in full.</p>
+
+    <p>Carried back to DeepSeek's layer, the calibration says two things. The floors there are already scaled by traced ratios, so the baseline-side error is absorbed. The host-side rule should be a sum, not a max: adding every host's epilogue bytes serially costs <span data-kt="calib.dsv3serial" data-fmt="us">269 µs</span> per layer on top of the <span data-kt="layer.epiAddFast" data-fmt="us">24 µs</span>–<span data-kt="layer.epiAddPrecise" data-fmt="us">253 µs</span> of transcendental work, against <span data-kt="layer.saved" data-fmt="ms">6.10 ms</span> saved, and the step saving's lower end becomes <span data-kt="step.savedSerial" data-fmt="s">2.4 s</span>. The fraction is smaller than on the paper's kernels because DeepGEMM's tiles are FP8 at K = 7,168: twice the mainloop per output byte of the paper's BF16 K = 4,096 tiles, and seven times the field guide's.</p>
+
     <h2>What would settle it</h2>
 
-    <p>Everything above is a model: two meters and a disposition per launch. But each row of the savings is a claim about one kernel pair at a shape the trace gives exactly, and the field guide's method (matched implementations, warmed CUDA-graph timings, Nsight for warps and issue slots, a restricted standalone proxy before a fused kernel exists) applies to each directly. The table lists the experiment that would confirm or kill each number, in the order they matter. Only the first can move the headline; the rest decide whether its parts are as cheap as the bytes say.</p>
+    <p>Everything above DeepSeek's layer is a model: two meters and a disposition per launch, calibrated on the paper's blocks but not measured on this one. Each row of the savings is a claim about one kernel pair at a shape the trace gives exactly, and the field guide's method (matched implementations, warmed CUDA-graph timings, Nsight for warps and issue slots, a restricted standalone proxy before a fused kernel exists) applies to each directly. The table lists the experiment that would confirm or kill each number, in the order they matter. Only the first can move the headline; the rest decide whether its parts are as cheap as the bytes say.</p>
 
     <table class="xcheck plan">
       <tr><th>claimed win</th><th>per layer</th><th>the experiment</th><th>what it settles</th></tr>
@@ -163,6 +177,7 @@
       <tr><td>the trace</td><td><a href="https://github.com/deepseek-ai/profile-data">deepseek-ai/profile-data</a>, the training profile; the four steady-state layer cycles and their alignment are in the refs directory (<code>coda/launches.json</code>)</td></tr>
       <tr><td>the per-launch model</td><td><code>src/kerntrace.js</code>: one entry per launch, bytes and FLOPs from the architecture constants of <code>src/model.js</code>, CODA dispositions; <code>src/kerndata.js</code> is generated from the trace</td></tr>
       <tr><td>the epilogue measurements</td><td><em>When a GEMM epilogue stops being free</em> (a GB300 field guide, October 2026): instrumented traces of the FlexGEMM/QuACK warp-specialized GEMM with fast and precise SiLU epilogues, the fused-vs-unfused table, the four-warps-per-SM restriction experiment; copy in the refs directory (<code>coda/gemm-epilogue.html</code>)</td></tr>
+      <tr><td>the paper's benchmarks</td><td>its code at the tag it was measured with (<code>open-lm-engine/coda-kernels</code> v0.1: <code>kernels/benchmarks/block.py</code>, <code>gemm.py</code>, <code>models/ops.py</code>, <code>models/ops2.py</code>, <code>kernels/refs/gpt2.py</code>; copies in <code>refs/coda/v0.1/</code>), modeled in <code>src/codablock.js</code>; the measured bars digitized from the paper's figure PDFs by <code>refs/coda/digitize-bars.py</code> into <code>src/codapaper.js</code></td></tr>
       <tr><td>the rates</td><td>post 03's sheet: π<sup>sol</sup><sub>fp8</sub>, π<sup>sol</sup><sub>bf16</sub>, and the H800 HBM figure of <code>src/model.js</code></td></tr>
     </table>
 
@@ -176,6 +191,7 @@
     import './series.js';
     import { priced, tally } from '../src/kerntrace.js';
     import { REPORTED } from '../src/kerntrace.js';
+    import { all as calibAll, time as ktime } from '../src/codablock.js';
 
     const P = priced(), T = tally();
     const n = (x, d = 0) => x.toLocaleString('en-US', { maximumFractionDigits: d, minimumFractionDigits: d });
@@ -212,7 +228,7 @@
 
     // ---- the savings table -----------------------------------------------------
     const sv = document.querySelector('.tally.savings');
-    const L = { other: { trace: 0, hbm: 0, hbmAfter: 0, projected: 0, bytes: 0, bytesAfter: 0, kept: 0, gone: 0, aux: 0 }, gemm: { trace: 0, flop: 0, hbm: 0, hbmAfter: 0, exposed: 0, epiAddFast: 0, epiAddPrecise: 0, epiOverFast: 0, epiOverPrecise: 0 } };
+    const L = { other: { trace: 0, hbm: 0, hbmAfter: 0, projected: 0, bytes: 0, bytesAfter: 0, kept: 0, gone: 0, aux: 0 }, gemm: { trace: 0, flop: 0, hbm: 0, hbmAfter: 0, exposed: 0, epiAddFast: 0, epiAddPrecise: 0, epiOverFast: 0, epiOverPrecise: 0, epiBytesSerial: 0 } };
     for (const p of 'FBW') { for (const k in L.other) L.other[k] += T[p].other[k]; for (const k in L.gemm) L.gemm[k] += T[p].gemm[k]; }
     L.other.eff = L.other.trace * 1e-6 / L.other.hbm;
     const PASSN = { F: 'forward', B: 'backward (input gradients)', W: 'weight gradients' };
@@ -228,11 +244,32 @@
       hosts.map((e) => { const x = e.epx; return `<tr data-i="${e.i}"><td class="dim n">${e.i}</td><td class="lab">${e.lab}</td><td class="n">${n(e.Kd)}</td><td class="how">${e.epi.join(' · ')}</td><td class="${x.cls === 'transcendental' ? 'cmp' : 'dim'}">${x.cls}</td><td class="n">${us1(x.mmaTile)}</td><td class="n">${us1(x.epiTile.plain)} · ${us1(x.epiTile.fast)} · ${us1(x.epiTile.precise)}</td><td class="n">${us(e.flop)}</td><td class="n">${x.cls === 'transcendental' ? `${us(x.epiAdd.fast)} · ${us(x.epiAdd.precise)}` : '—'}</td><td class="n">${x.epiOver.precise > 0 ? us(x.epiOver.precise) : '—'}</td></tr>`; }).join('') +
       `<tr class="hl"><td></td><td colspan="7">one layer, one microbatch: ${hosts.length} hosts</td><td class="n">${us(L.gemm.epiAddFast)} · ${us(L.gemm.epiAddPrecise)}</td><td class="n">${L.gemm.epiOverPrecise > 0 ? us(L.gemm.epiOverPrecise) : '—'}</td></tr></tbody></table>`;
 
+    // ---- the calibration tables: the paper's benchmarks, predicted vs measured ----
+    const CAL = calibAll();
+    const x3 = (v) => v == null ? '—' : n(v, 3);
+    const pm = (r, k) => r.meas[k] == null ? '—' : `${n(r.meas[k], 3)}${r.sd[k] ? ` ±${n(r.sd[k], 3)}` : ''}`;
+    const pct = (v) => v == null ? '—' : `${n(v * 100, v < 0.1 ? 1 : 0)}%`;
+    for (const div of document.querySelectorAll('.tally.calib')) {
+      const level = div.dataset.level, rows = CAL.filter((r) => r.level === level);
+      if (level === 'block') {
+        div.innerHTML = `<table><thead><tr><th>block (16,384 tokens)</th><th class="n">d</th><th class="n">GEMMs</th><th class="n">non-GEMM floor, baseline</th><th class="n">after CODA</th><th class="n">predicted</th><th class="n">measured: CODA (LLM)</th><th class="n">CODA (human)</th><th class="n">Liger · FlashInfer</th></tr></thead><tbody>` +
+          rows.map((r) => `<tr><td class="lab">${r.name}</td><td class="n">${n(r.size)}</td><td class="n">${us(r.tGemm)}</td><td class="n">${us(r.nonGemmBase)}</td><td class="n">${r.nonGemmCoda > 1e-6 ? us(r.nonGemmCoda) : '—'}</td><td class="n cmp">${x3(r.pred)}</td><td class="n">${pm(r, 'llm')}</td><td class="n">${pm(r, 'human')}</td><td class="n dim">${x3(r.meas.liger)} · ${x3(r.meas.flashinfer)}</td></tr>`).join('') + '</tbody></table>';
+      } else {
+        div.innerHTML = `<table><thead><tr><th>kernel (M = N = K = m)</th><th class="n">m</th><th class="n">raw GEMM</th><th class="n">non-GEMM floor, baseline</th><th class="n">ceiling: predicted</th><th class="n">measured</th><th class="n">× floor</th><th class="n">CODA: predicted</th><th class="n">measured (LLM)</th><th class="n">(human)</th><th class="n">epilogue cost: measured</th><th class="n">bytes, serialized</th><th class="n">execution (fast · precise)</th></tr></thead><tbody>` +
+          rows.map((r) => `<tr><td class="lab">${r.name}</td><td class="n">${n(r.size)}</td><td class="n">${us(r.tGemm)}</td><td class="n">${us(r.nonGemmBase)}</td><td class="n">${x3(r.ceilPred)}</td><td class="n">${x3(r.meas.ceil)}</td><td class="n">${r.xFloor != null ? `×${n(r.xFloor, 1)}` : '—'}</td><td class="n cmp">${x3(r.pred)}</td><td class="n">${pm(r, 'llm')}</td><td class="n">${pm(r, 'human')}</td><td class="n">${pct(r.epiMeas)}</td><td class="n">${r.epiBytes != null ? pct(r.epiBytes) : '—'}</td><td class="n dim">${r.epiExec ? `${pct(r.epiExec.fast)} · ${pct(r.epiExec.precise)}` : '—'}</td></tr>`).join('') + '</tbody></table>';
+      }
+    }
+    const best = (r) => Math.max(r.meas.llm ?? 0, r.meas.human ?? 0);
+    const blockRows = CAL.filter((r) => r.level === 'block'), errs = blockRows.map((r) => Math.abs(r.pred - best(r))).sort((a, b) => a - b);
+    const withCeil = CAL.filter((r) => r.xFloor != null);
+    const bwd = CAL.find((r) => r.name === 'Layer Backward' && r.size === 2048), ropeBwd = bwd.coda.find((k) => /RoPE backward/.test(k.name));
+
     // ---- prose numbers (data-kt) -----------------------------------------------
     const MB_PER_GPU = 15360 * 4096 / 2048 / 4096, MOE_LAYERS = 58;
     const step = { reported: 15360 * 4096 / 2048 / REPORTED.h800.rate };
     step.saved = (L.other.trace * 1e-6 - L.other.projected - L.gemm.exposed) * MB_PER_GPU * MOE_LAYERS;
     step.savedLow = step.saved - L.gemm.epiAddPrecise * MB_PER_GPU * MOE_LAYERS;   // the SwiGLU epilogues serialized with their mainloops, at precise-math rates
+    step.savedSerial = step.savedLow - L.gemm.epiBytesSerial * MB_PER_GPU * MOE_LAYERS;   // and every host's epilogue bytes serialized too (the calibration's rule)
     step.pct = step.saved / step.reported;
     const sumUs = (f) => P.filter(f).reduce((t, e) => t + e.us, 0) * 1e-6;
     const sumHbm = (f) => P.filter(f).reduce((t, e) => t + e.hbm, 0);
@@ -253,6 +290,12 @@
       'epi.plain': P[109].epx.epiTile.plain, 'epi.fast': P[109].epx.epiTile.fast, 'epi.precise': P[109].epx.epiTile.precise,
       swigluT: sumUs((e) => [111, 116, 76, 71, 70].includes(e.i)),
       latentnorm: sumUs((e) => [9, 10, 11, 12, 13, 14, 16, 17].includes(e.i)),
+      'layer.saved': L.other.trace * 1e-6 - L.other.projected - L.gemm.exposed, 'step.savedSerial': step.savedSerial,
+      'calib.blockN': blockRows.length, 'calib.blockMaxErr': errs.at(-1), 'calib.blockMedErr': errs[Math.floor(errs.length / 2)],
+      'calib.bwd2048': bwd.pred, 'calib.bwd2048ceil': bwd.tBase / (bwd.tCoda - ktime(ropeBwd)),
+      'calib.xFloorMin': Math.min(...withCeil.map((r) => r.xFloor)), 'calib.xFloorMax': Math.max(...withCeil.map((r) => r.xFloor)),
+      'calib.epiMin': Math.max(0, Math.min(...withCeil.map((r) => r.epiMeas))), 'calib.epiMax': Math.max(...withCeil.map((r) => r.epiMeas)),
+      'calib.dsv3serial': L.gemm.epiBytesSerial,
     };
     const get = (path) => {
       if (path in K) return K[path];
@@ -261,7 +304,7 @@
       const l = path.match(/^([FBW])\.launches$/); if (l) return T[l[1]].launches;
       return null;
     };
-    const FMT = { ms: (v) => `${n(v * 1e3, 2)} ms`, us: (v) => us(v), us1: (v) => us1(v), ns: (v) => `${n(v * 1e9, 1)} ns`, s: (v) => `${n(v, 1)} s`, x: (v) => n(v, 1), n: (v) => n(v), pct: (v) => `${n(v * 100)}%`, gb: (v) => `${n(v / 1e9, 1)} GB` };
+    const FMT = { ms: (v) => `${n(v * 1e3, 2)} ms`, us: (v) => us(v), us1: (v) => us1(v), ns: (v) => `${n(v * 1e9, 1)} ns`, s: (v) => `${n(v, 1)} s`, x3: (v) => n(v, 3), x1: (v) => n(v, 1), x: (v) => n(v, 1), n: (v) => n(v), pct: (v) => `${n(v * 100)}%`, gb: (v) => `${n(v / 1e9, 1)} GB` };
     for (const q of document.querySelectorAll('[data-kt]')) { const v = get(q.dataset.kt); if (v != null) q.textContent = (FMT[q.dataset.fmt ?? 'n'])(v); }
   </script>
 </body>

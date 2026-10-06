@@ -132,7 +132,8 @@
           "epiAddFast": 0.000015818181818181818,
           "epiAddPrecise": 0.00016872727272727273,
           "epiOverFast": 0,
-          "epiOverPrecise": 0
+          "epiOverPrecise": 0,
+          "epiBytesSerial": 0.00006170165492537314
         },
         "other": {
           "trace": 2713.25,
@@ -167,7 +168,8 @@
           "epiAddFast": 0.000007854545454545453,
           "epiAddPrecise": 0.00008378181818181818,
           "epiOverFast": 0,
-          "epiOverPrecise": 0
+          "epiOverPrecise": 0,
+          "epiBytesSerial": 0.00020757060776119398
         },
         "other": {
           "trace": 5307.25,
@@ -200,7 +202,8 @@
           "epiAddFast": 0,
           "epiAddPrecise": 0,
           "epiOverFast": 0,
-          "epiOverPrecise": 0
+          "epiOverPrecise": 0,
+          "epiBytesSerial": 0
         },
         "other": {
           "trace": 577.75,
@@ -2139,6 +2142,295 @@
         0
       ]
     ]
+  },
+  "codablock": {
+    "GEMM-Residual-PartialRMS-GEMM@4096": {
+      "pred": 1.22174,
+      "ceil": 1.22174,
+      "tGemm": 0.00018138967067704895,
+      "nonGemmBase": 0.000040221497313432846,
+      "nonGemmCoda": 0
+    },
+    "GEMM-Residual-PartialRMS-GEMM@8192": {
+      "pred": 1.11087,
+      "ceil": 1.11087,
+      "tGemm": 0.0014511173654163916,
+      "nonGemmBase": 0.00016088598925373138,
+      "nonGemmCoda": 0
+    },
+    "GEMM-RMS@4096": {
+      "pred": 1.11044,
+      "ceil": 1.11044,
+      "tGemm": 0.00018138967067704895,
+      "nonGemmBase": 0.000020032496716417903,
+      "nonGemmCoda": 0
+    },
+    "GEMM-RMS@8192": {
+      "pred": 1.05522,
+      "ceil": 1.05522,
+      "tGemm": 0.0014511173654163916,
+      "nonGemmBase": 0.00008012998686567161,
+      "nonGemmCoda": 0
+    },
+    "GEMM-RMS-SwiGLU@4096": {
+      "pred": 1.13805,
+      "ceil": 1.13805,
+      "tGemm": 0.00018138967067704895,
+      "nonGemmBase": 0.00002504062089552238,
+      "nonGemmCoda": 0
+    },
+    "GEMM-RMS-SwiGLU@8192": {
+      "pred": 1.06902,
+      "ceil": 1.06902,
+      "tGemm": 0.0014511173654163916,
+      "nonGemmBase": 0.00010016248358208951,
+      "nonGemmCoda": 0
+    },
+    "GEMM-RMS-RoPE@4096": {
+      "pred": 1.22088,
+      "ceil": 1.22088,
+      "tGemm": 0.0005441690120311469,
+      "nonGemmBase": 0.00012019498029850742,
+      "nonGemmCoda": 0
+    },
+    "GEMM-RMS-RoPE@8192": {
+      "pred": 1.11044,
+      "ceil": 1.11044,
+      "tGemm": 0.004353352096249175,
+      "nonGemmBase": 0.00048077992119402967,
+      "nonGemmCoda": 0
+    },
+    "GEMM-RMS-CrossEntropy@4096": {
+      "pred": 1.1113,
+      "ceil": 1.1113,
+      "tGemm": 0.0014511173654163916,
+      "nonGemmBase": 0.00016151200477611933,
+      "nonGemmCoda": 0
+    },
+    "GEMM-RMS-CrossEntropy@8192": {
+      "pred": 1.05565,
+      "ceil": 1.05565,
+      "tGemm": 0.0058044694616655665,
+      "nonGemmBase": 0.0003230240095522391,
+      "nonGemmCoda": 0
+    },
+    "GEMM-Residual-PartialRMS-GEMM (Backward)@4096": {
+      "pred": 1.27696,
+      "ceil": 1.27696,
+      "tGemm": 0.00018138967067704895,
+      "nonGemmBase": 0.0000502377456716418,
+      "nonGemmCoda": 0
+    },
+    "GEMM-Residual-PartialRMS-GEMM (Backward)@8192": {
+      "pred": 1.13848,
+      "ceil": 1.13848,
+      "tGemm": 0.0014511173654163916,
+      "nonGemmBase": 0.0002009509826865672,
+      "nonGemmCoda": 0
+    },
+    "GEMM-RMS-SwiGLU (Backward)@4096": {
+      "pred": 1.33218,
+      "ceil": 1.33218,
+      "tGemm": 0.00018138967067704895,
+      "nonGemmBase": 0.00006025399402985075,
+      "nonGemmCoda": 0
+    },
+    "GEMM-RMS-SwiGLU (Backward)@8192": {
+      "pred": 1.16609,
+      "ceil": 1.16609,
+      "tGemm": 0.0014511173654163916,
+      "nonGemmBase": 0.000241015976119403,
+      "nonGemmCoda": 0
+    },
+    "GEMM + SwiGLU@4096": {
+      "pred": 1.08283,
+      "ceil": 1.08283,
+      "tGemm": 0.00018138967067704895,
+      "nonGemmBase": 0.000015024372537313427,
+      "nonGemmCoda": 0
+    },
+    "GEMM + SwiGLU@8192": {
+      "pred": 1.04141,
+      "ceil": 1.04141,
+      "tGemm": 0.0014511173654163916,
+      "nonGemmBase": 0.00006009749014925371,
+      "nonGemmCoda": 0
+    },
+    "GEMM + RoPE@4096": {
+      "pred": 1.16566,
+      "ceil": 1.16566,
+      "tGemm": 0.0005441690120311469,
+      "nonGemmBase": 0.00009014623522388056,
+      "nonGemmCoda": 0
+    },
+    "GEMM + RoPE@8192": {
+      "pred": 1.08283,
+      "ceil": 1.08283,
+      "tGemm": 0.004353352096249175,
+      "nonGemmBase": 0.0003605849408955227,
+      "nonGemmCoda": 0
+    },
+    "GEMM + Cross Entropy@4096": {
+      "pred": 1.05608,
+      "ceil": 1.05608,
+      "tGemm": 0.0014511173654163916,
+      "nonGemmBase": 0.00008138201791044772,
+      "nonGemmCoda": 0
+    },
+    "GEMM + Cross Entropy@8192": {
+      "pred": 1.02804,
+      "ceil": 1.02804,
+      "tGemm": 0.0058044694616655665,
+      "nonGemmBase": 0.00016276403582089587,
+      "nonGemmCoda": 0
+    },
+    "GEMM-Residual-RMS-GEMM@2048": {
+      "pred": 1.06768,
+      "ceil": 1.06798,
+      "tGemm": 0.0011790328594008183,
+      "nonGemmBase": 0.00008014954985074638,
+      "nonGemmCoda": 3.3257074626862927e-7
+    },
+    "GEMM-Residual-RMS-GEMM@4096": {
+      "pred": 1.03451,
+      "ceil": 1.03465,
+      "tGemm": 0.004625436602264749,
+      "nonGemmBase": 0.000160279536716418,
+      "nonGemmCoda": 6.455785074629267e-7
+    },
+    "GEMM-Residual-RMS-GEMM@8192": {
+      "pred": 1.01725,
+      "ceil": 1.01732,
+      "tGemm": 0.018501746409058994,
+      "nonGemmBase": 0.0003205395104477621,
+      "nonGemmCoda": 0.0000012715940298502204
+    },
+    "GEMM-Residual-RMS-GEMM-SwiGLU@2048": {
+      "pred": 1.20781,
+      "ceil": 1.20815,
+      "tGemm": 0.0011790328594008183,
+      "nonGemmBase": 0.000245417647761194,
+      "nonGemmCoda": 3.3257074626862927e-7
+    },
+    "GEMM-Residual-RMS-GEMM-SwiGLU@4096": {
+      "pred": 1.10433,
+      "ceil": 1.10449,
+      "tGemm": 0.004625436602264749,
+      "nonGemmBase": 0.0004833035462686571,
+      "nonGemmCoda": 6.455785074629267e-7
+    },
+    "GEMM-Residual-RMS-GEMM-SwiGLU@8192": {
+      "pred": 1.05217,
+      "ceil": 1.05224,
+      "tGemm": 0.018501746409058994,
+      "nonGemmBase": 0.0009665875295522403,
+      "nonGemmCoda": 0.0000012715940298502204
+    },
+    "GEMM-Residual-RMS-GEMM-RoPE@2048": {
+      "pred": 1.19171,
+      "ceil": 1.19209,
+      "tGemm": 0.0010429906063930314,
+      "nonGemmBase": 0.0002003445301492538,
+      "nonGemmCoda": 3.325707462688461e-7
+    },
+    "GEMM-Residual-RMS-GEMM-RoPE@4096": {
+      "pred": 1.09692,
+      "ceil": 1.09709,
+      "tGemm": 0.004126615007902864,
+      "nonGemmBase": 0.00040066949731343195,
+      "nonGemmCoda": 6.455785074620593e-7
+    },
+    "GEMM-Residual-RMS-GEMM-RoPE@8192": {
+      "pred": 1.04847,
+      "ceil": 1.04855,
+      "tGemm": 0.016506460031611457,
+      "nonGemmBase": 0.00080131943164179,
+      "nonGemmCoda": 0.0000012715940298502204
+    },
+    "GEMM-Residual-RMS-GEMM-CrossEntropy@2048": {
+      "pred": 1.11605,
+      "ceil": 1.11781,
+      "tGemm": 0.003401056325194668,
+      "nonGemmBase": 0.00040068906029850715,
+      "nonGemmCoda": 0.0000053602579104475995
+    },
+    "GEMM-Residual-RMS-GEMM-CrossEntropy@4096": {
+      "pred": 1.06123,
+      "ceil": 1.06201,
+      "tGemm": 0.0077544084214438425,
+      "nonGemmBase": 0.0004808190471641792,
+      "nonGemmCoda": 0.000005673265671642114
+    },
+    "GEMM-Residual-RMS-GEMM-CrossEntropy@8192": {
+      "pred": 1.0327,
+      "ceil": 1.03303,
+      "tGemm": 0.019408694762444237,
+      "nonGemmBase": 0.0006410790208955242,
+      "nonGemmCoda": 0.000006299281194031142
+    },
+    "Layer Forward@2048": {
+      "pred": 1.20025,
+      "ceil": 1.20061,
+      "tGemm": 0.0022220234657938497,
+      "nonGemmBase": 0.0004457621779104478,
+      "nonGemmCoda": 6.651414925372585e-7
+    },
+    "Layer Forward@4096": {
+      "pred": 1.10084,
+      "ceil": 1.101,
+      "tGemm": 0.008752051610167611,
+      "nonGemmBase": 0.0008839730435820925,
+      "nonGemmCoda": 0.0000012911570149258533
+    },
+    "Layer Forward@8192": {
+      "pred": 1.05042,
+      "ceil": 1.0505,
+      "tGemm": 0.035008206440670445,
+      "nonGemmBase": 0.0017679069611940337,
+      "nonGemmCoda": 0.000002543188059700441
+    },
+    "Layer Backward@2048": {
+      "pred": 1.06701,
+      "ceil": 1.1251,
+      "tGemm": 0.0044440469315877,
+      "nonGemmBase": 0.0005559458005970144,
+      "nonGemmCoda": 0.00024192076417910418
+    },
+    "Layer Backward@4096": {
+      "pred": 1.03422,
+      "ceil": 1.0628,
+      "tGemm": 0.017504103220335226,
+      "nonGemmBase": 0.0010993321647761213,
+      "nonGemmCoda": 0.00048376327641791103
+    },
+    "Layer Backward@8192": {
+      "pred": 1.01734,
+      "ceil": 1.0314,
+      "tGemm": 0.0700164128813409,
+      "nonGemmBase": 0.0021986252035820913,
+      "nonGemmCoda": 0.0009674874268656847
+    },
+    "Layer Forward + Backward@2048": {
+      "pred": 1.10988,
+      "ceil": 1.15027,
+      "tGemm": 0.00666607039738155,
+      "nonGemmBase": 0.0010017079785074618,
+      "nonGemmCoda": 0.00024258590567164187
+    },
+    "Layer Forward + Backward@4096": {
+      "pred": 1.05603,
+      "ceil": 1.07554,
+      "tGemm": 0.026256154830502833,
+      "nonGemmBase": 0.001983305208358214,
+      "nonGemmCoda": 0.00048505443343284035
+    },
+    "Layer Forward + Backward@8192": {
+      "pred": 1.02827,
+      "ceil": 1.03777,
+      "tGemm": 0.10502461932201133,
+      "nonGemmBase": 0.003966532164776132,
+      "nonGemmCoda": 0.0009700306149253851
+    }
   },
   "stash": {
     "moe·bf16·full": {
