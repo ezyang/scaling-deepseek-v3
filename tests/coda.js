@@ -24,6 +24,10 @@ T.check('GEMM speed of light = 03\'s cells', [[3, 61.9], [6, 23.2], [15, 212], [
 T.check('routed rows normalized like 03 (32,512 F / 32,128 B)', near(KD.ROUTED_ROWS.F.reduce((a, b) => a + b) / 4, 32512) && near(KD.ROUTED_ROWS.B.reduce((a, b) => a + b) / 4, 32128), '');
 T.check('every GEMM compute-bound today (the bf16 router GEMMs sit on the ridge)', P.filter((e) => e.kind === 'gemm' && e.dt === 'fp8').every((e) => e.flop >= e.hbm) && P.filter((e) => e.kind === 'gemm' && e.dt === 'bf16').every((e) => e.flop >= e.hbm * 0.97), '');
 T.check('after CODA every host hides its epilogue but the Q-down input gradient', TT.F.gemm.over.length === 0 && TT.W.gemm.over.length === 0 && TT.B.gemm.over.join() === '214' && P[214].hbmAfter < 2 * P[214].flop, TT.B.gemm.over.join());
+// epilogue execution (the field guide's meter): at DeepSeek's K no host is exposed if overlapped; serialized, the SwiGLU epilogues add less than the kernels they retire, at either rate
+const hosts = P.filter((e) => e.epx);
+T.check('epilogue execution: 19 hosts, 5 transcendental, none exposed if overlapped, serialized add < retired SwiGLU kernels', hosts.length === 19 && hosts.filter((e) => e.epx.cls === 'transcendental').map((e) => e.i).join() === '30,68,75,103,109' && hosts.every((e) => e.epx.epiOver.precise === 0) && hosts.every((e) => e.epx.cls === 'transcendental' || e.epx.epiAdd.precise === 0)
+  && TT.F.gemm.epiAddPrecise + TT.B.gemm.epiAddPrecise < [111, 116, 76, 71, 70].reduce((t, i) => t + P[i].us, 0) * 1e-6 && TT.F.gemm.epiAddFast < TT.F.gemm.epiAddPrecise / 5, `${hosts.map((e) => e.i).join(' ')} add ${((TT.F.gemm.epiAddPrecise + TT.B.gemm.epiAddPrecise) * 1e6).toFixed(0)} µs`);
 T.check('bytes shrink under CODA, in every pass', ['F', 'B', 'W'].every((p) => TT[p].other.bytesAfter < TT[p].other.bytes), '');
 T.check('inferred shapes are marked', P.filter((e) => e.inf).length > 10 && P.filter((e) => e.inf).every((e) => !e.kind || e.kind !== 'gemm'), P.filter((e) => e.inf).length);
 

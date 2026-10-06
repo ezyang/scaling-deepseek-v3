@@ -40,6 +40,22 @@ export const SCALE_BLOCK = 128;              // DeepSeek's fine-grained FP8: one
 // rates (03's sheet): measured GEMM peaks, data-sheet HBM
 export const RATES = { fp8: 1456.6e12, bf16: 757.7e12, hbm: 3.35e12 };
 
+// epilogue execution — the second thing an epilogue costs, after bytes. An
+// epilogue is a pipeline stage run by a few warps per SM on the finished
+// accumulator tile; with double-buffered accumulators the steady state per
+// tile is max(mainloop, epilogue), and on a kernel that runs the epilogue on
+// its math warps (DeepGEMM on Hopper: cooperative, not ping-pong) it is
+// mainloop + epilogue. Anchors: an instrumented GB300 trace of a
+// warp-specialized bf16 GEMM, 256 × 256 tiles, four epilogue warps per SM
+// (refs/coda/gemm-epilogue.html): per tile the epilogue and its tail take
+// ≈ 2.5 µs for a plain convert-and-store (Epi/MMA 2.3 at K = 256), ≈ 3.4 µs
+// with fast-math SiLU (0.7 at K = 1,024, hidden), ≈ 12.1 µs with precise SiLU
+// (3.2 at K = 1,024; chunks 1–13, chunk 0 is cold). Carried to the H800 per
+// output element per SM, with no clock or warp-count correction (the caveats
+// say which way each would push).
+export const EPI = { plain: 2.5e-6 / 65536, fast: 3.4e-6 / 65536, precise: 12.1e-6 / 65536, sms: 132, tile: 128 * 128 };
+const TRANSCENDENTAL = /SwiGLU|sigmoid/;   // epilogue work that needs exp (SiLU, σ): the rest is scales, adds, rotations, casts, tile reductions
+
 // bytes of one tensor of n elements in a format
 const bf = (n) => 2 * n;
 const f32 = (n) => 4 * n;
@@ -339,7 +355,17 @@ export function priced(rates = RATES) {
     // gone: the launch folds away (into a host, a stash, a once-per-step transpose); aux: a small kernel remains in its place
     const gone = !host && !comm && s.how !== 'keep';
     const col = s.col ?? (s.lane < 2 ? 'attn' : 'mlp');
-    return { ...o, ...s, col, seq: s.seq ?? i, pass, comm, flop, hbm, sol, bound, x: sol ? o.us * 1e-6 / sol : null, bAfter, hbmAfter, solAfter, gone, aux: gone && bAfter > 0 };
+    // epilogue execution (GEMM hosts): mainloop per tile vs epilogue per tile at the three anchor rates;
+    // `epiAdd` = time a serialized epilogue adds over today's plain one, `epiOver` = what sticks out past the mainloop if overlapped
+    let epx = null;
+    if (s.kind === 'gemm' && s.epi?.length) {
+      const el = s.M * s.N, cls = TRANSCENDENTAL.test(s.epi.join()) ? 'transcendental' : 'pointwise';
+      const rate = (k) => cls === 'pointwise' ? EPI.plain : EPI[k];
+      const tot = (k) => el * rate(k) / EPI.sms;
+      epx = { cls, mmaTile: 2 * EPI.tile * s.Kd / (rates[s.dt] / EPI.sms), epiTile: { plain: EPI.tile * EPI.plain, fast: EPI.tile * rate('fast'), precise: EPI.tile * rate('precise') },
+        epiAdd: { fast: tot('fast') - tot('plain'), precise: tot('precise') - tot('plain') }, epiOver: { fast: Math.max(0, tot('fast') - flop), precise: Math.max(0, tot('precise') - flop) } };
+    }
+    return { ...o, ...s, col, seq: s.seq ?? i, pass, comm, flop, hbm, sol, bound, x: sol ? o.us * 1e-6 / sol : null, bAfter, hbmAfter, solAfter, gone, aux: gone && bAfter > 0, epx };
   });
 }
 // per pass: trace, SOL, bytes — GEMM+attention vs everything else, today and under CODA
@@ -354,7 +380,10 @@ export function tally(rates = RATES) {
       launches: es.length, launchesAfter: es.filter((e) => !e.gone || e.aux).length,
       gemm: { trace: sum(g, 'raw'), traceNorm: sum(g, 'us'), flop: sum(g, 'flop'), hbm: sum(g, 'hbm'), sol: sum(g, 'sol'), bytes: sum(g, 'b'), hbmAfter: sum(g, 'hbmAfter'), solAfter: sum(g, 'solAfter'),
         // hosts whose epilogue traffic outgrows their tensor-core time, and the time that sticks out
-        over: g.filter((e) => e.hbmAfter > e.hbm && e.hbmAfter > e.flop).map((e) => e.i), exposed: g.reduce((t, e) => t + (e.hbmAfter > e.hbm ? Math.max(0, e.hbmAfter - Math.max(e.flop, e.hbm)) : 0), 0) },
+        over: g.filter((e) => e.hbmAfter > e.hbm && e.hbmAfter > e.flop).map((e) => e.i), exposed: g.reduce((t, e) => t + (e.hbmAfter > e.hbm ? Math.max(0, e.hbmAfter - Math.max(e.flop, e.hbm)) : 0), 0),
+        // epilogue execution: added if serialized with the mainloop (DeepGEMM on Hopper) / sticking out if overlapped, at fast-math and precise rates
+        epiAddFast: sum(g.filter((e) => e.epx).map((e) => e.epx.epiAdd), 'fast'), epiAddPrecise: sum(g.filter((e) => e.epx).map((e) => e.epx.epiAdd), 'precise'),
+        epiOverFast: sum(g.filter((e) => e.epx).map((e) => e.epx.epiOver), 'fast'), epiOverPrecise: sum(g.filter((e) => e.epx).map((e) => e.epx.epiOver), 'precise') },
       other: { trace: sum(o, 'raw'), traceNorm: sum(o, 'us'), hbm: sum(o, 'hbm'), bytes: sum(o, 'b'), bytesAfter: sum(o, 'bAfter'), hbmAfter: sum(o, 'hbmAfter'),
         gone: o.filter((e) => e.gone && !e.aux).length, aux: o.filter((e) => e.aux).length, kept: o.filter((e) => !e.gone).length },
     };

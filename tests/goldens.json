@@ -128,7 +128,11 @@
           "hbmAfter": 0.0009404513814925373,
           "solAfter": 0.004208275485542774,
           "over": [],
-          "exposed": 0
+          "exposed": 0,
+          "epiAddFast": 0.000015818181818181818,
+          "epiAddPrecise": 0.00016872727272727273,
+          "epiOverFast": 0,
+          "epiOverPrecise": 0
         },
         "other": {
           "trace": 2713.25,
@@ -159,7 +163,11 @@
           "over": [
             214
           ],
-          "exposed": 0.000013415928777914637
+          "exposed": 0.000013415928777914637,
+          "epiAddFast": 0.000007854545454545453,
+          "epiAddPrecise": 0.00008378181818181818,
+          "epiOverFast": 0,
+          "epiOverPrecise": 0
         },
         "other": {
           "trace": 5307.25,
@@ -188,7 +196,11 @@
           "hbmAfter": 0.0013229273026865672,
           "solAfter": 0.0032814511393217077,
           "over": [],
-          "exposed": 0
+          "exposed": 0,
+          "epiAddFast": 0,
+          "epiAddPrecise": 0,
+          "epiOverFast": 0,
+          "epiOverPrecise": 0
         },
         "other": {
           "trace": 577.75,
