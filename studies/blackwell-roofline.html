@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script data-theme>document.documentElement.classList.toggle('dark', (localStorage.getItem('dsv3-theme') ?? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')) === 'dark');</script>
+  <title>Working the roofline for DeepSeek-V3 on Blackwell (draft)</title>
+  <meta name="robots" content="noindex">
+  <link rel="stylesheet" href="./study.css">
+  <style>
+    /* 03's static formula sheets (studies/sheetedit.js makes them live) */
+    /* 03's static formula sheets (studies/sheetedit.js makes them live) */
+    .cellsheet { max-width: 760px; box-sizing: border-box; margin: 14px 0; font: 12px system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--c-0b0b0b);
+      border: 1px solid var(--c-e1e0d9); border-radius: 6px; background: var(--c-fcfcfb); padding: 8px 12px; }
+    .cellsheet table { border-collapse: collapse; width: 100%; table-layout: fixed; }
+    .cellsheet th:nth-child(1) { width: 38px; } .cellsheet th:nth-child(2) { width: 170px; } .cellsheet th:nth-child(3) { width: 181px; }
+    .cellsheet th:nth-child(4) { width: 83px; } .cellsheet th:nth-child(5) { width: 105px; }
+    .cellsheet th { box-sizing: border-box; text-align: left; font-size: 10.5px; color: var(--c-898781); font-weight: 600; padding: 1px 10px 3px 2px; }
+    .cellsheet td { padding: 1.5px 10px 1.5px 2px; border-top: 1px solid var(--c-f0efe9); font-size: 11.5px; vertical-align: baseline; white-space: nowrap; }
+    .cellsheet th.vl, .cellsheet td.vl { text-align: right; font-variant-numeric: tabular-nums; }
+    .cellsheet td.si .d { display: inline-block; width: 1.7em; text-align: left; }
+    .cellsheet td.si .u { display: inline-block; width: 4.3em; text-align: left; white-space: pre; }
+    .cellsheet th.si .u { display: inline-block; width: calc(4.3 * 11.5px); text-align: left; white-space: pre; }
+    .cellsheet td.sc sup { display: inline-block; width: 1.35em; text-align: left; }
+    .cellsheet td:nth-child(2) { white-space: normal; }
+    .cellsheet td.nm { font: 600 11px ui-monospace, monospace; color: var(--c-2a78d6); }
+    .cellsheet td.fx { font: 11px ui-monospace, monospace; color: var(--c-52514e); white-space: normal; }
+    .cellsheet td.fx b { color: var(--c-2a78d6); font-weight: 600; }
+    .cellsheet td.fx i { font: 11.5px system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--c-898781); font-style: normal; }
+    .cellsheet td.ap { color: var(--c-898781); }
+    .cellsheet sup, .cellsheet sub { line-height: 0; font-size: 0.8em; }
+    .cellsheet tr.hl td { background: var(--c-fff8ea); font-weight: 600; }
+    .cellsheet td.fx b.ref { cursor: pointer; }
+    .cellsheet tr.sel td { background: var(--c-fff3d1); }
+    .cellsheet .cs-dl { float: right; font: inherit; color: var(--c-2a78d6); background: none; border: 0; padding: 0; cursor: pointer; }
+    .cellsheet td.vl.edv { background: var(--c-eef4fc); cursor: text; }
+    @media (hover: hover) { .cellsheet td.vl.edv:hover { background: var(--c-dcebfa); } }
+    .cellsheet tr.off td.vl, .cellsheet tr.off td.ap { color: var(--c-b05f00); }
+    [data-cellref] { cursor: pointer; border-bottom: 1px dotted var(--c-898781); }
+    [data-cellref].off { color: var(--c-b05f00); }
+    .cellsheet .cs-in { box-sizing: border-box; width: 100%; margin: -2px 0; padding: 1px 3px; text-align: right;
+      font: inherit; font-variant-numeric: tabular-nums; color: var(--c-0b0b0b); background: var(--c-ffffff);
+      border: 1px solid var(--c-2a78d6); border-radius: 3px; outline: none; }
+    .cellsheet .cs-in.bad { border-color: var(--c-d03b3b); }
+    .cs-err { position: absolute; display: none; z-index: 7; max-width: 300px; padding: 4px 8px; border-radius: 4px;
+      background: var(--c-fdf1f1); border: 1px solid var(--c-d03b3b); color: var(--c-1c1c1a);
+      font: 11.5px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+    .cs-tip b { color: var(--c-2a78d6); font-weight: 600; }
+    .cs-tip i { color: var(--c-898781); font-style: normal; }
+    .cs-tip sup, .cs-tip sub { line-height: 0; font-size: 0.8em; }
+    .cellsheet sup:has(+ sub), .cs-tip sup:has(+ sub) { display: inline-block; width: 0; vertical-align: 0.7em; }
+    /* the frontier table: one row per cluster size, the best fitting layout per policy (page script, from the sheet's formulas) */
+    .tally { width: fit-content; box-sizing: border-box; margin: 14px 0; font: 12px system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--c-0b0b0b);
+      border: 1px solid var(--c-e1e0d9); border-radius: 6px; background: var(--c-fcfcfb); padding: 8px 12px; }
+    .tally table { border-collapse: collapse; }
+    .tally th { text-align: left; font-size: 10.5px; color: var(--c-898781); font-weight: 600; padding: 1px 16px 3px 2px; }
+    .tally th.g { text-align: center; padding-right: 16px; border-bottom: 1px solid var(--c-e1e0d9); }
+    .tally td { padding: 2.5px 16px 2.5px 2px; border-top: 1px solid var(--c-f0efe9); vertical-align: baseline; }
+    .tally th.n, .tally td.n { text-align: right; font-variant-numeric: tabular-nums; }
+    .tally th:last-child, .tally td:last-child { padding-right: 2px; }
+    .tally tr.hl td { background: var(--c-fff8ea); font-weight: 600; }
+    .tally td.no { color: var(--c-898781); }
+    .tally td.cb { color: var(--c-d03b3b); }
+    .tally .lay { font: 11px ui-monospace, monospace; color: var(--c-52514e); }
+  </style>
+</head>
+
+<body data-sheet="gb">
+  <main>
+    <h1>Working the roofline for DeepSeek-V3 on Blackwell</h1>
+
+    <p class="note">DRAFT (unlisted study). Sheets first, prose to follow; generated from
+    ~/Dev/scaling-dsv3-refs/blackwell-roofline/roofline-gen.mjs — edit the generator, not this file.</p>
+
+    <p>Part 3 worked the roofline for DeepSeek’s own run: 2,048 H800s, DualPipeV, EP64 across InfiniBand. This page runs the same method on the configuration NVIDIA publishes for GB300 NVL72: 256 GPUs, Megatron’s interleaved 1F1B at PP 2 with eight virtual stages, EP 32 inside one NVLink domain, MXFP8 on every GEMM including attention and the LM head, ZeRO-1, no recompute. Count the FLOPs, count the bytes each parallelism moves per link, divide by the link’s rate, check that compute covers the communication, and compare against what NVIDIA measures. The sheets are live as in part 3: the formula column is the program and blue values are knobs.</p>
+
+    <h2>Speed of light on a GB300</h2>
+
+    <p>Spec-sheet dense peaks are 2.5 PFLOP/s BF16 and 5 PFLOP/s FP8 per GPU. A sustained GEMM rate is not one number on Blackwell Ultra: the part is power limited, and how far under the architectural peak a perfectly efficient kernel settles depends on how much its operands make the datapath switch. Public B300 microbenchmarks reach about 94 % of the BF16 peak on low-switching operands and report the SM clock dropping under a sustained GEMM; random training data costs more power. The sheet carries 1.8 PFLOP/s BF16 and twice that for MXFP8 as the sustained rates, the same figures as the Kimi K3 roofline; both are knobs. The scale-out network is one ConnectX-8 (800 Gb/s) per GPU, twice Hopper’s; NVLink 5 is 900 GB/s per direction per GPU, and an NVL72 rack is one NVLink domain, of which NVIDIA’s DeepSeek-V3 recipes use 64 GPUs.</p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">π<sub>bf16</sub></td><td>GB300 BF16 dense peak, spec (FLOP/s)</td><td class="vl">2,500,000,000,000,000</td><td class="vl sc ap">2.50 × 10<sup>15</sup></td><td class="vl si ap">2<span class="d">.50</span><span class="u"> PFLOP/s</span></td><td class="fx"><i>(hardware spec, dense)</i></td></tr>
+    <tr class="hl"><td class="nm">π<sup>sol</sup><sub>bf16</sub></td><td>BF16 GEMM, sustained on random data (FLOP/s)</td><td class="vl">1,800,000,000,000,000</td><td class="vl sc ap">1.80 × 10<sup>15</sup></td><td class="vl si ap">1<span class="d">.80</span><span class="u"> PFLOP/s</span></td><td class="fx"><i>(model input: a power-limited estimate from public B300 microbenchmarks — see the text)</i></td></tr>
+    <tr><td class="nm">η<sub>bf16</sub></td><td>share of the spec peak</td><td class="vl">0.72</td><td class="vl sc ap">7.20 × 10<sup>−1</sup></td><td class="vl si ap">72<span class="d"></span><span class="u"> %</span></td><td class="fx"><b>π<sup>sol</sup><sub>bf16</sub></b> / <b>π<sub>bf16</sub></b></td></tr>
+    <tr><td class="nm">π<sub>fp8</sub></td><td>GB300 FP8 dense peak, spec (FLOP/s)</td><td class="vl">5,000,000,000,000,000</td><td class="vl sc ap">5.00 × 10<sup>15</sup></td><td class="vl si ap">5<span class="d"></span><span class="u"> PFLOP/s</span></td><td class="fx"><i>(hardware spec, dense)</i></td></tr>
+    <tr class="hl"><td class="nm">π<sup>sol</sup><sub>fp8</sub></td><td>MXFP8 GEMM, sustained on random data (FLOP/s)</td><td class="vl">3,600,000,000,000,000</td><td class="vl sc ap">3.60 × 10<sup>15</sup></td><td class="vl si ap">3<span class="d">.60</span><span class="u"> PFLOP/s</span></td><td class="fx"><i>(model input: 2× the BF16 figure, the spec ratio)</i></td></tr>
+    <tr><td class="nm">η<sub>fp8</sub></td><td>share of the spec peak</td><td class="vl">0.72</td><td class="vl sc ap">7.20 × 10<sup>−1</sup></td><td class="vl si ap">72<span class="d"></span><span class="u"> %</span></td><td class="fx"><b>π<sup>sol</sup><sub>fp8</sub></b> / <b>π<sub>fp8</sub></b></td></tr>
+    <tr><td class="nm">β<sub>NV</sub></td><td>NVLink per GPU, per direction (B/s)</td><td class="vl">900,000,000,000</td><td class="vl sc ap">9.00 × 10<sup>11</sup></td><td class="vl si ap">900<span class="d"></span><span class="u"> GB/s</span></td><td class="fx"><i>(hardware spec: NVLink 5, 1.8 TB/s bidirectional)</i></td></tr>
+    <tr><td class="nm">β<sub>IB</sub></td><td>scale-out per GPU (B/s)</td><td class="vl">100,000,000,000</td><td class="vl sc ap">1.00 × 10<sup>11</sup></td><td class="vl si ap">100<span class="d"></span><span class="u"> GB/s</span></td><td class="fx"><i>(hardware spec: ConnectX-8, 800 Gb/s)</i></td></tr>
+    <tr><td class="nm">NVL</td><td>GPUs per NVLink domain</td><td class="vl">64</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(model input: 64 of an NVL72 rack’s 72, as NVIDIA’s DeepSeek-V3 recipes lay it out)</i></td></tr>
+    </table></div>
+
+    <h2>The model</h2>
+
+    <p>The same model as part 3, with one change in the BF16 tally: NVIDIA’s GB300 recipe also runs the LM head in MXFP8, which leaves only the 58 routers in BF16.</p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">d</td><td>hidden dim</td><td class="vl">7,168</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(architecture)</i></td></tr>
+    <tr><td class="nm">L<sub>moe</sub></td><td>MoE layers</td><td class="vl">58</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(architecture)</i></td></tr>
+    <tr><td class="nm">L<sub>dns</sub></td><td>dense layers</td><td class="vl">3</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(architecture)</i></td></tr>
+    <tr><td class="nm">L</td><td>layers</td><td class="vl">61</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><b>L<sub>moe</sub></b> + <b>L<sub>dns</sub></b></td></tr>
+    <tr><td class="nm">n<sub>h</sub></td><td>attention heads</td><td class="vl">128</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(architecture)</i></td></tr>
+    <tr><td class="nm">d<sub>h</sub></td><td>head dim · qk nope, v</td><td class="vl">128</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(architecture)</i></td></tr>
+    <tr><td class="nm">d<sup>R</sup><sub>h</sub></td><td>head dim · qk rope</td><td class="vl">64</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(architecture)</i></td></tr>
+    <tr><td class="nm">k</td><td>routed experts per token</td><td class="vl">8</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(architecture)</i></td></tr>
+    <tr><td class="nm">N</td><td>activated params</td><td class="vl">36,625,618,432</td><td class="vl sc ap">3.66 × 10<sup>10</sup></td><td class="vl si ap">36<span class="d">.6</span><span class="u"> G</span></td><td class="fx"><i>(part 3’s checkpoint tally; the MTP module is out, as there)</i></td></tr>
+    <tr><td class="nm">N<sub>ne</sub></td><td>non-expert params</td><td class="vl">17,117,648,384</td><td class="vl sc ap">1.71 × 10<sup>10</sup></td><td class="vl si ap">17<span class="d">.1</span><span class="u"> G</span></td><td class="fx"><i>(checkpoint tally: attention, shared experts, dense FFNs, norms, routers, embedding, head)</i></td></tr>
+    <tr><td class="nm">N<sub>exp</sub></td><td>routed-expert params</td><td class="vl">653,908,770,816</td><td class="vl sc ap">6.54 × 10<sup>11</sup></td><td class="vl si ap">654<span class="d"></span><span class="u"> G</span></td><td class="fx"><i>(checkpoint tally: 58 MoE layers × 256 experts × 3 × 7,168 × 2,048)</i></td></tr>
+    <tr><td class="nm">N<sub>r</sub></td><td>router params, per layer</td><td class="vl">1,835,008</td><td class="vl sc ap">1.84 × 10<sup>6</sup></td><td class="vl si ap">1<span class="d">.84</span><span class="u"> M</span></td><td class="fx"><i>(7,168 × 256)</i></td></tr>
+    <tr><td class="nm">N<sub>bf16</sub></td><td>params in BF16 GEMMs</td><td class="vl">106,430,464</td><td class="vl sc ap">1.06 × 10<sup>8</sup></td><td class="vl si ap">106<span class="d"></span><span class="u"> M</span></td><td class="fx"><b>L<sub>moe</sub></b> · <b>N<sub>r</sub></b> <i>(the routers only: NVIDIA’s GB300 recipe runs the LM head in MXFP8 too)</i></td></tr>
+    </table></div>
+
+    <h2>The batch and the cluster</h2>
+
+    <p>NVIDIA’s benchmark trains 4,096 sequences of 4,096 tokens per step on 256 GPUs, a quarter of DeepSeek’s batch on an eighth of its GPUs: <span data-cellref="D<sub>GPU</sub>">65<span class="d">.5</span><span class="u"> K</span></span> tokens per GPU per step, twice part 3’s.</p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">B</td><td>sequences per step</td><td class="vl">4,096</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(model input: NVIDIA’s Megatron-Bridge GB300 benchmark)</i></td></tr>
+    <tr><td class="nm">S</td><td>tokens per sequence</td><td class="vl">4,096</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(model input)</i></td></tr>
+    <tr><td class="nm">D</td><td>tokens per step</td><td class="vl">16,777,216</td><td class="vl sc ap">1.68 × 10<sup>7</sup></td><td class="vl si ap">16<span class="d">.8</span><span class="u"> M</span></td><td class="fx"><b>B</b> · <b>S</b></td></tr>
+    <tr><td class="nm">GPUs</td><td>GPUs in the cluster</td><td class="vl">256</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(model input: four 64-GPU domains)</i></td></tr>
+    <tr><td class="nm">D<sub>GPU</sub></td><td>tokens per GPU per step</td><td class="vl">65,536</td><td class="vl sc ap">6.55 × 10<sup>4</sup></td><td class="vl si ap">65<span class="d">.5</span><span class="u"> K</span></td><td class="fx"><b>D</b> / <b>GPUs</b></td></tr>
+    </table></div>
+
+    <h2>How many FLOPs do we need to do?</h2>
+
+    <p>6ND for the GEMMs, split by dtype, plus the attention core, which 6ND does not count. NVIDIA’s recipe runs attention in MXFP8 (a<sub>8</sub> = 1); set it to 0 for a BF16 attention core. Nothing is recomputed, so there is no replay term.</p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">C</td><td>FLOPs per step, 6ND</td><td class="vl">3,686,855,469,403,471,872</td><td class="vl sc ap">3.69 × 10<sup>18</sup></td><td class="vl si ap">3<span class="d">.69</span><span class="u"> EFLOP</span></td><td class="fx">6 · <b>N</b> · <b>D</b></td></tr>
+    <tr><td class="nm">C<sub>bf16</sub></td><td>BF16 GEMM FLOPs inside 6ND</td><td class="vl">10,713,641,301,049,344</td><td class="vl sc ap">1.07 × 10<sup>16</sup></td><td class="vl si ap">10<span class="d">.7</span><span class="u"> PFLOP</span></td><td class="fx">6 · <b>N<sub>bf16</sub></b> · <b>D</b></td></tr>
+    <tr><td class="nm">C<sub>fp8</sub></td><td>MXFP8 GEMM FLOPs inside 6ND</td><td class="vl">3,676,141,828,102,422,528</td><td class="vl sc ap">3.68 × 10<sup>18</sup></td><td class="vl si ap">3<span class="d">.68</span><span class="u"> EFLOP</span></td><td class="fx"><b>C</b> − <b>C<sub>bf16</sub></b></td></tr>
+    <tr><td class="nm">c<sub>qk</sub></td><td>QKᵀ-shaped FLOPs · one layer, one sequence</td><td class="vl">412,316,860,416</td><td class="vl sc ap">4.12 × 10<sup>11</sup></td><td class="vl si ap">412<span class="d"></span><span class="u"> GFLOP</span></td><td class="fx">2 · <b>n<sub>h</sub></b> · (<b>d<sub>h</sub></b> + <b>d<sup>R</sup><sub>h</sub></b>) · <b>S</b> · <b>S</b> / 2 <i>(causal keeps half the pairs)</i></td></tr>
+    <tr><td class="nm">c<sub>pv</sub></td><td>PV-shaped FLOPs · one layer, one sequence</td><td class="vl">274,877,906,944</td><td class="vl sc ap">2.75 × 10<sup>11</sup></td><td class="vl si ap">275<span class="d"></span><span class="u"> GFLOP</span></td><td class="fx">2 · <b>n<sub>h</sub></b> · <b>d<sub>h</sub></b> · <b>S</b> · <b>S</b> / 2</td></tr>
+    <tr><td class="nm">C<sub>attn</sub></td><td>attention FLOPs per step</td><td class="vl">618,119,048,856,600,576</td><td class="vl sc ap">6.18 × 10<sup>17</sup></td><td class="vl si ap">618<span class="d"></span><span class="u"> PFLOP</span></td><td class="fx"><b>L</b> · <b>B</b> · (4 · <b>c<sub>qk</sub></b> + 3 · <b>c<sub>pv</sub></b>) <i>(QKᵀ-shaped ×4 (fwd, bwd replay, dQ, dK), PV-shaped ×3 (fwd, dV, dP))</i></td></tr>
+    <tr><td class="nm">a<sub>8</sub></td><td>attention core in MXFP8</td><td class="vl">1</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(model input: 1 = MXFP8 attention (fp8_dot_product_attention, NVIDIA’s GB300 recipe), 0 = BF16)</i></td></tr>
+    <tr><td class="nm">T<sub>fp8</sub></td><td>MXFP8 GEMM time (s)</td><td class="vl"></td><td class="vl sc ap">3.99 × 10<sup>0</sup></td><td class="vl si ap">3<span class="d">.99</span><span class="u"> s</span></td><td class="fx"><b>C<sub>fp8</sub></b> / (<b>GPUs</b> · <b>π<sup>sol</sup><sub>fp8</sub></b>)</td></tr>
+    <tr><td class="nm">T<sub>bf16</sub></td><td>BF16 GEMM time, routers (s)</td><td class="vl"></td><td class="vl sc ap">2.33 × 10<sup>−2</sup></td><td class="vl si ap">23<span class="d">.3</span><span class="u"> ms</span></td><td class="fx"><b>C<sub>bf16</sub></b> / (<b>GPUs</b> · <b>π<sup>sol</sup><sub>bf16</sub></b>)</td></tr>
+    <tr><td class="nm">T<sub>attn</sub></td><td>attention core time (s)</td><td class="vl"></td><td class="vl sc ap">6.71 × 10<sup>−1</sup></td><td class="vl si ap">671<span class="d"></span><span class="u"> ms</span></td><td class="fx"><b>C<sub>attn</sub></b> / (<b>GPUs</b> · (<b>a<sub>8</sub></b> · <b>π<sup>sol</sup><sub>fp8</sub></b> + (1 − <b>a<sub>8</sub></b>) · <b>π<sup>sol</sup><sub>bf16</sub></b>))</td></tr>
+    <tr class="hl"><td class="nm">T<sub>c</sub></td><td>compute time per step (s)</td><td class="vl"></td><td class="vl sc ap">4.68 × 10<sup>0</sup></td><td class="vl si ap">4<span class="d">.68</span><span class="u"> s</span></td><td class="fx"><b>T<sub>fp8</sub></b> + <b>T<sub>bf16</sub></b> + <b>T<sub>attn</sub></b> <i>(no recompute: NVIDIA’s GB300 MXFP8 recipe recomputes nothing)</i></td></tr>
+    <tr><td class="nm">φ</td><td>model FLOPs per token</td><td class="vl">256,596,476,928</td><td class="vl sc ap">2.57 × 10<sup>11</sup></td><td class="vl si ap">257<span class="d"></span><span class="u"> GFLOP</span></td><td class="fx">(<b>C</b> + <b>C<sub>attn</sub></b>) / <b>D</b></td></tr>
+    </table></div>
+
+    <h2>The layout</h2>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">PP</td><td>pipeline ranks</td><td class="vl">2</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(model input: NVIDIA’s GB300 benchmark)</i></td></tr>
+    <tr><td class="nm">VP</td><td>virtual stages per rank</td><td class="vl">8</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(model input: layout Et*4|(t*4|)*14tmL, sixteen chunks)</i></td></tr>
+    <tr><td class="nm">EP</td><td>expert parallelism</td><td class="vl">32</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(model input)</i></td></tr>
+    <tr><td class="nm">DP</td><td>replicas of a non-expert slice</td><td class="vl">128</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><b>GPUs</b> / <b>PP</b></td></tr>
+    <tr><td class="nm">EDP</td><td>replicas of an expert slice</td><td class="vl">4</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><b>GPUs</b> / (<b>PP</b> · <b>EP</b>)</td></tr>
+    <tr><td class="nm">domains</td><td>NVLink domains</td><td class="vl">4</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><b>GPUs</b> / <b>NVL</b></td></tr>
+    </table></div>
+
+    <h2>Expert parallelism over NVLink</h2>
+
+    <p>On Hopper the expert all-to-all crossed InfiniBand and was the largest communication term. On GB300 EP 32 lives inside one NVLink domain, so dispatch and combine ride NVLink at nine times the scale-out bandwidth. Each token goes once to each distinct GPU holding one of its eight experts; the forward sends MXFP8 out and BF16 back, the backward sends BF16 both ways.</p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">q</td><td>chance one expert pick misses a given GPU</td><td class="vl">0.96875</td><td class="vl sc ap">9.69 × 10<sup>−1</sup></td><td class="vl si ap"></td><td class="fx">1 − 1 / <b>EP</b></td></tr>
+    <tr><td class="nm">q<sup>8</sup></td><td>chance all k picks miss it</td><td class="vl"></td><td class="vl sc ap">7.76 × 10<sup>−1</sup></td><td class="vl si ap"></td><td class="fx"><b>q</b> · <b>q</b> · <b>q</b> · <b>q</b> · <b>q</b> · <b>q</b> · <b>q</b> · <b>q</b> <i>(k = 8; picks treated as independent, group limit ignored)</i></td></tr>
+    <tr><td class="nm">M<sub>NV</sub></td><td>other GPUs a token is sent to</td><td class="vl"></td><td class="vl sc ap">6.95 × 10<sup>0</sup></td><td class="vl si ap"></td><td class="fx">(<b>EP</b> − 1) · (1 − <b>q<sup>8</sup></b>) <i>(deduped: one copy per destination GPU, however many of its experts the token picked)</i></td></tr>
+    <tr><td class="nm">V<sub>disp</sub></td><td>dispatch bytes/token·layer</td><td class="vl"></td><td class="vl sc ap">5.14 × 10<sup>4</sup></td><td class="vl si ap">51<span class="d">.4</span><span class="u"> KB</span></td><td class="fx"><b>M<sub>NV</sub></b> · <b>d</b> · (1 + 1 / 32) <i>(MXFP8 + one E8M0 scale per 32)</i></td></tr>
+    <tr><td class="nm">V<sub>comb</sub></td><td>combine bytes/token·layer</td><td class="vl"></td><td class="vl sc ap">9.97 × 10<sup>4</sup></td><td class="vl si ap">99<span class="d">.7</span><span class="u"> KB</span></td><td class="fx"><b>M<sub>NV</sub></b> · <b>d</b> · 2 <i>(BF16)</i></td></tr>
+    <tr><td class="nm">V<sub>tok</sub></td><td>EP NVLink bytes per token</td><td class="vl"></td><td class="vl sc ap">2.03 × 10<sup>7</sup></td><td class="vl si ap">20<span class="d">.3</span><span class="u"> MB</span></td><td class="fx">(<b>V<sub>disp</sub></b> + 3 · <b>V<sub>comb</sub></b>) · <b>L<sub>moe</sub></b> <i>(forward: an MXFP8 dispatch and a BF16 combine; backward: both directions again, in BF16)</i></td></tr>
+    <tr><td class="nm">V<sub>EP</sub></td><td>EP NVLink bytes per GPU·step</td><td class="vl"></td><td class="vl sc ap">1.33 × 10<sup>12</sup></td><td class="vl si ap">1<span class="d">.33</span><span class="u"> TB</span></td><td class="fx"><b>V<sub>tok</sub></b> · <b>D<sub>GPU</sub></b></td></tr>
+    <tr class="hl"><td class="nm">T<sub>EP</sub></td><td>EP time per step (s)</td><td class="vl"></td><td class="vl sc ap">1.48 × 10<sup>0</sup></td><td class="vl si ap">1<span class="d">.48</span><span class="u"> s</span></td><td class="fx"><b>V<sub>EP</sub></b> / <b>β<sub>NV</sub></b></td></tr>
+    <tr class="hl"><td class="nm">f<sub>EP</sub></td><td>EP time, share of compute</td><td class="vl"></td><td class="vl sc ap">3.16 × 10<sup>−1</sup></td><td class="vl si ap">31<span class="d">.6</span><span class="u"> %</span></td><td class="fx"><b>T<sub>EP</sub></b> / <b>T<sub>c</sub></b> <i>(under 100 %: the 1F1B all-to-all overlap can hide it behind another microbatch’s compute)</i></td></tr>
+    </table></div>
+
+    <h2>ZeRO-1</h2>
+
+    <p>Megatron’s distributed optimizer shards the optimizer state over the data-parallel replicas: 128 for the non-expert slice of a stage, 4 for an expert slice. Gradients reduce-scatter in BF16 and the updated weights all-gather in BF16 once per step. The non-expert traffic splits across a domain’s 64 NICs, as in part 3’s two-bandwidth argument; the expert traffic is charged to a single GPU’s NIC.</p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">Λ<sub>ne</sub></td><td>non-expert params a domain receives</td><td class="vl">4,279,412,096</td><td class="vl sc ap">4.28 × 10<sup>9</sup></td><td class="vl si ap">4<span class="d">.28</span><span class="u"> G</span></td><td class="fx">max(0, <b>N<sub>ne</sub></b> / <b>PP</b> · (1 − <b>NVL</b> · <b>PP</b> / <b>GPUs</b>)) <i>(the domain’s one copy of a stage, minus the shards its own GPUs own; zero when a stage’s replicas fit in one domain)</i></td></tr>
+    <tr><td class="nm">β<sub>dom</sub></td><td>scale-out into a domain (B/s)</td><td class="vl">6,400,000,000,000</td><td class="vl sc ap">6.40 × 10<sup>12</sup></td><td class="vl si ap">6<span class="d">.40</span><span class="u"> TB/s</span></td><td class="fx"><b>NVL</b> · <b>β<sub>IB</sub></b></td></tr>
+    <tr><td class="nm">Λ<sub>exp</sub></td><td>expert params a GPU receives</td><td class="vl">7,662,993,408</td><td class="vl sc ap">7.66 × 10<sup>9</sup></td><td class="vl si ap">7<span class="d">.66</span><span class="u"> G</span></td><td class="fx"><b>N<sub>exp</sub></b> / (<b>PP</b> · <b>EP</b>) · (1 − 1 / <b>EDP</b>) <i>(its slice minus its own shard, all charged to scale-out (some replicas share a domain: an overestimate))</i></td></tr>
+    <tr><td class="nm">T<sub>ag</sub></td><td>parameter all-gather, BF16 (s)</td><td class="vl"></td><td class="vl sc ap">1.55 × 10<sup>−1</sup></td><td class="vl si ap">155<span class="d"></span><span class="u"> ms</span></td><td class="fx">2 · <b>Λ<sub>ne</sub></b> / <b>β<sub>dom</sub></b> + 2 · <b>Λ<sub>exp</sub></b> / <b>β<sub>IB</sub></b> <i>(MXFP8 parameters are gathered in BF16 and quantized locally)</i></td></tr>
+    <tr><td class="nm">T<sub>rs</sub></td><td>gradient reduce-scatter, BF16 (s)</td><td class="vl"></td><td class="vl sc ap">1.55 × 10<sup>−1</sup></td><td class="vl si ap">155<span class="d"></span><span class="u"> ms</span></td><td class="fx">2 · <b>Λ<sub>ne</sub></b> / <b>β<sub>dom</sub></b> + 2 · <b>Λ<sub>exp</sub></b> / <b>β<sub>IB</sub></b> <i>(grad_reduce_in_fp32 off)</i></td></tr>
+    <tr class="hl"><td class="nm">T<sub>sync</sub></td><td>ZeRO-1 time per step (s)</td><td class="vl"></td><td class="vl sc ap">3.09 × 10<sup>−1</sup></td><td class="vl si ap">309<span class="d"></span><span class="u"> ms</span></td><td class="fx"><b>T<sub>ag</sub></b> + <b>T<sub>rs</sub></b></td></tr>
+    </table></div>
+
+    <h2>Pipeline parallelism</h2>
+
+    <p>Interleaved 1F1B with V virtual stages divides the bubble by V: (PP − 1)/(V · m). At PP 2, V 8 and 32 microbatches per replica that is <span data-cellref="b<sub>ILV</sub>">0<span class="d">.391</span><span class="u"> %</span></span>. The price is traffic: each token crosses every chunk boundary, 2V times per rank per pass instead of 2.</p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">D<sub>PP</sub></td><td>tokens per replica·step</td><td class="vl">131,072</td><td class="vl sc ap">1.31 × 10<sup>5</sup></td><td class="vl si ap">131<span class="d"></span><span class="u"> K</span></td><td class="fx"><b>D</b> · <b>PP</b> / <b>GPUs</b></td></tr>
+    <tr><td class="nm">V<sub>res</sub></td><td>residual bytes per token</td><td class="vl">14,336</td><td class="vl sc ap">1.43 × 10<sup>4</sup></td><td class="vl si ap">14<span class="d">.3</span><span class="u"> KB</span></td><td class="fx"><b>d</b> · 2 <i>(BF16)</i></td></tr>
+    <tr><td class="nm">V<sub>PP</sub></td><td>PP bytes per GPU·step</td><td class="vl">30,064,771,072</td><td class="vl sc ap">3.01 × 10<sup>10</sup></td><td class="vl si ap">30<span class="d">.1</span><span class="u"> GB</span></td><td class="fx">2 · <b>VP</b> · <b>V<sub>res</sub></b> · <b>D<sub>PP</sub></b> <i>(each token enters each of this rank’s chunks once forward, once backward; charged to scale-out (Megatron puts PP outermost, so stages sit in different domains))</i></td></tr>
+    <tr><td class="nm">T<sub>PP</sub></td><td>PP time per step (s)</td><td class="vl"></td><td class="vl sc ap">3.01 × 10<sup>−1</sup></td><td class="vl si ap">301<span class="d"></span><span class="u"> ms</span></td><td class="fx"><b>V<sub>PP</sub></b> / <b>β<sub>IB</sub></b></td></tr>
+    <tr><td class="nm">m</td><td>microbatches per replica·step</td><td class="vl">32</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><b>D<sub>PP</sub></b> / <b>S</b> <i>(one sequence each)</i></td></tr>
+    <tr class="hl"><td class="nm">b<sub>ILV</sub></td><td>interleaved 1F1B bubble, share of compute</td><td class="vl">0.00390625</td><td class="vl sc ap">3.91 × 10<sup>−3</sup></td><td class="vl si ap">0<span class="d">.391</span><span class="u"> %</span></td><td class="fx">(<b>PP</b> − 1) / (<b>VP</b> · <b>m</b>)</td></tr>
+    <tr><td class="nm">T<sub>bub</sub></td><td>bubble time per step (s)</td><td class="vl"></td><td class="vl sc ap">1.83 × 10<sup>−2</sup></td><td class="vl si ap">18<span class="d">.3</span><span class="u"> ms</span></td><td class="fx"><b>T<sub>c</sub></b> · <b>b<sub>ILV</sub></b></td></tr>
+    </table></div>
+
+    <h2>Putting it together</h2>
+
+    <p>Compute dominates: EP traffic over NVLink is <span data-cellref="f<sub>EP</sub>">31<span class="d">.6</span><span class="u"> %</span></span> of the compute time and scale-out traffic <span data-cellref="f<sub>IB</sub>">13<span class="d">.0</span><span class="u"> %</span></span>, both hideable, and the bubble is a rounding error. Speed of light is <span data-cellref="ρ<sup>sol</sup>">13<span class="d">.9</span><span class="u"> K</span></span> tokens/s per GPU against the <span data-cellref="ρ<sup>NV</sup>">6<span class="d">.29</span><span class="u"> K</span></span> NVIDIA reports, a factor of <span data-cellref="f<sup>sol</sup>">2<span class="d">.22</span><span class="u"> </span></span> — where part 3 found DeepSeek’s run 4.3× under its speed of light.</p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">T<sub>IB</sub></td><td>scale-out time per step (s)</td><td class="vl"></td><td class="vl sc ap">6.10 × 10<sup>−1</sup></td><td class="vl si ap">610<span class="d"></span><span class="u"> ms</span></td><td class="fx"><b>T<sub>sync</sub></b> + <b>T<sub>PP</sub></b></td></tr>
+    <tr class="hl"><td class="nm">f<sub>IB</sub></td><td>scale-out time, share of compute</td><td class="vl"></td><td class="vl sc ap">1.30 × 10<sup>−1</sup></td><td class="vl si ap">13<span class="d">.0</span><span class="u"> %</span></td><td class="fx"><b>T<sub>IB</sub></b> / <b>T<sub>c</sub></b> <i>(under 100 % with f<sub>EP</sub>: compute bound, comms overlapped)</i></td></tr>
+    <tr class="hl"><td class="nm">T<sub>step</sub></td><td>step time at speed of light (s)</td><td class="vl"></td><td class="vl sc ap">4.70 × 10<sup>0</sup></td><td class="vl si ap">4<span class="d">.70</span><span class="u"> s</span></td><td class="fx"><b>T<sub>c</sub></b> + <b>T<sub>bub</sub></b> <i>(compute plus the bubble)</i></td></tr>
+    <tr class="hl"><td class="nm">ρ<sup>sol</sup></td><td>tokens/s per GPU at speed of light</td><td class="vl"></td><td class="vl sc ap">1.39 × 10<sup>4</sup></td><td class="vl si ap">13<span class="d">.9</span><span class="u"> K</span></td><td class="fx"><b>D<sub>GPU</sub></b> / <b>T<sub>step</sub></b></td></tr>
+    <tr><td class="nm">ρ<sup>NV</sup></td><td>tokens/s per GPU, as reported</td><td class="vl">6,288</td><td class="vl sc ap">6.29 × 10<sup>3</sup></td><td class="vl si ap">6<span class="d">.29</span><span class="u"> K</span></td><td class="fx"><i>(Megatron-Bridge performance summary, 26.08.01 container: DGX-GB300, 256 GPUs, MXFP8, GBS 4,096, PP 2 · VP 8 · EP 32, forced-balanced routing)</i></td></tr>
+    <tr class="hl"><td class="nm">f<sup>sol</sup></td><td>speed of light over reality</td><td class="vl"></td><td class="vl sc ap">2.22 × 10<sup>0</sup></td><td class="vl si ap">2<span class="d">.22</span><span class="u"> </span></td><td class="fx"><b>ρ<sup>sol</sup></b> / <b>ρ<sup>NV</sup></b></td></tr>
+    </table></div>
+
+    <div class="tally configs"><table>
+    <thead>
+    <tr><th>configuration</th><th class="n">GBS</th><th>layout</th><th class="n">T<sub>step</sub> at SOL</th><th class="n">EP / compute</th><th class="n">bubble</th><th class="n">tok/s/GPU at SOL</th><th class="n">measured</th><th class="n">SOL / measured</th></tr>
+    </thead>
+    <tbody></tbody>
+    </table></div>
+
+    <h2>Comparing against NVIDIA’s numbers</h2>
+
+    <p>NVIDIA reports 1,636 model TFLOP/s per GPU alongside the throughput, which pins their FLOP count per token: <span data-cellref="f<sub>φ</sub>">101<span class="d"></span><span class="u"> %</span></span> of ours, close enough that the comparison is like for like. At their throughput our count is <span data-cellref="π<sup>NV</sup>">1<span class="d">.61</span><span class="u"> PFLOP/s</span></span> per GPU, <span data-cellref="η<sup>NV</sup>">32<span class="d">.3</span><span class="u"> %</span></span> of the FP8 spec peak. The benchmark has moved a long way in six months: 4,612 tokens/s per GPU in the 26.02 container, 6,338 in 26.06, 6,288 in 26.08.01. The MLPerf Training v6.0 submission routes for real, at GBS 15,360 and PP 4 · VP 4, and lands within a percent of the forced-balanced benchmark.</p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">φ<sup>NV</sup></td><td>NVIDIA’s model FLOPs per token</td><td class="vl"></td><td class="vl sc ap">2.60 × 10<sup>11</sup></td><td class="vl si ap">260<span class="d"></span><span class="u"> GFLOP</span></td><td class="fx">1,636 · 10<sup>12</sup> / <b>ρ<sup>NV</sup></b> <i>(the same row’s 1,636 model TFLOP/s per GPU over its tokens/s)</i></td></tr>
+    <tr><td class="nm">f<sub>φ</sub></td><td>theirs over ours</td><td class="vl"></td><td class="vl sc ap">1.01 × 10<sup>0</sup></td><td class="vl si ap">101<span class="d"></span><span class="u"> %</span></td><td class="fx"><b>φ<sup>NV</sup></b> / <b>φ</b></td></tr>
+    <tr><td class="nm">π<sup>NV</sup></td><td>achieved model FLOP rate per GPU (FLOP/s)</td><td class="vl">1,613,478,646,923,264</td><td class="vl sc ap">1.61 × 10<sup>15</sup></td><td class="vl si ap">1<span class="d">.61</span><span class="u"> PFLOP/s</span></td><td class="fx"><b>ρ<sup>NV</sup></b> · <b>φ</b> <i>(our FLOP count at their throughput)</i></td></tr>
+    <tr><td class="nm">η<sup>NV</sup></td><td>of the FP8 spec peak</td><td class="vl"></td><td class="vl sc ap">3.23 × 10<sup>−1</sup></td><td class="vl si ap">32<span class="d">.3</span><span class="u"> %</span></td><td class="fx"><b>π<sup>NV</sup></b> / <b>π<sub>fp8</sub></b></td></tr>
+    <tr><td class="nm">B<sup>ML</sup></td><td>MLPerf: sequences per step</td><td class="vl">15,360</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(MLPerf Training v6.0, NVIDIA result 6.0-0100: 256 GB300s, PP 4 · VP 4 · EP 32, real routing)</i></td></tr>
+    <tr><td class="nm">T<sup>ML</sup></td><td>MLPerf: median step time (s)</td><td class="vl">39.355</td><td class="vl sc ap">3.94 × 10<sup>1</sup></td><td class="vl si ap">39<span class="d">.4</span><span class="u"> s</span></td><td class="fx"><i>(median train_step_time over the 147 steps of the three published result logs (38.8–41.1 s))</i></td></tr>
+    <tr><td class="nm">ρ<sup>ML</sup></td><td>MLPerf: tokens/s per GPU</td><td class="vl"></td><td class="vl sc ap">6.24 × 10<sup>3</sup></td><td class="vl si ap">6<span class="d">.24</span><span class="u"> K</span></td><td class="fx"><b>B<sup>ML</sup></b> · <b>S</b> / (<b>GPUs</b> · <b>T<sup>ML</sup></b>)</td></tr>
+    </table></div>
+
+  </main>
+  <script type="module">
+    import '../src/viewer.js';
+    import './reset.js';
+    import './sheetedit.js';
+  </script>
+  <script type="module">
+    // 03's sheet interactions (cell cards, jump-to-row, row select) + the configuration table
+    import { attachTip } from '../src/tip.js';
+    import { current, withKnobs } from './sheetedit.js';
+    const def = new Map();
+    for (const tr of document.querySelectorAll('.cellsheet tr')) {
+      const nm = tr.querySelector('td.nm')?.innerHTML;
+      if (nm && !def.has(nm)) def.set(nm, tr);
+    }
+    const rowOf = (b) => def.get(b?.dataset.cellref ?? b?.innerHTML);
+    for (const b of document.querySelectorAll('.cellsheet td.fx b')) if (rowOf(b)) b.classList.add('ref');
+    const card = (tr) => {
+      const [nm, lb, vl, , si, fx] = tr.cells;
+      const leaf = !fx.querySelector('b') && fx.children.length === 1 && fx.firstElementChild.tagName === 'I';
+      const approx = si.textContent.trim();
+      const d = document.createElement('div');
+      const terms = [leaf ? '' : `= ${fx.innerHTML}`, vl.textContent && `= ${vl.textContent}`, approx && `≈ ${approx.replace(/\s+/g, ' ')}`];
+      d.innerHTML = `<b>${nm.innerHTML}</b> · ${lb.innerHTML}<br>` + terms.filter(Boolean).join(' ');
+      return d;
+    };
+    let sel = null, fuse;
+    const select = (tr) => { sel?.classList.remove('sel'); sel = tr; tr?.classList.add('sel'); };
+    const jump = (tr) => { select(tr); tr.scrollIntoView({ block: 'center' }); };
+    for (const sheet of document.querySelectorAll('.cellsheet')) {
+      attachTip(sheet, (ev) => { const tr = rowOf(ev.target.closest?.('b.ref')); return tr ? card(tr) : null; },
+        { parent: document.body, cls: 'cs-tip', pinnable: (ev) => !ev.target.closest('b.ref') });
+      sheet.addEventListener('click', (ev) => {
+        const tr = rowOf(ev.target.closest?.('b.ref'));
+        if (tr) { jump(tr); return; }
+        const row = ev.target.closest?.('tr');
+        if (!row?.querySelector('td')) return;
+        clearTimeout(fuse);
+        if (ev.detail > 1 || !getSelection().isCollapsed) return;
+        fuse = setTimeout(() => select(sel === row ? null : row), 250);
+      });
+    }
+    for (const q of document.querySelectorAll('main [data-cellref]')) {
+      attachTip(q, () => card(rowOf(q)), { parent: document.body, cls: 'cs-tip', pinnable: () => false });
+      q.addEventListener('click', () => jump(rowOf(q)));
+    }
+    // NVIDIA's two GB300 configurations through the sheet's own formulas (withKnobs), at the
+    // current hardware knobs: the Megatron-Bridge benchmark and the MLPerf v6.0 submission
+    const num = ([a, b]) => Number(a) / Number(b);
+    const Q = (x) => [BigInt(x), 1n];
+    const CONFIGS = [
+      ['Megatron-Bridge benchmark (26.08.01)', { B: Q(4096), PP: Q(2), VP: Q(8), EP: Q(32) }, (v) => num(v.get('ρ<sup>NV</sup>'))],
+      ['MLPerf v6.0, NVIDIA 6.0-0100', { B: Q(15360), PP: Q(4), VP: Q(4), EP: Q(32) }, (v) => num(v.get('ρ<sup>ML</sup>'))],
+    ];
+    const pct = (x) => (100 * x).toFixed(1) + ' %';
+    const tbody = document.querySelector('.configs tbody');
+    const build = () => {
+      tbody.innerHTML = CONFIGS.map(([label, over, meas]) => {
+        const v = withKnobs(over), g = (k) => num(v.get(k));
+        const sol = g('ρ<sup>sol</sup>'), m = meas(v);
+        return `<tr><td>${label}</td><td class="n">${g('B').toLocaleString('en-US')}</td><td class="lay">PP ${g('PP')} · VP ${g('VP')} · EP ${g('EP')}</td>` +
+          `<td class="n">${g('T<sub>step</sub>').toFixed(2)} s</td><td class="n">${pct(g('f<sub>EP</sub>'))}</td><td class="n">${pct(g('b<sub>ILV</sub>'))}</td>` +
+          `<td class="n">${Math.round(sol).toLocaleString('en-US')}</td><td class="n">${Math.round(m).toLocaleString('en-US')}</td><td class="n">${(sol / m).toFixed(2)}×</td></tr>`;
+      }).join('');
+    };
+    build();
+    document.addEventListener('dsv3-cells', build);
+  </script>
+</body>
+
+</html>

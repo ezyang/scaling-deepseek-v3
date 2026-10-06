@@ -32,6 +32,22 @@ const PAGES = {
       return null;
     },
   },
+  gb: {
+    knobs: { 'π<sup>sol</sup><sub>bf16</sub>': 'sol', 'π<sup>sol</sup><sub>fp8</sub>': 'sol8', 'β<sub>NV</sub>': 'NV', 'β<sub>IB</sub>': 'IB', NVL: 'NVL', B: 'B', S: 'S', GPUs: 'GPUs', 'a<sub>8</sub>': 'a8', PP: 'PP', VP: 'VP', EP: 'EP' },
+    counts: ['NVL', 'B', 'S', 'GPUs', 'a8', 'PP', 'VP', 'EP'],
+    zero: ['a8'],
+    xlsx: ['dsv3-blackwell-roofline-sheet.xlsx', 'DSv3 Blackwell roofline'],
+    rules(v, edits, pub) {
+      const [G, P, E, N, B, A] = ['GPUs', 'PP', 'EP', 'NVL', 'B', 'a8'].map((k) => v(k)[0]);
+      if (A > 1n) return 'a₈ is a switch: 1 = MXFP8 attention, 0 = BF16';
+      if (N % E) return `EP must divide NVL (${N}): EP lives inside one NVLink domain`;
+      if (G % (P * E)) return `PP · EP must divide GPUs (${G.toLocaleString('en-US')})`;
+      if ((B * P) % G) return `the replicas (GPUs / PP = ${(G / P).toLocaleString('en-US')}) must divide B`;
+      const L = pub.get('L')?.[0];
+      if (P * v('VP')[0] > L) return `PP · VP chunks need at least one of the model's ${L} layers each`;
+      return null;
+    },
+  },
   k3: {
     knobs: { B: 'B', S: 'S', GPUs: 'GPUs', 'π<sup>sol</sup><sub>bf16</sub>': 'sol', 'π<sup>sol</sup><sub>fp8</sub>': 'sol8', 'β<sub>NV</sub>': 'NV', 'β<sub>IB</sub>': 'IB', NVL: 'NVL', PP: 'PP', EP: 'EP', 'V<sub>pp</sub>': 'Vpp', 'r<sub>res</sub>': 'rres', ovl: 'ovl', 'μ': 'mu', 'g<sub>B</sub>': 'gB', 'o<sub>B</sub>': 'oB', 'β<sub>host</sub>': 'host' },
     counts: ['B', 'S', 'GPUs', 'NVL', 'PP', 'EP', 'Vpp', 'rres', 'ovl', 'gB', 'oB'],
