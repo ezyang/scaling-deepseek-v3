@@ -37,6 +37,8 @@
     details.fold[open] > summary { margin-bottom: 0; }
     .eq { font: 13px ui-monospace, Menlo, monospace; color: var(--c-1c1c1a); background: var(--c-f3f2ee); padding: 8px 12px; border-radius: 5px; margin: 10px 0; overflow-x: auto; white-space: pre; }
     .srcs td { vertical-align: top; }
+    .plan td { vertical-align: top; }
+    .plan td:nth-child(2) { white-space: nowrap; font-variant-numeric: tabular-nums; }
   </style>
 </head>
 
@@ -132,6 +134,23 @@
     <p>Third, registers, which the field guide names as the real budget for independent work in an epilogue. A 128 × 128 fp32 accumulator over the 256 threads of two warpgroups is 64 registers per thread, and DeepGEMM holds two of them (the WGMMA accumulator and the promoted sum). The SwiGLU epilogue needs the gate and up values of a pair live together, the 128-block quantization an absmax across the quad and a second reduction for the column layout, and the two scale layouts their own staging. None of that is modeled here. The field guide's four warps recovered most of their throughput by batching 128 elements per thread at 190 registers; a Hopper epilogue has no such slack, which is the argument for reading the precise-rate number as the H800 estimate and the fast-rate one as Blackwell's.</p>
 
     <div class="tally hosts"></div>
+
+    <h2>What would settle it</h2>
+
+    <p>Everything above is a model: two meters and a disposition per launch. But each row of the savings is a claim about one kernel pair at a shape the trace gives exactly, and the field guide's method (matched implementations, warmed CUDA-graph timings, Nsight for warps and issue slots, a restricted standalone proxy before a fused kernel exists) applies to each directly. The table lists the experiment that would confirm or kill each number, in the order they matter. Only the first can move the headline; the rest decide whether its parts are as cheap as the bytes say.</p>
+
+    <table class="xcheck plan">
+      <tr><th>claimed win</th><th>per layer</th><th>the experiment</th><th>what it settles</th></tr>
+      <tr><td>SwiGLU in the gate/up and FC2-backward epilogues</td><td><span data-kt="swigluT" data-fmt="us">554 µs</span> retired, <span data-kt="layer.epiAddFast" data-fmt="us">24 µs</span>–<span data-kt="layer.epiAddPrecise" data-fmt="us">253 µs</span> back</td><td>DeepGEMM's FP8 kernel (or a CuTe DSL FP8 grouped GEMM) with a pairwise SwiGLU × routing-weight × 128-block FP8 epilogue in both scale layouts, at 32,768 × 7,168 → 4,096, against the GEMM plus DeepSeek's fused SwiGLU kernel; fast and precise exp; registers and spills from ptxas</td><td>where in the 24–253 µs range the H800 sits, and whether spills push it out of it; on a GB300 the same kernel tests the overlapped end</td></tr>
+      <tr><td>pointwise epilogues on the thin-K hosts (KV up K = 512, Q up K = 1,536)</td><td><span data-kt="ropeF" data-fmt="us">314 µs</span> of RoPE and copies, forward; the same again in the recompute</td><td>DeepGEMM at those two shapes with and without a per-row scale and a 64-column rotation in the epilogue</td><td>the serialized plain-epilogue cost where the mainloop is 1.5–4.6 µs per tile</td></tr>
+      <tr><td>weight transposes cached per step; one FP8 write in both scale layouts</td><td><span data-kt="cache" data-fmt="us">329 µs</span> + <span data-kt="requant" data-fmt="us">322 µs</span></td><td>run the GEMMs from a pre-transposed weight; emit row- and column-scaled FP8 from one cast kernel</td><td>plumbing only: that the GEMMs run at the same speed from cached operands</td></tr>
+      <tr><td>GEMM → delayed RMSNorm → GEMM, with <i>r</i> in the FP8 scales</td><td><span data-kt="latentnorm" data-fmt="us">78 µs</span> around the MLA latents</td><td>the paper's Kernel 1/2 pair on FP8: partial sums of squares in the down-projection's epilogue, <i>r</i> multiplied into the per-token scales, the up-projection reading them; compare outputs to the standalone chain</td><td>that per-block scales absorb a per-row factor to one fp32 rounding, and the epilogue reductions cost nothing visible</td></tr>
+      <tr><td>the Q-down input gradient hosting the input-norm backward</td><td><span data-kt="qdn.replaced" data-fmt="us">170 µs</span> retired, <span data-kt="qdn.exposed" data-fmt="us">13 µs</span> exposed</td><td>a K = 1,536 GEMM whose epilogue loads three bf16 tiles and reduces a row dot product</td><td>the one host the HBM meter flags; whether a tile-load epilogue at small K costs its bytes or more</td></tr>
+      <tr><td>one routing kernel for the router's <span data-kt="routerglue" data-fmt="n">58</span> launches</td><td><span data-kt="routergluet" data-fmt="us">333 µs</span></td><td>a hand-written group-limited top-8 over 256 logits with the bias, normalization and load-balance statistics, timed alone</td><td>that the launches are latency, not work (their HBM floor is microseconds)</td></tr>
+      <tr><td>the DeepEP changes: residual and norm in the combine, <i>r</i> in the dispatched scales, <i>ŝ</i> partials on the gradient combine</td><td><span data-kt="inputnorm" data-fmt="us">215 µs</span> and the plumbing the backward identity needs</td><td>a DeepEP fork on one node (intranode kernels): the combine reducing a full row and emitting the FP8 copy, the dispatch carrying scaled scales</td><td>that a network-bound kernel absorbs two extra tensor writes; the bytes are argued above, the kernels are not</td></tr>
+    </table>
+
+    <p>What no microbenchmark settles is the step-level number. 03's trace shows the compute and communication streams busy for about the same time; taking six milliseconds a layer off the compute stream exposes the all-to-all unless it shortens too, and the expansion and reduction kernels around it are the largest thing CODA leaves behind. That needs the full EP64 run, or 03's timing model with these kernel times fed back into it.</p>
 
     <h2>Caveats</h2>
 
@@ -233,6 +252,7 @@
       'mma.perK': P[109].epx.mmaTile / P[109].Kd, 'mma.7168': P[109].epx.mmaTile, 'mma.1536': P[15].epx.mmaTile, 'mma.512': P[18].epx.mmaTile,
       'epi.plain': P[109].epx.epiTile.plain, 'epi.fast': P[109].epx.epiTile.fast, 'epi.precise': P[109].epx.epiTile.precise,
       swigluT: sumUs((e) => [111, 116, 76, 71, 70].includes(e.i)),
+      latentnorm: sumUs((e) => [9, 10, 11, 12, 13, 14, 16, 17].includes(e.i)),
     };
     const get = (path) => {
       if (path in K) return K[path];
