@@ -229,13 +229,23 @@
     <dsv3-anatomy style="min-height:1073px" layer="fp8-layer" ctx='{"world":256,"pp":2,"ep":32,"zero":1,"sched":"interleaved","vpp":8,"hw":"gb300","stage":1,"peak":false,"a2a":true}' controls="dtype" recipe="nv-mxfp8" recipes="bf16,nv-mxfp8" recompute="none"
       xlayers="29" xinflight="2.21" xtag="rank 1 of PP2 · interleaved 1F1B, VP8"></dsv3-anatomy>
 
-    <p>Not modeled, and worth knowing about before comparing this roofline to a
-    real memory trace: NVIDIA's full-iteration CUDA graphs need static shapes,
-    so the MoE buffers are padded to a fixed expert capacity (1.5× the balanced
-    load in the archive recipe, 4× in the MLPerf submission, which routes for
-    real) and the dispatched activations live in a paged stash with a CPU
-    spill; the LM head's
-    MXFP8 weight copies; and the MTP module described above.</p>
+    <p class="ai">[[AI: Not modeled, and worth knowing about before comparing this
+    roofline to a real memory trace: NVIDIA's full-iteration CUDA graphs need
+    static shapes, so each GPU's MoE receive buffers are sized to a fixed
+    multiple of the balanced load (<code>moe_expert_rank_capacity_factor</code>:
+    1.5 in the archive recipe, 4 in the MLPerf submission, which routes for
+    real), and the routed experts' saved activations live in a paged stash: one
+    pool shared by every layer and in-flight microbatch, sized at a multiple of
+    the balanced total (1.2 on the GPU in the archive recipe, 1.5 in MLPerf)
+    with a pinned-host spill behind it (1.0 in both).  If either budget
+    overflows on any rank, Megatron discards the step and reruns it dropless;
+    the 147 steps of NVIDIA's three published MLPerf runs all take 38.8–41.1
+    seconds, so none of them did.  The two factors buy headroom at very
+    different prices: a receive buffer holds one layer at a time, so even 4×
+    is cheap, while the stash spans every layer the rank holds, where
+    per-layer spikes average out — which is why it can get away with 1.2–1.5.
+    Also unmodeled: the LM head's MXFP8 weight copies, and the MTP module
+    described above.]]</p>
 
     <h2>Fitting it</h2>
 
@@ -243,7 +253,7 @@
     the line.  On GB300 we run the same steps, and then keep going to see which
     levers were load-bearing.</p>
 
-    <dsv3-beat-deck id="fitdeck" style="min-height:648px">
+    <dsv3-beat-deck id="fitdeck" style="min-height:715px">
       <section data-config='{"world":256,"pp":1,"ep":1,"zero":0,"hw":"gb300","gradB":2}'>
         <b>Step 1 — Global memory usage.</b> Everything replicated on every one of the 256 GPUs, with
         Megatron's bf16 gradient buffer.
@@ -269,13 +279,13 @@
       <section data-config='{"world":256,"pp":1,"ep":32,"zero":1,"hw":"gb300","gradB":2,"recipe":"nv-mxfp8","fp8Params":true}' data-hypothetical="hypothetical — not NVIDIA's config">
         <b>What if there were no pipeline at all?</b> Drop PP entirely, keep EP32: the weights and
         gradients double back, the activations fall to one microbatch, and by this roofline it still fits
-        on a GB300 with 40 GiB to spare.  Memory is not why NVIDIA runs PP2 here.
+        on a GB300 with 40 GiB to spare.  <mark class="flag">Memory is not why NVIDIA runs PP2 here.</mark> <span class="flag-why">[[FLAG: 40 GiB is less than real stacks spend above this roofline — measured GB300 runs land ≈ 10 GiB + 15% over it, which puts no-PP/EP32 at ≈ 282 GiB, borderline; no-PP at EP64 (198 → ≈ 237) is the one that clearly fits.  NVIDIA's own no-PP recipe (64 GPUs) is FSDP + recompute + attention offload, not ZeRO-1.]]</span>
       </section>
       <section data-config='{"world":256,"pp":2,"vpp":8,"ep":32,"zero":1,"sched":"interleaved","fold":"wrap","a2a":true,"hw":"gb200","gradB":2,"recipe":"nv-mxfp8","fp8Params":true}' data-hypothetical="hypothetical — the GB300 config on a GB200">
         <b>The GB300 config on a GB200.</b> The same configuration against 184 GiB.  By this roofline it
         fits with 7 GiB to spare — and the intermediates the roofline leaves out (CUDA-graph pools, the
-        1.5× expert-capacity buffers, the paged stash, communicator workspaces) are certainly worth more
-        than that.  So NVIDIA's GB200 recipes move to PP4 / VP4 / EP64 with the MLA up-projections
+        <mark class="flag">1.5× expert-capacity buffers</mark> <span class="flag-why">[[FLAG: per-GPU receive buffers (moe_expert_rank_capacity_factor), not per-expert capacity; see the paragraph above the deck]]</span>, the paged stash, communicator workspaces) are <mark class="flag">certainly worth more
+        than that.</mark> <span class="flag-why">[[FLAG: quantifiable now: measured GB300 runs need ≈ 10 GiB + 15% over this roofline, ≈ 36 GiB here, so the config is ≈ 29 GiB over 184, not 7 under; consider stating the rule instead of "certainly"]]</span>  So NVIDIA's GB200 recipes move to PP4 / VP4 / EP64 with the MLA up-projections
         recomputed, and the MLPerf GB200 submissions add TP2 as well.  On GB200, memory is still picking
         the configuration.
       </section>
@@ -294,7 +304,7 @@
 
     <p>On Hopper every lever was load-bearing.  On GB300 the reference
     configuration lands near 177 GiB of 276 with no recompute at all, and the
-    roofline still fits with the pipeline removed.  On GB200 the same
+    <mark class="flag">roofline still fits with the pipeline removed.</mark> <span class="flag-why">[[FLAG: true of the roofline, but at EP32 the margin real stacks need eats the 40 GiB; say EP64, or qualify]]</span>  On GB200 the same
     configuration lands 7 GiB under the line, which is to say over it in
     practice, and NVIDIA's GB200 recipes duly pull more levers.  So Blackwell
     splits the question the Hopper post could not: on GB200 memory still picks
