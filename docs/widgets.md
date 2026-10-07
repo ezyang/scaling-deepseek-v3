@@ -528,21 +528,23 @@ flattens it into one FSDP 2,048 axis. The knob groups its buttons by mesh
 narrows an instance to some of them (03 shows `fsdp` and `efsdp,ep` as two
 widgets). A one-view instance keeps the group label but drops the buttons. Our
 GPU (EP group 12, node 5, local rank 3) blue and outlined, its node box
-outlined. Darkness = in the group, graded by how the bytes reach us: ink
-= direct IB peer, dark grey = direct NVLink peer, mid grey = through a peer,
-light grey = a node-mate's copy (its own IB lane); white = not in the group. `ep`: the MoE all-to-all's group, our row — 7
-node-mates, 7 IB peers (our local rank on the group's other nodes), the
-other 49 through them. `fsdp`: the non-expert parameters sharded over all
-2,048 — our 7 node-mates, the 255 GPUs with our local rank (IB peers, 1/8
-of the bytes, gathered before the NVLink stage), everyone else through them. `efsdp`: our expert
-slice's 32 copies are our column, one per EP group and none on our node —
-31 IB peers; our node-mates' slices have their own columns beside it (the
-rest of our node's column of boxes, 224 `lane` cells), everything else
-white. The readout prices IB per NODE: the non-expert copy is pulled
+outlined. The cells say which pieces we need. `ep`: darkness = in the
+group, graded by how the bytes reach us: ink = direct IB peer, dark grey =
+direct NVLink peer, mid grey = through a peer; white = not in the group —
+the MoE all-to-all's group, our row: 7 node-mates, 7 IB peers (our local
+rank on the group's other nodes), the other 49 through them. `fsdp`: ONE
+uniform color — every other GPU holds a shard of the one copy our node
+needs (the roles ib/nv/grp still drive the hover route: our 7 node-mates,
+the 255 GPUs with our local rank, everyone else through them). `efsdp`:
+our expert slice's 32 copies are our column, one per EP group and none on
+our node — 31 ink cells; our node-mates' slices have their own columns
+beside it, STRIPED by local rank (`STRIPE`, 8 colors, ours the ink; 224
+`lane` cells: eight payloads, we need only our stripe), everything else
+white. `fillOf(view, role, rank)` is the cell color. The readout prices IB per NODE: the non-expert copy is pulled
 through all eight NICs (400 GB/s), each expert slice through its GPU's own
 NIC (50 GB/s). A readout line and a fixed legend (every view's swatches;
-the FSDP-only instance drops 'not in the group' and the lane swatch, which
-it never draws, and spells its labels longer) sit below the grid, rows
+the FSDP-only instance has just 'our GPU' and its one swatch; the expert
+instance's is terser to fit the eight stripe chips, `[data-stripe=k]`) sit below the grid, rows
 labeled `EP group N`. Hovering a GPU draws its route to ours (no tip card:
 it would cover the route; a key sits at the legend's right end): IB an
 amber curve that leaves and enters cells vertically (a straight line down
@@ -565,7 +567,7 @@ their node, then NVLink.
 A flip tweens every cell's fill (~200 ms). `role(view, row, node, rank)`,
 `route(…)`, `lanes(…)`, `OURS`, `ROWS`/`NODES`/`GPUS` are node-importable;
 test affordances: `[data-knob=view] [data-v]`,
-`rect[data-role=ours|ib|nv|grp|lane|out]`, `rect[data-node=ours]`,
+`rect[data-role=ours|ib|nv|grp|lane|out]`, `[data-stripe]`, `rect[data-node=ours]`,
 `path[data-hop=ib|nv]` (the route), `path[data-lane]` (the seven others),
 `[data-readout]` (tests/mesh.js).
 

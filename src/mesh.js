@@ -12,6 +12,10 @@
 // ours at the same time — under FSDP the eight lanes carry eighths of one
 // shard (then NVLink swaps them), under EFSDP eight different slices, one
 // per node-mate, so the same eight pipes serve eight needs instead of one.
+// The cells say which pieces we need: the FSDP view is one uniform color
+// (every GPU holds a shard of the one copy our node needs), the EFSDP view
+// stripes our node's column by local rank (eight slices, eight colors; we
+// need only our rank's stripe, our node-mates need theirs).
 import { C } from './theme.js';
 import { knobCss } from './ui.js';
 
@@ -48,9 +52,12 @@ export function lanes(view, row, node, rank) {
   if (view === 'ep' || (row === OURS.row && node === OURS.node) || (view === 'efsdp' && node !== OURS.node)) return [];
   return [...Array(GPUS).keys()].filter((j) => j !== rank).map((j) => [[row, node, j], [OURS.row, OURS.node, j]]);
 }
-// dark = in the group, graded by how the bytes reach us: direct IB peer ·
-// direct NVLink peer · one hop further (through a peer); light = a node-mate's lane; white = not in it
-const FILL = { ours: '#2a78d6', ib: '#1c1c1a', nv: '#52514e', grp: '#8f8d86', lane: '#aba89f', out: '#ffffff' };
+// EP: dark = in the group, graded by how the bytes reach us: direct IB peer · direct NVLink peer ·
+// one hop further (through a peer); white = not in it. FSDP flattens the grades to one color (one
+// payload, every GPU holds a piece of it); EFSDP stripes the lanes by local rank (eight payloads)
+const FILL = { ours: '#2a78d6', ib: '#1c1c1a', nv: '#52514e', grp: '#8f8d86', out: '#ffffff' };
+const STRIPE = ['#8a3324', '#eb6834', '#6b7d12', '#1c1c1a', '#0a98a0', '#4a6a8e', '#6b5bd2', '#d6408b'];   // by local rank; ours (3) is the ink of 'ib'
+export const fillOf = (view, ro, rank) => ro === 'lane' ? STRIPE[rank] : view === 'fsdp' && ro !== 'ours' ? FILL.nv : FILL[ro];
 const READOUT = {
   ep: 'our EP64 group (our row): dispatch + combine each MoE layer · NVLink: our 7 node-mates · IB: 7 same-rank peers, who forward to 49 more',
   fsdp: 'non-expert: one copy per node, pulled through all 8 NICs at 400 GB/s (34.1 GB a move) · 8 lanes per node, NVLink swaps the eighths',
@@ -180,8 +187,8 @@ class Dsv3Mesh extends (typeof HTMLElement === 'undefined' ? class {} : HTMLElem
         const ourNode = us && n === OURS.node;
         B.push(`<rect x="${cx(n, 0) - 2}" y="${y - 2}" width="${GPUS * PX + 3}" height="${CS + 4}" rx="2" fill="${C('#f3f2ee')}" stroke="${C(ourNode ? '#0b0b0b' : '#e1e0d9')}"${ourNode ? ' stroke-width="1.2" data-node="ours"' : ''}/>`);
         for (let k = 0; k < GPUS; k++) {
-          const ro = role(v, row, n, k), f0 = from ? role(from, row, n, k) : ro;
-          const c = f0 === ro || t >= 1 ? fill(ro) : mix(fill(f0), fill(ro), t);
+          const ro = role(v, row, n, k), c1 = C(fillOf(v, ro, k)), c0 = from ? C(fillOf(from, role(from, row, n, k), k)) : c1;
+          const c = c0 === c1 || t >= 1 ? c1 : mix(c0, c1, t);
           B.push(`<rect data-role="${ro}" x="${cx(n, k)}" y="${y}" width="${CS}" height="${CS}" fill="${c}"/>`);
         }
       }
@@ -191,14 +198,15 @@ class Dsv3Mesh extends (typeof HTMLElement === 'undefined' ? class {} : HTMLElem
     B.push(`<g data-route>${this._routeSvg()}</g>`);
     B.push(`<text data-readout x="0" y="${H - 22}">${READOUT[v]}</text>`);
     const ly = H - 4, sw = (x, ro, label) => `<rect x="${x}" y="${ly - 8}" width="${CS}" height="${CS}" fill="${fill(ro)}"${ro === 'out' ? ` stroke="${C('#aba89f')}" stroke-width="0.6"` : ''}/><text class="dims" x="${x + 12}" y="${ly - 1}">${label}</text>`;
-    // the expert instance's legend is terser: it also has to fit the lane swatch (FSDP alone has no outsiders, no lanes)
-    B.push(sw(0, 'ours', 'our GPU'), sw(66, 'ib', 'IB peer'), ...(ex
-      ? [sw(126, 'nv', 'NVLink peer'), sw(207, 'grp', 'via a peer'), sw(283, 'out', 'not in the group'), sw(389, 'lane', 'a node-mate\'s copy · its own lane')]
-      : [sw(126, 'nv', 'NVLink peer (same node)'), sw(262, 'grp', 'in the group, reached through a peer')]));
+    // the FSDP instance: one payload, one swatch. The expert instance's legend is terser: it also fits the eight stripes
+    const stripes = (x) => STRIPE.map((h, k) => `<rect data-stripe="${k}" x="${x + k * 4}" y="${ly - 8}" width="3.4" height="${CS}" fill="${C(h)}"/>`).join('') + `<text class="dims" x="${x + 36}" y="${ly - 1}">slices by local rank · own lanes</text>`;
+    B.push(sw(0, 'ours', 'our GPU'), ...(ex
+      ? [sw(66, 'ib', 'IB peer'), sw(126, 'nv', 'NVLink peer'), sw(207, 'grp', 'via a peer'), sw(283, 'out', 'not in the group'), stripes(389)]
+      : [sw(66, 'nv', 'holds a shard of the one copy our node needs (all 2,047)')]));
     // the hover route's key, right-aligned
     const key = (x, c, lab) => `<path d="M${x},${ly - 4} h10" stroke="${C(c)}" stroke-width="1.6"/>${head(x + 14, ly - 4, 1, 0, C(c))}<text class="dims" x="${x + 17}" y="${ly - 1}">${lab}</text>`;
     B.push(`<g data-key><text class="dims" x="${W - 146}" y="${ly - 1}">route:</text>${key(W - 115, '#eda100', 'IB')}${key(W - 83, '#1baf7a', 'NVLink')}</g>`);
-    this._chart.innerHTML = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="DeepSeek-V3's 2,048 GPUs drawn as 32 rows, one per EP group, each of 8 nodes of 8 GPUs. Under EP our row trades tokens: NVLink to our 7 node-mates, InfiniBand to our local rank on its 7 other nodes. Under FSDP the non-expert parameters are sharded over all of them: our GPU gathers from its 7 node-mates over NVLink and from the 255 GPUs with the same local rank over InfiniBand, so the node pulls its one copy through all eight NICs at once. Under EFSDP our expert slice's 32 copies form one column, one GPU per EP group, all on other nodes; our node-mates' slices have their own columns beside it, each fed by its own NIC, so the eight NICs carry eight different payloads and nothing crosses NVLink.">${B.join('')}</svg>`;
+    this._chart.innerHTML = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="DeepSeek-V3's 2,048 GPUs drawn as 32 rows, one per EP group, each of 8 nodes of 8 GPUs. Under EP our row trades tokens: NVLink to our 7 node-mates, InfiniBand to our local rank on its 7 other nodes. Under FSDP the non-expert parameters are sharded over all of them: our GPU gathers from its 7 node-mates over NVLink and from the 255 GPUs with the same local rank over InfiniBand, so the node pulls its one copy through all eight NICs at once. Under EFSDP our expert slice's 32 copies form one column, one GPU per EP group, all on other nodes; our node-mates' slices have their own columns beside it, striped by local rank, each fed by its own NIC, so the eight NICs carry eight different payloads and nothing crosses NVLink.">${B.join('')}</svg>`;
   }
   // the GPU under the pointer, from its position: no dead zones between cells, and the gutters between
   // node boxes belong to the nearer box's edge cell, so a route never blinks out while the pointer crosses one

@@ -23,6 +23,8 @@ T.check('route key clears the legend', keyClear(), q('[data-key]').getBBox().x);
 T.check('FSDP readout fits', q('[data-readout]').getComputedTextLength() < 738, q('[data-readout]').getComputedTextLength());
 let c = count();
 T.check('FSDP: 1 ours · 255 IB · 7 NVLink · 1,785 via a peer', fmt(c) === fmt({ ours: 1, ib: 255, nv: 7, grp: 1785, lane: 0, out: 0 }), fmt(c));
+T.check('FSDP: one payload, one color — every cell but ours shares a fill', new Set(qa('rect[data-role]:not([data-role=ours])').map((r) => r.getAttribute('fill'))).size === 1 && q('rect[data-role=ours]').getAttribute('fill') === '#2a78d6', '');
+T.check('FSDP legend: our GPU + the one swatch, no stripes', /holds a shard of the one copy/.test(q('svg').textContent) && !qa('[data-stripe]').length && !/IB peer/.test(q('svg').textContent), '');
 T.check('FSDP: NVLink peers are exactly our node', qa('rect[data-role=nv]').every((r) => Math.abs(+r.getAttribute('y') - +q('rect[data-role=ours]').getAttribute('y')) < 0.5), '');
 T.check('our node box is outlined', qa('rect[data-node=ours]').length === 1, '');
 const roles = [];
@@ -86,6 +88,9 @@ T.check('mid-tween: some fill is between the two roles', qa('rect[data-role=out]
 await T.tick(400);
 c = count();
 T.check('EFSDP: 1 ours · 31 IB · 224 lanes · 1,792 elsewhere', fmt(c) === fmt({ ours: 1, ib: 31, nv: 0, grp: 0, lane: 224, out: 1792 }), fmt(c));
+const stripeFills = () => { const m = new Map(); for (const r of qa('rect[data-role=lane]')) { const x = (+r.getAttribute('x') - +q('rect[data-node=ours]').getAttribute('x')); (m.get(x) ?? m.set(x, new Set()).get(x)).add(r.getAttribute('fill')); } return m; };
+T.check('EFSDP: striped by local rank — 7 lane columns, one fill each, all different, none ink or white', stripeFills().size === 7 && [...stripeFills().values()].every((f) => f.size === 1) && new Set([...stripeFills().values()].map((f) => [...f][0])).size === 7 && ![...stripeFills().values()].some((f) => f.has('#1c1c1a') || f.has('#ffffff')), JSON.stringify([...stripeFills()].map(([x, f]) => [x, [...f]])));
+T.check('EFSDP legend: eight stripe swatches match the cells', qa('[data-stripe]').length === 8 && qa('[data-stripe]')[3].getAttribute('fill') === '#1c1c1a' && [...stripeFills().values()].every((f) => qa('[data-stripe]').some((r) => f.has(r.getAttribute('fill')))), '');
 T.check('EFSDP: lanes fill our node\'s column, 7 per box', qa('rect[data-role=lane]').every((r) => +r.getAttribute('x') >= +q('rect[data-node=ours]').getAttribute('x') && +r.getAttribute('x') <= +q('rect[data-node=ours]').getAttribute('x') + 79) && qa('rect[data-role=ib]').every((r) => +r.getAttribute('x') === +q('rect[data-role=ours]').getAttribute('x')), '');
 T.check('EFSDP: fills land exactly', qa('rect[data-role=out]').every((r) => r.getAttribute('fill') === '#ffffff') && qa('rect[data-role=ib]').every((r) => r.getAttribute('fill') === '#1c1c1a'), '');
 T.check('EFSDP readout fits', q('[data-readout]').getComputedTextLength() < 738, q('[data-readout]').getComputedTextLength());
