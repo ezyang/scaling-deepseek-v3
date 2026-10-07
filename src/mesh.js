@@ -200,14 +200,16 @@ class Dsv3Mesh extends (typeof HTMLElement === 'undefined' ? class {} : HTMLElem
     B.push(`<g data-key><text class="dims" x="${W - 146}" y="${ly - 1}">route:</text>${key(W - 115, '#eda100', 'IB')}${key(W - 83, '#1baf7a', 'NVLink')}</g>`);
     this._chart.innerHTML = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="DeepSeek-V3's 2,048 GPUs drawn as 32 rows, one per EP group, each of 8 nodes of 8 GPUs. Under EP our row trades tokens: NVLink to our 7 node-mates, InfiniBand to our local rank on its 7 other nodes. Under FSDP the non-expert parameters are sharded over all of them: our GPU gathers from its 7 node-mates over NVLink and from the 255 GPUs with the same local rank over InfiniBand, so the node pulls its one copy through all eight NICs at once. Under EFSDP our expert slice's 32 copies form one column, one GPU per EP group, all on other nodes; our node-mates' slices have their own columns beside it, each fed by its own NIC, so the eight NICs carry eight different payloads and nothing crosses NVLink.">${B.join('')}</svg>`;
   }
-  // the GPU under the pointer, from its position (no dead zones between cells)
+  // the GPU under the pointer, from its position: no dead zones between cells, and the gutters between
+  // node boxes belong to the nearer box's edge cell, so a route never blinks out while the pointer crosses one
   _hover(ev) {
     let hov = null;
     if (ev) {
       const svg = this._chart.querySelector('svg'), R = svg.getBoundingClientRect(), s = W / R.width;
       const x = (ev.clientX - R.left) * s, y = (ev.clientY - R.top) * s;
-      const row = Math.floor((y - TOP + (PY - CS) / 2) / PY), n = Math.floor((x - LX + NG / 2) / NP), k = Math.floor((x - cx(n, 0) + (PX - CS) / 2) / PX);
-      if (row >= 0 && row < ROWS && n >= 0 && n < NODES && k >= 0 && k < GPUS && x <= GX1 + 2) hov = [row, n, k];
+      const row = Math.floor((y - TOP + (PY - CS) / 2) / PY), n = Math.floor((x - LX + NG / 2) / NP);
+      const k = Math.max(0, Math.min(GPUS - 1, Math.floor((x - cx(n, 0) + (PX - CS) / 2) / PX)));
+      if (row >= 0 && row < ROWS && n >= 0 && n < NODES && x >= LX - NG / 2 && x <= GX1 + NG / 2) hov = [row, n, k];
     }
     if (String(hov) !== String(this._hov)) { this._hov = hov; this._route(); }
   }

@@ -57,6 +57,12 @@ const [ib, nv] = qa('path[data-hop]'), mate = qa('rect[data-role=nv]').find((r) 
 T.check('route: via a peer → IB then NVLink', hops() === 'ib,nv', hops());
 T.check('route: IB arrives from above, so the NVLink bracket runs below our row', +ends(nv)[0][1] > +q('rect[data-role=ours]').getAttribute('y'), ends(nv)[0][1]);
 T.check('route: IB from the hovered GPU to our node-mate at its local rank, NVLink on to us', near(ends(ib)[0], far) && near(ends(ib)[1], mate) && near(ends(nv)[0], mate) && near(ends(nv)[1], q('rect[data-role=ours]')), JSON.stringify([ends(ib), ends(nv)]));
+// the gutter between node boxes is not a dead zone: the route holds while the pointer crosses it
+const gx = (r) => { const b = r.getBoundingClientRect(); return [b.x + b.width + 3 * b.width / 8, b.y + b.height / 2]; };   // 3 px right of the cell, mid-gutter
+const last = qa('rect[data-role=grp]').find((r) => +r.getAttribute('y') === +far.getAttribute('y') && +r.getAttribute('x') === +far.getAttribute('x') + 63);   // row 0, node 0, rank 7
+q('svg').parentElement.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: gx(last)[0], clientY: gx(last)[1] }));
+await T.tick(30);
+T.check('route holds across the gutter between node boxes', hops() === 'ib,nv' && near(ends(qa('path[data-hop]')[0])[0], last), hops());
 q('svg').parentElement.dispatchEvent(new MouseEvent('mouseleave'));
 await T.tick(30);
 T.check('no tip card', !w.querySelector('.dsv3-tip'), '');
