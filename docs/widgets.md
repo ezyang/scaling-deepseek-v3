@@ -538,9 +538,10 @@ needs (the roles ib/nv/grp still drive the hover route: our 7 node-mates,
 the 255 GPUs with our local rank, everyone else through them). `efsdp`:
 our expert slice's 32 copies are our column, one per EP group and none on
 our node — 31 ink cells; our node-mates' slices have their own columns
-beside it, STRIPED by local rank (`STRIPE`, 8 colors, ours the ink; 224
-`lane` cells: eight payloads, we need only our stripe), everything else
-white. `fillOf(view, role, rank)` is the cell color. The readout prices IB per NODE: the non-expert copy is pulled
+beside it, STRIPED by local rank (`STRIPE`, 8 theme hues softened 40%
+toward the paper at render time, ours the full ink; 224 `lane` cells: eight
+payloads, we need only our stripe), everything else white.
+`fillOf(view, role, rank)` / `stripe(rank)` are the resolved cell colors. The readout prices IB per NODE: the non-expert copy is pulled
 through all eight NICs (400 GB/s), each expert slice through its GPU's own
 NIC (50 GB/s). A readout line and a fixed legend (every view's swatches;
 the FSDP-only instance has just 'our GPU' and its one swatch; the expert
@@ -548,11 +549,14 @@ instance's is terser to fit the eight stripe chips, `[data-stripe=k]`) sit below
 labeled `EP group N`. Hovering a GPU draws its route to ours (no tip card:
 it would cover the route; a key sits at the legend's right end): IB an
 amber curve that leaves and enters cells vertically (a straight line down
-our node's column), NVLink a green bracket hugging our row on the side the
+our node's column — there it rides inside the column with no halo, so it
+reads as the stripe connecting the rows rather than a wire slicing every
+cell), NVLink a green bracket hugging our row on the side the
 IB curve doesn't arrive from — plus, faint and behind it, the hovered
-node's other seven IB lanes into our node, rank to rank (`lanes()`): the
-same eight pipes carry eighths of one shard under `fsdp` and eight
-different slices under `efsdp`; none under `ep`. `fsdp` grey cells: IB to
+node's other seven IB lanes into our node, rank to rank (`lanes()`; under
+`efsdp` each in its stripe's color): the same eight pipes carry eighths of
+one shard under `fsdp` and eight different slices under `efsdp`; none
+under `ep`. `fsdp` grey cells: IB to
 our node-mate at their local rank, then NVLink to us (the hierarchical
 all-gather's order); `efsdp` lane cells: IB to their own GPU on our node;
 `ep` grey cells: dispatch runs the other way, IB to our local rank on

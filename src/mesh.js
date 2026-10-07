@@ -57,7 +57,9 @@ export function lanes(view, row, node, rank) {
 // payload, every GPU holds a piece of it); EFSDP stripes the lanes by local rank (eight payloads)
 const FILL = { ours: '#2a78d6', ib: '#1c1c1a', nv: '#52514e', grp: '#8f8d86', out: '#ffffff' };
 const STRIPE = ['#8a3324', '#eb6834', '#6b7d12', '#1c1c1a', '#0a98a0', '#4a6a8e', '#6b5bd2', '#d6408b'];   // by local rank; ours (3) is the ink of 'ib'
-export const fillOf = (view, ro, rank) => ro === 'lane' ? STRIPE[rank] : view === 'fsdp' && ro !== 'ours' ? FILL.nv : FILL[ro];
+// stripes are softened 40% toward the paper at render time (C() first, so night mode softens toward its own paper)
+export const stripe = (rank) => rank === OURS.rank ? C(STRIPE[rank]) : mix(C(STRIPE[rank]), C('#fcfcfb'), 0.4);
+export const fillOf = (view, ro, rank) => ro === 'lane' ? stripe(rank) : C(view === 'fsdp' && ro !== 'ours' ? FILL.nv : FILL[ro]);
 const READOUT = {
   ep: 'our EP64 group (our row): dispatch + combine each MoE layer · NVLink: our 7 node-mates · IB: 7 same-rank peers, who forward to 49 more',
   fsdp: 'non-expert: one copy per node, pulled through all 8 NICs at 400 GB/s (34.1 GB a move) · 8 lanes per node, NVLink swaps the eighths',
@@ -81,14 +83,17 @@ const ctr = ([r, n, k]) => [cx(n, k) + CS / 2, cy(r) + CS / 2];
 const f1 = (v) => v.toFixed(1);
 const HALO = (d) => `<path d="${d}" fill="none" stroke="${C('#fcfcfb')}" stroke-width="3.5"/>`;
 const head = (tx, ty, ux, uy, c) => `<path d="M${f1(tx)},${f1(ty)} L${f1(tx - ux * 4 - uy * 2.3)},${f1(ty - uy * 4 + ux * 2.3)} L${f1(tx - ux * 4 + uy * 2.3)},${f1(ty - uy * 4 - ux * 2.3)}Z" fill="${c}" stroke="${C('#fcfcfb')}" stroke-width="0.8"/>`;
-function ibHop([x0, y0], [x1, y1], faint) {   // leaves and enters vertically, crossing only the gaps between rows; straight down our node's column
+// faint: one of the node's other seven lanes (amber at half strength, or `tint` — its stripe's color under
+// EFSDP). A lane straight down our node's column rides INSIDE the column: no halo (it would slice every
+// cell it passes), so it reads as the stripe connecting the two rows rather than a wire over them
+function ibHop([x0, y0], [x1, y1], faint, tint) {   // leaves and enters vertically, crossing only the gaps between rows
   const dx = x1 - x0, dy = y1 - y0, sg = Math.sign(dy) || 1, h = dy ? Math.abs(dy) * 0.45 : 6 + Math.min(40, Math.abs(dx) / 4);
   const [ax, ay, bx, by] = dy ? [x0, y0 + sg * h, x1, y1 - sg * h] : [x0, y0 - h, x1, y1 - h];
   const u = (x, y, tx, ty) => { const l = Math.hypot(tx - x, ty - y); return [(tx - x) / l, (ty - y) / l]; };
   const [sx, sy] = u(x0, y0, ax, ay), [ex, ey] = u(bx, by, x1, y1);
-  const tx = x1 - ex * 4.5, ty = y1 - ey * 4.5, c = faint ? mix(C('#eda100'), C('#fcfcfb'), 0.5) : C('#eda100');   // both ends at the cell rim
+  const tx = x1 - ex * 4.5, ty = y1 - ey * 4.5, c = tint ?? (faint ? mix(C('#eda100'), C('#fcfcfb'), 0.5) : C('#eda100'));   // both ends at the cell rim
   const line = `M${f1(x0 + sx * 4.5)},${f1(y0 + sy * 4.5)} C${f1(ax)},${f1(ay)} ${f1(bx)},${f1(by)} ${f1(tx - ex * 3)},${f1(ty - ey * 3)}`;
-  return HALO(line) + `<path data-${faint ? 'lane' : 'hop'}="ib" d="${line}" fill="none" stroke="${c}" stroke-width="${faint ? 1.1 : 1.6}"/>` + head(tx, ty, ex, ey, c);
+  return (dx ? HALO(line) : '') + `<path data-${faint ? 'lane' : 'hop'}="ib" d="${line}" fill="none" stroke="${c}" stroke-width="${faint ? 1.1 : 1.6}"/>` + head(tx, ty, ex, ey, c);
 }
 function nvHop(a, b, side) {   // side: -1 above the row, +1 below
   const x0 = ctr(a)[0], x1 = ctr(b)[0], edge = cy(a[0]) + (side > 0 ? CS : 0), yr = edge + side * 6.5, c = C('#1baf7a');
@@ -167,7 +172,7 @@ class Dsv3Mesh extends (typeof HTMLElement === 'undefined' ? class {} : HTMLElem
     const [row, n, k] = this._hov;
     const hops = route(this.view, row, n, k), ib = hops.find((h) => h[2] === 'ib');
     const side = ib && ib[0][0] > ib[1][0] ? -1 : 1;   // IB arriving from below: NVLink goes above
-    return lanes(this.view, row, n, k).map(([a, b]) => ibHop(ctr(a), ctr(b), true)).join('')   // the node's other lanes, behind
+    return lanes(this.view, row, n, k).map(([a, b]) => ibHop(ctr(a), ctr(b), true, this.view === 'efsdp' ? stripe(b[2]) : null)).join('')   // the node's other lanes, behind
       + hops.map(([a, b, link]) => link === 'ib' ? ibHop(ctr(a), ctr(b)) : nvHop(a, b, side)).join('')
       + `<rect x="${cx(n, k) - 1}" y="${cy(row) - 1}" width="${CS + 2}" height="${CS + 2}" fill="none" stroke="${C('#eda100')}" stroke-width="1.2"/>`;
   }
@@ -187,7 +192,7 @@ class Dsv3Mesh extends (typeof HTMLElement === 'undefined' ? class {} : HTMLElem
         const ourNode = us && n === OURS.node;
         B.push(`<rect x="${cx(n, 0) - 2}" y="${y - 2}" width="${GPUS * PX + 3}" height="${CS + 4}" rx="2" fill="${C('#f3f2ee')}" stroke="${C(ourNode ? '#0b0b0b' : '#e1e0d9')}"${ourNode ? ' stroke-width="1.2" data-node="ours"' : ''}/>`);
         for (let k = 0; k < GPUS; k++) {
-          const ro = role(v, row, n, k), c1 = C(fillOf(v, ro, k)), c0 = from ? C(fillOf(from, role(from, row, n, k), k)) : c1;
+          const ro = role(v, row, n, k), c1 = fillOf(v, ro, k), c0 = from ? fillOf(from, role(from, row, n, k), k) : c1;
           const c = c0 === c1 || t >= 1 ? c1 : mix(c0, c1, t);
           B.push(`<rect data-role="${ro}" x="${cx(n, k)}" y="${y}" width="${CS}" height="${CS}" fill="${c}"/>`);
         }
@@ -199,7 +204,7 @@ class Dsv3Mesh extends (typeof HTMLElement === 'undefined' ? class {} : HTMLElem
     B.push(`<text data-readout x="0" y="${H - 22}">${READOUT[v]}</text>`);
     const ly = H - 4, sw = (x, ro, label) => `<rect x="${x}" y="${ly - 8}" width="${CS}" height="${CS}" fill="${fill(ro)}"${ro === 'out' ? ` stroke="${C('#aba89f')}" stroke-width="0.6"` : ''}/><text class="dims" x="${x + 12}" y="${ly - 1}">${label}</text>`;
     // the FSDP instance: one payload, one swatch. The expert instance's legend is terser: it also fits the eight stripes
-    const stripes = (x) => STRIPE.map((h, k) => `<rect data-stripe="${k}" x="${x + k * 4}" y="${ly - 8}" width="3.4" height="${CS}" fill="${C(h)}"/>`).join('') + `<text class="dims" x="${x + 36}" y="${ly - 1}">slices by local rank · own lanes</text>`;
+    const stripes = (x) => STRIPE.map((h, k) => `<rect data-stripe="${k}" x="${x + k * 4}" y="${ly - 8}" width="3.4" height="${CS}" fill="${stripe(k)}"/>`).join('') + `<text class="dims" x="${x + 36}" y="${ly - 1}">slices by local rank · own lanes</text>`;
     B.push(sw(0, 'ours', 'our GPU'), ...(ex
       ? [sw(66, 'ib', 'IB peer'), sw(126, 'nv', 'NVLink peer'), sw(207, 'grp', 'via a peer'), sw(283, 'out', 'not in the group'), stripes(389)]
       : [sw(66, 'nv', 'holds a shard of the one copy our node needs (all 2,047)')]));
