@@ -529,22 +529,32 @@ narrows an instance to some of them (03 shows `fsdp` and `efsdp,ep` as two
 widgets). A one-view instance keeps the group label but drops the buttons. Our
 GPU (EP group 12, node 5, local rank 3) blue and outlined, its node box
 outlined. Darkness = in the group, graded by how the bytes reach us: ink
-= direct IB peer, dark grey = direct NVLink peer, mid grey = through a peer;
-white = not in the group. `ep`: the MoE all-to-all's group, our row — 7
+= direct IB peer, dark grey = direct NVLink peer, mid grey = through a peer,
+light grey = a node-mate's copy (its own IB lane); white = not in the group. `ep`: the MoE all-to-all's group, our row — 7
 node-mates, 7 IB peers (our local rank on the group's other nodes), the
 other 49 through them. `fsdp`: the non-expert parameters sharded over all
 2,048 — our 7 node-mates, the 255 GPUs with our local rank (IB peers, 1/8
 of the bytes, gathered before the NVLink stage), everyone else through them. `efsdp`: our expert
 slice's 32 copies are our column, one per EP group and none on our node —
-31 IB peers, everything else white. A readout line and a fixed legend
-(every view's swatches; the FSDP-only instance drops 'not in the group', which it never draws) sit below the grid, rows labeled `EP group N`.
-Hovering a GPU draws its route to ours (no tip card: it would cover the
-route; a key sits at the legend's right end): IB an amber curve that leaves
-and enters cells vertically (sideways down our own column), NVLink a green
-bracket hugging our row on the side the IB curve doesn't arrive from.
-`fsdp` grey cells: IB to our node-mate at their local rank, then NVLink to
-us (the hierarchical all-gather's order); `ep` grey cells: dispatch runs
-the other way, IB to our local rank on their node, then NVLink.
+31 IB peers; our node-mates' slices have their own columns beside it (the
+rest of our node's column of boxes, 224 `lane` cells), everything else
+white. The readout prices IB per NODE: the non-expert copy is pulled
+through all eight NICs (400 GB/s), each expert slice through its GPU's own
+NIC (50 GB/s). A readout line and a fixed legend (every view's swatches;
+the FSDP-only instance drops 'not in the group' and the lane swatch, which
+it never draws, and spells its labels longer) sit below the grid, rows
+labeled `EP group N`. Hovering a GPU draws its route to ours (no tip card:
+it would cover the route; a key sits at the legend's right end): IB an
+amber curve that leaves and enters cells vertically (a straight line down
+our node's column), NVLink a green bracket hugging our row on the side the
+IB curve doesn't arrive from — plus, faint and behind it, the hovered
+node's other seven IB lanes into our node, rank to rank (`lanes()`): the
+same eight pipes carry eighths of one shard under `fsdp` and eight
+different slices under `efsdp`; none under `ep`. `fsdp` grey cells: IB to
+our node-mate at their local rank, then NVLink to us (the hierarchical
+all-gather's order); `efsdp` lane cells: IB to their own GPU on our node;
+`ep` grey cells: dispatch runs the other way, IB to our local rank on
+their node, then NVLink.
 
 | attr | kind | values | meaning |
 |---|---|---|---|
@@ -553,9 +563,11 @@ the other way, IB to our local rank on their node, then NVLink.
 | state | | `#m:<id>={v}` | URL hash, when the element has an id |
 
 A flip tweens every cell's fill (~200 ms). `role(view, row, node, rank)`,
-`OURS`, `ROWS`/`NODES`/`GPUS` are node-importable; test affordances:
-`[data-knob=view] [data-v]`, `rect[data-role=ours|ib|nv|grp|out]`,
-`rect[data-node=ours]`, `[data-readout]` (tests/mesh.js).
+`route(…)`, `lanes(…)`, `OURS`, `ROWS`/`NODES`/`GPUS` are node-importable;
+test affordances: `[data-knob=view] [data-v]`,
+`rect[data-role=ours|ib|nv|grp|lane|out]`, `rect[data-node=ours]`,
+`path[data-hop=ib|nv]` (the route), `path[data-lane]` (the seven others),
+`[data-readout]` (tests/mesh.js).
 
 ## `<dsv3-fsdpsched>` — the ZeRO-3 timeline (src/fsdpsched.js, post 03 draft)
 
@@ -565,7 +577,7 @@ tracks: compute (F, B = 2× F; per token 2 × active params + the causal
 attention core, the page's (6N + C3) ÷ 3 per layer; the router and attention core at BF16, the rest FP8) and InfiniBand (an
 all-gather before each layer's forward and again before its backward, a
 reduce-scatter after its backward). Every gather is one BF16 move of
-the layer as 03's Vne/Vexp cells price it (the non-expert 1/8 hierarchical +
+the layer as 03's Λne/Λexp cells price it (the non-expert copy over the node's eight NICs +
 our whole expert slice, ring factors) — 399.3 MB, 7.99 ms, independent of
 the microbatch; a reduce-scatter moves FP32 gradients, two moves' worth
 (798.7 MB, 16.0 ms). One IB queue served in ready order: a gather is ready when

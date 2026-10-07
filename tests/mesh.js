@@ -2,18 +2,19 @@
 // the mesh axes: under EP our row (7 NVLink node-mates, 7 IB peers with our
 // local rank, 49 more reached through them); under FSDP our GPU's peers are its 7 node-mates
 // (NVLink) and the 255 GPUs with its local rank (IB), every other GPU holding
-// a shard it reaches through them; under EFSDP only our column (the expert
-// slice's 31 other copies, one per EP group, none on our node) and nothing on
-// NVLink; the flip tweens and lands on exact fills; hovering a GPU draws its
-// route to ours, keyed at the legend's right end (FSDP: IB to the
-// node-mate with its local rank, then NVLink; EP dispatch: the reverse way
-// out); state rides the hash. Two instances: #mesh-dp (FSDP
+// a shard it reaches through them; under EFSDP our column (the expert
+// slice's 31 other copies, one per EP group, none on our node), our
+// node-mates' columns beside it (lanes) and nothing on NVLink; the flip
+// tweens and lands on exact fills; hovering a GPU draws its route to ours,
+// keyed at the legend's right end (FSDP: IB to the node-mate with its local
+// rank, then NVLink; EP dispatch: the reverse way out), plus its node's
+// other seven IB lanes into ours, faint (none under EP); state rides the hash. Two instances: #mesh-dp (FSDP
 // alone, no buttons) and #mesh-ep (EFSDP by default, flips to EP)
-const { role, route, OURS, ROWS, NODES, GPUS } = await import('/src/mesh.js');
+const { role, route, lanes, OURS, ROWS, NODES, GPUS } = await import('/src/mesh.js');
 let w = document.getElementById('mesh-dp');
 const q = (s) => w.querySelector(s), qa = (s) => [...w.querySelectorAll(s)];
 const btn = (v) => q(`[data-knob=view] [data-v="${v}"]`);
-const count = () => Object.fromEntries(['ours', 'ib', 'nv', 'grp', 'out'].map((r) => [r, qa(`rect[data-role=${r}]`).length]));
+const count = () => Object.fromEntries(['ours', 'ib', 'nv', 'grp', 'lane', 'out'].map((r) => [r, qa(`rect[data-role=${r}]`).length]));
 const fmt = (c) => JSON.stringify(c);
 
 T.check('FSDP instance: no buttons, no outsider swatch', qa('button').length === 0 && !/not in the group/.test(q('svg').textContent), qa('button').length);
@@ -21,7 +22,7 @@ const keyClear = () => { const k = q('[data-key]').getBBox(); return k.x + k.wid
 T.check('route key clears the legend', keyClear(), q('[data-key]').getBBox().x);
 T.check('FSDP readout fits', q('[data-readout]').getComputedTextLength() < 738, q('[data-readout]').getComputedTextLength());
 let c = count();
-T.check('FSDP: 1 ours · 255 IB · 7 NVLink · 1,785 via a peer', fmt(c) === fmt({ ours: 1, ib: 255, nv: 7, grp: 1785, out: 0 }), fmt(c));
+T.check('FSDP: 1 ours · 255 IB · 7 NVLink · 1,785 via a peer', fmt(c) === fmt({ ours: 1, ib: 255, nv: 7, grp: 1785, lane: 0, out: 0 }), fmt(c));
 T.check('FSDP: NVLink peers are exactly our node', qa('rect[data-role=nv]').every((r) => Math.abs(+r.getAttribute('y') - +q('rect[data-role=ours]').getAttribute('y')) < 0.5), '');
 T.check('our node box is outlined', qa('rect[data-node=ours]').length === 1, '');
 const roles = [];
@@ -40,6 +41,14 @@ const hops = () => qa('path[data-hop]').map((p) => p.dataset.hop).join(',');
 const ends = (p) => { const n = p.getAttribute('d').match(/-?[\d.]+/g).map(Number); return p.dataset.hop === 'ib' ? [n.slice(0, 2), n.slice(6, 8)] : [n.slice(0, 2), [n[3], n[1]]]; };
 const near = ([x, y], r) => { const b = r.getBoundingClientRect(), s = q('svg').getBoundingClientRect(); return Math.hypot(x - (b.x - s.x + b.width / 2), y - (b.y - s.y + b.height / 2)) < 12; };
 T.check('route: IB peer → one IB hop', hops() === 'ib', hops());
+// its node's other seven lanes, rank to rank into our node, faint and behind the route
+const lns = () => qa('path[data-lane]');
+const lx = (p) => p.getAttribute('d').match(/-?[\d.]+/g).map(Number);
+T.check('lanes: seven more, one per other local rank', lns().length === 7, lns().length);
+T.check('lanes: translates of each other (parallel), on the 9 px cell pitch', lns().every((p, i) => { const n = lx(p), m = lx(lns()[0]); return Math.abs((n[6] - n[0]) - (m[6] - m[0])) < 0.01 && Math.abs(n[7] - m[7]) < 0.01 && Math.abs((n[0] - m[0]) % 9) < 0.01; }), lns().map((p) => lx(p)[0]).join(','));
+T.check('lanes: all land on our node box (from below: the hovered row is under ours)', lns().every((p) => { const n = lx(p), b = q('rect[data-node=ours]'), g = (a) => +b.getAttribute(a); return n[6] > g('x') && n[6] < g('x') + g('width') && Math.abs(n[7] - g('y') - g('height')) < 6; }), lns().map((p) => lx(p).slice(6).join(',')).join(' · '));
+T.check('lanes: drawn before the route', q('svg').innerHTML.indexOf('data-lane') < q('svg').innerHTML.indexOf('data-hop'), '');
+T.check('lanes(): none for our own node, none under EP', lanes('fsdp', OURS.row, OURS.node, 0).length === 0 && lanes('ep', OURS.row, 0, 0).length === 0 && lanes('fsdp', 0, 0, 0).length === 7, '');
 // a GPU in another node at another local rank: IB to our node-mate at its rank, then NVLink to us
 const far = qa('rect[data-role=grp]')[0];   // row 0, node 0, rank 0
 hov(far);
@@ -58,11 +67,11 @@ T.check('route(): nothing for outsiders or us', route('efsdp', 0, 0, 0).length =
 w = document.getElementById('mesh-ep');
 T.check('route key clears the legend (expert)', keyClear(), q('[data-key]').getBBox().x);
 T.check('expert instance rests on EFSDP', btn('efsdp').classList.contains('on') && !btn('ep').classList.contains('on') && !btn('fsdp'), '');
-T.check('expert instance: EFSDP 1 ours · 31 IB · 2,016 elsewhere', fmt(count()) === fmt({ ours: 1, ib: 31, nv: 0, grp: 0, out: 2016 }), fmt(count()));
+T.check('expert instance: EFSDP 1 ours · 31 IB · 2,016 elsewhere', fmt(count()) === fmt({ ours: 1, ib: 31, nv: 0, grp: 0, lane: 224, out: 1792 }), fmt(count()));
 btn('ep').click();
 await T.tick(400);
 c = count();
-T.check('EP: 1 ours · 7 IB · 7 NVLink · 49 via a peer, all in our row', fmt(c) === fmt({ ours: 1, ib: 7, nv: 7, grp: 49, out: 1984 }), fmt(c));
+T.check('EP: 1 ours · 7 IB · 7 NVLink · 49 via a peer, all in our row', fmt(c) === fmt({ ours: 1, ib: 7, nv: 7, grp: 49, lane: 0, out: 1984 }), fmt(c));
 T.check('EP readout fits', q('[data-readout]').getComputedTextLength() < 738, q('[data-readout]').getComputedTextLength());
 T.check('EP: every peer is in our row', qa('rect[data-role=ib], rect[data-role=grp]').every((r) => +r.getAttribute('y') === +q('rect[data-role=ours]').getAttribute('y')), '');
 btn('efsdp').click();
@@ -70,16 +79,31 @@ await T.tick(60);
 T.check('mid-tween: some fill is between the two roles', qa('rect[data-role=out]').some((r) => r.getAttribute('fill') !== '#ffffff'), '');
 await T.tick(400);
 c = count();
-T.check('EFSDP: 1 ours · 31 IB · 0 NVLink · 2,016 elsewhere', fmt(c) === fmt({ ours: 1, ib: 31, nv: 0, grp: 0, out: 2016 }), fmt(c));
+T.check('EFSDP: 1 ours · 31 IB · 224 lanes · 1,792 elsewhere', fmt(c) === fmt({ ours: 1, ib: 31, nv: 0, grp: 0, lane: 224, out: 1792 }), fmt(c));
+T.check('EFSDP: lanes fill our node\'s column, 7 per box', qa('rect[data-role=lane]').every((r) => +r.getAttribute('x') >= +q('rect[data-node=ours]').getAttribute('x') && +r.getAttribute('x') <= +q('rect[data-node=ours]').getAttribute('x') + 79) && qa('rect[data-role=ib]').every((r) => +r.getAttribute('x') === +q('rect[data-role=ours]').getAttribute('x')), '');
 T.check('EFSDP: fills land exactly', qa('rect[data-role=out]').every((r) => r.getAttribute('fill') === '#ffffff') && qa('rect[data-role=ib]').every((r) => r.getAttribute('fill') === '#1c1c1a'), '');
 T.check('EFSDP readout fits', q('[data-readout]').getComputedTextLength() < 738, q('[data-readout]').getComputedTextLength());
-T.check('EFSDP readout: all IB', /IB: all of it \(19\.8 GB a move\)/.test(q('[data-readout]').textContent), q('[data-readout]').textContent);
+T.check('EFSDP readout: own NIC, 8 payloads', /its own NIC at 50 GB\/s \(19\.8 GB a move\).*8 payloads, no NVLink/.test(q('[data-readout]').textContent), q('[data-readout]').textContent);
 hov(qa('rect[data-role=out]')[0]);
 await T.tick(30);
 T.check('route: an outsider has none', hops() === '', hops());
 hov(qa('rect[data-role=ib]')[0]);
 await T.tick(30);
-T.check('route: EFSDP copy → one IB hop', hops() === 'ib', hops());
+T.check('route: EFSDP copy → one IB hop, straight down the column', hops() === 'ib' && Math.abs(lx(q('path[data-hop]'))[0] - lx(q('path[data-hop]'))[6]) < 0.01, hops());
+T.check('lanes: the node\'s seven others, into our node-mates', lns().length === 7, lns().length);
+// a node-mate's copy: its lane goes to that mate, not to us; the lane to us is among the faint seven
+const lc = qa('rect[data-role=lane]')[0];   // row 0, node 5, rank 0
+hov(lc);
+await T.tick(30);
+T.check('route: a node-mate\'s copy → one IB hop to that mate', hops() === 'ib' && near(ends(q('path[data-hop]'))[1], qa('rect[data-role=lane]').find((r) => +r.getAttribute('x') === +lc.getAttribute('x') && +r.getAttribute('y') === +q('rect[data-role=ours]').getAttribute('y'))), JSON.stringify(ends(q('path[data-hop]'))));
+T.check('lanes: one of the seven lands on us', lns().some((p) => near([lx(p)[6], lx(p)[7]], q('rect[data-role=ours]'))), '');
+hov(qa('rect[data-role=lane]').find((r) => +r.getAttribute('y') === +q('rect[data-role=ours]').getAttribute('y')));
+await T.tick(30);
+T.check('route: our own node-mate under EFSDP → nothing', hops() === '' && lns().length === 0, hops());
+btn('ep').click(); await T.tick(400);
+hov(qa('rect[data-role=grp]')[0]); await T.tick(30);
+T.check('EP: a dispatch route, no lanes', hops() === 'ib,nv' && lns().length === 0, hops() + '|' + lns().length);
+btn('efsdp').click(); await T.tick(400);
 T.check('the default view leaves the hash clean', !/mesh-ep/.test(location.hash), location.hash);
 btn('ep').click(); await T.tick(30);
 T.check('state in the hash', /m%3Amesh-ep=.*%22ep%22/.test(location.hash), location.hash);
