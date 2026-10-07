@@ -549,14 +549,13 @@ instance's is terser to fit the eight stripe chips, `[data-stripe=k]`) sit below
 labeled `EP group N`. Hovering a GPU draws its route to ours (no tip card:
 it would cover the route; a key sits at the legend's right end): IB an
 amber curve that leaves and enters cells vertically (a straight line down
-our node's column — there it rides inside the column with no halo, so it
-reads as the stripe connecting the rows rather than a wire slicing every
-cell), NVLink a green bracket hugging our row on the side the
-IB curve doesn't arrive from — plus, faint and behind it, the hovered
-node's other seven IB lanes into our node, rank to rank (`lanes()`; under
-`efsdp` each in its stripe's color): the same eight pipes carry eighths of
-one shard under `fsdp` and eight different slices under `efsdp`; none
-under `ep`. `fsdp` grey cells: IB to
+our node's column), NVLink a green bracket hugging our row on the side the
+IB curve doesn't arrive from. Under `fsdp` only, faint and behind it, the
+hovered node's other seven IB lanes into our node, rank to rank
+(`lanes()`; halo-free when they run down our own column): eight lanes for
+the one copy, against the single lane an `efsdp` hover draws for one slice
+(its stripes already show each slice's own lane); none under `ep`.
+`fsdp` grey cells: IB to
 our node-mate at their local rank, then NVLink to us (the hierarchical
 all-gather's order); `efsdp` lane cells: IB to their own GPU on our node;
 `ep` grey cells: dispatch runs the other way, IB to our local rank on

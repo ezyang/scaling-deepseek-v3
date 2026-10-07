@@ -7,15 +7,14 @@
 // with our local rank, 1/8 of the bytes each; every other GPU's shard
 // arrives through one of those) and EFSDP of our expert slice (its 32
 // copies are our column, one per EP group, all on other nodes: IB only).
-// The unit of IB bandwidth is the node: eight NICs, one per GPU. Hovering a
-// GPU draws its shard's route AND the other seven lanes its node runs into
-// ours at the same time — under FSDP the eight lanes carry eighths of one
-// shard (then NVLink swaps them), under EFSDP eight different slices, one
-// per node-mate, so the same eight pipes serve eight needs instead of one.
-// The cells say which pieces we need: the FSDP view is one uniform color
-// (every GPU holds a shard of the one copy our node needs), the EFSDP view
-// stripes our node's column by local rank (eight slices, eight colors; we
-// need only our rank's stripe, our node-mates need theirs).
+// The unit of IB bandwidth is the node: eight NICs, one per GPU. The cells
+// say which pieces we need: the FSDP view is one uniform color (every GPU
+// holds a shard of the one copy our node needs), the EFSDP view stripes our
+// node's column by local rank (eight slices, eight colors; we need only our
+// rank's stripe, our node-mates need theirs, each down its own lane). Hovering
+// a GPU draws its shard's route; under FSDP also the other seven lanes its
+// node runs into ours at the same time (eighths of the one shard, then NVLink
+// swaps them) — eight lanes for one copy vs one lane for one slice.
 import { C } from './theme.js';
 import { knobCss } from './ui.js';
 
@@ -45,11 +44,11 @@ export function route(view, row, node, rank) {
   const mate = [OURS.row, OURS.node, rank];
   return [[at, mate, 'ib'], [mate, me, 'nv']];
 }
-// the hovered node's other seven IB lanes into our node, rank to rank, as [from, to]: the node's NICs
-// all run at once (FSDP: an eighth of its one shard each; EFSDP: a node-mate's own slice each).
-// None under EP (a dispatch, not a gather), for our own node, or off our node's column under EFSDP
+// FSDP: the hovered node's other seven IB lanes into our node, rank to rank, as [from, to] — the node's
+// NICs all run at once, an eighth of its one shard each. None for our own node, under EP (a dispatch,
+// not a gather) or under EFSDP (the stripes already draw each slice's own lane; the hover shows one)
 export function lanes(view, row, node, rank) {
-  if (view === 'ep' || (row === OURS.row && node === OURS.node) || (view === 'efsdp' && node !== OURS.node)) return [];
+  if (view !== 'fsdp' || (row === OURS.row && node === OURS.node)) return [];
   return [...Array(GPUS).keys()].filter((j) => j !== rank).map((j) => [[row, node, j], [OURS.row, OURS.node, j]]);
 }
 // EP: dark = in the group, graded by how the bytes reach us: direct IB peer · direct NVLink peer ·
@@ -83,17 +82,16 @@ const ctr = ([r, n, k]) => [cx(n, k) + CS / 2, cy(r) + CS / 2];
 const f1 = (v) => v.toFixed(1);
 const HALO = (d) => `<path d="${d}" fill="none" stroke="${C('#fcfcfb')}" stroke-width="3.5"/>`;
 const head = (tx, ty, ux, uy, c) => `<path d="M${f1(tx)},${f1(ty)} L${f1(tx - ux * 4 - uy * 2.3)},${f1(ty - uy * 4 + ux * 2.3)} L${f1(tx - ux * 4 + uy * 2.3)},${f1(ty - uy * 4 - ux * 2.3)}Z" fill="${c}" stroke="${C('#fcfcfb')}" stroke-width="0.8"/>`;
-// faint: one of the node's other seven lanes (amber at half strength, or `tint` — its stripe's color under
-// EFSDP). A lane straight down our node's column rides INSIDE the column: no halo (it would slice every
-// cell it passes), so it reads as the stripe connecting the two rows rather than a wire over them
-function ibHop([x0, y0], [x1, y1], faint, tint) {   // leaves and enters vertically, crossing only the gaps between rows
+// faint: one of the node's other seven lanes, amber at half strength. A faint lane straight down our
+// node's column rides inside the column with no halo (seven halos would slice every cell they pass)
+function ibHop([x0, y0], [x1, y1], faint) {   // leaves and enters vertically, crossing only the gaps between rows
   const dx = x1 - x0, dy = y1 - y0, sg = Math.sign(dy) || 1, h = dy ? Math.abs(dy) * 0.45 : 6 + Math.min(40, Math.abs(dx) / 4);
   const [ax, ay, bx, by] = dy ? [x0, y0 + sg * h, x1, y1 - sg * h] : [x0, y0 - h, x1, y1 - h];
   const u = (x, y, tx, ty) => { const l = Math.hypot(tx - x, ty - y); return [(tx - x) / l, (ty - y) / l]; };
   const [sx, sy] = u(x0, y0, ax, ay), [ex, ey] = u(bx, by, x1, y1);
-  const tx = x1 - ex * 4.5, ty = y1 - ey * 4.5, c = tint ?? (faint ? mix(C('#eda100'), C('#fcfcfb'), 0.5) : C('#eda100'));   // both ends at the cell rim
+  const tx = x1 - ex * 4.5, ty = y1 - ey * 4.5, c = faint ? mix(C('#eda100'), C('#fcfcfb'), 0.5) : C('#eda100');   // both ends at the cell rim
   const line = `M${f1(x0 + sx * 4.5)},${f1(y0 + sy * 4.5)} C${f1(ax)},${f1(ay)} ${f1(bx)},${f1(by)} ${f1(tx - ex * 3)},${f1(ty - ey * 3)}`;
-  return (dx ? HALO(line) : '') + `<path data-${faint ? 'lane' : 'hop'}="ib" d="${line}" fill="none" stroke="${c}" stroke-width="${faint ? 1.1 : 1.6}"/>` + head(tx, ty, ex, ey, c);
+  return (dx || !faint ? HALO(line) : '') + `<path data-${faint ? 'lane' : 'hop'}="ib" d="${line}" fill="none" stroke="${c}" stroke-width="${faint ? 1.1 : 1.6}"/>` + head(tx, ty, ex, ey, c);
 }
 function nvHop(a, b, side) {   // side: -1 above the row, +1 below
   const x0 = ctr(a)[0], x1 = ctr(b)[0], edge = cy(a[0]) + (side > 0 ? CS : 0), yr = edge + side * 6.5, c = C('#1baf7a');
@@ -172,7 +170,7 @@ class Dsv3Mesh extends (typeof HTMLElement === 'undefined' ? class {} : HTMLElem
     const [row, n, k] = this._hov;
     const hops = route(this.view, row, n, k), ib = hops.find((h) => h[2] === 'ib');
     const side = ib && ib[0][0] > ib[1][0] ? -1 : 1;   // IB arriving from below: NVLink goes above
-    return lanes(this.view, row, n, k).map(([a, b]) => ibHop(ctr(a), ctr(b), true, this.view === 'efsdp' ? stripe(b[2]) : null)).join('')   // the node's other lanes, behind
+    return lanes(this.view, row, n, k).map(([a, b]) => ibHop(ctr(a), ctr(b), true)).join('')   // the node's other lanes, behind
       + hops.map(([a, b, link]) => link === 'ib' ? ibHop(ctr(a), ctr(b)) : nvHop(a, b, side)).join('')
       + `<rect x="${cx(n, k) - 1}" y="${cy(row) - 1}" width="${CS + 2}" height="${CS + 2}" fill="none" stroke="${C('#eda100')}" stroke-width="1.2"/>`;
   }

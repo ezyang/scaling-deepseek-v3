@@ -7,8 +7,9 @@
 // node-mates' columns beside it (lanes) and nothing on NVLink; the flip
 // tweens and lands on exact fills; hovering a GPU draws its route to ours,
 // keyed at the legend's right end (FSDP: IB to the node-mate with its local
-// rank, then NVLink; EP dispatch: the reverse way out), plus its node's
-// other seven IB lanes into ours, faint (none under EP); state rides the hash. Two instances: #mesh-dp (FSDP
+// rank, then NVLink; EP dispatch: the reverse way out), under FSDP plus its
+// node's other seven IB lanes into ours, faint (none under EFSDP, whose
+// stripes already draw the lanes, or EP); state rides the hash. Two instances: #mesh-dp (FSDP
 // alone, no buttons) and #mesh-ep (EFSDP by default, flips to EP)
 const { role, route, lanes, OURS, ROWS, NODES, GPUS } = await import('/src/mesh.js');
 let w = document.getElementById('mesh-dp');
@@ -50,7 +51,7 @@ T.check('lanes: seven more, one per other local rank', lns().length === 7, lns()
 T.check('lanes: translates of each other (parallel), on the 9 px cell pitch', lns().every((p, i) => { const n = lx(p), m = lx(lns()[0]); return Math.abs((n[6] - n[0]) - (m[6] - m[0])) < 0.01 && Math.abs(n[7] - m[7]) < 0.01 && Math.abs((n[0] - m[0]) % 9) < 0.01; }), lns().map((p) => lx(p)[0]).join(','));
 T.check('lanes: all land on our node box (from below: the hovered row is under ours)', lns().every((p) => { const n = lx(p), b = q('rect[data-node=ours]'), g = (a) => +b.getAttribute(a); return n[6] > g('x') && n[6] < g('x') + g('width') && Math.abs(n[7] - g('y') - g('height')) < 6; }), lns().map((p) => lx(p).slice(6).join(',')).join(' · '));
 T.check('lanes: drawn before the route', q('svg').innerHTML.indexOf('data-lane') < q('svg').innerHTML.indexOf('data-hop'), '');
-T.check('lanes(): none for our own node, none under EP', lanes('fsdp', OURS.row, OURS.node, 0).length === 0 && lanes('ep', OURS.row, 0, 0).length === 0 && lanes('fsdp', 0, 0, 0).length === 7, '');
+T.check('lanes(): none for our own node, none under EP', lanes('fsdp', OURS.row, OURS.node, 0).length === 0 && lanes('ep', OURS.row, 0, 0).length === 0 && lanes('efsdp', 0, OURS.node, 0).length === 0 && lanes('fsdp', 0, 0, 0).length === 7, '');
 // a GPU in another node at another local rank: IB to our node-mate at its rank, then NVLink to us
 const far = qa('rect[data-role=grp]')[0];   // row 0, node 0, rank 0
 hov(far);
@@ -101,13 +102,12 @@ T.check('route: an outsider has none', hops() === '', hops());
 hov(qa('rect[data-role=ib]')[0]);
 await T.tick(30);
 T.check('route: EFSDP copy → one IB hop, straight down the column', hops() === 'ib' && Math.abs(lx(q('path[data-hop]'))[0] - lx(q('path[data-hop]'))[6]) < 0.01, hops());
-T.check('lanes: the node\'s seven others, into our node-mates', lns().length === 7, lns().length);
+T.check('lanes: none under EFSDP (the stripes are the lanes)', lns().length === 0, lns().length);
 // a node-mate's copy: its lane goes to that mate, not to us; the lane to us is among the faint seven
 const lc = qa('rect[data-role=lane]')[0];   // row 0, node 5, rank 0
 hov(lc);
 await T.tick(30);
 T.check('route: a node-mate\'s copy → one IB hop to that mate', hops() === 'ib' && near(ends(q('path[data-hop]'))[1], qa('rect[data-role=lane]').find((r) => +r.getAttribute('x') === +lc.getAttribute('x') && +r.getAttribute('y') === +q('rect[data-role=ours]').getAttribute('y'))), JSON.stringify(ends(q('path[data-hop]'))));
-T.check('lanes: one of the seven lands on us', lns().some((p) => near([lx(p)[6], lx(p)[7]], q('rect[data-role=ours]'))), '');
 hov(qa('rect[data-role=lane]').find((r) => +r.getAttribute('y') === +q('rect[data-role=ours]').getAttribute('y')));
 await T.tick(30);
 T.check('route: our own node-mate under EFSDP → nothing', hops() === '' && lns().length === 0, hops());
