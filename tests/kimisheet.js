@@ -26,6 +26,8 @@ T.check('every formula name resolves to a defining row', names.every((b) => b.cl
 // the parameter tally: the released checkpoint's text model, to the digit
 T.check('total params = 2,779,484,476,000', val('Ntot') === '2,779,484,476,000', val('Ntot'));
 T.check('activated params = 104,189,612,640', val('N') === '104,189,612,640', val('N'));
+// Muon: 5 quintic Newton–Schulz iterations per matrix per step (Per-Head for q/k/v), each matrix once; ≈ 1 % of compute
+T.check('Newton–Schulz FLOPs per step = 244,757,732,159,324,160; T_NS 1.07 % of policy A compute', val('CNS') === '244,757,732,159,324,160' && Math.abs(parseFloat(si('TNS')) / parseFloat(si('TAc')) / 1000 - 0.0107) < 0.0005, `${val('CNS')} ${si('TNS')} ${si('TAc')}`);
 const edv = [...document.querySelectorAll('.cellsheet td.vl.edv')].map((td) => td.parentElement.cells[0].textContent);
 T.check('editable: exactly this page\'s knobs', edv.join(' ') === 'πsolbf16 πsolfp8 βNV βIB NVL B S GPUs PP EP Vpp ovl μ gB oB βhost', edv.join(' '));
 T.check('untouched: no hash, nothing amber', location.hash === '' && !document.querySelector('.cellsheet tr.off'), location.hash);
