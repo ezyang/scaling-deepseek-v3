@@ -105,6 +105,12 @@ T.check('weight gradients: 17 nodes, every operand an amber stub in, every dW a 
 T.check('per-launch tables: 240 rows', document.querySelectorAll('.tally[data-pass] tr[data-i]').length === 240, '');
 T.check('inferred rows marked ~', [...document.querySelectorAll('.tally[data-pass] tr[data-i] td.lab')].filter((td) => td.textContent.startsWith('~')).length === P.filter((e) => e.inf).length, '');
 T.check('savings table: layer row', /one layer, one microbatch/.test(document.querySelector('.tally.savings tr.hl')?.textContent), '');
-T.check('prose numbers live', document.querySelector('[data-kt="F.other.trace"]').textContent === '2.71 ms' && document.querySelector('[data-kt="F.other.hbm"]').textContent === '1.40 ms' && document.querySelector('[data-kt="B.other.trace"]').textContent === '5.31 ms' && /%$/.test(document.querySelector('[data-kt="step.pct"]').textContent), '');
+T.check('prose numbers live', document.querySelector('[data-kt="F.other.trace"]').textContent === '2.71 ms' && document.querySelector('[data-kt="F.other.hbm"]').textContent === '1.40 ms' && document.querySelector('[data-kt="B.other.trace"]').textContent === '5.31 ms' && /%$/.test(document.querySelector('[data-kt="cy.nic3.pct"]').textContent), '');
+// the step: the profile's cycles under a faster DeepEP, then CODA
+const ST = M.steps(), hd = (c) => c.comp - c.comm;
+T.check('step: today reproduces the profile (34.04 ms cycle, compute-bound by 2.4 ms)', Math.abs(ST.today.span - 34.045) < 0.01 && Math.abs(hd(ST.today) - 2.433) < 0.01, `${ST.today.span} ${hd(ST.today)}`);
+T.check('step: faster transfers grow the headroom; the SMs handed back eat into it', ['bench', 'nic'].every((k) => hd(ST[k + '1']) > hd(ST.today) && hd(ST[k + '2']) < hd(ST[k + '1']) && ST[k + '2'].comm === ST[k + '1'].comm), ['bench', 'nic'].map((k) => [hd(ST[k + '1']), hd(ST[k + '2'])].map((v) => v.toFixed(2)).join('→')).join(' · '));
+T.check('step: CODA lands at most its saving, and more behind the faster DeepEP; every stage only shortens the cycle', ['bench', 'nic'].every((k) => ST[k + '2'].span - ST[k + '3'].span <= ST.coda * 1e3 + 1e-9 && ST[k + '1'].span <= ST.today.span && ST[k + '3'].span < ST[k + '2'].span) && ST.nic2.span - ST.nic3.span > ST.bench2.span - ST.bench3.span && ST.nic3.span < ST.bench3.span && ST.bench3.span < ST.codaAlone.span, '');
+T.check('step table: 2 + 2 × 3 scenario rows, last of each group highlighted', document.querySelectorAll('.tally.steps tr[data-k]').length === 8 && document.querySelectorAll('.tally.steps tr.hl').length === 2, '');
 T.check('AI disclosure present', document.getElementById('fn1')?.textContent.includes('Disclosure'), '');
 T.done();

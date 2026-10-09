@@ -19,7 +19,7 @@ import { buildCells, cellsEnv } from '../src/cells.js';
 import { fsdpSweep } from '../src/fsdp.js';
 import { ladderPoint, LOG_C_DSV3 } from '../src/ladder.js';
 import { simulate as epSimulate, EXACT as EP_EXACT } from '../src/epsim.js';
-import { tally as kernTally, priced as kernPriced } from '../src/kerntrace.js';
+import { tally as kernTally, priced as kernPriced, steps as kernSteps } from '../src/kerntrace.js';
 import { all as codaCalib } from '../src/codablock.js';
 
 // the CODA study (studies/coda.html): every launch of the DeepSeek profile's
@@ -34,6 +34,7 @@ G.dtypeBytes = DTYPE_BYTES;
 G.hardware = HARDWARE;
 G.flopsPerToken = { seq4096: modelFlopsPerToken(DSV3, 4096), seq8192: modelFlopsPerToken(DSV3, 8192) };
 G.kern = { passes: KERN, launches: kernPriced().map((e) => [e.i, e.b, e.f ?? 0, +e.us.toFixed(3), e.how ?? 'host', e.bAfter]) };
+G.kernStep = kernSteps();   // coda.html § the step: the profile's cycles under a faster DeepEP, then CODA
 // the CODA calibration (studies/coda.html § calibration): the paper's benchmarks predicted the same way, per cell: predicted speedup, predicted ceiling, GEMM and non-GEMM seconds
 G.codablock = Object.fromEntries(codaCalib().map((r) => [`${r.name}@${r.size}`, { pred: +r.pred.toFixed(5), ceil: +r.ceilPred.toFixed(5), tGemm: r.tGemm, nonGemmBase: r.nonGemmBase, nonGemmCoda: r.nonGemmCoda }]));
 

@@ -54,7 +54,8 @@
     <p>The short version:</p>
     <ul>
       <li>The non-GEMM kernels already run at only ×<span data-kt="B.other.eff" data-fmt="x">1.6</span>–<span data-kt="F.other.eff" data-fmt="x">1.9</span> the minimum time needed to move their bytes. They can't be made much faster; the only real saving is to stop moving the bytes.</li>
-      <li>Under CODA, a layer's non-GEMM time per microbatch would drop from <span data-kt="layer.other.trace" data-fmt="ms">8.60 ms</span> to about <span data-kt="layer.other.projected" data-fmt="ms">2.54 ms</span>. Over a full step that is <span data-kt="step.savedSerial" data-fmt="s">2.4 s</span>–<span data-kt="step.saved" data-fmt="s">2.6 s</span> of a <span data-kt="step.reported" data-fmt="s">20.8 s</span> step, at best.</li>
+      <li>Under CODA, a layer's non-GEMM time per microbatch would drop from <span data-kt="layer.other.trace" data-fmt="ms">8.60 ms</span> to about <span data-kt="layer.other.projected" data-fmt="ms">2.54 ms</span>. But the step is nearly communication-bound, so on its own that makes the step only <span data-kt="cy.codaAlone.pct" data-fmt="pct1">8.6%</span> faster.</li>
+      <li>Modern DeepEP fixes that: it moves data faster and frees SMs for compute. The freed SMs eat into the headroom the faster transfers create, but together with CODA the step gets <span data-kt="cy.bench3.pct" data-fmt="pct1">16.4%</span>–<span data-kt="cy.nic3.pct" data-fmt="pct1">23.7%</span> faster (<a href="#step">the step</a>).</li>
       <li>DeepSeek's multi-GPU layout causes one problem: part of a norm has to cross the all-to-all. It turns out to cost nothing, because it can ride inside the FP8 scales the all-to-all already sends.</li>
       <li>The biggest leftover cost is not CODA's to fix: DeepEP's shuffling kernels around the all-to-all, <span data-kt="a2aglue" data-fmt="ms">1.28 ms</span> per layer.</li>
       <li>Run on the paper's own benchmarks, the same method predicts the measured speedups to within about <span data-kt="calib.blockMaxErr" data-fmt="x3">0.05</span>.</li>
@@ -171,7 +172,7 @@
 
     <div class="tally savings"></div>
 
-    <p>Per layer and microbatch, that's <span data-kt="layer.other.trace" data-fmt="ms">8.60 ms</span> of non-GEMM kernel time today and <span data-kt="layer.other.projected" data-fmt="ms">2.54 ms</span> projected, next to <span data-kt="layer.gemm.trace" data-fmt="ms">23.8 ms</span> of GEMMs and attention that don't change. In DeepSeek's step, each GPU runs 7.5 such microbatches through 58 MoE layers. So the saving is <span data-kt="step.saved" data-fmt="s">2.6 s</span> of kernel time on a <span data-kt="step.reported" data-fmt="s">20.8 s</span> step, about <span data-kt="step.pct" data-fmt="pct">13%</span>. That's an upper bound. It drops to <span data-kt="step.savedLow" data-fmt="s">2.5 s</span> if the SwiGLU epilogues run serialized at precise-math rates (<a href="#epilogue">below</a>).<span class="mn-ref"></span><span class="mn">An upper bound because 03's trace shows compute and communication neck and neck: the communication stream is busy about as long as the compute stream. Cutting 6 ms of compute per layer exposes communication time unless the all-to-all also gets faster, and the all-to-all's own packing kernels are the largest thing CODA leaves behind.</span> In bytes, the forward's non-GEMM launches move <span data-kt="F.other.bytes" data-fmt="gb">4.7 GB</span> through HBM per layer and microbatch, and would move <span data-kt="F.other.bytesAfter" data-fmt="gb">1.8 GB</span>. The backward goes from <span data-kt="B.other.bytes" data-fmt="gb">11.4 GB</span> to <span data-kt="B.other.bytesAfter" data-fmt="gb">3.1 GB</span>.</p>
+    <p>Per layer and microbatch, that's <span data-kt="layer.other.trace" data-fmt="ms">8.60 ms</span> of non-GEMM kernel time today and <span data-kt="layer.other.projected" data-fmt="ms">2.54 ms</span> projected, next to <span data-kt="layer.gemm.trace" data-fmt="ms">23.8 ms</span> of GEMMs and attention that don't change. In DeepSeek's step, each GPU runs 7.5 such microbatches through 58 MoE layers. So the saving is <span data-kt="step.saved" data-fmt="s">2.6 s</span> of kernel time per step, or <span data-kt="step.savedLow" data-fmt="s">2.5 s</span> if the SwiGLU epilogues run serialized at precise-math rates (<a href="#epilogue">below</a>). How much of that the step actually gains depends on communication, which runs beside the compute stream; that is <a href="#step">its own section</a>. In bytes, the forward's non-GEMM launches move <span data-kt="F.other.bytes" data-fmt="gb">4.7 GB</span> through HBM per layer and microbatch, and would move <span data-kt="F.other.bytesAfter" data-fmt="gb">1.8 GB</span>. The backward goes from <span data-kt="B.other.bytes" data-fmt="gb">11.4 GB</span> to <span data-kt="B.other.bytesAfter" data-fmt="gb">3.1 GB</span>.</p>
 
     <p>HBM <em>capacity</em> is a smaller story, and it's mostly about short-lived tensors. CODA doesn't change what the backward needs saved: the paper's SwiGLU backward reads the saved (interleaved) pre-activation, which is exactly the FP8 gate/up stash DeepSeek already keeps. So the <a href="./02-hopper-memory.html">memory post</a>'s accounting of saved activations still holds. What changes is what sits in memory <em>between</em> kernels. Today the routed gate/up GEMM writes a 268 MB bf16 intermediate that lives until the SwiGLU kernel consumes it. The attention output exists in bf16, E5M6 and FP8 at the same time. And the backward dequantizes a 134 MB stash into a 268 MB bf16 copy before using it. Under CODA, those intermediates only ever exist as tiles on the chip. On the other side of the ledger, the saved activations grow where the forward now writes things the backward used to recompute or re-quantize: the normalized input and the MoE input in transposed FP8 layout (+29 MB each per layer). In exchange, the bf16 latents (−16 MB) and three recompute kernels go away. The net is a few tens of MB per layer and microbatch, in one direction or the other. CODA pays off in bandwidth, not capacity.</p>
 
@@ -219,6 +220,26 @@
 
     <p>Applied back to DeepSeek's layer, the calibration says two things. First, DeepSeek's minimums are already scaled by measured ratios, so the baseline-side error is already accounted for. Second, the rule for host GEMMs should be a sum, not a max. Adding every host's epilogue bytes in series costs <span data-kt="calib.dsv3serial" data-fmt="us">269 µs</span> per layer, on top of the <span data-kt="layer.epiAddFast" data-fmt="us">24 µs</span>–<span data-kt="layer.epiAddPrecise" data-fmt="us">253 µs</span> of transcendental work, against <span data-kt="layer.saved" data-fmt="ms">6.10 ms</span> saved. The low end of the step saving becomes <span data-kt="step.savedSerial" data-fmt="s">2.4 s</span>. The fraction is smaller than on the paper's kernels because DeepGEMM's tiles are FP8 at K = 7,168. That's twice the main-loop time per output byte of the paper's BF16 tiles at K = 4,096, and seven times the field guide's.</p>
 
+    <h2 id="step">The step: DeepEP first, then CODA</h2>
+
+    <p>Everything so far has been kernel time. What a training step gains is a different question, because the compute stream doesn't run alone. DeepEP's all-to-all runs beside it on a second stream, and each layer cycle (one layer's forward for one microbatch, overlapped with another microbatch's backward) takes as long as the busier of the two streams, plus whatever gaps the overlap leaves. The profile measures all three. Averaged over its four cycles, the compute stream is busy <span data-kt="cy.today.comp" data-fmt="ms">31.06 ms</span>, the communication stream <span data-kt="cy.today.comm" data-fmt="ms">28.63 ms</span>, and the cycle takes <span data-kt="cy.today.span" data-fmt="ms">34.04 ms</span>. A step runs each GPU through <span data-kt="cycles" data-fmt="n">435</span> cycles (7.5 microbatches through 58 MoE layers), so the profile puts it at <span data-kt="cy.today.step" data-fmt="s">14.8 s</span>.<span class="mn-ref"></span><span class="mn">DeepSeek's reported GPU-hours imply a <span data-kt="step.reported" data-fmt="s">19.9 s</span> step. The other ~5 s is what the profile doesn't capture: the pipeline bubble, the three dense layers, MTP, the embedding and output head, the optimizer, real routing imbalance. Nothing on this page touches it, so the seconds saved below carry over to the full step while the percentages shrink: the last row of the table is <span data-kt="cy.nic3.full" data-fmt="pct1">17.7%</span> of the 19.9 s step.</span></p>
+
+    <p>Compute is ahead by only <span data-kt="cy.today.head" data-fmt="ms">2.43 ms</span>. That is the <em>headroom</em>: the compute time that can be removed before the GPU starts waiting on the all-to-all instead. CODA alone removes <span data-kt="cy.coda" data-fmt="ms">6.10 ms</span>, so most of it runs into communication. The cycle drops to <span data-kt="cy.codaAlone.span" data-fmt="ms">31.13 ms</span>, and the step gets <span data-kt="cy.codaAlone.pct" data-fmt="pct1">8.6%</span> faster. To get the rest, communication has to get faster first.</p>
+
+    <p>It has. DeepEP's own benchmarks (H800s, CX7 NICs, DeepSeek-V3's shapes) give two numbers to work with.</p>
+    <ul>
+      <li><b>Transfer speed.</b> At the trace's EP64 scale, the version of DeepEP from the trace's era already moved <span data-kt="cy.v1" data-fmt="x">40.3</span> GB/s of real InfiniBand traffic on dispatch, out of the NIC's 50. V2 (April 2026) moves <span data-kt="cy.v2" data-fmt="x">45.8</span> GB/s. So the library itself can only get about 1.15× faster. But the trace's own DeepEP kernels ran at just 24–34 GB/s, well below their library's benchmark: they had fewer SMs, shared HBM with the GEMMs running beside them, and waited on slower GPUs. If modern DeepEP ran at its benchmark rate in situ, dispatch would get <span data-kt="cy.x.nic.d" data-fmt="x">1.7</span>× faster and combine <span data-kt="cy.x.nic.c" data-fmt="x">1.4</span>×. The table brackets the two cases.</li>
+      <li><b>SMs.</b> V2 fills the NIC using <span data-kt="cy.smsV2" data-fmt="n">6</span> SMs, where the trace gives DeepEP <span data-kt="cy.sms" data-fmt="n">20</span>. The other <span data-kt="cy.smsBack" data-fmt="n">14</span> go back to the GEMMs and attention, which get about <span data-kt="cy.gemmSpeed" data-fmt="pct1">12.5%</span> faster.<span class="mn-ref"></span><span class="mn">Both DeepEP versions report bandwidth counting each token once per destination node, its own node included, so real InfiniBand traffic is the reported figure × (nodes − 1) / nodes. V1 at release, EP64: 46 / 45 GB/s reported → <span data-kt="cy.v1" data-fmt="x">40.3</span> / <span data-kt="cy.v1c" data-fmt="x">39.4</span> real. V2, EP 8 × 4: 61 / 61 → 45.8 real, on 6 SMs; its analytical SM count gives 4 at EP64. V2 publishes no EP64 number, and its benchmark uses 8K tokens and routing without DeepSeek's group limit.</span></li>
+    </ul>
+
+    <div class="tally steps"></div>
+
+    <p>Those two speed up different streams, and that's the catch. Faster transfers shorten the communication stream and grow the headroom, but on their own they barely move the step, because the step is compute-bound: the cycle shrinks by only <span data-kt="cy.bench1.pct" data-fmt="pct1">1.4%</span>, all of it from the one cycle of the four that was communication-bound. The SMs shorten the compute stream, and that eats the headroom the faster transfers just created. At V2's benchmark gain it eats all of it: the headroom goes back to <span data-kt="cy.bench2.head" data-fmt="ms">2.44 ms</span>, right where it started. At the in-situ benchmark rate, <span data-kt="cy.nic2.head" data-fmt="ms">6.29 ms</span> survives.</p>
+
+    <p>Then CODA. Behind the first DeepEP, <span data-kt="cy.land.bench" data-fmt="ms">2.94 ms</span> of CODA's <span data-kt="cy.coda" data-fmt="ms">6.10 ms</span> lands; behind the second, <span data-kt="cy.land.nic" data-fmt="ms">4.95 ms</span>. All together the step goes from <span data-kt="cy.today.step" data-fmt="s">14.8 s</span> to <span data-kt="cy.bench3.step" data-fmt="s">12.4 s</span>–<span data-kt="cy.nic3.step" data-fmt="s">11.3 s</span>: <span data-kt="cy.bench3.pct" data-fmt="pct1">16.4%</span>–<span data-kt="cy.nic3.pct" data-fmt="pct1">23.7%</span> faster. With the calibrated rule for the epilogues (serialized, precise-math SwiGLU), it's <span data-kt="cy.bench3s.pct" data-fmt="pct1">16.1%</span>–<span data-kt="cy.nic3s.pct" data-fmt="pct1">22.8%</span>. In the second case compute and communication end up almost exactly balanced again, so any further compute saving would need communication to keep pace.</p>
+
+    <p>This is arithmetic on measured cycles, not a schedule simulation. It assumes GEMMs and attention speed up in proportion to their SMs while memory-bound kernels don't, and that each cycle keeps today's gaps. It also keeps the notify handshake as measured: about 8 ms of each cycle's communication, mostly waiting on the slowest GPU. V2 rewrote that handshake, and nothing published prices it. 03's timing model is the place to do this properly.</p>
+
     <h2>What would settle it</h2>
 
     <p>Everything said above about DeepSeek's layer is a model: two estimates and a verdict per launch, calibrated on the paper's blocks but never measured on this layer. Each row of the savings is a claim about one pair of kernels, at a shape the trace gives exactly. The field guide's method applies to each one directly: matched implementations, warmed-up CUDA-graph timings, Nsight for warps and issue slots, and a restricted standalone stand-in before a fused kernel exists. The table lists the experiment that would confirm or refute each number, most important first. Only the first can change the headline. The rest decide whether its pieces are as cheap as the byte counts say.</p>
@@ -234,7 +255,7 @@
     </table>
 
 
-    <p>What no microbenchmark can settle is the step-level number. 03's trace shows the compute and communication streams busy for about the same time. Taking six milliseconds per layer off the compute stream exposes the all-to-all unless it gets faster too, and the expansion and reduction kernels around it are the largest thing CODA leaves behind. Settling it needs the full EP64 run, or 03's timing model with these kernel times fed back in.</p>
+    <p>What no microbenchmark can settle is the step-level number. <a href="#step">The step</a> section is arithmetic on measured cycles. It rests on DeepEP's standalone benchmarks holding in situ, and on the notify handshake staying as measured. Settling it needs the full EP64 run with a modern DeepEP, or 03's timing model with these kernel times fed back in.</p>
 
     <h2>Caveats</h2>
 
@@ -244,7 +265,7 @@
       <li>CODA's verdicts assume a grouped FP8 GEMM whose epilogue can load per-row vectors (the routing weight, <i>r</i>) and tiles (the residual, the gate/up stash), do reductions within a tile, and write FP8 with 128-block scales in both layouts. The paper's prototype is a dense BF16 CuTeDSL GEMM on Hopper. So this is the paper's building blocks applied to DeepGEMM's shape, not something the paper measured.</li>
       <li>The all-to-all plumbing (<i>r</i> in the scales in the forward, <i>ŝ</i> partials on the backward combine, the residual and norm in the combine) is a DeepEP change, argued here only at the level of bytes.</li>
       <li>The epilogue execution rates come from one GB300 trace (four epilogue warps on a 256 × 256 BF16 tile). They are carried over to the H800 per output element per SM, with no correction for clock speed or warp count. Some differences suggest they're pessimistic for Hopper: it has eight consumer warps, and its accumulators are already in registers (no TMEM load). Others suggest they're optimistic: the serialized epilogue and the already-spent register budget. And SwiGLU computes one exp per column pair, not per element, which halves the transcendental count the SiLU rate assumes.</li>
-      <li>Nothing here models overlap. The figure prices kernels; 03 is where the kernels meet the network.</li>
+      <li>Overlap is modeled only as arithmetic on the profile's measured cycles (<a href="#step">the step</a>). The figure prices kernels; 03 is where the kernels meet the network.</li>
     </ul>
 
     <h2>Sources</h2>
@@ -267,7 +288,7 @@
     import '../src/kernels.js';
     import './series.js';
     import { priced, tally } from '../src/kerntrace.js';
-    import { REPORTED } from '../src/kerntrace.js';
+    import { REPORTED, steps, DEEPEP } from '../src/kerntrace.js';
     import { all as calibAll, time as ktime } from '../src/codablock.js';
 
     const P = priced(), T = tally();
@@ -341,13 +362,25 @@
     const withCeil = CAL.filter((r) => r.xFloor != null);
     const bwd = CAL.find((r) => r.name === 'Layer Backward' && r.size === 2048), ropeBwd = bwd.coda.find((k) => /RoPE backward/.test(k.name));
 
+    // ---- the step: the profile's cycles under a faster DeepEP, then CODA ----------
+    const MB_PER_GPU = 15360 * 4096 / 2048 / 4096, MOE_LAYERS = 58, CYC = MB_PER_GPU * MOE_LAYERS;
+    const ST = steps();
+    const ms = (v) => `${n(v, 1)} ms`, sgn = (v) => `${v < 0 ? '−' : '+'}${n(Math.abs(v), 1)} ms`;
+    const srow = (lab, k, cls = '') => { const c = ST[k], h = c.comp - c.comm; return `<tr class="${cls}" data-k="${k}"><td class="lab">${lab}</td><td class="n">${ms(c.comp)}</td><td class="n">${ms(c.comm)}</td><td class="n ${h < 0 ? 'mem' : 'cmp'}">${sgn(h)}</td><td class="n">${ms(c.span)}</td><td class="n">${n(c.span * CYC * 1e-3, 1)} s</td><td class="n">${k === 'today' ? '—' : `${n((1 - c.span / ST.today.span) * 100, 1)}%`}</td></tr>`; };
+    const sgrp = (lab) => `<tr class="sub"><td colspan="7"><b>${lab}</b></td></tr>`;
+    const xf = (f) => `×${n(1 / f, 2)}`;
+    document.querySelector('.tally.steps').innerHTML = `<table><thead><tr><th>one layer cycle, averaged over the profile's four</th><th class="n">compute stream</th><th class="n">communication</th><th class="n">headroom</th><th class="n">cycle</th><th class="n">step</th><th class="n">faster than today</th></tr></thead><tbody>` +
+      srow('today (the profile)', 'today') + srow('CODA alone', 'codaAlone') +
+      sgrp(`DeepEP V2 at its benchmark gain over V1: dispatch ${xf(ST.bench.dispatch)}, combine ${xf(ST.bench.combine)}`) +
+      srow('faster transfers', 'bench1') + srow(`+ ${DEEPEP.sms - DEEPEP.v2.sms} SMs back to compute`, 'bench2') + srow('+ CODA', 'bench3', 'hl') +
+      sgrp(`DeepEP at its benchmark rate in situ (${n(DEEPEP.v2.dispatch, 1)} GB/s): dispatch ${xf(ST.nic.dispatch)}, combine ${xf(ST.nic.combine)}`) +
+      srow('faster transfers', 'nic1') + srow(`+ ${DEEPEP.sms - DEEPEP.v2.sms} SMs back to compute`, 'nic2') + srow('+ CODA', 'nic3', 'hl') + '</tbody></table>';
+
     // ---- prose numbers (data-kt) -----------------------------------------------
-    const MB_PER_GPU = 15360 * 4096 / 2048 / 4096, MOE_LAYERS = 58;
     const step = { reported: 15360 * 4096 / 2048 / REPORTED.h800.rate };
     step.saved = (L.other.trace * 1e-6 - L.other.projected - L.gemm.exposed) * MB_PER_GPU * MOE_LAYERS;
     step.savedLow = step.saved - L.gemm.epiAddPrecise * MB_PER_GPU * MOE_LAYERS;   // the SwiGLU epilogues serialized with their mainloops, at precise-math rates
     step.savedSerial = step.savedLow - L.gemm.epiBytesSerial * MB_PER_GPU * MOE_LAYERS;   // and every host's epilogue bytes serialized too (the calibration's rule)
-    step.pct = step.saved / step.reported;
     const sumUs = (f) => P.filter(f).reduce((t, e) => t + e.us, 0) * 1e-6;
     const sumHbm = (f) => P.filter(f).reduce((t, e) => t + e.hbm, 0);
     const K = {
@@ -360,7 +393,11 @@
       routerglue: P.filter((e) => /^router( bwd)?$/.test(e.op) && e.kind !== 'gemm').length, routergluet: sumUs((e) => /^router( bwd)?$/.test(e.op) && e.kind !== 'gemm'),
       cache: sumUs((e) => e.how === 'cache'), requant: sumUs((e) => [65, 72, 87, 89, 93].includes(e.i)),
       'layer.other.trace': L.other.trace * 1e-6, 'layer.other.projected': L.other.projected, 'layer.gemm.trace': L.gemm.trace * 1e-6,
-      'step.saved': step.saved, 'step.reported': step.reported, 'step.pct': step.pct,
+      'step.saved': step.saved, 'step.reported': step.reported, cycles: CYC, 'cy.sms': DEEPEP.sms, 'cy.smsV2': DEEPEP.v2.sms, 'cy.smsBack': DEEPEP.sms - DEEPEP.v2.sms,
+      'cy.coda': ST.coda, 'cy.land.bench': (ST.bench2.span - ST.bench3.span) * 1e-3, 'cy.land.nic': (ST.nic2.span - ST.nic3.span) * 1e-3,
+      'cy.x.bench.d': 1 / ST.bench.dispatch, 'cy.x.bench.c': 1 / ST.bench.combine, 'cy.x.nic.d': 1 / ST.nic.dispatch, 'cy.x.nic.c': 1 / ST.nic.combine,
+      'cy.v1': DEEPEP.v1.dispatch, 'cy.v1c': DEEPEP.v1.combine, 'cy.v2': DEEPEP.v2.dispatch,
+      'cy.gemmSpeed': (132 - DEEPEP.v2.sms) / (132 - DEEPEP.sms) - 1,
       'qdn.flop': P[214].flop, 'qdn.hbmAfter': P[214].hbmAfter, 'qdn.exposed': P[214].hbmAfter - P[214].flop, 'qdn.replaced': sumUs((e) => [217, 218].includes(e.i)),
       'step.savedLow': step.savedLow, 'layer.epiAddFast': L.gemm.epiAddFast, 'layer.epiAddPrecise': L.gemm.epiAddPrecise,
       'mma.perK': P[109].epx.mmaTile / P[109].Kd, 'mma.7168': P[109].epx.mmaTile, 'mma.1536': P[15].epx.mmaTile, 'mma.512': P[18].epx.mmaTile,
@@ -379,9 +416,12 @@
       const m = path.match(/^([FBW])\.(gemm|other)\.(\w+)(?:\+(\w+))?$/);
       if (m) { const t = T[m[1]][m[2]]; let v = m[3] === 'trace' ? t.trace * 1e-6 : t[m[3]]; if (m[4]) v += t[m[4]] + (m[4] === 'gone' ? t.aux : 0); return v; }
       const l = path.match(/^([FBW])\.launches$/); if (l) return T[l[1]].launches;
+      // cy.<scenario>.<comp|comm|span|head> (s) · .step (s) · .pct (faster than today) · .full (seconds saved ÷ the GPU-hours step)
+      const c = path.match(/^cy\.(\w+)\.(comp|comm|span|head|step|pct|full)$/);
+      if (c && ST[c[1]]?.span) { const x = ST[c[1]]; return { comp: x.comp * 1e-3, comm: x.comm * 1e-3, span: x.span * 1e-3, head: (x.comp - x.comm) * 1e-3, step: x.span * CYC * 1e-3, pct: 1 - x.span / ST.today.span, full: (ST.today.span - x.span) * CYC * 1e-3 / step.reported }[c[2]]; }
       return null;
     };
-    const FMT = { ms: (v) => `${n(v * 1e3, 2)} ms`, us: (v) => us(v), us1: (v) => us1(v), ns: (v) => `${n(v * 1e9, 1)} ns`, s: (v) => `${n(v, 1)} s`, x3: (v) => n(v, 3), x1: (v) => n(v, 1), x: (v) => n(v, 1), n: (v) => n(v), pct: (v) => `${n(v * 100)}%`, gb: (v) => `${n(v / 1e9, 1)} GB` };
+    const FMT = { ms: (v) => `${n(v * 1e3, 2)} ms`, us: (v) => us(v), us1: (v) => us1(v), ns: (v) => `${n(v * 1e9, 1)} ns`, s: (v) => `${n(v, 1)} s`, x3: (v) => n(v, 3), x1: (v) => n(v, 1), x: (v) => n(v, 1), n: (v) => n(v), pct: (v) => `${n(v * 100)}%`, pct1: (v) => `${n(v * 100, 1)}%`, gb: (v) => `${n(v / 1e9, 1)} GB` };
     for (const q of document.querySelectorAll('[data-kt]')) { const v = get(q.dataset.kt); if (v != null) q.textContent = (FMT[q.dataset.fmt ?? 'n'])(v); }
   </script>
 </body>

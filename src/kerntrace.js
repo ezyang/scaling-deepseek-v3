@@ -396,6 +396,62 @@ export function tally(rates = RATES) {
   return T;
 }
 
+// ---- the step: the profile's layer cycles under a faster DeepEP and CODA ------------
+// One cycle = one layer's forward chunk overlapped with another microbatch's backward
+// chunk (B and W). GPU-timestamp interval unions per cycle (~/Dev/dsv3-trace-analysis,
+// comm-compute-summary.json), ms: wall span, compute-stream union, comm-lane union, and
+// the comm lane's payload (dispatch + combine kernels; the rest is notify + layout prep).
+export const CYCLES = [
+  { span: 32.288, comp: 30.966, comm: 25.066, payload: 20.475 },
+  { span: 33.687, comp: 30.850, comm: 27.099, payload: 20.346 },
+  { span: 34.957, comp: 32.105, comm: 30.076, payload: 19.786 },
+  { span: 35.248, comp: 30.330, comm: 32.280, payload: 19.845 },
+];
+// DeepEP's published normal-kernel benchmarks, H800 + CX7 (README history). Both versions
+// count a token once per destination node, its own included, so real InfiniBand GB/s =
+// logical · (nodes − 1) / nodes. V1 at release (the trace's era), EP64: 46 / 45 logical;
+// V2 (Apr 2026), EP 8×4: 61 / 61 logical on 6 SMs (its analytical SM count gives 4 at EP64).
+// The trace runs DeepEP on 20 of the 132 SMs. Bytes per pass are 03's: 3.5 remote nodes
+// per token, FP8 + one fp32 scale per 128 values dispatched, BF16 combined.
+export const DEEPEP = {
+  v1: { dispatch: 46 * 7 / 8, combine: 45 * 7 / 8 }, v2: { dispatch: 61 * 3 / 4, combine: 61 * 3 / 4, sms: 6 }, sms: 20,
+  bytes: { dispatch: S * 3.5 * D * (1 + 4 / SCALE_BLOCK), combine: S * 3.5 * D * 2 },
+};
+// One cycle under a change: the compute stream loses `coda` s of non-GEMM time and its
+// GEMMs and attention speed up with the SMs DeepEP hands back (112 → 132 − sms; the
+// memory-bound kernels do not); the payload's dispatch and combine shares scale by their
+// time factors; notify waits and each cycle's slack (span beyond its busier stream) stay.
+export function cycle({ coda = 0, sms = DEEPEP.sms, dispatch = 1, combine = 1 } = {}, T = tally(), P = priced()) {
+  const gemm = (T.F.gemm.trace + T.B.gemm.trace + T.W.gemm.trace) * 1e-3;   // ms
+  const kind = (k) => P.filter((e) => e.comm && e.k.endsWith(`::${k}`)).reduce((t, e) => t + e.us, 0);
+  const dShare = kind('dispatch') / (kind('dispatch') + kind('combine'));
+  const mean = (f) => CYCLES.reduce((t, c) => t + f(c), 0) / CYCLES.length;
+  const one = (c) => {
+    const slack = c.span - Math.max(c.comp, c.comm);
+    const comp = c.comp - coda * 1e3 - gemm * (1 - (132 - DEEPEP.sms) / (132 - sms));
+    const comm = c.comm - c.payload * (1 - dShare * dispatch - (1 - dShare) * combine);
+    return { comp, comm, span: Math.max(comp, comm) + slack };
+  };
+  return { comp: mean((c) => one(c).comp), comm: mean((c) => one(c).comm), span: mean((c) => one(c).span) };
+}
+// the scenarios coda.html tabulates: DeepEP V2 at its benchmark gain over V1, or at the
+// NIC rate it benchmarks in situ; each with its SMs handed back, then CODA on top
+export function steps(T = tally(), P = priced()) {
+  const L = (k) => ['F', 'B', 'W'].reduce((t, p) => t + k(T[p]), 0);
+  const coda = L((t) => t.other.trace * 1e-6 - t.other.projected - t.gemm.exposed);              // s per cycle
+  const codaSerial = coda - L((t) => t.gemm.epiAddPrecise + t.gemm.epiBytesSerial);
+  const traced = (k) => P.filter((e) => e.comm && e.k.endsWith(`::${k}`)).reduce((t, e) => t + e.us, 0) * 1e-6 / 2;   // s per pass
+  const bench = { dispatch: DEEPEP.v1.dispatch / DEEPEP.v2.dispatch, combine: DEEPEP.v1.combine / DEEPEP.v2.combine };
+  const nic = { dispatch: DEEPEP.bytes.dispatch / (DEEPEP.v2.dispatch * 1e9) / traced('dispatch'), combine: DEEPEP.bytes.combine / (DEEPEP.v2.combine * 1e9) / traced('combine') };
+  const c = (o) => cycle(o, T, P), sms = DEEPEP.v2.sms;
+  return {
+    coda, codaSerial, bench, nic,
+    today: c(), codaAlone: c({ coda }),
+    bench1: c(bench), bench2: c({ ...bench, sms }), bench3: c({ ...bench, sms, coda }), bench3s: c({ ...bench, sms, coda: codaSerial }),
+    nic1: c(nic), nic2: c({ ...nic, sms }), nic3: c({ ...nic, sms, coda }), nic3s: c({ ...nic, sms, coda: codaSerial }),
+  };
+}
+
 // ---- the graph ------------------------------------------------------------------
 // The launches of one pass as nodes and the tensors between them as edges
 // (producer → consumer, by name). Every launch of the pass is a node (the
