@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script data-theme>document.documentElement.classList.toggle('dark', (localStorage.getItem('dsv3-theme') ?? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')) === 'dark');</script>
+  <title>The roofline of DeepSeek-V3’s context extension (draft)</title>
+  <meta name="robots" content="noindex">
+  <link rel="stylesheet" href="./study.css">
+  <style>
+    /* 03's static formula sheets (studies/sheetedit.js makes them live) */
+    /* 03's static formula sheets (studies/sheetedit.js makes them live) */
+    .cellsheet { max-width: 760px; box-sizing: border-box; margin: 14px 0; font: 12px system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--c-0b0b0b);
+      border: 1px solid var(--c-e1e0d9); border-radius: 6px; background: var(--c-fcfcfb); padding: 8px 12px; }
+    .cellsheet table { border-collapse: collapse; width: 100%; table-layout: fixed; }
+    .cellsheet th:nth-child(1) { width: 38px; } .cellsheet th:nth-child(2) { width: 170px; } .cellsheet th:nth-child(3) { width: 181px; }
+    .cellsheet th:nth-child(4) { width: 83px; } .cellsheet th:nth-child(5) { width: 105px; }
+    .cellsheet th { box-sizing: border-box; text-align: left; font-size: 10.5px; color: var(--c-898781); font-weight: 600; padding: 1px 10px 3px 2px; }
+    .cellsheet td { padding: 1.5px 10px 1.5px 2px; border-top: 1px solid var(--c-f0efe9); font-size: 11.5px; vertical-align: baseline; white-space: nowrap; }
+    .cellsheet th.vl, .cellsheet td.vl { text-align: right; font-variant-numeric: tabular-nums; }
+    .cellsheet td.si .d { display: inline-block; width: 1.7em; text-align: left; }
+    .cellsheet td.si .u { display: inline-block; width: 4.3em; text-align: left; white-space: pre; }
+    .cellsheet th.si .u { display: inline-block; width: calc(4.3 * 11.5px); text-align: left; white-space: pre; }
+    .cellsheet td.sc sup { display: inline-block; width: 1.35em; text-align: left; }
+    .cellsheet td:nth-child(2) { white-space: normal; }
+    .cellsheet td.nm { font: 600 11px ui-monospace, monospace; color: var(--c-2a78d6); }
+    .cellsheet td.fx { font: 11px ui-monospace, monospace; color: var(--c-52514e); white-space: normal; }
+    .cellsheet td.fx b { color: var(--c-2a78d6); font-weight: 600; }
+    .cellsheet td.fx i { font: 11.5px system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--c-898781); font-style: normal; }
+    .cellsheet td.ap { color: var(--c-898781); }
+    .cellsheet sup, .cellsheet sub { line-height: 0; font-size: 0.8em; }
+    .cellsheet tr.hl td { background: var(--c-fff8ea); font-weight: 600; }
+    .cellsheet td.fx b.ref { cursor: pointer; }
+    .cellsheet tr.sel td { background: var(--c-fff3d1); }
+    .cellsheet .cs-dl { float: right; font: inherit; color: var(--c-2a78d6); background: none; border: 0; padding: 0; cursor: pointer; }
+    .cellsheet td.vl.edv { background: var(--c-eef4fc); cursor: text; }
+    @media (hover: hover) { .cellsheet td.vl.edv:hover { background: var(--c-dcebfa); } }
+    .cellsheet tr.off td.vl, .cellsheet tr.off td.ap { color: var(--c-b05f00); }
+    [data-cellref] { cursor: pointer; border-bottom: 1px dotted var(--c-898781); }
+    [data-cellref].off { color: var(--c-b05f00); }
+    .cellsheet .cs-in { box-sizing: border-box; width: 100%; margin: -2px 0; padding: 1px 3px; text-align: right;
+      font: inherit; font-variant-numeric: tabular-nums; color: var(--c-0b0b0b); background: var(--c-ffffff);
+      border: 1px solid var(--c-2a78d6); border-radius: 3px; outline: none; }
+    .cellsheet .cs-in.bad { border-color: var(--c-d03b3b); }
+    .cs-err { position: absolute; display: none; z-index: 7; max-width: 300px; padding: 4px 8px; border-radius: 4px;
+      background: var(--c-fdf1f1); border: 1px solid var(--c-d03b3b); color: var(--c-1c1c1a);
+      font: 11.5px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+    .cs-tip b { color: var(--c-2a78d6); font-weight: 600; }
+    .cs-tip i { color: var(--c-898781); font-style: normal; }
+    .cs-tip sup, .cs-tip sub { line-height: 0; font-size: 0.8em; }
+    .cellsheet sup:has(+ sub), .cs-tip sup:has(+ sub) { display: inline-block; width: 0; vertical-align: 0.7em; }
+    /* the frontier table: one row per cluster size, the best fitting layout per policy (page script, from the sheet's formulas) */
+    .tally { width: fit-content; box-sizing: border-box; margin: 14px 0; font: 12px system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--c-0b0b0b);
+      border: 1px solid var(--c-e1e0d9); border-radius: 6px; background: var(--c-fcfcfb); padding: 8px 12px; }
+    .tally table { border-collapse: collapse; }
+    .tally th { text-align: left; font-size: 10.5px; color: var(--c-898781); font-weight: 600; padding: 1px 16px 3px 2px; }
+    .tally th.g { text-align: center; padding-right: 16px; border-bottom: 1px solid var(--c-e1e0d9); }
+    .tally td { padding: 2.5px 16px 2.5px 2px; border-top: 1px solid var(--c-f0efe9); vertical-align: baseline; }
+    .tally th.n, .tally td.n { text-align: right; font-variant-numeric: tabular-nums; }
+    .tally th:last-child, .tally td:last-child { padding-right: 2px; }
+    .tally tr.hl td { background: var(--c-fff8ea); font-weight: 600; }
+    .tally td.no { color: var(--c-898781); }
+    .tally td.cb { color: var(--c-d03b3b); }
+    .tally .lay { font: 11px ui-monospace, monospace; color: var(--c-52514e); }
+    .sheet-dl { font: inherit; color: var(--c-2a78d6); background: none; border: 0; padding: 0; cursor: pointer; }
+  </style>
+</head>
+
+<body data-sheet="cx">
+  <main>
+    <h1>The roofline of DeepSeek-V3’s context extension</h1>
+
+    <p class="note">DRAFT (unlisted study). Generated from
+    ~/Dev/scaling-dsv3-refs/context-extension/roofline-gen.mjs — edit the generator, not this file.</p>
+
+    <p>DeepSeek-V3 pretrained on 14.8T tokens in 4,096-token sequences, then stretched its context window to 128K in two short phases: 1,000 steps at 32K tokens per sequence, then 1,000 at 128K, with YaRN rescaling the rotary frequencies of the decoupled rope key. The report gives the whole recipe in one paragraph (§4.3) and its cost in one cell of Table 1: 119K H800 GPU-hours, against 2,664K for pretraining. This page runs part 3’s roofline on those two phases and asks how far from speed of light they ran. YaRN itself costs nothing here: it changes the rotary frequencies and scales the attention logits, not the shapes of any matmul.</p>
+
+    <h2>What DeepSeek published</h2>
+
+    <p>One detail of the recipe does most of the work: the batch shrinks exactly as the sequence grows. 15,360 × 4K, 1,920 × 32K and 480 × 128K are all <span data-cellref="D">62<span class="d">.9</span><span class="u"> M</span></span> tokens per step. The two phases together are <span data-cellref="D<sub>cx</sub>">126<span class="d"></span><span class="u"> G</span></span> tokens, under 1 % of pretraining, for 4.5 % of its GPU-hours: a context-extension token cost r<sub>H</sub> = <span data-cellref="r<sub>H</sub>">5<span class="d">.25</span><span class="u"> ×</span></span> as much as a pretraining token.</p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">S<sub>0</sub></td><td>pretraining: tokens per sequence</td><td class="vl">4,096</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(DeepSeek-V3 report §4.2)</i></td></tr>
+    <tr><td class="nm">B<sub>0</sub></td><td>pretraining: sequences per step</td><td class="vl">15,360</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(§4.2: after the batch-size ramp from 3,072 over the first 469B tokens)</i></td></tr>
+    <tr><td class="nm">S<sub>1</sub></td><td>phase 1: tokens per sequence</td><td class="vl">32,768</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(§4.3)</i></td></tr>
+    <tr><td class="nm">B<sub>1</sub></td><td>phase 1: sequences per step</td><td class="vl">1,920</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(§4.3)</i></td></tr>
+    <tr><td class="nm">S<sub>2</sub></td><td>phase 2: tokens per sequence</td><td class="vl">131,072</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(§4.3)</i></td></tr>
+    <tr><td class="nm">B<sub>2</sub></td><td>phase 2: sequences per step</td><td class="vl">480</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(§4.3)</i></td></tr>
+    <tr><td class="nm">n<sub>cx</sub></td><td>steps per phase</td><td class="vl">1,000</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(§4.3: “two additional training phases, each comprising 1000 steps”)</i></td></tr>
+    <tr><td class="nm">D</td><td>pretraining: tokens per step</td><td class="vl">62,914,560</td><td class="vl sc ap">6.29 × 10<sup>7</sup></td><td class="vl si ap">62<span class="d">.9</span><span class="u"> M</span></td><td class="fx"><b>B<sub>0</sub></b> · <b>S<sub>0</sub></b></td></tr>
+    <tr><td class="nm">D<sub>1</sub></td><td>phase 1: tokens per step</td><td class="vl">62,914,560</td><td class="vl sc ap">6.29 × 10<sup>7</sup></td><td class="vl si ap">62<span class="d">.9</span><span class="u"> M</span></td><td class="fx"><b>B<sub>1</sub></b> · <b>S<sub>1</sub></b> <i>(the same D: the batch shrinks as the sequence grows)</i></td></tr>
+    <tr><td class="nm">D<sub>2</sub></td><td>phase 2: tokens per step</td><td class="vl">62,914,560</td><td class="vl sc ap">6.29 × 10<sup>7</sup></td><td class="vl si ap">62<span class="d">.9</span><span class="u"> M</span></td><td class="fx"><b>B<sub>2</sub></b> · <b>S<sub>2</sub></b></td></tr>
+    <tr><td class="nm">D<sub>cx</sub></td><td>context-extension tokens</td><td class="vl">125,829,120,000</td><td class="vl sc ap">1.26 × 10<sup>11</sup></td><td class="vl si ap">126<span class="d"></span><span class="u"> G</span></td><td class="fx"><b>n<sub>cx</sub></b> · (<b>D<sub>1</sub></b> + <b>D<sub>2</sub></b>)</td></tr>
+    <tr><td class="nm">D<sub>pre</sub></td><td>pretraining tokens</td><td class="vl">14,800,000,000,000</td><td class="vl sc ap">1.48 × 10<sup>13</sup></td><td class="vl si ap">14<span class="d">.8</span><span class="u"> T</span></td><td class="fx"><i>(§1: 14.8T)</i></td></tr>
+    <tr><td class="nm">H<sub>pre</sub></td><td>pretraining H800 GPU-hours</td><td class="vl">2,664,000</td><td class="vl sc ap">2.66 × 10<sup>6</sup></td><td class="vl si ap">2<span class="d">.66</span><span class="u"> M</span></td><td class="fx"><i>(Table 1)</i></td></tr>
+    <tr><td class="nm">H<sub>cx</sub></td><td>context-extension H800 GPU-hours</td><td class="vl">119,000</td><td class="vl sc ap">1.19 × 10<sup>5</sup></td><td class="vl si ap">119<span class="d"></span><span class="u"> K</span></td><td class="fx"><i>(Table 1)</i></td></tr>
+    <tr class="hl"><td class="nm">r<sub>H</sub></td><td>GPU-hours per token, extension over pretraining</td><td class="vl"></td><td class="vl sc ap">5.25 × 10<sup>0</sup></td><td class="vl si ap">5<span class="d">.25</span><span class="u"> ×</span></td><td class="fx"><b>H<sub>cx</sub></b> / <b>D<sub>cx</sub></b> / (<b>H<sub>pre</sub></b> / <b>D<sub>pre</sub></b>)</td></tr>
+    </table></div>
+
+    <h2>Everything 6ND counts is unchanged</h2>
+
+    <p>The GEMM FLOPs, their split between FP8 and BF16, and the recompute replay all scale with D and not with S. At a fixed D, part 3’s numbers carry over to both phases unchanged: <span data-cellref="T<sub>rest</sub>">4<span class="d">.90</span><span class="u"> s</span></span> of compute per step that has nothing to do with sequence length.</p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">π<sup>sol</sup><sub>bf16</sub></td><td>BF16 GEMM, measured (FLOP/s)</td><td class="vl">757,700,000,000,000</td><td class="vl sc ap">7.58 × 10<sup>14</sup></td><td class="vl si ap">758<span class="d"></span><span class="u"> TFLOP/s</span></td><td class="fx"><i>(part 3’s sheet: Smol, H100, torch.matmul, best of 5)</i></td></tr>
+    <tr><td class="nm">π<sup>sol</sup><sub>fp8</sub></td><td>FP8 GEMM, measured (FLOP/s)</td><td class="vl">1,456,600,000,000,000</td><td class="vl sc ap">1.46 × 10<sup>15</sup></td><td class="vl si ap">1<span class="d">.46</span><span class="u"> PFLOP/s</span></td><td class="fx"><i>(part 3’s sheet: Smol, H100, e4m3 _scaled_mm, best of 5)</i></td></tr>
+    <tr><td class="nm">GPUs</td><td>GPUs in the cluster</td><td class="vl">2,048</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(DeepSeek’s pretraining cluster; the report does not say what context extension ran on, and at speed of light GPU-hours do not depend on it)</i></td></tr>
+    <tr><td class="nm">N</td><td>activated params</td><td class="vl">36,625,618,432</td><td class="vl sc ap">3.66 × 10<sup>10</sup></td><td class="vl si ap">36<span class="d">.6</span><span class="u"> G</span></td><td class="fx"><i>(part 3’s sheet: checkpoint tally, MTP module out)</i></td></tr>
+    <tr><td class="nm">N<sub>bf16</sub></td><td>params in BF16 GEMMs</td><td class="vl">1,033,109,504</td><td class="vl sc ap">1.03 × 10<sup>9</sup></td><td class="vl si ap">1<span class="d">.03</span><span class="u"> G</span></td><td class="fx"><i>(part 3’s sheet: output head 7,168 × 129,280 + 58 routers × 7,168 × 256)</i></td></tr>
+    <tr><td class="nm">L</td><td>layers</td><td class="vl">61</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(architecture: 58 MoE + 3 dense)</i></td></tr>
+    <tr><td class="nm">N<sup>up</sup><sub>q</sub></td><td>q up-projection params, per layer</td><td class="vl">37,748,736</td><td class="vl sc ap">3.77 × 10<sup>7</sup></td><td class="vl si ap">37<span class="d">.7</span><span class="u"> M</span></td><td class="fx"><i>(architecture: 1,536 × 128 × 192)</i></td></tr>
+    <tr><td class="nm">N<sup>up</sup><sub>kv</sub></td><td>kv up-projection params, per layer</td><td class="vl">16,777,216</td><td class="vl sc ap">1.68 × 10<sup>7</sup></td><td class="vl si ap">16<span class="d">.8</span><span class="u"> M</span></td><td class="fx"><i>(architecture: 512 × 128 × (128 + 128))</i></td></tr>
+    <tr><td class="nm">N<sub>rc</sub></td><td>replayed GEMM params</td><td class="vl">3,326,083,072</td><td class="vl sc ap">3.33 × 10<sup>9</sup></td><td class="vl si ap">3<span class="d">.33</span><span class="u"> G</span></td><td class="fx"><b>L</b> · (<b>N<sup>up</sup><sub>q</sub></b> + <b>N<sup>up</sup><sub>kv</sub></b>) <i>(DeepSeek recomputes the MLA up-projections in the backward pass)</i></td></tr>
+    <tr><td class="nm">C</td><td>FLOPs per step, 6ND</td><td class="vl">13,825,708,010,263,019,520</td><td class="vl sc ap">1.38 × 10<sup>19</sup></td><td class="vl si ap">13<span class="d">.8</span><span class="u"> EFLOP</span></td><td class="fx">6 · <b>N</b> · <b>D</b></td></tr>
+    <tr><td class="nm">C<sub>bf16</sub></td><td>BF16 GEMM FLOPs inside 6ND</td><td class="vl">389,985,779,255,869,440</td><td class="vl sc ap">3.90 × 10<sup>17</sup></td><td class="vl si ap">390<span class="d"></span><span class="u"> PFLOP</span></td><td class="fx">6 · <b>N<sub>bf16</sub></b> · <b>D</b></td></tr>
+    <tr><td class="nm">C<sub>fp8</sub></td><td>FP8 GEMM FLOPs inside 6ND</td><td class="vl">13,435,722,231,007,150,080</td><td class="vl sc ap">1.34 × 10<sup>19</sup></td><td class="vl si ap">13<span class="d">.4</span><span class="u"> EFLOP</span></td><td class="fx"><b>C</b> − <b>C<sub>bf16</sub></b></td></tr>
+    <tr><td class="nm">C<sub>rc</sub></td><td>recompute FLOPs per step</td><td class="vl">418,518,105,996,656,640</td><td class="vl sc ap">4.19 × 10<sup>17</sup></td><td class="vl si ap">419<span class="d"></span><span class="u"> PFLOP</span></td><td class="fx">2 · <b>N<sub>rc</sub></b> · <b>D</b></td></tr>
+    <tr><td class="nm">T<sub>fp8</sub></td><td>FP8 GEMM time (s)</td><td class="vl"></td><td class="vl sc ap">4.50 × 10<sup>0</sup></td><td class="vl si ap">4<span class="d">.50</span><span class="u"> s</span></td><td class="fx"><b>C<sub>fp8</sub></b> / (<b>GPUs</b> · <b>π<sup>sol</sup><sub>fp8</sub></b>)</td></tr>
+    <tr><td class="nm">T<sub>bf16</sub></td><td>BF16 GEMM time, head + routers (s)</td><td class="vl"></td><td class="vl sc ap">2.51 × 10<sup>−1</sup></td><td class="vl si ap">251<span class="d"></span><span class="u"> ms</span></td><td class="fx"><b>C<sub>bf16</sub></b> / (<b>GPUs</b> · <b>π<sup>sol</sup><sub>bf16</sub></b>)</td></tr>
+    <tr><td class="nm">T<sub>rc</sub></td><td>recompute time, FP8 (s)</td><td class="vl"></td><td class="vl sc ap">1.40 × 10<sup>−1</sup></td><td class="vl si ap">140<span class="d"></span><span class="u"> ms</span></td><td class="fx"><b>C<sub>rc</sub></b> / (<b>GPUs</b> · <b>π<sup>sol</sup><sub>fp8</sub></b>)</td></tr>
+    <tr class="hl"><td class="nm">T<sub>rest</sub></td><td>compute time per step, all but attention (s)</td><td class="vl"></td><td class="vl sc ap">4.90 × 10<sup>0</sup></td><td class="vl si ap">4<span class="d">.90</span><span class="u"> s</span></td><td class="fx"><b>T<sub>fp8</sub></b> + <b>T<sub>bf16</sub></b> + <b>T<sub>rc</sub></b> <i>(a function of D alone: the same in all three phases)</i></td></tr>
+    </table></div>
+
+    <h2>Attention is the only term that grows</h2>
+
+    <p>Part 3’s attention count, L · B · (4 · c<sub>qk</sub> + 3 · c<sub>pv</sub>), is α · D · S once the per-sequence S · S is written out. At fixed D it grows linearly with S: <span data-cellref="T<sup>0</sup><sub>attn</sub>">1<span class="d">.49</span><span class="u"> s</span></span> per step at 4K, <span data-cellref="T<sup>1</sup><sub>attn</sub>">11<span class="d">.9</span><span class="u"> s</span></span> at 32K, <span data-cellref="T<sup>2</sup><sub>attn</sub>">47<span class="d">.8</span><span class="u"> s</span></span> at 128K. That takes the attention core from a quarter of the step’s compute to more than nine tenths of it. This counts every causal pair of the packed sequence: the report says pretraining packs documents without cross-sample attention masking, and we assume the extension does too.</p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">n<sub>h</sub></td><td>attention heads</td><td class="vl">128</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(architecture)</i></td></tr>
+    <tr><td class="nm">d<sub>h</sub></td><td>head dim · qk nope, v</td><td class="vl">128</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(architecture)</i></td></tr>
+    <tr><td class="nm">d<sup>R</sup><sub>h</sub></td><td>head dim · qk rope</td><td class="vl">64</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(architecture)</i></td></tr>
+    <tr><td class="nm">α</td><td>attention FLOPs per token, per token of context</td><td class="vl">8,994,816</td><td class="vl sc ap">8.99 × 10<sup>6</sup></td><td class="vl si ap">8<span class="d">.99</span><span class="u"> MFLOP</span></td><td class="fx"><b>L</b> · <b>n<sub>h</sub></b> · (4 · (<b>d<sub>h</sub></b> + <b>d<sup>R</sup><sub>h</sub></b>) + 3 · <b>d<sub>h</sub></b>) <i>(part 3’s L · B · (4 · c<sub>qk</sub> + 3 · c<sub>pv</sub>) is α · D · S: causal halves the S · S pairs, 2 FLOPs per multiply-add doubles them back)</i></td></tr>
+    <tr><td class="nm">T<sup>0</sup><sub>attn</sub></td><td>attention core time at S<sub>0</sub>, BF16 (s)</td><td class="vl"></td><td class="vl sc ap">1.49 × 10<sup>0</sup></td><td class="vl si ap">1<span class="d">.49</span><span class="u"> s</span></td><td class="fx"><b>α</b> · <b>D</b> · <b>S<sub>0</sub></b> / (<b>GPUs</b> · <b>π<sup>sol</sup><sub>bf16</sub></b>) <i>(part 3’s T<sub>attn</sub>)</i></td></tr>
+    <tr><td class="nm">T<sup>1</sup><sub>attn</sub></td><td>attention core time at S<sub>1</sub>, BF16 (s)</td><td class="vl"></td><td class="vl sc ap">1.19 × 10<sup>1</sup></td><td class="vl si ap">11<span class="d">.9</span><span class="u"> s</span></td><td class="fx"><b>α</b> · <b>D</b> · <b>S<sub>1</sub></b> / (<b>GPUs</b> · <b>π<sup>sol</sup><sub>bf16</sub></b>)</td></tr>
+    <tr><td class="nm">T<sup>2</sup><sub>attn</sub></td><td>attention core time at S<sub>2</sub>, BF16 (s)</td><td class="vl"></td><td class="vl sc ap">4.78 × 10<sup>1</sup></td><td class="vl si ap">47<span class="d">.8</span><span class="u"> s</span></td><td class="fx"><b>α</b> · <b>D</b> · <b>S<sub>2</sub></b> / (<b>GPUs</b> · <b>π<sup>sol</sup><sub>bf16</sub></b>)</td></tr>
+    <tr><td class="nm">T<sup>0</sup><sub>c</sub></td><td>compute time per step, pretraining (s)</td><td class="vl"></td><td class="vl sc ap">6.39 × 10<sup>0</sup></td><td class="vl si ap">6<span class="d">.39</span><span class="u"> s</span></td><td class="fx"><b>T<sub>rest</sub></b> + <b>T<sup>0</sup><sub>attn</sub></b> <i>(part 3’s T<sup>+</sup><sub>c</sub>)</i></td></tr>
+    <tr class="hl"><td class="nm">T<sup>1</sup><sub>c</sub></td><td>compute time per step, phase 1 (s)</td><td class="vl"></td><td class="vl sc ap">1.68 × 10<sup>1</sup></td><td class="vl si ap">16<span class="d">.8</span><span class="u"> s</span></td><td class="fx"><b>T<sub>rest</sub></b> + <b>T<sup>1</sup><sub>attn</sub></b></td></tr>
+    <tr class="hl"><td class="nm">T<sup>2</sup><sub>c</sub></td><td>compute time per step, phase 2 (s)</td><td class="vl"></td><td class="vl sc ap">5.27 × 10<sup>1</sup></td><td class="vl si ap">52<span class="d">.7</span><span class="u"> s</span></td><td class="fx"><b>T<sub>rest</sub></b> + <b>T<sup>2</sup><sub>attn</sub></b></td></tr>
+    </table></div>
+
+    <h2>A long sequence does not fit on one GPU</h2>
+
+    <p>Part 2 fit pretraining into 80 GiB with 4,096-token microbatches, eight and a half of them in flight under DualPipeV. Saved activations are linear in a microbatch’s tokens (the attention kernel saves its output and log-sum-exp, never the S · S scores), so the same budget holds at most <span data-cellref="s<sub>max</sub>">5<span class="d">.93</span><span class="u"> K</span></span> tokens per GPU per microbatch. A 32K sequence has to be spread over at least six GPUs, a 128K sequence over at least 23. DeepSeek trained without tensor or context parallelism, and the report doesn’t say how the extension was laid out. The pretraining layout can’t run it unchanged in any case: at PP 16 each replica takes 491,520 tokens per step, which is 15 sequences at 32K (DualPipe needs an even number of microbatches) and 3.75 at 128K.</p>
+
+    <p>We pick the layout that leaves each GPU’s work exactly as it was: context parallelism CP = S / 4,096, so every GPU still holds a 4,096-token slice of one sequence per microbatch. Its activation memory is part 2’s, and so is everything that is counted per token.</p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">M<sub>HBM</sub></td><td>HBM per GPU (B)</td><td class="vl">85,899,345,920</td><td class="vl sc ap">8.59 × 10<sup>10</sup></td><td class="vl si ap">85<span class="d">.9</span><span class="u"> GB</span></td><td class="fx"><i>(80 GiB, part 2’s yardstick)</i></td></tr>
+    <tr><td class="nm">R<sub>4K</sub></td><td>resident bytes at part 2’s endpoint (B)</td><td class="vl">66,296,545,344</td><td class="vl sc ap">6.63 × 10<sup>10</sup></td><td class="vl si ap">66<span class="d">.3</span><span class="u"> GB</span></td><td class="fx"><i>(part 2’s sheet, T1: PP 8 DualPipeV, EP 64, ZeRO-1, DeepSeek’s FP8 recipe and recompute, 4,096-token microbatches)</i></td></tr>
+    <tr><td class="nm">A<sub>4K</sub></td><td>of which saved activations (B)</td><td class="vl">43,780,145,152</td><td class="vl sc ap">4.38 × 10<sup>10</sup></td><td class="vl si ap">43<span class="d">.8</span><span class="u"> GB</span></td><td class="fx"><i>(part 2’s sheet, A1)</i></td></tr>
+    <tr><td class="nm">m<sub>fl</sub></td><td>microbatches in flight</td><td class="vl">8.5</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(part 2: DualPipeV holds PP + ½)</i></td></tr>
+    <tr><td class="nm">a<sub>tok</sub></td><td>saved-activation bytes per in-flight token</td><td class="vl">1,257,472</td><td class="vl sc ap">1.26 × 10<sup>6</sup></td><td class="vl si ap">1<span class="d">.26</span><span class="u"> MB</span></td><td class="fx"><b>A<sub>4K</sub></b> / (<b>S<sub>0</sub></b> · <b>m<sub>fl</sub></b>) <i>(linear in tokens: the attention core saves its output and log-sum-exp, not the S · S scores)</i></td></tr>
+    <tr><td class="nm">s<sub>max</sub></td><td>most tokens per GPU per microbatch that fit</td><td class="vl"></td><td class="vl sc ap">5.93 × 10<sup>3</sup></td><td class="vl si ap">5<span class="d">.93</span><span class="u"> K</span></td><td class="fx">(<b>M<sub>HBM</sub></b> − <b>R<sub>4K</sub></b> + <b>A<sub>4K</sub></b>) / (<b>a<sub>tok</sub></b> · <b>m<sub>fl</sub></b>)</td></tr>
+    <tr><td class="nm">g<sub>1</sub></td><td>GPUs a phase-1 sequence must span, at least</td><td class="vl"></td><td class="vl sc ap">5.53 × 10<sup>0</sup></td><td class="vl si ap">5<span class="d">.53</span><span class="u"> </span></td><td class="fx"><b>S<sub>1</sub></b> / <b>s<sub>max</sub></b></td></tr>
+    <tr><td class="nm">g<sub>2</sub></td><td>GPUs a phase-2 sequence must span, at least</td><td class="vl"></td><td class="vl sc ap">2.21 × 10<sup>1</sup></td><td class="vl si ap">22<span class="d">.1</span><span class="u"> </span></td><td class="fx"><b>S<sub>2</sub></b> / <b>s<sub>max</sub></b></td></tr>
+    <tr class="hl"><td class="nm">CP<sub>1</sub></td><td>context parallelism, phase 1</td><td class="vl">8</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><b>S<sub>1</sub></b> / <b>S<sub>0</sub></b> <i>(model choice: every GPU keeps pretraining’s 4,096-token slice)</i></td></tr>
+    <tr class="hl"><td class="nm">CP<sub>2</sub></td><td>context parallelism, phase 2</td><td class="vl">32</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><b>S<sub>2</sub></b> / <b>S<sub>0</sub></b></td></tr>
+    </table></div>
+
+    <h2>The pipeline sees the same microbatches</h2>
+
+    <p>With CP GPUs sharing a sequence, a replica is PP · CP GPUs and a microbatch is one sequence. The replica count falls by CP while its sequences grow by CP, so every phase has 60 microbatches per replica, as in pretraining, and the same DualPipeV bubble of <span data-cellref="b<sub>Dual</sub>">3<span class="d">.89</span><span class="u"> %</span></span>.</p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">PP</td><td>pipeline ranks</td><td class="vl">8</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(part 3’s sheet: the DualPipeV layout of part 2)</i></td></tr>
+    <tr><td class="nm">s<sub>GPU</sub></td><td>chunks per GPU</td><td class="vl">2</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(DualPipeV)</i></td></tr>
+    <tr><td class="nm">m<sub>0</sub></td><td>microbatches per replica·step, pretraining</td><td class="vl">60</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><b>D</b> · <b>PP</b> / (<b>GPUs</b> · <b>S<sub>0</sub></b>)</td></tr>
+    <tr><td class="nm">m<sub>1</sub></td><td>microbatches per replica·step, phase 1</td><td class="vl">60</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><b>D</b> · <b>PP</b> · <b>CP<sub>1</sub></b> / (<b>GPUs</b> · <b>S<sub>1</sub></b>) <i>(a replica is now PP · CP GPUs; a microbatch is one sequence spread over CP of them)</i></td></tr>
+    <tr><td class="nm">m<sub>2</sub></td><td>microbatches per replica·step, phase 2</td><td class="vl">60</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><b>D</b> · <b>PP</b> · <b>CP<sub>2</sub></b> / (<b>GPUs</b> · <b>S<sub>2</sub></b>)</td></tr>
+    <tr><td class="nm">b<sub>Dual</sub></td><td>DualPipeV bubble, share of compute</td><td class="vl"></td><td class="vl sc ap">3.89 × 10<sup>−2</sup></td><td class="vl si ap">3<span class="d">.89</span><span class="u"> %</span></td><td class="fx">(<b>PP</b> − 1) · 2 / (<b>s<sub>GPU</sub></b> · <b>m<sub>0</sub></b> · 3) <i>(part 3’s b<sub>Dual</sub> with B = 2F, W = F; the same in every phase, since m is)</i></td></tr>
+    </table></div>
+
+    <h2>InfiniBand traffic that does not change</h2>
+
+    <p>Expert parallelism, pipeline sends and part 3’s per-node ZeRO-1 traffic are all counted per token or per parameter, and a CP group holds the same parameters a data-parallel group would. The <span data-cellref="T<sup>0</sup><sub>IB</sub>">5<span class="d">.85</span><span class="u"> s</span></span> of InfiniBand time per step carries over from part 3 to both phases.</p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">β<sub>IB</sub></td><td>IB bandwidth into a GPU (B/s)</td><td class="vl">50,000,000,000</td><td class="vl sc ap">5.00 × 10<sup>10</sup></td><td class="vl si ap">50<span class="d"></span><span class="u"> GB/s</span></td><td class="fx"><i>(hardware spec)</i></td></tr>
+    <tr><td class="nm">NVL</td><td>GPUs per node</td><td class="vl">8</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(hardware spec)</i></td></tr>
+    <tr><td class="nm">β<sub>node</sub></td><td>IB bandwidth into a node (B/s)</td><td class="vl">400,000,000,000</td><td class="vl sc ap">4.00 × 10<sup>11</sup></td><td class="vl si ap">400<span class="d"></span><span class="u"> GB/s</span></td><td class="fx"><b>NVL</b> · <b>β<sub>IB</sub></b></td></tr>
+    <tr><td class="nm">V<sup>+</sup><sub>EP</sub></td><td>EP IB bytes per GPU·step</td><td class="vl">270,998,568,960</td><td class="vl sc ap">2.71 × 10<sup>11</sup></td><td class="vl si ap">271<span class="d"></span><span class="u"> GB</span></td><td class="fx"><i>(part 3’s sheet: V<sup>+</sup><sub>tok</sub> · D<sub>GPU</sub>, per token, so unchanged at fixed D)</i></td></tr>
+    <tr><td class="nm">V<sub>PP</sub></td><td>PP IB bytes per GPU·step</td><td class="vl">14,092,861,440</td><td class="vl sc ap">1.41 × 10<sup>10</sup></td><td class="vl si ap">14<span class="d">.1</span><span class="u"> GB</span></td><td class="fx"><i>(part 3’s sheet: per token, so unchanged)</i></td></tr>
+    <tr><td class="nm">Λ<sup>PP</sup></td><td>params a node receives, ZeRO-1 under PP</td><td class="vl">9,735,833,642</td><td class="vl sc ap">9.74 × 10<sup>9</sup></td><td class="vl si ap">9<span class="d">.74</span><span class="u"> G</span></td><td class="fx"><i>(part 3’s sheet: Λ<sup>PP</sup><sub>ne</sub> + Λ<sup>PP</sup><sub>exp</sub>; CP ranks hold the same parameters as data-parallel replicas, so a node still receives one stage)</i></td></tr>
+    <tr><td class="nm">T<sup>+</sup><sub>EP</sub></td><td>EP time per step (s)</td><td class="vl"></td><td class="vl sc ap">5.42 × 10<sup>0</sup></td><td class="vl si ap">5<span class="d">.42</span><span class="u"> s</span></td><td class="fx"><b>V<sup>+</sup><sub>EP</sub></b> / <b>β<sub>IB</sub></b></td></tr>
+    <tr><td class="nm">T<sub>PP</sub></td><td>PP time per step (s)</td><td class="vl"></td><td class="vl sc ap">2.82 × 10<sup>−1</sup></td><td class="vl si ap">282<span class="d"></span><span class="u"> ms</span></td><td class="fx"><b>V<sub>PP</sub></b> / <b>β<sub>IB</sub></b></td></tr>
+    <tr><td class="nm">T<sup>PP</sup><sub>sync</sub></td><td>ZeRO-1 time per step (s)</td><td class="vl"></td><td class="vl sc ap">1.46 × 10<sup>−1</sup></td><td class="vl si ap">146<span class="d"></span><span class="u"> ms</span></td><td class="fx">6 · <b>Λ<sup>PP</sup></b> / <b>β<sub>node</sub></b> <i>(BF16 all-gather + FP32 reduce-scatter)</i></td></tr>
+    <tr class="hl"><td class="nm">T<sup>0</sup><sub>IB</sub></td><td>IB time per step before context parallelism (s)</td><td class="vl"></td><td class="vl sc ap">5.85 × 10<sup>0</sup></td><td class="vl si ap">5<span class="d">.85</span><span class="u"> s</span></td><td class="fx"><b>T<sup>+</sup><sub>EP</sub></b> + <b>T<sub>PP</sub></b> + <b>T<sup>PP</sup><sub>sync</sub></b></td></tr>
+    </table></div>
+
+    <h2>What context parallelism moves</h2>
+
+    <p>A GPU holding one slice of a sequence still needs the keys and values of every earlier slice. There are three standard ways to get them. Ring attention, which is what Megatron’s context parallelism does, passes K and V around the CP group. MLA offers something much smaller to pass: the 576-wide latent that inference caches. The price is that every GPU then re-runs the kv up-projection for every token it gathers. Head-parallel attention (DeepSpeed-Ulysses) all-to-alls Q, K and V from a sequence split into a head split and O back, so each GPU’s bytes don’t grow with CP. Up-projected K and V are <span data-cellref="v<sub>kv</sub>">81<span class="d">.9</span><span class="u"> KB</span></span> per token and layer, 71 times the latent’s <span data-cellref="v<sub>lat</sub>">1<span class="d">.15</span><span class="u"> KB</span></span>.</p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">r<sub>kv</sub></td><td>kv latent rank</td><td class="vl">512</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(architecture)</i></td></tr>
+    <tr><td class="nm">v<sub>kv</sub></td><td>K and V bytes per token·layer, up-projected</td><td class="vl">81,920</td><td class="vl sc ap">8.19 × 10<sup>4</sup></td><td class="vl si ap">81<span class="d">.9</span><span class="u"> KB</span></td><td class="fx"><b>n<sub>h</sub></b> · (<b>d<sub>h</sub></b> + <b>d<sup>R</sup><sub>h</sub></b> + <b>d<sub>h</sub></b>) · 2 <i>(BF16; the shared rope key broadcast to every head, as the attention kernel sees it)</i></td></tr>
+    <tr><td class="nm">v<sub>lat</sub></td><td>latent bytes per token·layer</td><td class="vl">1,152</td><td class="vl sc ap">1.15 × 10<sup>3</sup></td><td class="vl si ap">1<span class="d">.15</span><span class="u"> KB</span></td><td class="fx">(<b>r<sub>kv</sub></b> + <b>d<sup>R</sup><sub>h</sub></b>) · 2 <i>(BF16: the compressed c<sup>KV</sup> and the one shared rope key)</i></td></tr>
+    <tr><td class="nm">v<sub>uly</sub></td><td>Q, K, V and O bytes per token·layer</td><td class="vl">163,840</td><td class="vl sc ap">1.64 × 10<sup>5</sup></td><td class="vl si ap">164<span class="d"></span><span class="u"> KB</span></td><td class="fx"><b>n<sub>h</sub></b> · (2 · (<b>d<sub>h</sub></b> + <b>d<sup>R</sup><sub>h</sub></b>) + 2 · <b>d<sub>h</sub></b>) · 2 <i>(BF16)</i></td></tr>
+    <tr><td class="nm">D<sub>L</sub></td><td>token·layers per GPU per step</td><td class="vl">1,873,920</td><td class="vl sc ap">1.87 × 10<sup>6</sup></td><td class="vl si ap">1<span class="d">.87</span><span class="u"> M</span></td><td class="fx"><b>D</b> · <b>L</b> / <b>GPUs</b></td></tr>
+    <tr><td class="nm">β<sup>sol</sup><sub>NV</sub></td><td>NVLink, achieved (B/s)</td><td class="vl">160,000,000,000</td><td class="vl sc ap">1.60 × 10<sup>11</sup></td><td class="vl si ap">160<span class="d"></span><span class="u"> GB/s</span></td><td class="fx"><i>(part 3’s sheet: DeepSeek-V3 report)</i></td></tr>
+    </table></div>
+
+    <h2>Phase 1: CP 8 inside a node</h2>
+
+    <p>At CP 8 a sequence fits in one node, so CP rides NVLink. Ring attention already outruns the compute it would hide behind: <span data-cellref="T<sup>1</sup><sub>ring</sub>">20<span class="d">.1</span><span class="u"> s</span></span> of traffic against <span data-cellref="T<sup>1</sup><sub>c</sub>">16<span class="d">.8</span><span class="u"> s</span></span> of compute. The latent all-gather moves almost nothing (<span data-cellref="T<sup>1</sup><sub>lat</sub>">283<span class="d"></span><span class="u"> ms</span></span>) but adds <span data-cellref="T<sup>1</sup><sub>up</sub>">1<span class="d">.21</span><span class="u"> s</span></span> of replayed up-projections. Ulysses takes <span data-cellref="T<sup>1</sup><sub>uly</sub>">3<span class="d">.36</span><span class="u"> s</span></span> and adds no FLOPs.</p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">V<sup>1</sup><sub>ring</sub></td><td>ring attention: bytes per GPU·step</td><td class="vl">3,223,742,054,400</td><td class="vl sc ap">3.22 × 10<sup>12</sup></td><td class="vl si ap">3<span class="d">.22</span><span class="u"> TB</span></td><td class="fx">3 · (<b>CP<sub>1</sub></b> − 1) · <b>v<sub>kv</sub></b> · <b>D<sub>L</sub></b> <i>(every local token sees K and V of the CP − 1 other slices; forward once, backward again plus dK and dV)</i></td></tr>
+    <tr><td class="nm">T<sup>1</sup><sub>ring</sub></td><td>ring attention: time per step (s)</td><td class="vl">20.14838784</td><td class="vl sc ap">2.01 × 10<sup>1</sup></td><td class="vl si ap">20<span class="d">.1</span><span class="u"> s</span></td><td class="fx"><b>V<sup>1</sup><sub>ring</sub></b> / <b>β<sup>sol</sup><sub>NV</sub></b></td></tr>
+    <tr><td class="nm">V<sup>1</sup><sub>lat</sub></td><td>latent all-gather: bytes per GPU·step</td><td class="vl">45,333,872,640</td><td class="vl sc ap">4.53 × 10<sup>10</sup></td><td class="vl si ap">45<span class="d">.3</span><span class="u"> GB</span></td><td class="fx">3 · (<b>CP<sub>1</sub></b> − 1) · <b>v<sub>lat</sub></b> · <b>D<sub>L</sub></b> <i>(gather forward, gather again and reduce-scatter its gradient backward)</i></td></tr>
+    <tr><td class="nm">T<sup>1</sup><sub>lat</sub></td><td>latent all-gather: time per step (s)</td><td class="vl">0.283336704</td><td class="vl sc ap">2.83 × 10<sup>−1</sup></td><td class="vl si ap">283<span class="d"></span><span class="u"> ms</span></td><td class="fx"><b>V<sup>1</sup><sub>lat</sub></b> / <b>β<sup>sol</sup><sub>NV</sub></b></td></tr>
+    <tr><td class="nm">C<sup>1</sup><sub>up</sub></td><td>latent all-gather: replayed up-projection FLOPs</td><td class="vl">3,605,694,451,663,503,360</td><td class="vl sc ap">3.61 × 10<sup>18</sup></td><td class="vl si ap">3<span class="d">.61</span><span class="u"> EFLOP</span></td><td class="fx">4 · (<b>CP<sub>1</sub></b> − 1) · 2 · <b>N<sup>up</sup><sub>kv</sub></b> · <b>L</b> · <b>D</b> <i>(every GPU up-projects the gathered tokens too: forward, recompute, dgrad, wgrad)</i></td></tr>
+    <tr><td class="nm">T<sup>1</sup><sub>up</sub></td><td>latent all-gather: replayed up-projection time, FP8 (s)</td><td class="vl"></td><td class="vl sc ap">1.21 × 10<sup>0</sup></td><td class="vl si ap">1<span class="d">.21</span><span class="u"> s</span></td><td class="fx"><b>C<sup>1</sup><sub>up</sub></b> / (<b>GPUs</b> · <b>π<sup>sol</sup><sub>fp8</sub></b>)</td></tr>
+    <tr><td class="nm">V<sup>1</sup><sub>uly</sub></td><td>head-parallel (Ulysses): bytes per GPU·step</td><td class="vl">537,290,342,400</td><td class="vl sc ap">5.37 × 10<sup>11</sup></td><td class="vl si ap">537<span class="d"></span><span class="u"> GB</span></td><td class="fx">2 · (<b>CP<sub>1</sub></b> − 1) / <b>CP<sub>1</sub></b> · <b>v<sub>uly</sub></b> · <b>D<sub>L</sub></b> <i>(all-to-all Q, K, V to head-split and O back; the backward mirrors it)</i></td></tr>
+    <tr class="hl"><td class="nm">T<sup>1</sup><sub>uly</sub></td><td>head-parallel (Ulysses): time per step (s)</td><td class="vl">3.35806464</td><td class="vl sc ap">3.36 × 10<sup>0</sup></td><td class="vl si ap">3<span class="d">.36</span><span class="u"> s</span></td><td class="fx"><b>V<sup>1</sup><sub>uly</sub></b> / <b>β<sup>sol</sup><sub>NV</sub></b></td></tr>
+    </table></div>
+
+    <h2>Phase 2: CP 32 across four nodes</h2>
+
+    <p>At CP 32, <span data-cellref="x<sub>2</sub>">77<span class="d">.4</span><span class="u"> %</span></span> of a GPU’s CP peers are on other nodes, and those bytes cross InfiniBand. Ring attention would need <span data-cellref="T<sup>2</sup><sub>ring</sub>">221<span class="d"></span><span class="u"> s</span></span> of InfiniBand time per step, about four times the compute, so ring CP at this size is not an option on an H800’s 50 GB/s. The latent all-gather needs <span data-cellref="T<sup>2</sup><sub>lat</sub>">3<span class="d">.11</span><span class="u"> s</span></span> of InfiniBand plus <span data-cellref="T<sup>2</sup><sub>up</sub>">5<span class="d">.35</span><span class="u"> s</span></span> of replayed FP8 compute. Ulysses needs <span data-cellref="T<sup>2</sup><sub>uly</sub>">9<span class="d">.21</span><span class="u"> s</span></span>. Added to the unchanged traffic, InfiniBand is busy for <span data-cellref="f<sup>2</sup><sub>IB</sub>">28<span class="d">.6</span><span class="u"> %</span></span> of phase 2’s compute time, so it hides under compute. The step times below assume Ulysses (or anything else whose traffic hides and that adds no FLOPs). The latent all-gather would add its <span data-cellref="T<sup>2</sup><sub>up</sub>">5<span class="d">.35</span><span class="u"> s</span></span> of replay to phase 2’s compute instead.</p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">x<sub>2</sub></td><td>share of a GPU’s CP peers on other nodes</td><td class="vl"></td><td class="vl sc ap">7.74 × 10<sup>−1</sup></td><td class="vl si ap">77<span class="d">.4</span><span class="u"> %</span></td><td class="fx">(<b>CP<sub>2</sub></b> − <b>NVL</b>) / (<b>CP<sub>2</sub></b> − 1) <i>(the rest ride NVLink, in parallel and faster)</i></td></tr>
+    <tr><td class="nm">V<sup>2</sup><sub>ring</sub></td><td>ring attention: bytes per GPU·step</td><td class="vl">14,276,571,955,200</td><td class="vl sc ap">1.43 × 10<sup>13</sup></td><td class="vl si ap">14<span class="d">.3</span><span class="u"> TB</span></td><td class="fx">3 · (<b>CP<sub>2</sub></b> − 1) · <b>v<sub>kv</sub></b> · <b>D<sub>L</sub></b></td></tr>
+    <tr><td class="nm">T<sup>2</sup><sub>ring</sub></td><td>ring attention: IB time per step (s)</td><td class="vl">221.056598016</td><td class="vl sc ap">2.21 × 10<sup>2</sup></td><td class="vl si ap">221<span class="d"></span><span class="u"> s</span></td><td class="fx"><b>V<sup>2</sup><sub>ring</sub></b> · <b>x<sub>2</sub></b> / <b>β<sub>IB</sub></b></td></tr>
+    <tr><td class="nm">V<sup>2</sup><sub>lat</sub></td><td>latent all-gather: bytes per GPU·step</td><td class="vl">200,764,293,120</td><td class="vl sc ap">2.01 × 10<sup>11</sup></td><td class="vl si ap">201<span class="d"></span><span class="u"> GB</span></td><td class="fx">3 · (<b>CP<sub>2</sub></b> − 1) · <b>v<sub>lat</sub></b> · <b>D<sub>L</sub></b></td></tr>
+    <tr><td class="nm">T<sup>2</sup><sub>lat</sub></td><td>latent all-gather: IB time per step (s)</td><td class="vl"></td><td class="vl sc ap">3.11 × 10<sup>0</sup></td><td class="vl si ap">3<span class="d">.11</span><span class="u"> s</span></td><td class="fx"><b>V<sup>2</sup><sub>lat</sub></b> · <b>x<sub>2</sub></b> / <b>β<sub>IB</sub></b></td></tr>
+    <tr><td class="nm">C<sup>2</sup><sub>up</sub></td><td>latent all-gather: replayed up-projection FLOPs</td><td class="vl">15,968,075,428,795,514,880</td><td class="vl sc ap">1.60 × 10<sup>19</sup></td><td class="vl si ap">16<span class="d">.0</span><span class="u"> EFLOP</span></td><td class="fx">4 · (<b>CP<sub>2</sub></b> − 1) · 2 · <b>N<sup>up</sup><sub>kv</sub></b> · <b>L</b> · <b>D</b></td></tr>
+    <tr><td class="nm">T<sup>2</sup><sub>up</sub></td><td>latent all-gather: replayed up-projection time, FP8 (s)</td><td class="vl"></td><td class="vl sc ap">5.35 × 10<sup>0</sup></td><td class="vl si ap">5<span class="d">.35</span><span class="u"> s</span></td><td class="fx"><b>C<sup>2</sup><sub>up</sub></b> / (<b>GPUs</b> · <b>π<sup>sol</sup><sub>fp8</sub></b>)</td></tr>
+    <tr><td class="nm">V<sup>2</sup><sub>uly</sub></td><td>head-parallel (Ulysses): bytes per GPU·step</td><td class="vl">594,857,164,800</td><td class="vl sc ap">5.95 × 10<sup>11</sup></td><td class="vl si ap">595<span class="d"></span><span class="u"> GB</span></td><td class="fx">2 · (<b>CP<sub>2</sub></b> − 1) / <b>CP<sub>2</sub></b> · <b>v<sub>uly</sub></b> · <b>D<sub>L</sub></b> <i>(CP 32 still leaves each GPU 4 of the 128 heads)</i></td></tr>
+    <tr class="hl"><td class="nm">T<sup>2</sup><sub>uly</sub></td><td>head-parallel (Ulysses): IB time per step (s)</td><td class="vl">9.210691584</td><td class="vl sc ap">9.21 × 10<sup>0</sup></td><td class="vl si ap">9<span class="d">.21</span><span class="u"> s</span></td><td class="fx"><b>V<sup>2</sup><sub>uly</sub></b> · <b>x<sub>2</sub></b> / <b>β<sub>IB</sub></b></td></tr>
+    <tr><td class="nm">T<sup>2</sup><sub>IB</sub></td><td>IB time per step, phase 2 with Ulysses (s)</td><td class="vl"></td><td class="vl sc ap">1.51 × 10<sup>1</sup></td><td class="vl si ap">15<span class="d">.1</span><span class="u"> s</span></td><td class="fx"><b>T<sup>0</sup><sub>IB</sub></b> + <b>T<sup>2</sup><sub>uly</sub></b></td></tr>
+    <tr class="hl"><td class="nm">f<sup>2</sup><sub>IB</sub></td><td>IB time, share of phase-2 compute</td><td class="vl"></td><td class="vl sc ap">2.86 × 10<sup>−1</sup></td><td class="vl si ap">28<span class="d">.6</span><span class="u"> %</span></td><td class="fx"><b>T<sup>2</sup><sub>IB</sub></b> / <b>T<sup>2</sup><sub>c</sub></b> <i>(under 100 %: compute bound, comms overlapped)</i></td></tr>
+    </table></div>
+
+    <h2>Putting it together</h2>
+
+    <p>At speed of light the two phases take <span data-cellref="H<sup>sol</sup><sub>cx</sub>">41<span class="d">.1</span><span class="u"> K</span></span> GPU-hours against the <span data-cellref="H<sub>cx</sub>">119<span class="d"></span><span class="u"> K</span></span> DeepSeek reports: speed of light is <span data-cellref="f<sub>cx</sub>">2<span class="d">.90</span><span class="u"> ×</span></span> faster than reality, against <span data-cellref="f<sub>pre</sub>">3<span class="d">.00</span><span class="u"> ×</span></span> for pretraining. Put another way, speed of light predicts that an extension token costs <span data-cellref="r<sup>sol</sup><sub>H</sub>">5<span class="d">.44</span><span class="u"> ×</span></span> as much as a pretraining token, and DeepSeek measured <span data-cellref="r<sub>H</sub>">5<span class="d">.25</span><span class="u"> ×</span></span>. The extra attention FLOPs account for the whole of the extension’s per-token premium. The run sat at about the same distance from speed of light as pretraining did.</p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">T<sup>0</sup><sub>step</sub></td><td>step time at speed of light, pretraining (s)</td><td class="vl"></td><td class="vl sc ap">6.64 × 10<sup>0</sup></td><td class="vl si ap">6<span class="d">.64</span><span class="u"> s</span></td><td class="fx"><b>T<sup>0</sup><sub>c</sub></b> · (1 + <b>b<sub>Dual</sub></b>) <i>(part 3’s T<sub>step</sub>)</i></td></tr>
+    <tr><td class="nm">T<sup>1</sup><sub>step</sub></td><td>step time at speed of light, phase 1 (s)</td><td class="vl"></td><td class="vl sc ap">1.75 × 10<sup>1</sup></td><td class="vl si ap">17<span class="d">.5</span><span class="u"> s</span></td><td class="fx"><b>T<sup>1</sup><sub>c</sub></b> · (1 + <b>b<sub>Dual</sub></b>) <i>(CP traffic hidden under compute, as with Ulysses)</i></td></tr>
+    <tr><td class="nm">T<sup>2</sup><sub>step</sub></td><td>step time at speed of light, phase 2 (s)</td><td class="vl"></td><td class="vl sc ap">5.47 × 10<sup>1</sup></td><td class="vl si ap">54<span class="d">.7</span><span class="u"> s</span></td><td class="fx"><b>T<sup>2</sup><sub>c</sub></b> · (1 + <b>b<sub>Dual</sub></b>)</td></tr>
+    <tr><td class="nm">D<sub>GPU</sub></td><td>tokens per GPU per step</td><td class="vl">30,720</td><td class="vl sc ap">3.07 × 10<sup>4</sup></td><td class="vl si ap">30<span class="d">.7</span><span class="u"> K</span></td><td class="fx"><b>D</b> / <b>GPUs</b></td></tr>
+    <tr><td class="nm">ρ<sub>sol</sub></td><td>pretraining: tokens/s per GPU at speed of light</td><td class="vl"></td><td class="vl sc ap">4.63 × 10<sup>3</sup></td><td class="vl si ap">4<span class="d">.63</span><span class="u"> K</span></td><td class="fx"><b>D<sub>GPU</sub></b> / <b>T<sup>0</sup><sub>step</sub></b></td></tr>
+    <tr><td class="nm">ρ<sub>DS</sub></td><td>pretraining: tokens/s per GPU, as reported</td><td class="vl"></td><td class="vl sc ap">1.54 × 10<sup>3</sup></td><td class="vl si ap">1<span class="d">.54</span><span class="u"> K</span></td><td class="fx"><b>D<sub>pre</sub></b> / (<b>H<sub>pre</sub></b> · 3,600)</td></tr>
+    <tr class="hl"><td class="nm">f<sub>pre</sub></td><td>pretraining: speed of light over reality</td><td class="vl"></td><td class="vl sc ap">3.00 × 10<sup>0</sup></td><td class="vl si ap">3<span class="d">.00</span><span class="u"> ×</span></td><td class="fx"><b>ρ<sub>sol</sub></b> / <b>ρ<sub>DS</sub></b> <i>(part 3’s f<sub>sol</sub>)</i></td></tr>
+    <tr><td class="nm">H<sup>sol</sup><sub>cx</sub></td><td>context extension: GPU-hours at speed of light</td><td class="vl"></td><td class="vl sc ap">4.11 × 10<sup>4</sup></td><td class="vl si ap">41<span class="d">.1</span><span class="u"> K</span></td><td class="fx"><b>GPUs</b> · <b>n<sub>cx</sub></b> · (<b>T<sup>1</sup><sub>step</sub></b> + <b>T<sup>2</sup><sub>step</sub></b>) / 3,600</td></tr>
+    <tr class="hl"><td class="nm">f<sub>cx</sub></td><td>context extension: speed of light over reality</td><td class="vl"></td><td class="vl sc ap">2.90 × 10<sup>0</sup></td><td class="vl si ap">2<span class="d">.90</span><span class="u"> ×</span></td><td class="fx"><b>H<sub>cx</sub></b> / <b>H<sup>sol</sup><sub>cx</sub></b></td></tr>
+    <tr class="hl"><td class="nm">r<sup>sol</sup><sub>H</sub></td><td>cost per token, extension over pretraining, at speed of light</td><td class="vl"></td><td class="vl sc ap">5.44 × 10<sup>0</sup></td><td class="vl si ap">5<span class="d">.44</span><span class="u"> ×</span></td><td class="fx">(<b>T<sup>1</sup><sub>step</sub></b> + <b>T<sup>2</sup><sub>step</sub></b>) / (2 · <b>T<sup>0</sup><sub>step</sub></b>) <i>(compare r<sub>H</sub>, the reported ratio)</i></td></tr>
+    </table></div>
+
+    <div class="tally phases"><table>
+    <thead>
+    <tr><th>phase</th><th class="n">S</th><th class="n">B</th><th class="n">CP</th><th class="n">microbatches</th><th class="n">T<sub>attn</sub></th><th class="n">T<sub>c</sub></th><th class="n">attention share</th><th class="n">T<sub>step</sub> at SOL</th></tr>
+    </thead>
+    <tbody></tbody>
+    </table></div>
+
+    <h2>Where the extension’s time went</h2>
+
+    <p>Equal ratios hide a puzzle. Attention at long sequence lengths is the friendliest kernel in the step: large, dense, compute-bound, with no all-to-all in its way. If it had run near its roofline while everything else stayed three times off, the extension would have been much cheaper than reported. Splitting the reported cost into two ratios, one for attention and one for the rest, each held fixed across the three phases, pins both: attention ran <span data-cellref="κ<sub>attn</sub>">2<span class="d">.87</span><span class="u"> ×</span></span> below its roofline, everything else <span data-cellref="κ<sub>rest</sub>">3<span class="d">.04</span><span class="u"> ×</span></span> below its own. Attention ran as far from speed of light as the MoE machinery did.</p>
+
+    <p>The roofline can’t say why, but it can list what κ<sub>attn</sub> absorbs. Anything that grows with S counts against attention here: CP traffic that wasn’t hidden (ring attention doesn’t fit under compute even inside a node), causal load imbalance across a CP group without zig-zag slicing, and attention kernels for MLA’s 192-wide query-key head that in late 2024 had nothing like FlashAttention-3’s tuning. It works the other way too: if the extension’s data masked documents from each other, there were fewer attention FLOPs than counted here, and attention ran even further off.</p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">T<sup>DS</sup><sub>cx</sub></td><td>reported time per pair of steps, compute-equivalent (s)</td><td class="vl"></td><td class="vl sc ap">2.01 × 10<sup>2</sup></td><td class="vl si ap">201<span class="d"></span><span class="u"> s</span></td><td class="fx"><b>H<sub>cx</sub></b> · 3,600 / (<b>GPUs</b> · <b>n<sub>cx</sub></b> · (1 + <b>b<sub>Dual</sub></b>)) <i>(one phase-1 step plus one phase-2 step, bubble taken out)</i></td></tr>
+    <tr class="hl"><td class="nm">κ<sub>attn</sub></td><td>attention: speed of light over reality</td><td class="vl"></td><td class="vl sc ap">2.87 × 10<sup>0</sup></td><td class="vl si ap">2<span class="d">.87</span><span class="u"> ×</span></td><td class="fx">(<b>T<sup>DS</sup><sub>cx</sub></b> − 2 · <b>f<sub>pre</sub></b> · <b>T<sup>0</sup><sub>c</sub></b>) / (<b>T<sup>1</sup><sub>attn</sub></b> + <b>T<sup>2</sup><sub>attn</sub></b> − 2 · <b>T<sup>0</sup><sub>attn</sub></b>) <i>(two unknown ratios, one for attention and one for the rest, held fixed across the three phases; pretraining and the extension’s total pin both)</i></td></tr>
+    <tr class="hl"><td class="nm">κ<sub>rest</sub></td><td>everything else: speed of light over reality</td><td class="vl"></td><td class="vl sc ap">3.04 × 10<sup>0</sup></td><td class="vl si ap">3<span class="d">.04</span><span class="u"> ×</span></td><td class="fx">(<b>f<sub>pre</sub></b> · <b>T<sup>0</sup><sub>c</sub></b> − <b>κ<sub>attn</sub></b> · <b>T<sup>0</sup><sub>attn</sub></b>) / <b>T<sub>rest</sub></b></td></tr>
+    </table></div>
+
+    <h2>What this does not model</h2>
+
+    <ul>
+      <li>The layout. DeepSeek doesn’t say how the extension was parallelized or on how many GPUs. Under a compute-bound roofline GPU-hours don’t depend on the cluster size (GPUs cancels out of every ratio above), but the bubble and the CP traffic do depend on the layout.</li>
+      <li>The MTP module, out of scope as in parts 2 and 3. Its one extra attention layer would add 1.6 % to the attention count.</li>
+      <li>Contention: in phase 1, CP and EP’s intra-node forwarding share NVLink; in phase 2, CP shares InfiniBand with EP, and the two are summed here as if one link carried them in turn.</li>
+      <li>Whatever the 119K GPU-hours include beyond the 2,000 training steps: evaluation, checkpointing, restarts.</li>
+    </ul>
+
+    <p><button class="sheet-dl" title="every sheet on this page as one .xlsx with live formulas (cell names become cell references), at the current knob values">⤓ Download all the sheets as one .xlsx</button></p>
+
+  </main>
+  <script type="module">
+    import '../src/viewer.js';
+    import './reset.js';
+    import './sheetedit.js';
+  </script>
+  <script type="module">
+    // 03's sheet interactions (cell cards, jump-to-row, row select) + the phase table
+    import { attachTip } from '../src/tip.js';
+    import { current } from './sheetedit.js';
+    const def = new Map();
+    for (const tr of document.querySelectorAll('.cellsheet tr')) {
+      const nm = tr.querySelector('td.nm')?.innerHTML;
+      if (nm && !def.has(nm)) def.set(nm, tr);
+    }
+    const rowOf = (b) => def.get(b?.dataset.cellref ?? b?.innerHTML);
+    for (const b of document.querySelectorAll('.cellsheet td.fx b')) if (rowOf(b)) b.classList.add('ref');
+    const card = (tr) => {
+      const [nm, lb, vl, , si, fx] = tr.cells;
+      const leaf = !fx.querySelector('b') && fx.children.length === 1 && fx.firstElementChild.tagName === 'I';
+      const approx = si.textContent.trim();
+      const d = document.createElement('div');
+      const terms = [leaf ? '' : `= ${fx.innerHTML}`, vl.textContent && `= ${vl.textContent}`, approx && `≈ ${approx.replace(/\s+/g, ' ')}`];
+      d.innerHTML = `<b>${nm.innerHTML}</b> · ${lb.innerHTML}<br>` + terms.filter(Boolean).join(' ');
+      return d;
+    };
+    let sel = null, fuse;
+    const select = (tr) => { sel?.classList.remove('sel'); sel = tr; tr?.classList.add('sel'); };
+    const jump = (tr) => { select(tr); tr.scrollIntoView({ block: 'center' }); };
+    for (const sheet of document.querySelectorAll('.cellsheet')) {
+      attachTip(sheet, (ev) => { const tr = rowOf(ev.target.closest?.('b.ref')); return tr ? card(tr) : null; },
+        { parent: document.body, cls: 'cs-tip', pinnable: (ev) => !ev.target.closest('b.ref') });
+      sheet.addEventListener('click', (ev) => {
+        const tr = rowOf(ev.target.closest?.('b.ref'));
+        if (tr) { jump(tr); return; }
+        const row = ev.target.closest?.('tr');
+        if (!row?.querySelector('td')) return;
+        clearTimeout(fuse);
+        if (ev.detail > 1 || !getSelection().isCollapsed) return;
+        fuse = setTimeout(() => select(sel === row ? null : row), 250);
+      });
+    }
+    for (const q of document.querySelectorAll('main [data-cellref]')) {
+      attachTip(q, () => card(rowOf(q)), { parent: document.body, cls: 'cs-tip', pinnable: () => false });
+      q.addEventListener('click', () => jump(rowOf(q)));
+    }
+    // the three phases side by side, read off the sheet (follows the knobs)
+    const num = ([a, b]) => Number(a) / Number(b);
+    const PHASES = [['pretraining', 0, 1], ['phase 1', 1, 'CP<sub>1</sub>'], ['phase 2', 2, 'CP<sub>2</sub>']];
+    const tbody = document.querySelector('.phases tbody');
+    const build = () => {
+      const v = current(), g = (k) => num(v.get(k));
+      tbody.innerHTML = PHASES.map(([label, j, cp]) => {
+        const ta = g(`T<sup>${j}</sup><sub>attn</sub>`), tc = g(`T<sup>${j}</sup><sub>c</sub>`);
+        return `<tr><td>${label}</td><td class="n">${g(`S<sub>${j}</sub>`).toLocaleString('en-US')}</td><td class="n">${g(`B<sub>${j}</sub>`).toLocaleString('en-US')}</td>` +
+          `<td class="n">${typeof cp === 'number' ? cp : g(cp)}</td><td class="n">${g(`m<sub>${j}</sub>`)}</td>` +
+          `<td class="n">${ta.toFixed(2)} s</td><td class="n">${tc.toFixed(2)} s</td><td class="n">${(100 * ta / tc).toFixed(1)} %</td>` +
+          `<td class="n">${g(`T<sup>${j}</sup><sub>step</sub>`).toFixed(2)} s</td></tr>`;
+      }).join('');
+    };
+    build();
+    document.addEventListener('dsv3-cells', build);
+  </script>
+</body>
+
+</html>
