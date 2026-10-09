@@ -73,6 +73,22 @@ T.check('none preset: nothing replays', ac.policy() === 'none' && ac._ana.replay
 T.click('#ac-layer [data-pol="k3"]');
 await T.tick(100);
 
+// ---- the figure drives the sheet's policy A ---------------------------------
+const cellQ = (nm) => [...document.querySelectorAll('.cellsheet tr')].find((tr) => tr.querySelector('td.nm')?.innerHTML === nm);
+const cellV = (nm) => Number(cellQ(nm)?.cells[2].textContent.replace(/,/g, ''));
+const head6V = 6 * 163840;
+T.check('published σᴬ = the graph under K3 (+ the head)', cellV('σ<sup>A</sup>') === m.k3Stash(m.K3_RECOMPUTE.k3) + head6V, cellV('σ<sup>A</sup>'));
+for (const p of ['none', 'full']) {
+  T.click(`#ac-layer [data-pol="${p}"]`);
+  await T.tick(250);
+  T.check(`${p}: σᴬ follows the figure exactly`, cellV('σ<sup>A</sup>') === m.k3Stash(m.K3_RECOMPUTE[p]) + head6V, `${cellV('σ<sup>A</sup>')} vs ${m.k3Stash(m.K3_RECOMPUTE[p]) + head6V}`);
+}
+T.check('full: both all-to-alls replay, the GEMM replays priced', cellV('δ<sub>comb</sub>') === 1 && cellV('c<sup>A</sup><sub>rp8</sub>') > 2e11
+  && cellQ('T<sup>A</sup><sub>c</sub>')?.classList.contains('off'));
+T.click('#ac-layer [data-pol="k3"]');
+await T.tick(250);
+T.check('back to K3: no sheet cell off its published value', !document.querySelector('.cellsheet tr.off'), document.querySelector('.cellsheet tr.off td.nm')?.innerHTML);
+
 // ---- AttnRes across the pipeline (#pipe) -----------------------------------
 const chain6 = m.attnresPipe(6, 'chain');
 T.check('1F1B PP 6: widths 3 4 5 7 8 (blocks + the partial sum)', chain6.tr.map((t) => t.w).join(' ') === '3 4 5 7 8', chain6.tr.map((t) => t.w).join(' '));

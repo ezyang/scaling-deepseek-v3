@@ -178,13 +178,17 @@ for (const tr of document.querySelectorAll('.cellsheet tr')) {
   const leaf = !fx.innerHTML.replace(/<i>[\s\S]*?<\/i>/g, '').trim();
   rows.set(name, { trs: [tr], label: lb.textContent, leaf, f: leaf ? null : compile(fx.innerHTML), lit: leaf ? dec(vl.textContent) : null });
 }
+// inputs a page widget sets (Kimi K3: the recompute figure's κ, replay flags
+// and FLOPs) — leaf rows, not editable, kept out of the URL (the widget's own
+// state is there); published values are the widget's default state
+const linked = new Map();
 const evalAll = (edits) => {
   const memo = new Map();
   const get = (name) => {
     if (memo.has(name)) return memo.get(name);
     const r = rows.get(name);
     if (!r) throw new Error(`sheetedit: no row named ${name}`);
-    const v = r.leaf ? edits[KNOBS[name]] ?? r.lit : r.f(get);
+    const v = r.leaf ? edits[KNOBS[name]] ?? linked.get(name) ?? r.lit : r.f(get);
     memo.set(name, v);
     return v;
   };
@@ -239,6 +243,16 @@ function render() {
     q.classList.toggle('off', off);
   }
   document.dispatchEvent(new CustomEvent('dsv3-cells', { detail: now }));
+}
+export function setLinked(vals) {
+  let changed = false;
+  for (const [name, x] of Object.entries(vals)) {
+    if (!rows.has(name)) throw new Error(`sheetedit: no row named ${name}`);
+    const q = Q(BigInt(x));
+    if (!eq(linked.get(name) ?? rows.get(name).lit, q)) changed = true;
+    linked.set(name, q);
+  }
+  if (changed) render();
 }
 function set(k, q) {
   if (q && !eq(q, PUB.get(Object.keys(KNOBS).find((n) => KNOBS[n] === k)))) edits[k] = q; else delete edits[k];
