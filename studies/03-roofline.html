@@ -1318,6 +1318,16 @@
 
     <p><button class="sheet-dl" title="every sheet on this page as one .xlsx with live formulas (cell names become cell references), at the current knob values">⤓ Download all the sheets as one .xlsx</button></p>
 
+    <h2>Errata</h2>
+
+    <ul>
+      <li><a href="https://github.com/ezyang/scaling-deepseek-v3/commit/dc94133">2026-10-09</a>:
+      based on a suggestion by Daniel Haziza, the ZeRO-1 section does InfiniBand accounting per node instead of
+      per GPU.  This still gives the same results as the old calculation, but hopefully it is
+      more intuitive to understand.
+      </li>
+    </ul>
+
   </main>
   <!-- cache stamps: regenerate with `node scripts/stamp.mjs` -->
   <script type="importmap">
