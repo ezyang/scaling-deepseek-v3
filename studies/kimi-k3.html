@@ -104,7 +104,7 @@
 
     <p>The architecture from the released config and modeling code (the shapes that are only in the code: the KDA decay bottleneck and the gated norm). Ninety-three layers in a 3 : 1 KDA : gated-MLA hybrid, the first layer dense, every other layer a Stable LatentMoE with 896 routed experts of which 16 are active, read and written through a 3,584-wide latent; two shared experts in the hidden dim. The attention residual (AttnRes) adds a handful of norms and pseudo-query projections per layer.</p>
 
-    <kimi-anatomy style="min-height:817px" layer="diagram" detail nocaption></kimi-anatomy>
+    <kimi-anatomy style="min-height:817px" layer="diagram" detail nocaption dtypetint></kimi-anatomy>
 
     <p>Reading the diagram, which gives K3 the same infra-oriented treatment as part 1’s <a href="./01-deepseek-diagram.html">DeepSeek-V3 diagram</a> (the kernels you actually run, with their shapes):</p>
 

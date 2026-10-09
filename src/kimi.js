@@ -14,10 +14,11 @@ import { fmtP, tokensCss, applyHighlight } from './viewer.js';
 import { C } from './theme.js';
 import { attachTip } from './tip.js';
 import { analyze } from './blockgraph.js';
-import { KIMI, KPARAMS, kimiGraph, MARKABLE_K3, K3_RECOMPUTE, K3_POLICIES, K3_KINDS, k3Stash, attnresPipe, k3Split } from './kimimodel.js';
+import { KIMI, KPARAMS, kimiGraph, k3ComputeDt, MARKABLE_K3, K3_RECOMPUTE, K3_POLICIES, K3_KINDS, k3Stash, attnresPipe, k3Split } from './kimimodel.js';
 export { KIMI, KPARAMS, kimiGraph, K3_RECOMPUTE, K3_POLICIES, K3_KINDS, k3Stash, attnresPipe };
 const A = KIMI, K = KPARAMS;
 const PJ = A.heads * A.headDim;
+const DT_INK = { mxfp8: '#d6408b', bf16: '#52514e' };   // the precision family's accents
 
 
 // totals cross the fmtP=B ceiling; the tally speaks T there
@@ -40,6 +41,8 @@ const writeState = (key, obj) => {
 // One K3 transformer block, two tabbed columns: attention (KDA ×69 | gated
 // MLA ×24) and FFN (LatentMoE ×92 | dense ×1). Static tier only: structure,
 // dims, parameter parentheticals, params lens; no dtype/recompute machinery.
+// `dtypetint` (static tier): every GEMM box wears its compute dtype under the
+// briefed recipe (03's convention: tinted rect + top-right readout + key).
 
 const KV_CSS = `
 kimi-layer { display: block; margin: 14px 0 26px; }
@@ -49,6 +52,8 @@ kimi-layer { display: block; margin: 14px 0 26px; }
 .kv-head button { font: 11px ui-monospace, monospace; padding: 2px 8px; border: 1px solid var(--c-c3c2b7);
   border-radius: 4px; background: var(--c-ffffff); color: var(--c-0b0b0b); cursor: pointer; margin-left: 8px; min-width: 8ch; box-sizing: content-box; }
 .kv svg { display: block; margin: 0 auto; }
+.kv-head .dtleg { margin-left: 14px; font-size: 11px; white-space: nowrap; }
+.kv-head .dtleg svg { display: inline-block; margin: 0 3px 0 0; vertical-align: -1px; }
 .kv-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 ${tokensCss('.kv')}
 .kv text.tensor { font: 10px system-ui; }
@@ -139,6 +144,8 @@ export class KimiLayer extends HTMLElement {
     // marks tier: the graph's verdicts; g() opens an op group with its mark
     // attributes, glyph() puts ↓ (saved) or ↻ (replays) at the op's right end
     const M = this.marksMode && !P;
+    const DTT = this.hasAttribute('dtypetint') && !M;
+    const cdt = DTT ? Object.fromEntries(kimiGraph(this.kindA, this.kindF).map((n) => [n.id, k3ComputeDt(n)])) : {};
     const graph = M ? kimiGraph(this.kindA, this.kindF) : [];
     const byId = Object.fromEntries(graph.map((n) => [n.id, n]));
     const ana = M ? analyze(graph, this.marks) : null;
@@ -157,9 +164,12 @@ export class KimiLayer extends HTMLElement {
     };
     const pk = (n, mult) => P || n ? ` <tspan class="dims">(${fmtP(n)}${mult ? ` ×${mult}` : ''})</tspan>` : '';
     const box = (id, x, y, w, name, dims, h = 32) =>
-      S.push(`${g(id)}<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="4"/>` +
+      S.push(`${g(id)}<rect class="box${cdt[id] ? ` dt-${cdt[id] === 'mxfp8' ? 'e4m3' : cdt[id]}` : ''}" x="${x}" y="${y}" width="${w}" height="${h}" rx="4"/>` +
         `<text class="name" x="${x + 8}" y="${y + 14}">${esc(name)}</text>` +
-        (dims ? `<text class="dims" x="${x + 8}" y="${y + 26}">${dims}</text>` : '') + glyph(id, x + w - 7, y + 15) + `</g>`);
+        (dims ? `<text class="dims" x="${x + 8}" y="${y + 26}">${dims}</text>` : '') + dtTag(id, x + w - 7, y + 14) + glyph(id, x + w - 7, y + 15) + `</g>`);
+    // the static compute-dtype readout (the router's FP32 logits ride along)
+    const dtTag = (id, x, y) => !cdt[id] ? '' :
+      `<text class="dims" x="${x}" y="${y}" text-anchor="end" style="font-weight:600;fill:${C(DT_INK[cdt[id]])}">${cdt[id]}${id === 'router' ? ' · fp32 logits' : ''}</text>`;
     const pill = (id, x, y, w, label, h = 20) =>
       S.push(`${g(id)}<rect class="op" x="${x}" y="${y}" width="${w}" height="${h}" rx="6"/>` +
         `<text class="oplabel" x="${x + 9}" y="${y + 14}">${label}</text>${glyph(id, x + w - 7, y + h / 2 + 4)}</g>`);
@@ -167,8 +177,8 @@ export class KimiLayer extends HTMLElement {
       S.push(`<rect class="micro" x="${x}" y="${y}" width="${w}" height="${h}" rx="6"/>` +
         `<text class="microlabel" x="${x + 9}" y="${y + 12}">${label}</text>`);
     const comm = (id, x, y, w, label, h = 22) =>
-      S.push(`${g(id)}<rect class="comm" x="${x}" y="${y}" width="${w}" height="${h}" rx="6"/>` +
-        `<text class="oplabel" x="${x + 9}" y="${y + 15}" fill="${C('#4636a3')}">${label}</text>${glyph(id, x + w - 7, y + 15)}</g>`);
+      S.push(`${g(id)}<rect class="${DTT ? 'box' : 'comm'}" x="${x}" y="${y}" width="${w}" height="${h}" rx="6"/>` +
+        `<text class="oplabel" x="${x + 9}" y="${y + 15}"${DTT ? '' : ` fill="${C('#4636a3')}"`}>${label}</text>${glyph(id, x + w - 7, y + 15)}</g>`);
     const res = (id, sx, y, w, label) => {   // ⊕ on the spine + dashed label box to its right
       S.push(`${g(id)}<circle cx="${sx}" cy="${y + 10}" r="7" fill="${C('#fcfcfb')}" stroke="${C('#c3c2b7')}"/>` +
         `<text class="plus" x="${sx - 3.5}" y="${y + 14}">+</text>` +
@@ -446,6 +456,12 @@ export class KimiLayer extends HTMLElement {
     b.title = `toggle sizes: factored (${A.heads}×${A.headDim}) vs multiplied out (${PJ})`;
     b.onclick = () => { this.flatDims = !this.flatDims; this.render(); this.changed(); };
     head.append(lab, b);
+    if (DTT) {   // the compute-dtype key, in the boxes' own fill + stroke
+      const leg = document.createElement('span'); leg.className = 'dtleg';
+      const bx = (f, s2) => `<svg width="16" height="11"><rect x="0.75" y="0.75" width="14.5" height="9.5" rx="2" fill="${C(f)}" stroke="${C(s2)}" stroke-width="1.5"/></svg>`;
+      leg.innerHTML = `${bx('#fbe4ef', '#d6408b')}MXFP8 GEMM · ${bx('#e9e8e3', '#52514e')}BF16 GEMM or attention core`;
+      head.append(leg);
+    }
     const scroll = document.createElement('div'); scroll.className = 'kv-scroll';
     scroll.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">${S.join('')}</svg>`;
     const parts = [head, scroll];
@@ -596,8 +612,10 @@ export class KimiAnatomyPlan extends HTMLElement {
     op('attn-res α (output)', `(${fmtP(2 * A.hidden)})`, 'final_res');
     op('final RMSNorm', `(${fmtP(A.hidden)})`, 'final_norm');
     wire(24, `norm out · ${A.hidden}`);
-    S.push(`<g data-op="lm_head"><rect class="box" x="${BX}" y="${y}" width="${W}" height="34" rx="4"/>` +
+    const DTT = l?.hasAttribute('dtypetint') && !l.hasAttribute('marks');
+    S.push(`<g data-op="lm_head"><rect class="box${DTT ? ' dt-e4m3' : ''}" x="${BX}" y="${y}" width="${W}" height="34" rx="4"/>` +
       `<text class="name" x="${BX + 8}" y="${y + 14}">lm head</text>` +
+      (DTT ? `<text class="dims" x="${BX + W - 7}" y="${y + 14}" text-anchor="end" style="font-weight:600;fill:${C(DT_INK.mxfp8)}">mxfp8</text>` : '') +
       `<text class="dims" x="${BX + 8}" y="${y + 27}">${PL ? `(${fmtP(K.embed)})` : `${A.hidden} → ${A.vocab} (${fmtP(K.embed)})`}</text></g>`);
     y += 34;
     wire(24, `logits · ${A.vocab}`);
@@ -873,7 +891,7 @@ kimi-anatomy kimi-anatomy-plan { margin-top: 46px; }
   .anat-cone { display: none; }
 }
 `;
-const FWD = ['detail', 'lens', 'nocaption', 'marks', 'recompute'];
+const FWD = ['detail', 'lens', 'nocaption', 'marks', 'recompute', 'dtypetint'];
 export class KimiAnatomy extends HTMLElement {
   connectedCallback() {
     const lid = this.getAttribute('layer') ?? ((this.id || 'kimi-anatomy') + '-layer');

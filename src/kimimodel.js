@@ -159,6 +159,10 @@ export function kimiGraph(kindA, kindF) {
   ];
 }
 // every markable op across the four block kinds
+// the briefed recipe's COMPUTE dtype per op (null = not a GEMM): every
+// linear MXFP8 except the routers (BF16 in, FP32 logits out); both attention
+// cores BF16. One rule for the sheet's replay split and the diagram's tints.
+export const k3ComputeDt = (n) => n.opKind === 'attn' || n.id === 'router' ? 'bf16' : n.opKind === 'matmul' ? 'mxfp8' : null;
 export const MARKABLE_K3 = [...new Set(['kda', 'mla'].flatMap((a) => ['moe', 'dense'].flatMap((f) =>
   kimiGraph(a, f).filter((n) => !n.always && !n.nomark).map((n) => n.id))))];
 const saveExcept = (redo) => Object.fromEntries(MARKABLE_K3.filter((i) => !redo.includes(i)).map((i) => [i, true]));
@@ -357,8 +361,9 @@ export function k3Linked(marks) {
     const r = ana(a, f);
     for (const id of r.replayed) {
       const nd = r.byId[id];
-      if (nd.opKind === 'attn' || id === 'router') rbf += n * nd.flopsTok;
-      else if (nd.opKind === 'matmul') r8 += n * nd.flopsTok;
+      const dt = k3ComputeDt(nd);
+      if (dt === 'bf16') rbf += n * nd.flopsTok;
+      else if (dt === 'mxfp8') r8 += n * nd.flopsTok;
     }
   }
   out[LINK_NAMES.r8A] = r8; out[LINK_NAMES.rbfA] = rbf;

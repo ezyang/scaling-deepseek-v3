@@ -37,6 +37,21 @@ T.check('flat dims', qkvDims().includes('36864'), qkvDims());
 T.click('#diagram .kv-head button');
 await T.tick(120);
 
+// dtypetint: the briefed recipe on every GEMM box (routers + attention cores
+// BF16, every other linear MXFP8); the marks instance stays untinted
+const tint = (sel) => T.el(`${sel} > rect`)?.getAttribute('class') ?? '';
+T.check('qkv tinted mxfp8', tint('#diagram [data-op="qkv"]').includes('dt-e4m3'));
+T.check('router + scan tinted bf16',
+  tint('#diagram [data-op="router"]').includes('dt-bf16') && tint('#diagram [data-op="kda_scan"]').includes('dt-bf16'));
+T.check('lm head tinted mxfp8', tint('kimi-anatomy-plan [data-op="lm_head"]').includes('dt-e4m3'));
+T.check('marks instance untinted', !T.el('#ac-layer rect[class*="dt-"]') && !T.el('kimi-anatomy[layer="ac-layer"] kimi-anatomy-plan rect[class*="dt-"]'));
+T.click('#diagram [data-tab="a:mla"]');
+await T.tick(120);
+T.check('mla: q down mxfp8, attention bf16',
+  tint('#diagram [data-op="q_down"]').includes('dt-e4m3') && tint('#diagram [data-op="attn"]').includes('dt-bf16'));
+T.click('#diagram [data-tab="a:kda"]');
+await T.tick(120);
+
 
 // ---- recompute marks (#ac-layer) ------------------------------------------
 const m = await import('/src/kimi.js');
