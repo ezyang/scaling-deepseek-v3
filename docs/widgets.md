@@ -397,7 +397,13 @@ figure draws the head cell, a per-rank time / mean row (numbers — a 2 %
 spread vanishes on a bar from zero) and the ledger's stage balance λ. The
 sheet takes `k3PipeLinked` (r_res + the slowest rank's FP8/BF16 FLOPs per
 schedule family, linked rows the page refreshes on every `dsv3-cells`) and
-rebuilds λ exactly from its own totals. State
+rebuilds λ exactly from its own totals. Memory follows the same pattern: `k3RankMemory` /
+`k3MemLinked` find, per schedule family, the FULLEST rank (parameter bytes +
+AttnRes block store; activations are balanced by K3's remote offload, so they
+stay averages) and hand the sheet its expert params, non-expert params and
+store count (blocks held × microbatches in flight, exact rationals) as linked
+inputs; the page weighs ranks with the current g_B, o_B, DP, DP_ne, EP, S, and
+the sweeps re-pick per cluster size. State
 `#k3p:<id>={pp,s}`. The block diagram draws the store symbolically: a dashed
 "block store b₀ … bₙ₋₁ · n×7168" input into both mixes (`detail` adds the
 plain-text note n = 1 + ⌊(layer − 1)/12⌋), a write arrow from the incoming x

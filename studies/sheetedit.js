@@ -248,7 +248,7 @@ export function setLinked(vals) {
   let changed = false;
   for (const [name, x] of Object.entries(vals)) {
     if (!rows.has(name)) throw new Error(`sheetedit: no row named ${name}`);
-    const q = Q(BigInt(x));
+    const q = Array.isArray(x) ? Q(BigInt(x[0]), BigInt(x[1])) : Q(BigInt(x));   // an integer, or [num, den]
     if (!eq(linked.get(name) ?? rows.get(name).lit, q)) changed = true;
     linked.set(name, q);
   }

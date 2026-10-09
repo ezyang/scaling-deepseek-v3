@@ -32,7 +32,7 @@ T.check('untouched: no hash, nothing amber', location.hash === '' && !document.q
 // the default: 432 GPUs, PP 6 × EP 72, one replica, 10 % reserve — 1F1B fits both on the line; ZB-V-Min gives A room; no ZeRO-1 traffic
 T.check('default layout: DP 1, ZeRO-1 bytes 0', val('DP') === '1' && val('Vsync') === '0', `${val('DP')} ${val('Vsync')}`);
 const pct = (txt) => parseFloat(si(txt));
-T.check('1F1B: both fit the usable memory (A within 1 %)', pct('fAmem') <= 100 && pct('fAmem') > 95 && pct('fBmem') <= 100, `${si('fAmem')} ${si('fBmem')}`);
+T.check('1F1B: on the fullest rank A just overflows (by under 2 %), B fits', pct('fAmem') > 100 && pct('fAmem') < 102 && pct('fBmem') <= 100, `${si('fAmem')} ${si('fBmem')}`);
 const bytes = (txt) => { const t = si(txt); return parseFloat(t) * (t.endsWith('GB') ? 1e9 : 1); };
 T.check('ZB-V-Min: 3 microbatches in flight, not 3.5; policy A under usable memory', val('nVminflt') === '3' && bytes('MAVmin') <= bytes('Muse'), `${val('nVminflt')} ${si('MAVmin')} ${si('Muse')}`);
 T.check('usable memory = device memory less the reserve', val('μ') === '0.1' && bytes('Muse') < bytes('MGPU'), `${si('Muse')} ${si('MGPU')}`);
@@ -89,7 +89,7 @@ T.check('… FP32/FP32, no offload: 432 · PP 6 × EP 72 · V-Min for policy A (
 T.check('… with offload: 288 for both, flagged ‡ (prefetch spans microbatches)', /^288 ·/.test(mins[7].cells[3].textContent) && /‡/.test(mins[7].cells[4].textContent) && /^288 ·/.test(mins[7].cells[5].textContent), mins[7].textContent);
 T.check('… BF16 grads + states, no offload: 288', /^288 ·/.test(mins[0].cells[3].textContent), mins[0].cells[3].textContent);
 const mgs = [...document.querySelectorAll('.margins tbody tr')];
-T.check('margin table: 0 % to 30 %, the minimum grows with the reserve', mgs.length === 7 && /^432 ·/.test(mgs[0].cells[1].textContent) && /^216 ·/.test(mgs[0].cells[4].textContent) && /^864 ·/.test(mgs[6].cells[1].textContent), mgs.map((tr) => tr.textContent).join(' | '));
+T.check('margin table: 0 % to 30 %, the minimum grows with the reserve', mgs.length === 7 && /^432 ·/.test(mgs[0].cells[1].textContent) && /^288 ·/.test(mgs[0].cells[4].textContent) && /^864 ·/.test(mgs[6].cells[1].textContent), mgs.map((tr) => tr.textContent).join(' | '));
 // the frontier follows the knobs: with BF16 gradients and states policy A fits at 288 GPUs
 type('oB', '6'); type('gB', '2');
 const r288 = [...document.querySelectorAll('.frontier tbody tr')].find((tr) => tr.cells[0].textContent === '288');

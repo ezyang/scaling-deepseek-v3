@@ -364,3 +364,53 @@ export function k3Linked(marks) {
   out[LINK_NAMES.r8A] = r8; out[LINK_NAMES.rbfA] = rbf;
   return { values: out, clash };
 }
+
+// ---- memory per pipeline rank ---------------------------------------------
+// Parameters can't move between ranks; activations can (K3 §5.2.2: remote
+// offload "achieving balanced activation memory across PP ranks"), so the fit
+// is decided by the rank with the most parameter bytes plus its AttnRes block
+// store (never offloaded). Per rank: its layers' routed experts (the sheet
+// divides by EP) and non-expert params, the embedding with the first chunk,
+// the head and final norms with the last (the V shape puts both on rank 0),
+// and store = blocks held × microbatches in flight on that rank (1F1B: PP − r;
+// interleaved: (2(PP − r − 1) + (V − 1)PP + 1)/V; V shapes: every rank alike,
+// so the count is per microbatch and the sheet multiplies by n). w = the byte
+// weights {e: per expert param, n: per non-expert param, s: per store
+// block·microbatch}; the worst rank maximizes e·Xe + n·Xn + s·H.
+export function k3RankMemory(P, sched, V = 2, w = { e: 1, n: 1, s: 0 }, S = 8192, ratio = 2) {
+  const sp = k3Split(P, sched, V, S, ratio), pipe = attnresPipe(P, sched, V, sp.cuts);
+  const exp = A.routedExperts * K.expert;
+  const ne = (l) => (l + 1) % 4 === 0 || l === A.layers - 1 ? K.mlaAttn : K.kdaAttn;
+  const nf = (l) => l < A.denseLayers ? K.denseFfn : K.routerWeight + K.routerBias + K.latents + K.shared;
+  const rk = Array.from({ length: P }, () => ({ xe: 0, xn: 0 }));
+  sp.ranks.forEach((r, c) => {
+    for (let l = sp.cuts[c]; l < sp.cuts[c + 1]; l++) { rk[r].xn += ne(l) + nf(l) + K.misc; if (l >= A.denseLayers) rk[r].xe += exp; }
+  });
+  rk[sp.ranks[0]].xn += K.embed;
+  rk[sp.ranks[sp.ranks.length - 1]].xn += K.embed + K.finalNorms;
+  // store: [numerator, denominator] block·microbatches (exact; interleaved counts chunks of 1/V)
+  const flight = (r) => sched === 'chain' ? [P - r, 1] : sched === 'ilv' ? [2 * (P - r - 1) + (V - 1) * P + 1, V] : [1, 1];
+  const ranks = rk.map((x, r) => { const [fn, fd] = flight(r); return { ...x, h: [pipe.held[r] * fn, fd] }; });
+  const cost = (x) => w.e * x.xe + w.n * x.xn + w.s * x.h[0] / x.h[1];
+  const worst = ranks.reduce((bi, x, r) => cost(x) > cost(ranks[bi]) ? r : bi, 0);
+  return { ranks, worst, ...ranks[worst] };
+}
+export const MEM_NAMES = {
+  xe1: 'X<sup>e</sup><sub>1F1B</sub>', xn1: 'X<sup>n</sup><sub>1F1B</sub>', h1: 'H<sub>1F1B</sub>',
+  xeI: 'X<sup>e</sup><sub>ILV</sub>', xnI: 'X<sup>n</sup><sub>ILV</sub>', hI: 'H<sub>ILV</sub>',
+  xeV: 'X<sup>e</sup><sub>V</sub>', xnV: 'X<sup>n</sup><sub>V</sub>', hV: 'H<sub>V</sub>' };
+const memMemo = new Map();
+// nV: microbatches in flight under the V schedules (every rank alike), to weigh
+// the store when picking the V family's worst rank (the sheet multiplies by
+// each V schedule's own n)
+export function k3MemLinked(P, V, w, S = 8192, ratio = 2, nV = 1) {
+  const key = JSON.stringify([P, V, w, S, ratio, nV]);
+  if (memMemo.has(key)) return memMemo.get(key);
+  const out = {};
+  for (const [t, s] of [['1', 'chain'], ['I', 'ilv'], ['V', 'v']]) {
+    const m = k3RankMemory(P, s, V, s === 'v' ? { ...w, s: w.s * nV } : w, S, ratio);
+    out[MEM_NAMES['xe' + t]] = m.xe; out[MEM_NAMES['xn' + t]] = m.xn; out[MEM_NAMES['h' + t]] = m.h;
+  }
+  memMemo.set(key, out);
+  return out;
+}
