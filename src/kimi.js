@@ -13,6 +13,7 @@
 import { fmtP, tokensCss, applyHighlight } from './viewer.js';
 import { C } from './theme.js';
 import { attachTip } from './tip.js';
+import { analyze, DTYPE_BYTES } from './blockgraph.js';
 
 export const KIMI = {
   layers: 93, kdaLayers: 69, mlaLayers: 24, denseLayers: 1,   // layer 1 dense; MLA every 4th + layer 93
@@ -79,8 +80,115 @@ export const KPARAMS = (() => {
 })();
 const K = KPARAMS;
 
+// ---- the block as an op graph, for recompute planning ----------------------
+// Same node format and semantics as src/blockgraph.js (whose analyze() does
+// the planning): marks {id: true} = save the op's output, anything unmarked
+// replays in backward. Stash FORMATS are fixed at K3's recipe so that only
+// the recompute choice varies: GEMM outputs and GEMM inputs block-wise FP8
+// (MXFP8 bytes), attention-kernel inputs/outputs and the residual stream
+// BF16, router state FP32. Under the K3 preset this reproduces the roofline
+// sheet's policy-A stash row for row (σᴬ: tests/kimi.js pins it), plus the
+// decay bottleneck's rank-128 intermediate, which the sheet drops.
+// Outside the graph: the AttnRes block store (the mixes' other input, kept
+// per microbatch, not per layer) and the chunked kernels' own state recompute.
+const B8 = DTYPE_BYTES.mxfp8;
+export function kimiGraph(kindA, kindF) {
+  const h = A.hidden, nh = A.heads, l = A.moeLatent, I = A.moeInter, k = A.topk;
+  const qk = A.qkNope + A.qkRope, moe = kindF === 'moe';
+  const N = (id, opKind, inputs, tensor, elems, bytesPer, flopsTok, opts = {}) => ({
+    id, label: tensor, opKind, inputs, tensor, elems, outBytes: elems * bytesPer, flopsTok,
+    bucket: opts.bucket ?? 'mla', always: !!opts.always, nomark: !!opts.nomark,
+    needsOwnOutput: !!opts.needsOwnOutput, aux: opts.aux ?? null, bwdNeeds: opts.bwdNeeds ?? null,
+    dt: bytesPer === 2 ? 'bf16' : bytesPer === 4 ? 'fp32' : 'mxfp8',
+  });
+  const rstd = (n = 1) => ({ name: 'rstd', bytes: 4 * n });
+  const attn = kindA === 'kda' ? [
+    N('qkv', 'matmul', ['norm1'], 'q, k, v (pre-conv)', 3 * PJ, B8, 2 * h * 3 * PJ),
+    N('conv', 'vector', ['qkv'], 'q, k, v', 3 * PJ, 2, 2 * 3 * PJ * A.convK),
+    // the f_a → f_b bottleneck: f_b's wgrad needs the rank-128 intermediate (aux)
+    N('decay', 'matmul', ['norm1'], 'α (decay)', PJ, B8, 2 * (h * A.decayRank + A.decayRank * PJ),
+      { aux: { name: 'f_a out', bytes: 2 * A.decayRank } }),
+    N('beta', 'matmul', ['norm1'], 'β', nh, B8, 2 * h * nh),
+    N('gate1', 'matmul', ['norm1'], 'gate', PJ, B8, 2 * h * PJ),
+    // chunk_kda takes the gate activation, L2Norm and β sigmoid in-kernel; its
+    // backward re-derives the chunk states from q, k, v, g, β (not its output)
+    N('kda_scan', 'attn', ['conv', 'decay', 'beta'], 'scan out', PJ, 2,
+      nh * (6 * A.headDim * A.headDim + 10 * 64 * A.headDim)),
+    N('gate_mul1', 'vector', ['kda_scan', 'gate1'], 'gated out', PJ, B8, 8 * PJ, { aux: rstd(nh) }),
+  ] : [
+    N('q_down', 'matmul', ['norm1'], 'q latent', A.qRank, B8, 2 * h * A.qRank),
+    N('kv_down', 'matmul', ['norm1'], 'kv latent', A.kvRank + A.qkRope, B8, 2 * h * (A.kvRank + A.qkRope)),
+    N('q_norm', 'vector', ['q_down'], 'norm(q latent)', A.qRank, B8, 8 * A.qRank, { aux: rstd() }),
+    N('kv_norm', 'vector', ['kv_down'], 'norm(kv latent)', A.kvRank, B8, 8 * A.kvRank, { aux: rstd() }),
+    N('q_up', 'matmul', ['q_norm'], 'q', nh * qk, 2, 2 * A.qRank * nh * qk),
+    // k counts per head with the shared 64-dim slice expanded, as attention reads it
+    N('kv_up', 'matmul', ['kv_norm'], 'k, v', nh * (qk + A.vHead), 2, 2 * A.kvRank * nh * (A.qkNope + A.vHead)),
+    N('attn', 'attn', ['q_up', 'kv_up'], 'attn out', nh * A.vHead, 2, 2 * nh * (qk + A.vHead) * 8192 / 2,
+      { needsOwnOutput: true, aux: { name: 'lse', bytes: 4 * nh } }),
+    N('gate1', 'matmul', ['norm1'], 'gate', PJ, B8, 2 * h * PJ),
+    N('gate_mul1', 'vector', ['attn', 'gate1'], 'gated out', PJ, B8, PJ),
+  ];
+  const ffn = moe ? [
+    N('router', 'matmul', ['norm2'], 'router state (logits, k probs)', A.routedExperts + k, 4, 2 * h * A.routedExperts, { bucket: 'moe' }),
+    N('lat_down', 'matmul', ['norm2'], 'z (latent)', l, B8, 2 * h * l, { bucket: 'moe' }),
+    N('dispatch', 'comm', ['lat_down', 'router'], 'dispatched tokens', k * l, B8, 0, { bucket: 'moe' }),
+    N('gate_up', 'matmul', ['dispatch'], 'gate, up (routed)', k * 2 * I, B8, 2 * k * l * 2 * I, { bucket: 'moe' }),
+    // the top-k weight multiplies before the (linear) down-proj, so the probs'
+    // gradient reads the activation, not the expert outputs (K3 §4's rewrite)
+    N('situ', 'vector', ['gate_up', 'router'], 'act out (routed)', k * I, B8, 8 * k * I, { bucket: 'moe' }),
+    N('ffn_down', 'matmul', ['situ'], 'expert outputs', k * l, 2, 2 * k * I * l, { bucket: 'moe' }),
+    N('combine', 'comm', ['ffn_down'], 'combined latent', l, B8, 0, { bucket: 'moe', bwdNeeds: [] }),
+    N('lat_norm', 'vector', ['combine'], 'norm(latent)', l, B8, 8 * l, { bucket: 'moe', aux: rstd() }),
+    N('lat_up', 'matmul', ['lat_norm'], 'moe out', h, 2, 2 * l * h, { bucket: 'moe' }),
+    N('shared_gu', 'matmul', ['norm2'], 'gate, up (shared)', 2 * I * A.sharedExperts, B8, 2 * h * 2 * I * A.sharedExperts, { bucket: 'moe' }),
+    N('shared_situ', 'vector', ['shared_gu'], 'act out (shared)', I * A.sharedExperts, B8, 8 * I * A.sharedExperts, { bucket: 'moe' }),
+    N('shared_down', 'matmul', ['shared_situ'], 'shared out', h, 2, 2 * I * A.sharedExperts * h, { bucket: 'moe' }),
+    N('moe_add', 'add', ['lat_up', 'shared_down'], 'ffn out', h, 2, 0, { bucket: 'moe' }),
+  ] : [
+    N('ffn_gate_up_d', 'matmul', ['norm2'], 'gate, up', 2 * A.denseInter, B8, 2 * h * 2 * A.denseInter, { bucket: 'moe' }),
+    N('situ_d', 'vector', ['ffn_gate_up_d'], 'act out', A.denseInter, B8, 8 * A.denseInter, { bucket: 'moe' }),
+    N('ffn_down_d', 'matmul', ['situ_d'], 'ffn out', h, 2, 2 * A.denseInter * h, { bucket: 'moe' }),
+  ];
+  return [
+    // the partial sum entering the layer: the checkpoint anchor (AttnRes keeps
+    // the residual stream as a within-block partial sum, reset every 12 layers)
+    N('x0', 'boundary', [], 'x0 (partial sum in)', h, 2, 0, { bucket: 'residual', always: true }),
+    N('attnres1', 'vector', ['x0'], 'attn mix out', h, 2, 0, { bucket: 'residual' }),
+    // MoE: the router reads BF16, the latent/shared GEMMs an FP8 copy
+    N('norm1', 'vector', ['attnres1'], 'norm1 out', h, B8, 8 * h, { aux: rstd() }),
+    ...attn,
+    N('o_proj', 'matmul', ['gate_mul1'], 'attn proj out', h, 2, 2 * PJ * h),
+    N('res1', 'add', ['o_proj', 'x0'], 'x1 (partial sum)', h, 2, 0, { bucket: 'residual' }),
+    N('attnres2', 'vector', ['res1'], 'ffn mix out', h, 2, 0, { bucket: 'residual' }),
+    N('norm2', 'vector', ['attnres2'], 'norm2 out', h, moe ? 2 + B8 : B8, 8 * h, { bucket: 'moe', aux: rstd() }),
+    ...ffn,
+    N('res2', 'add', [moe ? 'moe_add' : 'ffn_down_d', 'res1'], 'x2 → next layer', h, 2, 0, { bucket: 'residual', nomark: true }),
+  ];
+}
+// every markable op across the four block kinds
+const MARKABLE_K3 = [...new Set(['kda', 'mla'].flatMap((a) => ['moe', 'dense'].flatMap((f) =>
+  kimiGraph(a, f).filter((n) => !n.always && !n.nomark).map((n) => n.id))))];
+const saveExcept = (redo) => Object.fromEntries(MARKABLE_K3.filter((i) => !redo.includes(i)).map((i) => [i, true]));
+export const K3_RECOMPUTE = {
+  none: saveExcept([]),
+  // K3 §5: element-wise operators recompute, AttnRes runs wholly under
+  // checkpointing, the group GEMM's input comes back by re-dispatching; GEMM
+  // outputs stay (block-wise FP8) — the sheet's policy A
+  k3: saveExcept(['attnres1', 'norm1', 'conv', 'gate_mul1', 'q_norm', 'kv_norm', 'attnres2', 'norm2',
+    'situ', 'lat_norm', 'shared_situ', 'situ_d', 'dispatch']),
+  full: {},
+};
+export const K3_POLICIES = [['none', 'no recompute'], ['k3', 'K3'], ['full', 'recompute all']];
+// whole-model stash per token: the three block kinds × their counts
+export const K3_KINDS = [['kda', 'dense', A.denseLayers], ['kda', 'moe', A.kdaLayers - A.denseLayers], ['mla', 'moe', A.mlaLayers]];
+export function k3Stash(marks) {
+  return K3_KINDS.reduce((t, [a, f, n]) => t + n * analyze(kimiGraph(a, f), marks).savedBytes, 0);
+}
+
 // totals cross the fmtP=B ceiling; the tally speaks T there
 const fmtPT = (n) => n >= 1e12 ? (n / 1e12).toFixed(2) + 'T' : fmtP(n);
+// stash bytes per token (binary units)
+const fmtB = (b) => b < 1024 ? `${Math.round(b)} B` : b < 1024 ** 2 ? `${(b / 1024).toFixed(1)} KiB` : `${(b / 1024 ** 2).toFixed(2)} MiB`;
 
 // URL-hash state, same mechanics as viewer.js (#k3:<id>=<json>)
 const readState = (key) => {
@@ -115,6 +223,21 @@ ${tokensCss('.kv')}
 .kv .microlabel { font: italic 10px system-ui; fill: var(--c-52514e); }
 .kv svg.hlm > :not(.hl):not(defs) { opacity: 0.3; }
 .kv g[data-op].hl .dims { fill: var(--c-52514e); font-weight: 600; }
+/* recompute marks (the marks attribute): click an op to flip save ↔ ↻ */
+.kv g[data-mk] { cursor: pointer; }
+.kv g.rpl > rect { fill: var(--c-e0f3f3); stroke: var(--c-0a98a0); }
+.kv .mkg { font: 600 11px system-ui; }
+.kv .tsave { fill: var(--c-875600); }
+.kv .tredo { fill: var(--c-52514e); font-style: italic; }
+.kv-head .pols { display: inline-flex; gap: 4px; margin-left: 18px; align-items: center; }
+.kv-head .pols button { margin-left: 0; min-width: 0; }
+.kv-head .pols button.on { background: var(--c-eeede7); font-weight: 600; cursor: default; }
+.kv-head .pols .cust { font-size: 11px; color: var(--c-898781); margin-left: 4px; }
+.kv-led { font-size: 11.5px; color: var(--c-52514e); line-height: 1.55; padding: 6px 4px 0; max-width: 1060px; margin: 0 auto;
+  min-height: calc(7 * 1.55em); }   /* worst case (every op replays, MLA + MoE): no reflow on a flip */
+.kv-led b { color: var(--c-0b0b0b); }
+.kv-led .st { white-space: nowrap; color: var(--c-875600); }
+.kv-led .rp { white-space: nowrap; font-style: italic; }
 `;
 
 export class KimiLayer extends HTMLElement {
@@ -126,6 +249,9 @@ export class KimiLayer extends HTMLElement {
     this.flatDims = st ? !!st.flat : this.hasAttribute('flat');
     this.detail = this.hasAttribute('detail');
     this.activeView = false;
+    this.marksMode = this.hasAttribute('marks');
+    const pol = this.getAttribute('recompute') ?? 'k3';
+    this.marks = st?.m ? Object.fromEntries(st.m.map((i) => [i, true])) : { ...(K3_RECOMPUTE[st?.p ?? pol] ?? K3_RECOMPUTE.k3) };
     const style = document.createElement('style'); style.textContent = KV_CSS;
     this._card = document.createElement('div'); this._card.className = 'kv';
     this.append(style, this._card);
@@ -133,8 +259,15 @@ export class KimiLayer extends HTMLElement {
     addEventListener('dsv3-theme', () => this.render());
   }
   changed() {
-    writeState('k3:' + (this.id || 'layer'), { a: this.kindA, f: this.kindF, flat: this.flatDims ? 1 : 0 });
+    const st = { a: this.kindA, f: this.kindF, flat: this.flatDims ? 1 : 0 };
+    if (this.marksMode) { const p = this.policy(); if (p) st.p = p; else st.m = Object.keys(this.marks).filter((i) => this.marks[i]); }
+    writeState('k3:' + (this.id || 'layer'), st);
     this.dispatchEvent(new CustomEvent('recipe'));
+  }
+  // the preset these marks equal, or null (custom)
+  policy() {
+    const on = (m) => MARKABLE_K3.filter((i) => m[i] === true).join();
+    return K3_POLICIES.map(([k]) => k).find((k) => on(K3_RECOMPUTE[k]) === on(this.marks)) ?? null;
   }
   highlightOps(ids) { this._hl = ids ? new Set(ids) : null; this.applyHl(); }
   applyHl() {
@@ -168,33 +301,63 @@ export class KimiLayer extends HTMLElement {
 
     // ---- drawing helpers (the grammar's tokens) ----------------------------
     const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+    // marks tier: the graph's verdicts; g() opens an op group with its mark
+    // attributes, glyph() puts ↓ (saved) or ↻ (replays) at the op's right end
+    const M = this.marksMode && !P;
+    const graph = M ? kimiGraph(this.kindA, this.kindF) : [];
+    const byId = Object.fromEntries(graph.map((n) => [n.id, n]));
+    const ana = M ? analyze(graph, this.marks) : null;
+    this._ana = ana; this._graph = graph;
+    const MK = { router_bias: 'router' };   // boxes whose mark is another op's
+    const mkOf = (id) => { const m = MK[id] ?? id; return byId[m] && !byId[m].always && !byId[m].nomark ? m : null; };
+    const g = (id) => {
+      const m = M && mkOf(id);
+      return `<g data-op="${id}"${m ? ` data-mk="${m}"${this.marks[m] === true ? '' : ' class="rpl"'}` : ''}>`;
+    };
+    const glyph = (id, x, y) => {
+      const m = M && mkOf(id);
+      if (!m) return '';
+      const sv = this.marks[m] === true;
+      return `<text class="mkg" text-anchor="end" x="${x}" y="${y}" fill="${C(sv ? '#b05f00' : '#0a98a0')}">${sv ? '↓' : '↻'}</text>`;
+    };
     const pk = (n, mult) => P || n ? ` <tspan class="dims">(${fmtP(n)}${mult ? ` ×${mult}` : ''})</tspan>` : '';
     const box = (id, x, y, w, name, dims, h = 32) =>
-      S.push(`<g data-op="${id}"><rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="4"/>` +
+      S.push(`${g(id)}<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="4"/>` +
         `<text class="name" x="${x + 8}" y="${y + 14}">${esc(name)}</text>` +
-        (dims ? `<text class="dims" x="${x + 8}" y="${y + 26}">${dims}</text>` : '') + `</g>`);
+        (dims ? `<text class="dims" x="${x + 8}" y="${y + 26}">${dims}</text>` : '') + glyph(id, x + w - 7, y + 15) + `</g>`);
     const pill = (id, x, y, w, label, h = 20) =>
-      S.push(`<g data-op="${id}"><rect class="op" x="${x}" y="${y}" width="${w}" height="${h}" rx="6"/>` +
-        `<text class="oplabel" x="${x + 9}" y="${y + 14}">${label}</text></g>`);
+      S.push(`${g(id)}<rect class="op" x="${x}" y="${y}" width="${w}" height="${h}" rx="6"/>` +
+        `<text class="oplabel" x="${x + 9}" y="${y + 14}">${label}</text>${glyph(id, x + w - 7, y + h / 2 + 4)}</g>`);
     const micro = (x, y, w, label, h = 16) =>
       S.push(`<rect class="micro" x="${x}" y="${y}" width="${w}" height="${h}" rx="6"/>` +
         `<text class="microlabel" x="${x + 9}" y="${y + 12}">${label}</text>`);
     const comm = (id, x, y, w, label, h = 22) =>
-      S.push(`<g data-op="${id}"><rect class="comm" x="${x}" y="${y}" width="${w}" height="${h}" rx="6"/>` +
-        `<text class="oplabel" x="${x + 9}" y="${y + 15}" fill="${C('#4636a3')}">${label}</text></g>`);
+      S.push(`${g(id)}<rect class="comm" x="${x}" y="${y}" width="${w}" height="${h}" rx="6"/>` +
+        `<text class="oplabel" x="${x + 9}" y="${y + 15}" fill="${C('#4636a3')}">${label}</text>${glyph(id, x + w - 7, y + 15)}</g>`);
     const res = (id, sx, y, w, label) => {   // ⊕ on the spine + dashed label box to its right
-      S.push(`<g data-op="${id}"><circle cx="${sx}" cy="${y + 10}" r="7" fill="${C('#fcfcfb')}" stroke="${C('#c3c2b7')}"/>` +
+      S.push(`${g(id)}<circle cx="${sx}" cy="${y + 10}" r="7" fill="${C('#fcfcfb')}" stroke="${C('#c3c2b7')}"/>` +
         `<text class="plus" x="${sx - 3.5}" y="${y + 14}">+</text>` +
         `<rect class="res" x="${sx + 14}" y="${y}" width="${w}" height="20" rx="6"/>` +
-        `<text class="oplabel" x="${sx + 23}" y="${y + 14}">${label}</text></g>`);
+        `<text class="oplabel" x="${sx + 23}" y="${y + 14}">${label}</text>${glyph(id, sx + 14 + w - 7, y + 14)}</g>`);
     };
     const wv = (x, y1, y2, arrow = true) =>
       S.push(`<line class="wire" x1="${x}" y1="${y1}" x2="${x}" y2="${y2}"${arrow ? ' marker-end="url(#karr)"' : ''}/>`);
     const poly = (pts, arrow = true) =>
       S.push(`<polyline class="wire" points="${pts.map(p => p.join(',')).join(' ')}"${arrow ? ' marker-end="url(#karr)"' : ''} fill="none"/>`);
     const dot = (x, y) => S.push(`<circle cx="${x}" cy="${y}" r="2.5" fill="${C('#898781')}"/>`);
-    const chip = (x, y, name, dims) => {
+    // marks tier: a chip names its producer (nid) and says what backward
+    // gets — ↓ stashed (bytes per token) · ↻ recomputed · plain = not needed
+    const chip = (x, y, name, dims, nid) => {
       if (P) return;   // the params lens drops tensor chips (01's convention)
+      const n = M && byId[nid];
+      if (n && ana.neededSaved.has(nid)) {
+        S.push(`<text class="tensor tsave" x="${x}" y="${y}">↓ ${esc(name)} <tspan class="tdim">· ${fmtB(ana.savedById[nid])} ${n.dt}</tspan></text>`);
+        return;
+      }
+      if (n && ana.replayed.has(nid) && ana.neededBy.has(nid)) {
+        S.push(`<text class="tensor tredo" x="${x}" y="${y}">↻ ${esc(name)} — recomputed</text>`);
+        return;
+      }
       S.push(`<text class="tensor tidle" x="${x}" y="${y}">· ${esc(name)}${dims ? ` <tspan class="tdim">· ${dims}</tspan>` : ''}</text>`);
     };
     const grp = (x, y, w, h, label, lx = 10) =>
@@ -235,7 +398,7 @@ export class KimiLayer extends HTMLElement {
     wv(SX1, yRes0 + 20, yN1);
     pill('norm1', C1, yN1, W1, `RMSNorm${pk(A.hidden)}`);
     wv(SX1, yN1 + 20, yA);
-    chip(SX1 + 14, yChip1, 'norm1 out', A.hidden);
+    chip(SX1 + 14, yChip1, 'norm1 out', A.hidden, 'norm1');
     // the side branch: one horizontal under the tab row, drops feed the
     // side boxes (decay/β/gate — MLA: kv + gate) via the column gutter
     dot(SX1, yBr);
@@ -260,6 +423,7 @@ export class KimiLayer extends HTMLElement {
       box('qkv', C1, yA, W1, 'qkv proj (fused)',
         P ? fmtP(K.qkv) : F ? `${A.hidden} → ${3 * PJ}${pk(K.qkv)}` : `${A.hidden} → 3×${A.heads}×${A.headDim}${pk(K.qkv)}`);
       wv(SX1, yA + 32, yB);
+      if (M) chip(SX1 + 14, yB - 6, 'q, k, v (pre-conv)', '', 'qkv');
       pill('conv', C1, yB, W1, `short conv + SiLU — q, k, v · k=${A.convK}${pk(K.conv)}`);
       if (this.detail) {   // the L2Norm micro sits ON the spine: segment around it
         wv(SX1, yB + 20, yMicro);
@@ -276,12 +440,13 @@ export class KimiLayer extends HTMLElement {
         P ? fmtP(K.beta) : `${A.hidden} → ${A.heads}${pk(K.beta)}`);
       poly([[CS + WS, yA + 16], [RR1, yA + 16], [RR1, yAtt + 8], [C1 + W1 + 3, yAtt + 8]], true);
       poly([[CS + WS, yB + 12], [RR2, yB + 12], [RR2, yAtt + 20], [C1 + W1 + 3, yAtt + 20]], true);
-      chip(CS + 2, yA + 44, 'α', `${A.heads}×${A.headDim}`);
-      chip(CS + 2, yB + 42, 'β', String(A.heads));
+      chip(CS + 2, yA + 44, 'α', `${A.heads}×${A.headDim}`, 'decay');
+      chip(CS + 2, yB + 42, 'β', String(A.heads), 'beta');
+      if (M) chip(SX1 + 14, yAtt - 8, 'q, k, v', '', 'conv');
       box('kda_scan', C1, yAtt, W1, 'KDA scan — chunked delta rule',
         `state ${A.heads}×(${A.headDim}×${A.headDim}) · causal`, 36);
       wv(SX1, yAtt + 36, yGate);
-      chip(SX1 + 14, yGate - 8, 'scan out', `${A.heads}×${A.headDim}`);
+      chip(SX1 + 14, yGate - 8, 'scan out', `${A.heads}×${A.headDim}`, 'kda_scan');
       pill('gate_mul1', C1, yGate, W1, `σ(gate) ⊙ RMSNorm${pk(K.gateNorm)}`);
     } else {
       // gated MLA: DSv3's MLA wiring minus RoPE (NoPE), plus the output gate
@@ -294,8 +459,8 @@ export class KimiLayer extends HTMLElement {
         P ? fmtP(K.kvDown) : `${A.hidden} → ${A.kvRank} + ${A.qkRope}${pk(K.kvDown)}`);
       wv(SX1, yA + 32, yB);
       wv(sxk, yA + 32, yB);
-      chip(SX1 + 14, yB - 6, 'q latent', A.qRank);
-      chip(sxk + 14, yB - 6, 'kv latent', A.kvRank);
+      chip(SX1 + 14, yB - 6, 'q latent', A.qRank, 'q_down');
+      chip(sxk + 14, yB - 6, 'kv latent', A.kvRank, 'kv_down');
       pill('q_norm', C1, yB, w1, `RMSNorm${pk(A.qRank)}`, 18);
       pill('kv_norm', x2, yB, w2, `RMSNorm${pk(A.kvRank)}`, 18);
       // the 64-dim k slice: split from kv down, shared across heads, NEVER
@@ -311,11 +476,11 @@ export class KimiLayer extends HTMLElement {
         P ? fmtP(K.kvUp) : F ? `${A.kvRank} → ${A.heads * (A.qkNope + A.vHead)}${pk(K.kvUp)}` : `${A.kvRank} → ${A.heads}×(${A.qkNope}+${A.vHead})${pk(K.kvUp)}`);
       wv(SX1, yC + 32, yAtt);
       wv(sxk, yC + 32, yAtt);
-      chip(SX1 + 14, yAtt - 8, 'q', `${A.heads}×${A.qkNope + A.qkRope}`);
-      chip(sxk + 14, yAtt - 8, 'k,v', `${A.heads}×(${A.qkNope}+${A.vHead})`);
+      chip(SX1 + 14, yAtt - 8, 'q', `${A.heads}×${A.qkNope + A.qkRope}`, 'q_up');
+      chip(sxk + 14, yAtt - 8, 'k,v', `${A.heads}×(${A.qkNope}+${A.vHead})`, 'kv_up');
       box('attn', C1, yAtt, W1, 'attention', 'softmax(QKᵀ)V · causal', 36);
       wv(SX1, yAtt + 36, yGate);
-      chip(SX1 + 14, yGate - 8, 'attn out', `${A.heads}×${A.vHead}`);
+      chip(SX1 + 14, yGate - 8, 'attn out', `${A.heads}×${A.vHead}`, 'attn');
       pill('gate_mul1', C1, yGate, W1, 'σ(gate) ⊙');
     }
     // shared tail: out-proj, residual add
@@ -323,10 +488,10 @@ export class KimiLayer extends HTMLElement {
     box('o_proj', C1, yO, W1, 'attn out-proj',
       P ? fmtP(K.oProj) : F ? `${PJ} → ${A.hidden}${pk(K.oProj)}` : `${A.heads}×${A.headDim} → ${A.hidden}${pk(K.oProj)}`);
     wv(SX1, yO + 32, yAdd1 - 2);
-    chip(SX1 + 14, yO + 46, 'attn proj out');
+    chip(SX1 + 14, yO + 46, 'attn proj out', '', 'o_proj');
     res('res1', SX1, yAdd1, 150, 'residual add');
     wv(SX1, yAdd1 + 17, yX1, false);
-    chip(SX1 + 14, yX1 + 14, 'x1 (residual)', A.hidden);
+    chip(SX1 + 14, yX1 + 14, 'x1 (residual)', A.hidden, 'res1');
     // x1 → FFN column top (up and over), plus its rail to the final add
     dot(SX1, yX1);
     poly([[SX1, yX1], [RAIL2, yX1], [RAIL2, yAdd2 + 10], [SX2 - 9, yAdd2 + 10]], true);
@@ -336,7 +501,7 @@ export class KimiLayer extends HTMLElement {
     wv(SX2, yRes0 + 20, yN1);
     pill('norm2', C2, yN1, W2, `RMSNorm${pk(A.hidden)}`);
     wv(SX2, yN1 + 20, this.kindF === 'moe' ? yRout : yGU);   // dense: one run into the FFN
-    chip(SX2 + 14, yChip1, 'norm2 out', A.hidden);
+    chip(SX2 + 14, yChip1, 'norm2 out', A.hidden, 'norm2');
 
     // ---- FFN column tabs + enclosure ---------------------------------------
     const f1x = C2 + 24, f1w = 186, f2x = f1x + f1w + 8, f2w = 138;
@@ -355,7 +520,7 @@ export class KimiLayer extends HTMLElement {
       box('router', C2, yRout, W2, 'router',
         P ? fmtP(K.routerWeight) : `${A.hidden} → ${A.routedExperts}${pk(K.routerWeight)}`);
       wv(SX2, yRout + 32, yRoutM);
-      S.push(`<g data-op="router_bias">`);
+      S.push(g('router_bias'));
       micro(C2, yRoutM, W2, `sigmoid · biased top-${A.topk} · renorm (${A.routedExperts})`);
       S.push(`</g>`);
       wv(SX2, yRoutM + 16, yLatD);
@@ -365,21 +530,21 @@ export class KimiLayer extends HTMLElement {
       box('lat_down', C2, yLatD, W2, 'latent down-proj',
         P ? fmtP(K.latDown) : `${A.hidden} → ${A.moeLatent}${pk(K.latDown)}`);
       wv(SX2, yLatD + 32, yDisp);
-      chip(SX2 + 14, yLatD + 46, 'z (latent)', A.moeLatent);
+      chip(SX2 + 14, yLatD + 46, 'z (latent)', A.moeLatent, 'lat_down');
       comm('dispatch', C2, yDisp, W2, 'a2a dispatch (permute + comm) → EP group');
       wv(SX2, yDisp + 22, yGU);
-      chip(SX2 + 14, yDisp + 38, 'dispatched tokens', `${A.topk}×${A.moeLatent}`);
+      chip(SX2 + 14, yDisp + 38, 'dispatched tokens', `${A.topk}×${A.moeLatent}`, 'dispatch');
       grp(C2 - 6, yGrp, W2 + 12, yGrpB - yGrp, `routed experts ×${A.routedExperts} · ${fmtP(K.expert)} each`, SX2 + 20 - C2);
       box('gate_up', C2, yGU, W2, `ffn gate/up (grouped ×${A.topk})`,
         P ? `${fmtP(2 * K.expert / 3)} ×${EX}` : F ? `${A.moeLatent} → ${2 * A.moeInter} (${fmtP(2 * K.expert / 3 * EX)})` : `${A.moeLatent} → 2×${A.moeInter}${pk(2 * K.expert / 3, EX)}`);
       wv(SX2, yGU + 32, ySw);
-      chip(SX2 + 14, yGU + 46, 'gate, up (routed)', `${A.topk}×2×${A.moeInter}`);
+      chip(SX2 + 14, yGU + 46, 'gate, up (routed)', `${A.topk}×2×${A.moeInter}`, 'gate_up');
       pill('situ', C2, ySw, W2, 'SiTU-GLU · × top-k weight');
       wv(SX2, ySw + 20, yFD);
       box('ffn_down', C2, yFD, W2, `ffn down (grouped ×${A.topk})`,
         P ? `${fmtP(K.expert / 3)} ×${EX}` : F ? `${A.moeInter} → ${A.moeLatent} (${fmtP(K.expert / 3 * EX)})` : `${A.moeInter} → ${A.moeLatent}${pk(K.expert / 3, EX)}`);
       wv(SX2, yFD + 32, yComb);
-      chip(SX2 + 14, yGrpB + 12, 'expert outputs');
+      chip(SX2 + 14, yGrpB + 12, 'expert outputs', '', 'ffn_down');
       comm('combine', C2, yComb, W2, 'a2a combine (comm + unpermute · sum)');
       wv(SX2, yComb + 22, yLatN);
       pill('lat_norm', C2, yLatN, W2, `RMSNorm${pk(A.moeLatent)}`, 18);
@@ -387,7 +552,7 @@ export class KimiLayer extends HTMLElement {
       box('lat_up', C2, yLatU, W2, 'latent up-proj',
         P ? fmtP(K.latUp) : `${A.moeLatent} → ${A.hidden}${pk(K.latUp)}`);
       wv(SX2, yLatU + 32, yMAdd - 2);
-      chip(SX2 + 14, yLatU + 46, 'moe out');
+      chip(SX2 + 14, yLatU + 46, 'moe out', '', 'lat_up');
       // shared experts: every token, full width, alongside the routed group
       grp(CSH - 6, yGrp, WSH + 12, yGrpB - yGrp);
       S.push(`<text class="grplabel" x="${CSH - 6}" y="${yGrp - 8}">shared experts ×${A.sharedExperts} (every token)</text>`);
@@ -398,7 +563,7 @@ export class KimiLayer extends HTMLElement {
       wv(SXSH, ySw + 20, yFD);
       box('shared_down', CSH, yFD, WSH, 'shared down',
         P ? fmtP(K.shared / 3) : `${A.sharedExperts * A.moeInter} → ${A.hidden}${pk(K.shared / 3)}`);
-      chip(SXSH + 8, yGrpB + 12, 'shared out');
+      chip(SXSH + 8, yGrpB + 12, 'shared out', '', 'shared_down');
       poly([[SXSH, yFD + 32], [SXSH, yMAdd + 10], [SX2 + 14 + 210 + 3, yMAdd + 10]], true);
       res('moe_add', SX2, yMAdd, 210, 'add — routed + shared');
       wv(SX2, yMAdd + 17, yAdd2 - 2);
@@ -407,13 +572,13 @@ export class KimiLayer extends HTMLElement {
       box('ffn_gate_up_d', C2, yGU, W2, 'ffn gate/up',
         P ? fmtP(2 * K.denseFfn / 3) : F ? `${A.hidden} → ${2 * A.denseInter}${pk(2 * K.denseFfn / 3)}` : `${A.hidden} → 2×${A.denseInter}${pk(2 * K.denseFfn / 3)}`);
       wv(SX2, yGU + 32, ySw);
-      chip(SX2 + 14, yGU + 46, 'gate, up', `2×${A.denseInter}`);
+      chip(SX2 + 14, yGU + 46, 'gate, up', `2×${A.denseInter}`, 'ffn_gate_up_d');
       pill('situ_d', C2, ySw, W2, 'SiTU-GLU');
       wv(SX2, ySw + 20, yFD);
       box('ffn_down_d', C2, yFD, W2, 'ffn down',
         P ? fmtP(K.denseFfn / 3) : `${A.denseInter} → ${A.hidden}${pk(K.denseFfn / 3)}`);
       wv(SX2, yFD + 32, yAdd2 - 2);
-      chip(SX2 + 14, yFD + 46, 'ffn out');
+      chip(SX2 + 14, yFD + 46, 'ffn out', '', 'ffn_down_d');
     }
     res('res2', SX2, yAdd2, 150, 'residual add');
     wv(SX2, yAdd2 + 17, yAdd2 + 36, false);
@@ -429,7 +594,36 @@ export class KimiLayer extends HTMLElement {
     head.append(lab, b);
     const scroll = document.createElement('div'); scroll.className = 'kv-scroll';
     scroll.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">${S.join('')}</svg>`;
-    this._card.replaceChildren(head, scroll);
+    const parts = [head, scroll];
+    if (M) {
+      const pol = this.policy();
+      const pols = document.createElement('span'); pols.className = 'pols';
+      pols.innerHTML = 'recompute: ' + K3_POLICIES.map(([k2, lb]) =>
+        `<button type="button" data-pol="${k2}"${pol === k2 ? ' class="on"' : ''}>${lb}</button>`).join('') +
+        `<span class="cust">${pol ? '' : 'custom — click ops to flip save ↔ ↻'}</span>`;
+      head.append(pols);
+      for (const pb of pols.querySelectorAll('[data-pol]')) pb.onclick = () => {
+        if (this.policy() === pb.dataset.pol) return;
+        this.marks = { ...K3_RECOMPUTE[pb.dataset.pol] }; this.render(); this.changed();
+      };
+      const led = document.createElement('div'); led.className = 'kv-led';
+      const st = graph.filter((n) => ana.neededSaved.has(n.id) || (n.aux && ana.savedById[n.id]))
+        .map((n) => `<span class="st" data-op="${n.id}">↓ ${n.tensor} ${fmtB(ana.savedById[n.id])}</span>`);
+      const rp = graph.filter((n) => ana.replayed.has(n.id)).map((n) => `<span class="rp" data-op="${n.id}">↻ ${n.tensor}</span>`);
+      const kindN = K3_KINDS.find(([a2, f2]) => a2 === this.kindA && f2 === this.kindF)?.[2] ?? 0;
+      led.innerHTML = `<b>stashed for backward: ${fmtB(ana.savedBytes)} per token</b> for this block ` +
+        `(${this.kindA === 'kda' ? 'KDA' : 'gated MLA'} + ${this.kindF === 'moe' ? 'LatentMoE' : 'dense FFN'}, ×${kindN}): ${st.join(' · ')}` +
+        (rp.length ? `<br>replayed in backward (+${(100 * ana.replayFrac).toFixed(ana.replayFrac < 0.01 ? 2 : 0)} % of the block’s forward FLOPs${ana.replayComm.length ? `, plus the ${ana.replayComm.join(' and ')} all-to-all` : ''}): ${rp.join(' · ')}` : '') +
+        `<br><b>whole model: ${fmtB(k3Stash(this.marks))} per token</b> over all ${A.layers} layers under these marks, ` +
+        `plus the head’s logits and the AttnRes block store (both outside the blocks)`;
+      parts.push(led);
+    }
+    this._card.replaceChildren(...parts);
+    for (const mg of this._card.querySelectorAll('svg [data-mk]')) mg.addEventListener('click', () => {
+      const id = mg.dataset.mk;
+      if (this.marks[id] === true) delete this.marks[id]; else this.marks[id] = true;
+      this.render(); this.changed();
+    });
     for (const g of this._card.querySelectorAll('[data-tab]')) {
       g.addEventListener('click', () => {
         const [onto, key] = g.dataset.tab.split(':');
@@ -825,7 +1019,7 @@ kimi-anatomy kimi-anatomy-plan { margin-top: 46px; }
   .anat-cone { display: none; }
 }
 `;
-const FWD = ['detail', 'lens', 'nocaption'];
+const FWD = ['detail', 'lens', 'nocaption', 'marks', 'recompute'];
 export class KimiAnatomy extends HTMLElement {
   connectedCallback() {
     const lid = this.getAttribute('layer') ?? ((this.id || 'kimi-anatomy') + '-layer');

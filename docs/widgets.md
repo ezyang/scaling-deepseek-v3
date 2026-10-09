@@ -369,10 +369,11 @@ parameter model lives in the module itself (`KIMI`, `KPARAMS`); the exact
 |---|---|
 | `<kimi-layer>` | one K3 block, two tabbed columns: attention (`kda` ×69 · gated `mla` ×24, NoPE) and FFN (`moe` = Stable LatentMoE ×92 · `dense` ×1), each module behind an attn-res mix pill |
 | `kind-a` / `kind-f` | initial tabs (`kda` / `moe` default); `flat` = multiplied-out sizes; `detail` = micro pills; `lens="params"` drops tensor chips and shows counts |
-| state | `#k3:<id>={a,f,flat}` in the URL hash; `recipe` event on change; `activeView` is set by the tally (active / token accounting) |
+| `marks` [`recompute=none\|k3\|full`] | the recompute tier: the block as an op graph (`kimiGraph(kindA, kindF)`, planned by src/blockgraph.js `analyze`). Click an op = flip save (↓) ↔ recompute (↻, teal box); tensor chips read ↓ name · bytes/token dtype, ↻ recomputed, or plain (backward doesn't read it); head row = presets (no recompute · K3 · recompute all, lit when the marks equal one, else "custom"); ledger below = this block's stash per token, the replayed set (+ % forward FLOPs, replayed all-to-alls) and the whole-model stash (`k3Stash`: the three block kinds × counts). Stash formats are fixed at K3's recipe; the K3 preset = the sheet's policy A (+256 B of decay intermediate), pinned in tests/kimi.js. The ledger reserves its worst-case height |
+| state | `#k3:<id>={a,f,flat[,p\|m]}` in the URL hash (`p` = preset name, `m` = saved op ids when custom); `recipe` event on change; `activeView` is set by the tally (active / token accounting) |
 | `<kimi-anatomy-plan layer=…>` | the model stack: embedding → [KDA ×3 → gated MLA] ×23 → final gated MLA → attn-res α → final norm → head. Blocks carry `data-kind`; clicking flips the attention tab |
 | `<kimi-param-tally layer=… [compact] [mode=total\|active]>` | rows per block kind; hover/pin highlight `data-op` cells and plan blocks; counts carry exact values (src/tip.js) |
-| `<kimi-anatomy layer=… [tally] [lens] [detail] [nocaption]>` | the grid wrapper; forwards `detail lens nocaption` to the layer |
+| `<kimi-anatomy layer=… [tally] [lens] [marks] [recompute] [detail] [nocaption]>` | the grid wrapper; forwards `detail lens nocaption marks recompute` to the layer |
 
 Excluded from the tally: the 401M MoonViT-V2 vision tower and the MTP layer
 (absent from the released checkpoint).

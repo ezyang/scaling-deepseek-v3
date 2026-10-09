@@ -289,6 +289,10 @@
     <tr><td class="nm">O</td><td>optimizer state on this GPU (B)</td><td class="vl"></td><td class="vl sc ap">5.15 × 10<sup>10</sup></td><td class="vl si ap">51<span class="d">.5</span><span class="u"> GB</span></td><td class="fx"><b>o<sub>B</sub></b> · (<b>Q<sub>exp</sub></b> / <b>DP</b> + <b>Q<sub>ne</sub></b> / <b>DP<sub>ne</sub></b>) <i>(sharded across every replica of the slice)</i></td></tr>
     </table></div>
 
+    <p>What each layer stashes for backward depends on which ops replay. The figure below is the block as an op graph: click an op to flip it between saved (↓) and recomputed (↻, teal); a recomputed op’s inputs must then be stashed or recomputed in turn, so a flip can move bytes elsewhere. The presets are no recompute, K3’s policy (element-wise operators and the attention-residual mixes recompute, the routed experts’ input comes back by re-dispatching, GEMM outputs stay in block-wise FP8) and recompute all (replay the layer from its input, both all-to-alls included). Stash formats stay at K3’s recipe throughout, so only the recompute choice moves. The K3 preset is the sheet’s policy A, row for row, plus the decay bottleneck’s 256-byte intermediate the sheet leaves out.</p>
+
+    <kimi-anatomy style="min-height:948px" layer="ac-layer" marks detail nocaption></kimi-anatomy>
+
     <div class="cellsheet"><table>
     <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
     <tr><td class="nm">σ<sub>res</sub></td><td>residual stash per token, one layer</td><td class="vl">28,672</td><td class="vl sc ap">2.87 × 10<sup>4</sup></td><td class="vl si ap">28<span class="d">.7</span><span class="u"> KB</span></td><td class="fx">4 · <b>d</b> <i>(block input and post-attention residual, BF16; the AttnRes cache adds nothing per layer)</i></td></tr>
