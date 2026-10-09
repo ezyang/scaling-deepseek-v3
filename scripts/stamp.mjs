@@ -12,12 +12,11 @@
 // touch every live page, and concurrent sessions committing those one-line
 // hash diffs stomp on each other. Stale hashes are harmless until a deploy,
 // so the battery checks only the theme blocks (which every page, draft or
-// live, needs current); .githooks/pre-push refuses a push to main while the
-// hashes are stale.
+// live, needs current); run --publish right before pushing main.
 //
 //   node scripts/stamp.mjs                     # theme blocks only (battery: --check)
 //   node scripts/stamp.mjs --publish           # + cache hashes in index.html + the SERIES posts
-//   node scripts/stamp.mjs --publish --check   # exit 1 if anything is stale (pre-push)
+//   node scripts/stamp.mjs --publish --check   # exit 1 if anything is stale
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync, readdirSync } from 'node:fs';
 import { join, relative, dirname } from 'node:path';

@@ -53,9 +53,7 @@ generality.
   pairs fresh HTML with stale JS) are written ONLY by `--publish`: let them
   go stale while iterating and don't commit hash churn ("stamps follow")
   with ordinary changes, since concurrent sessions stomp on it. Publishing =
-  `node scripts/stamp.mjs --publish`, commit "Restamp for publish", push;
-  .githooks/pre-push refuses a push to main with stale hashes (enable per
-  clone: `git config core.hooksPath .githooks`).
+  `node scripts/stamp.mjs --publish`, commit "Restamp for publish", push.
 - `node scripts/goldens.mjs` — numeric goldens (tests/goldens.json): stash
   rates, FLOP counts, the kernel and sweep tables, story-config cell
   totals. Changing a number is fine; changing one invisibly is not — on
