@@ -50,9 +50,8 @@ const SHOTS = [
   // V4.1-Flash (unpublished draft): the CSA2-tabbed block diagram + params view
   { name: 'v41-diagram', page: PAGE41, sel: 'dsv41-anatomy[layer="diagram"]' },
   { name: 'v41-params', page: PAGE41, sel: 'dsv41-anatomy[layer="params-diagram"]' },
-  // Kimi K3 (unpublished draft): the KDA/MLA-tabbed block diagram + params view
+  // Kimi K3 (unpublished draft): the KDA/MLA-tabbed block diagram
   { name: 'k3-diagram', page: PAGEK3, sel: 'kimi-anatomy[layer="diagram"]' },
-  { name: 'k3-params', page: PAGEK3, sel: 'kimi-anatomy[layer="params-diagram"]' },
   // the FSDP sweep (unpublished standalone study)
   { name: 'fsdp-sweep', page: PAGEF, sel: 'dsv3-fsdp' },
 ];

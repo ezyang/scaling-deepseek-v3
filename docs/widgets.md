@@ -358,11 +358,12 @@ aligner and the 14.2B DSpark drafter (`mtp.*`).
 
 ## `<kimi-anatomy>` family — the Kimi K3 architecture (src/kimi.js, unlisted draft)
 
-Self-contained sibling of `<dsv3-anatomy>` for studies/kimi-k3.html (the
-architecture diagrams sit in the roofline page's model section), built on the
-same skeleton as the `<dsv41-anatomy>` family. The parameter model lives in
-the module itself (`KIMI`, `KPARAMS`); tests/kimi.js pins the text-model
-total 2,779,484,476,000 and the active 104,189,612,640.
+Self-contained sibling of `<dsv3-anatomy>` for studies/kimi-k3.html (one
+shapes-lens instance in the roofline page's model section; the params sheet
+there carries the counts, so the page uses neither `lens="params"` nor the
+tally), built on the same skeleton as the `<dsv41-anatomy>` family. The
+parameter model lives in the module itself (`KIMI`, `KPARAMS`); the exact
+2,779,484,476,000 / 104,189,612,640 anchors are pinned by tests/kimisheet.js.
 
 | element / attribute | meaning |
 |---|---|
