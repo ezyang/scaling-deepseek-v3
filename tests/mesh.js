@@ -1,6 +1,7 @@
 // @page studies/03-roofline.html
 // the mesh axes: under EP our row (7 NVLink node-mates, 7 IB peers with our
-// local rank, 49 more reached through them); under FSDP our GPU's peers are its 7 node-mates
+// local rank, 49 more reached through them; each cell its own slice color,
+// our node's the EFSDP stripes); under FSDP our GPU's peers are its 7 node-mates
 // (NVLink) and the 255 GPUs with its local rank (IB), every other GPU holding
 // a shard it reaches through them; under EFSDP our column (the expert
 // slice's 31 other copies, one per EP group, none on our node), our
@@ -82,6 +83,12 @@ await T.tick(400);
 c = count();
 T.check('EP: 1 ours · 7 IB · 7 NVLink · 49 via a peer, all in our row', fmt(c) === fmt({ ours: 1, ib: 7, nv: 7, grp: 49, lane: 0, out: 1984 }), fmt(c));
 T.check('EP readout fits', q('[data-readout]').getComputedTextLength() < 738, q('[data-readout]').getComputedTextLength());
+const rowFill = (n, k) => qa('rect[data-role]').find((r) => +r.getAttribute('y') === +q('rect[data-role=ours]').getAttribute('y') && +r.getAttribute('x') === +q('rect[data-node=ours]').getAttribute('x') + 2 + (n - OURS.node) * 79 + k * 9).getAttribute('fill');
+const epFills = qa('rect[data-role]:not([data-role=ours]):not([data-role=out])').map((r) => r.getAttribute('fill'));
+T.check('EP: every GPU in our row holds its own slice — 63 fills, all different, none white', epFills.length === 63 && new Set(epFills).size === 63 && !epFills.includes('#ffffff'), new Set(epFills).size);
+const ourNodeEp = [0, 1, 2, 4, 5, 6, 7].map((k) => rowFill(OURS.node, k));
+T.check('EP: our node\'s cells are the EFSDP stripes (a slice keeps its color across the flip)', ourNodeEp.every((f, i) => f === qa('[data-stripe]')[[0, 1, 2, 4, 5, 6, 7][i]].getAttribute('fill')), ourNodeEp.join(','));
+T.check('EP legend: no route-grade swatches, the slice chips', !/NVLink peer|via a peer/.test(q('svg').textContent) && /hue by local rank, tone by node/.test(q('svg').textContent), '');
 T.check('EP: every peer is in our row', qa('rect[data-role=ib], rect[data-role=grp]').every((r) => +r.getAttribute('y') === +q('rect[data-role=ours]').getAttribute('y')), '');
 btn('efsdp').click();
 await T.tick(60);
@@ -95,7 +102,7 @@ T.check('EFSDP legend: eight stripe swatches match the cells', qa('[data-stripe]
 T.check('EFSDP: lanes fill our node\'s column, 7 per box', qa('rect[data-role=lane]').every((r) => +r.getAttribute('x') >= +q('rect[data-node=ours]').getAttribute('x') && +r.getAttribute('x') <= +q('rect[data-node=ours]').getAttribute('x') + 79) && qa('rect[data-role=ib]').every((r) => +r.getAttribute('x') === +q('rect[data-role=ours]').getAttribute('x')), '');
 T.check('EFSDP: fills land exactly', qa('rect[data-role=out]').every((r) => r.getAttribute('fill') === '#ffffff') && qa('rect[data-role=ib]').every((r) => r.getAttribute('fill') === '#1c1c1a'), '');
 T.check('EFSDP readout fits', q('[data-readout]').getComputedTextLength() < 738, q('[data-readout]').getComputedTextLength());
-T.check('EFSDP readout: own NIC, 8 payloads', /its own NIC at 50 GB\/s \(19\.8 GB a move\).*8 payloads, no NVLink/.test(q('[data-readout]').textContent), q('[data-readout]').textContent);
+T.check('EFSDP readout: per node, own NIC, 8 payloads', /all 8 NICs at 400 GB\/s \(158 GB a move\).*its own GPU’s NIC · 8 payloads, no NVLink/.test(q('[data-readout]').textContent), q('[data-readout]').textContent);
 hov(qa('rect[data-role=out]')[0]);
 await T.tick(30);
 T.check('route: an outsider has none', hops() === '', hops());

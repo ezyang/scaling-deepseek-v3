@@ -11,7 +11,9 @@
 // say which pieces we need: the FSDP view is one uniform color (every GPU
 // holds a shard of the one copy our node needs), the EFSDP view stripes our
 // node's column by local rank (eight slices, eight colors; we need only our
-// rank's stripe, our node-mates need theirs, each down its own lane). Hovering
+// rank's stripe, our node-mates need theirs, each down its own lane), and the
+// EP view colors our row the same way, every GPU's slice its own color (the
+// same slice keeps its color across the flip). Hovering
 // a GPU draws its shard's route; under FSDP also the other seven lanes its
 // node runs into ours at the same time (eighths of the one shard, then NVLink
 // swaps them) — eight lanes for one copy vs one lane for one slice.
@@ -51,18 +53,21 @@ export function lanes(view, row, node, rank) {
   if (view !== 'fsdp' || (row === OURS.row && node === OURS.node)) return [];
   return [...Array(GPUS).keys()].filter((j) => j !== rank).map((j) => [[row, node, j], [OURS.row, OURS.node, j]]);
 }
-// EP: dark = in the group, graded by how the bytes reach us: direct IB peer · direct NVLink peer ·
-// one hop further (through a peer); white = not in it. FSDP flattens the grades to one color (one
-// payload, every GPU holds a piece of it); EFSDP stripes the lanes by local rank (eight payloads)
+// the roles' fills: FSDP flattens them to one color (one payload, every GPU holds a piece of it);
+// EFSDP stripes the lanes by local rank (eight payloads); EP colors each GPU of our row by its slice
 const FILL = { ours: '#2a78d6', ib: '#1c1c1a', nv: '#52514e', grp: '#8f8d86', out: '#ffffff' };
 const STRIPE = ['#8a3324', '#eb6834', '#6b7d12', '#1c1c1a', '#0a98a0', '#4a6a8e', '#6b5bd2', '#d6408b'];   // by local rank; ours (3) is the ink of 'ib'
-// stripes are softened 40% toward the paper at render time (C() first, so night mode softens toward its own paper)
-export const stripe = (rank) => rank === OURS.rank ? C(STRIPE[rank]) : mix(C(STRIPE[rank]), C('#fcfcfb'), 0.4);
-export const fillOf = (view, ro, rank) => ro === 'lane' ? stripe(rank) : C(view === 'fsdp' && ro !== 'ours' ? FILL.nv : FILL[ro]);
+// every GPU of an EP group holds its own expert slice, colored the same in every row: hue by local rank,
+// tone by node, softened toward the paper at render time (C() first, so night mode softens toward its own
+// paper). Node 5's tone (40%) is the EFSDP stripes, ours the full ink; EP colors our row the same way
+const TONE = [0, 0.08, 0.16, 0.24, 0.32, 0.4, 0.52, 0.64];
+export const slice = (node, rank) => node === OURS.node && rank === OURS.rank ? C(STRIPE[rank]) : mix(C(STRIPE[rank]), C('#fcfcfb'), TONE[node]);
+export const stripe = (rank) => slice(OURS.node, rank);
+export const fillOf = (view, ro, node, rank) => ro === 'lane' || (view === 'ep' && ro !== 'ours' && ro !== 'out') ? slice(node, rank) : C(view === 'fsdp' && ro !== 'ours' ? FILL.nv : FILL[ro]);
 const READOUT = {
   ep: 'our EP64 group (our row): dispatch + combine each MoE layer · NVLink: our 7 node-mates · IB: 7 same-rank peers, who forward to 49 more',
   fsdp: 'non-expert: one copy per node, pulled through all 8 NICs at 400 GB/s (34.1 GB a move) · 8 lanes per node, NVLink swaps the eighths',
-  efsdp: 'experts: 8 slices per node, one per GPU, each through its own NIC at 50 GB/s (19.8 GB a move) · 8 lanes per node, 8 payloads, no NVLink',
+  efsdp: 'experts: 8 slices per node, all 8 NICs at 400 GB/s (158 GB a move), each slice down its own GPU’s NIC · 8 payloads, no NVLink',
 };
 
 // layout: a label gutter, then per row 8 node boxes of 8 GPU cells
@@ -190,7 +195,7 @@ class Dsv3Mesh extends (typeof HTMLElement === 'undefined' ? class {} : HTMLElem
         const ourNode = us && n === OURS.node;
         B.push(`<rect x="${cx(n, 0) - 2}" y="${y - 2}" width="${GPUS * PX + 3}" height="${CS + 4}" rx="2" fill="${C('#f3f2ee')}" stroke="${C(ourNode ? '#0b0b0b' : '#e1e0d9')}"${ourNode ? ' stroke-width="1.2" data-node="ours"' : ''}/>`);
         for (let k = 0; k < GPUS; k++) {
-          const ro = role(v, row, n, k), c1 = fillOf(v, ro, k), c0 = from ? fillOf(from, role(from, row, n, k), k) : c1;
+          const ro = role(v, row, n, k), c1 = fillOf(v, ro, n, k), c0 = from ? fillOf(from, role(from, row, n, k), n, k) : c1;
           const c = c0 === c1 || t >= 1 ? c1 : mix(c0, c1, t);
           B.push(`<rect data-role="${ro}" x="${cx(n, k)}" y="${y}" width="${CS}" height="${CS}" fill="${c}"/>`);
         }
@@ -201,10 +206,11 @@ class Dsv3Mesh extends (typeof HTMLElement === 'undefined' ? class {} : HTMLElem
     B.push(`<g data-route>${this._routeSvg()}</g>`);
     B.push(`<text data-readout x="0" y="${H - 22}">${READOUT[v]}</text>`);
     const ly = H - 4, sw = (x, ro, label) => `<rect x="${x}" y="${ly - 8}" width="${CS}" height="${CS}" fill="${fill(ro)}"${ro === 'out' ? ` stroke="${C('#aba89f')}" stroke-width="0.6"` : ''}/><text class="dims" x="${x + 12}" y="${ly - 1}">${label}</text>`;
-    // the FSDP instance: one payload, one swatch. The expert instance's legend is terser: it also fits the eight stripes
-    const stripes = (x) => STRIPE.map((h, k) => `<rect data-stripe="${k}" x="${x + k * 4}" y="${ly - 8}" width="3.4" height="${CS}" fill="${stripe(k)}"/>`).join('') + `<text class="dims" x="${x + 36}" y="${ly - 1}">slices by local rank · own lanes</text>`;
+    // the FSDP instance: one payload, one swatch. The expert instance's serves both its views: the ink copies of our
+    // slice (EFSDP), the outsiders and the slice colors (our node's eight chips; EP tones them by node along the row)
+    const stripes = (x) => STRIPE.map((h, k) => `<rect data-stripe="${k}" x="${x + k * 4}" y="${ly - 8}" width="3.4" height="${CS}" fill="${stripe(k)}"/>`).join('') + `<text class="dims" x="${x + 36}" y="${ly - 1}">expert slices: hue by local rank, tone by node</text>`;
     B.push(sw(0, 'ours', 'our GPU'), ...(ex
-      ? [sw(66, 'ib', 'IB peer'), sw(126, 'nv', 'NVLink peer'), sw(207, 'grp', 'via a peer'), sw(283, 'out', 'not in the group'), stripes(389)]
+      ? [sw(66, 'ib', 'copy of our slice'), sw(162, 'out', 'not in the group'), stripes(268)]
       : [sw(66, 'nv', 'holds a shard of the one copy our node needs (all 2,047)')]));
     // the hover route's key, right-aligned
     const key = (x, c, lab) => `<path d="M${x},${ly - 4} h10" stroke="${C(c)}" stroke-width="1.6"/>${head(x + 14, ly - 4, 1, 0, C(c))}<text class="dims" x="${x + 17}" y="${ly - 1}">${lab}</text>`;

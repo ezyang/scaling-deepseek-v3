@@ -225,7 +225,7 @@
 
     <div class="cellsheet"><table>
     <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
-    <tr class="hl"><td class="nm">β<sub>IB</sub></td><td>IB bandwidth per GPU (B/s)</td><td class="vl">50,000,000,000</td><td class="vl sc ap">5.00 × 10<sup>10</sup></td><td class="vl si ap">50<span class="d"></span><span class="u"> GB/s</span></td><td class="fx"><i>(hardware spec; DeepSeek's report uses it as is)</i></td></tr>
+    <tr class="hl"><td class="nm">β<sub>IB</sub></td><td>IB bandwidth into a GPU (B/s)</td><td class="vl">50,000,000,000</td><td class="vl sc ap">5.00 × 10<sup>10</sup></td><td class="vl si ap">50<span class="d"></span><span class="u"> GB/s</span></td><td class="fx"><i>(hardware spec; DeepSeek's report uses it as is)</i></td></tr>
     <tr><td class="nm">β<sub>NV</sub></td><td>NVLink per GPU, per direction, spec (B/s)</td><td class="vl">200,000,000,000</td><td class="vl sc ap">2.00 × 10<sup>11</sup></td><td class="vl si ap">200<span class="d"></span><span class="u"> GB/s</span></td><td class="fx"><i>(hardware spec: H800, cut from H100's 450)</i></td></tr>
     <tr class="hl"><td class="nm">β<sup>sol</sup><sub>NV</sub></td><td>NVLink, achieved (B/s)</td><td class="vl">160,000,000,000</td><td class="vl sc ap">1.60 × 10<sup>11</sup></td><td class="vl si ap">160<span class="d"></span><span class="u"> GB/s</span></td><td class="fx"><i>(DeepSeek-V3 report)</i></td></tr>
     <tr><td class="nm">η<sub>NV</sub></td><td>share of the spec bandwidth achieved</td><td class="vl">0.8</td><td class="vl sc ap">8.00 × 10<sup>−1</sup></td><td class="vl si ap">80<span class="d"></span><span class="u"> %</span></td><td class="fx"><b>β<sup>sol</sup><sub>NV</sub></b> / <b>β<sub>NV</sub></b></td></tr>
@@ -302,7 +302,23 @@
 
     <p>In both cases, the rule of thumb is that you want to be compute bound,
     since that usually means you are efficiently utilizing the hardware resources
-    you have available.  In distributed training, this means you want your
+    you have available.<span class="mn-ref"></span><span class="mn">Be careful,
+    you can reward hack this!  For example, you can easily force your training
+    setup to be compute bound by
+    doing large amounts of recompute in your model: but this will harm your
+    overall time to result.  This distinction is clearly modeled by the difference
+    between MFU (model FLOPs utilization)
+    and HFU (hardware FLOPs utilization).  MFU measures your utilization against
+    an idealized algorithmic number of FLOPs—recompute is not counted, because you
+    don't <em>have</em> to recompute; that's an implementation detail.  HFU measures
+    your utilization against how many FLOPs you are actually computing in reality.
+    MFU is better if you are trying to evaluate how efficient your training
+    is overall, whereas HFU can be useful if you're trying to evaluate how efficient
+    your kernels are.  In our roofline discussion, we are going to account for recompute
+    in our overall wall time, as you should model recompute to determine if you are
+    compute bound, but it also means you shouldn't use this number to compute MFU.
+    </span>
+    In distributed training, this means you want your
     compute to take longer than your communications, since a well-implemented
     trainer will manage to overlap the comms and make them effectively free.<span class="mn-ref"></span><span class="mn">Actually, <a href="https://www.usenix.org/system/files/nsdi25-xu-guanbin.pdf">it's not free</a>.</span>  If you don't have enough compute to cover up your comms,
     you probably want to change something (your architecture, or your parallelism
@@ -330,6 +346,8 @@
 
     <h2>How many FLOPs do we need to do?</h2>
 
+    <h3>A rough and dirty estimate: 6ND</h3>
+
     <p>The classic training FLOPs approximation is 6ND,
     where N is the number of activated parameters in the model and D is the number of
     tokens (either the total number of trainable tokens, giving the total amount of FLOPs
@@ -356,10 +374,14 @@
     <tr class="hl"><td class="nm">T<sub>c</sub></td><td>step time at speed of light (s)</td><td class="vl"></td><td class="vl sc ap">4.63 × 10<sup>0</sup></td><td class="vl si ap">4<span class="d">.63</span><span class="u"> s</span></td><td class="fx"><b>C</b> / (<b>GPUs</b> · <b>π<sup>sol</sup><sub>fp8</sub></b>) <i>(every GEMM at FP8: see T<sup>+</sup><sub>c</sub>)</i></td></tr>
     </table></div>
 
-    <h3>Where does 6ND come from?</h3>
+    <p>While this approximation is really convenient to calculate, it will not
+    be a good one for roofline or MFU calculation, primarily because it doesn't include
+    attention (whose FLOPs are non-negligible in most training regimes).  But before
+    we talk about these correction factors, it's worth talking about where the 6ND
+    approximation comes from.</p>
 
     <p>The core of the 6ND approximation is based off
-    the idea that your non-attention matmuls take the bulk of the FLOPs in
+    the idea that your matmuls take the bulk of the FLOPs in
     your model (in <a href="./01-deepseek-diagram.html">part 1</a>, we used
     this idea to justify treating the matmuls specially in our architecture
     diagram).  The number of FLOPs per token that a learned linear
@@ -478,19 +500,27 @@
       <text x="372" y="190" text-anchor="middle">d² → 4d² weights: 4× the FLOPs</text>
     </svg>
 
-    <h3>Is this model too simple?</h3>
+    <h3>Improving the estimate: attention, recompute, compute dtype</h3>
 
-    <p>Yes.  There are three main refinements, ordered in how much they impact
-    your overall wall time roofline.</p>
+    <p>We said that 6ND is not a good estimate for roofline (or for MFU).
+    There are three main refinements we should do, listed below in order of how much they impact
+    the overall wall time estimate.</p>
 
     <ol>
         <li>The 6ND approximation undercounts attention FLOPs, since the
         attention core (the QKᵀ and PV matmuls) doesn't actually have any
         trainable parameters (it scales on sequence length).  The attention
-        is non-negligible and we need to account for it.</li>
+        is non-negligible and we need to account for it, for both a roofline
+        calculation and if we were computing FLOPs for MFU.</li>
 
         <li>We are doing some recompute to help us fit the activations
-        in memory.  We need to add these recompute FLOPs to our FLOP count.</li>
+        in memory.  We should account for these recompute FLOPs when we are predicting
+        if we're comms bound or compute bound, since recompute FLOPs generate "more"
+        compute that we can further hide comms under.  However, note that if we were calculating MFU,
+        we should not include recompute costs in our numerator: recompute makes
+        our program <em>less</em> efficient and we want our MFU to go down
+        if we are recomputing!
+        </li>
 
         <li>Not all matrix multiplies in DSv3 are FP8; notably attention,
         router and LM head are in BF16.  We have a different speed of light
@@ -498,7 +528,22 @@
         these FLOPs.  In DSv3, this isn't a huge difference (and thus
         last on our list), because most GEMM
         compute is in FP8, but this could be a substantial correction factor
-        if you were analyzing a model that didn't have one dominant compute dtype.</li>
+        if you were analyzing a model that didn't have one dominant compute dtype.
+        Whether or not dtypes are considered in MFU calculation is something
+        of a controversial subject; for example, the <a href="https://microsoft.ai/wp-content/uploads/2026/06/main_20260602_2.pdf">MAI-Thinking
+        tech report</a> normalizes its MFU to the BF16 tensor core peak even though
+        its forward GEMMs run in FP8, which flatters the number: an FP8 GEMM can
+        exceed the BF16 peak.<span class="mn-ref"></span><span class="mn">But on the other hand, if you normalize MFU
+        with respect to each dtype's own hardware peak, you will often find that your MFU gets
+        <em>worse</em> when you go to low precision, because it is typically harder
+        to fully utilize the marketing FLOPs at lower precision.  If you do your
+        matmul compute in FP32, your MFU will look really good!  At the end
+        of the day, understanding what the correct denominator for an MFU calculation is
+        such that numbers can be compared across training setups is highly contextual,
+        and MFU is best used as a way to compare efficiency across the same cluster
+        setup, with the denominator offering a little bit of intuition of how far off
+        you are from optimal (e.g., 30% is OK, 40% is really good).</span>
+        </li>
     </ol>
 
     <p>Let's take these in order.  Inside attention, there are attention activation matmuls that don't
@@ -693,97 +738,86 @@
     this, we need to do a reduce-scatter to get each GPU the summed gradients
     for its shard, and then after the (sharded) optimizer step, an all-gather
     that sends the updated BF16 parameters back to every GPU.  Calculating the cost of these
-    collectives is a little nontrivial due to the need to reason about
-    hierarchical all-gather in the presence of EP, so we'll take a detour to
-    explain this.  We'll then reuse these numbers later when we analyze
+    collectives is a little nontrivial because expert and non-expert parameters are sharded
+    differently (due to expert parallelism).  We'll take a detour to
+    explain the roofline calculation of these collectives, and then reuse these numbers later when we analyze
     FSDP/ZeRO-3.</p>
 
-    <h3>Accounting for hierarchical all-gather over IB and NVLink</h3>
+    <h3>InfiniBand analysis on a per-node basis</h3>
 
-    <p>To get accurate numbers for how long our all-gathers take, we need to reason
-    about whether the all-gather for a parameter happens entirely over InfiniBand, or if some
-    communications can be handled in NVLink.  Suppose we are doing an all-gather
-    over the entire cluster (DP2048).  We don't actually need to send our
-    parameters to 2048 GPUs over IB: we can use a hierarchical collective.
-    First, each GPU all-gathers over IB with only the GPUs that share its local rank
-    on the other 255 nodes, which gets it one eighth of the parameters.  Then the eight
-    GPUs on a node all-gather their eighths over NVLink.  This nets out to an eight-fold reduction
-    on IB comms compared to the full parameters.  In the diagram below, mouse over
-    a GPU to see the route its shard takes to arrive at our GPU.</p>
+    <p>Typically, our comms will be bound by InfiniBand bandwidth.  Naively, to determine
+    how long they take, we want to compute how much data a GPU receives
+    over InfiniBand, so we can divide by our per-GPU InfiniBand bandwidth.  If we forget
+    about InfiniBand versus NVLink for a moment, each GPU eventually needs all the shards of parameters/gradients to
+    do its compute (modulo EP), so asymptotically the amount of data that will need to be transmitted
+    is simply the full parameter/gradient size (minus however much the GPU already had
+    locally, since you don't have to transmit this!).  However, our
+    collectives are defined over groups that may include GPUs sharing an NVLink domain,
+    so not <em>every</em> parameter will actually need to travel over InfiniBand.</p>
+
+    <p>While you can work out the per-GPU calculation directly, a more intuitive way
+    to do this calculation is to reason about what communication a single node
+    (a single NVL domain, eight GPUs on Hopper) needs to do in aggregate.  Then we
+    can simply divide by the aggregate InfiniBand bandwidth for the entire node
+    (typically the per-GPU spec sheet number times the number of GPUs on the node).
+    </p>
+
+    <p>To start, let's look at non-expert parameters.  As our DP mesh axis spans the
+    entire cluster, any given node (a rectangle of eight GPUs) clearly needs to collect
+    all non-expert parameters, minus the 1/256 shard that it already stores locally:</p>
 
     <dsv3-mesh id="mesh-dp" views="fsdp" style="min-height: 572px"></dsv3-mesh>
 
-    <p>However, the routed expert parameters are handled differently.  With
-    EP, nodes on the same NVLink domain already have different experts
-    and don't need to all gather across NVLink (we use the NVLink to do the EP all-to-all
-    comms).  These parameters only all-gather over IB and don't use NVLink in
-    their all-gather at all, thus we have to pay their full cost on IB.</p>
+    <p>However, for routed expert parameters, we already store different experts across
+    the EP axis (the x-axis in the diagram below).  So the EDP sharding only spreads
+    them vertically, across the EDP axis.  A given node only needs to collect
+    NVL / EP (one eighth—the width of the vertical stripe below) of all the expert parameters
+    (minus the 1/256 of them it holds locally).</p>
 
     <dsv3-mesh id="mesh-ep" views="efsdp,ep" style="min-height: 594px"></dsv3-mesh>
 
-    <p>The upshot is that we have to split the parameters in our
+    <p>Let's do the calculation.  We must split the parameters in our
     model into two categories: the non-expert parameters (sharded over
-    DP2048) and the expert parameters (sharded over EDP32) and charge
-    them differently for InfiniBand usage.  This split is pretty
+    DP2048) and the expert parameters (sharded over EDP32).  This split is pretty
     intuitive, but here it is on the architecture diagram (green boxes are the routed
     experts and blue boxes are everything else that holds parameters):</p>
 
     <dsv3-anatomy style="min-height:847px" tally experttint lens="params" squares="matrix" layer="fsdp-params" detail controls="static" nocaption></dsv3-anatomy>
 
-    <p>Let's write the spreadsheet.  We will carefully denominate our values
+    <p>Now let's write the spreadsheet.  We will carefully denominate our values
     as parameters (not bytes), because the comms dtype differs depending on
     what we are doing: we reduce-scatter FP32 gradients, but we all-gather BF16
-    updated weights.
-    First, the non-experts, which
-    communicate with IB over all ranks modulo NVLink:</p>
+    updated weights.  The key quantities we compute are the number of parameters
+    a node receives: the total number of parameters the node needs, minus
+    the parameters it has locally.</p>
 
     <div class="cellsheet"><table>
     <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
     <tr><td class="nm">N<sub>ne</sub></td><td>non-expert params</td><td class="vl">17,117,648,384</td><td class="vl sc ap">1.71 × 10<sup>10</sup></td><td class="vl si ap">17<span class="d">.1</span><span class="u"> G</span></td><td class="fx"><i>(checkpoint tally: attention, shared experts, dense FFNs, norms, routers, embedding, head)</i></td></tr>
-    <tr><td class="nm">Ψ<sub>ne</sub></td><td>params/GPU over IB</td><td class="vl">2,139,706,048</td><td class="vl sc ap">2.14 × 10<sup>9</sup></td><td class="vl si ap">2<span class="d">.14</span><span class="u"> G</span></td><td class="fx"><b>N<sub>ne</sub></b> / <b>NVL</b> <i>(NVLink gathers the other ⅞)</i></td></tr>
-    <tr><td class="nm">IBDP</td><td>IB all-gather group</td><td class="vl">256</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><b>GPUs</b> / <b>NVL</b> <i>(one GPU per node)</i></td></tr>
-    <tr><td class="nm">V<sub>ne</sub></td><td>IB params/GPU per move</td><td class="vl">2,131,347,821.25</td><td class="vl sc ap">2.13 × 10<sup>9</sup></td><td class="vl si ap">2<span class="d">.13</span><span class="u"> G</span></td><td class="fx"><b>Ψ<sub>ne</sub></b> · (1 − 1 / <b>IBDP</b>)</td></tr>
-    </table></div>
-
-    <p>Note there's one small corrective factor above: we don't communicate
-    all of Ψ!  We don't need to do IB communications for the slice that lives
-    on our node, so we only need to communicate (1 − 1/<b>IBDP</b>).  It's
-    worth noting that besides
-    this factor, the amount of data we need to transmit in an all-gather isn't affected by how many nodes we are
-    sharded to.
-    </p>
-
-    <p>Continuing with experts, where our whole EDP slice crosses IB:<span class="mn-ref"></span><span class="mn">An interesting observation is that the experts (after EP sharding) are actually less
-    parameters than the non-expert parameters, but they still end up taking up more
-    IB communications because none of them can be communicated over NVLink.</span></p>
-
-    <div class="cellsheet"><table>
-    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">Nodes</td><td>nodes in the cluster</td><td class="vl">256</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><b>GPUs</b> / <b>NVL</b> <i>(on Hopper a node is one NVLink domain)</i></td></tr>
+    <tr><td class="nm">Λ<sub>ne</sub></td><td>non-expert params a node receives</td><td class="vl">17,050,782,570</td><td class="vl sc ap">1.71 × 10<sup>10</sup></td><td class="vl si ap">17<span class="d">.1</span><span class="u"> G</span></td><td class="fx"><b>N<sub>ne</sub></b> − <b>N<sub>ne</sub></b> / <b>Nodes</b> <i>(the node's one shared copy, minus the 1/256 it owns)</i></td></tr>
     <tr><td class="nm">N<sub>exp</sub></td><td>routed-expert params</td><td class="vl">653,908,770,816</td><td class="vl sc ap">6.54 × 10<sup>11</sup></td><td class="vl si ap">654<span class="d"></span><span class="u"> G</span></td><td class="fx"><i>(checkpoint tally: 58 MoE layers × 256 experts × 3 × 7,168 × 2,048)</i></td></tr>
-    <tr><td class="nm">Ψ<sub>exp</sub></td><td>params/GPU over IB</td><td class="vl">10,217,324,544</td><td class="vl sc ap">1.02 × 10<sup>10</sup></td><td class="vl si ap">10<span class="d">.2</span><span class="u"> G</span></td><td class="fx"><b>N<sub>exp</sub></b> / <b>EP</b> <i>(our EP slice, all of it)</i></td></tr>
-    <tr><td class="nm">EDP</td><td>IB all-gather group</td><td class="vl">32</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><b>GPUs</b> / <b>EP</b> <i>(replicas of our slice)</i></td></tr>
-    <tr><td class="nm">V<sub>exp</sub></td><td>IB params/GPU per move</td><td class="vl">9,898,033,152</td><td class="vl sc ap">9.90 × 10<sup>9</sup></td><td class="vl si ap">9<span class="d">.90</span><span class="u"> G</span></td><td class="fx"><b>Ψ<sub>exp</sub></b> · (1 − 1 / <b>EDP</b>)</td></tr>
+    <tr><td class="nm">Λ<sub>exp</sub></td><td>expert params a node receives</td><td class="vl">79,184,265,216</td><td class="vl sc ap">7.92 × 10<sup>10</sup></td><td class="vl si ap">79<span class="d">.2</span><span class="u"> G</span></td><td class="fx"><b>N<sub>exp</sub></b> · <b>NVL</b> / <b>EP</b> − <b>N<sub>exp</sub></b> / <b>Nodes</b> <i>(eight distinct slices, one per GPU, minus the 1/256 it owns)</i></td></tr>
+    <tr class="hl"><td class="nm">Λ</td><td>params a node receives</td><td class="vl">96,235,047,786</td><td class="vl sc ap">9.62 × 10<sup>10</sup></td><td class="vl si ap">96<span class="d">.2</span><span class="u"> G</span></td><td class="fx"><b>Λ<sub>ne</sub></b> + <b>Λ<sub>exp</sub></b></td></tr>
     </table></div>
 
-    <p>This gives us the following costs for ZeRO-1's all-gather and reduce-scatter:</p>
+    <p>Overall, this gives us the following costs for ZeRO-1's all-gather and reduce-scatter:</p>
 
     <div class="cellsheet"><table>
     <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
-    <tr><td class="nm">V<sub>ag</sub></td><td>BF16 AG bytes/GPU</td><td class="vl">24,058,761,946.5</td><td class="vl sc ap">2.41 × 10<sup>10</sup></td><td class="vl si ap">24<span class="d">.1</span><span class="u"> GB</span></td><td class="fx">(<b>V<sub>ne</sub></b> + <b>V<sub>exp</sub></b>) · 2 <i>(BF16)</i></td></tr>
-    <tr class="hl"><td class="nm">T<sub>ag</sub></td><td>AG time (s)</td><td class="vl"></td><td class="vl sc ap">4.81 × 10<sup>−1</sup></td><td class="vl si ap">481<span class="d"></span><span class="u"> ms</span></td><td class="fx"><b>V<sub>ag</sub></b> / <b>β<sub>IB</sub></b></td></tr>
-    <tr><td class="nm">V<sub>rs</sub></td><td>FP32 RS bytes/GPU</td><td class="vl">48,117,523,893</td><td class="vl sc ap">4.81 × 10<sup>10</sup></td><td class="vl si ap">48<span class="d">.1</span><span class="u"> GB</span></td><td class="fx">(<b>V<sub>ne</sub></b> + <b>V<sub>exp</sub></b>) · 4 <i>(FP32)</i></td></tr>
-    <tr class="hl"><td class="nm">T<sub>rs</sub></td><td>RS time (s)</td><td class="vl"></td><td class="vl sc ap">9.62 × 10<sup>−1</sup></td><td class="vl si ap">962<span class="d"></span><span class="u"> ms</span></td><td class="fx"><b>V<sub>rs</sub></b> / <b>β<sub>IB</sub></b></td></tr>
+    <tr><td class="nm">β<sub>node</sub></td><td>IB bandwidth into a node (B/s)</td><td class="vl">400,000,000,000</td><td class="vl sc ap">4.00 × 10<sup>11</sup></td><td class="vl si ap">400<span class="d"></span><span class="u"> GB/s</span></td><td class="fx"><b>NVL</b> · <b>β<sub>IB</sub></b> <i>(eight NICs)</i></td></tr>
+    <tr class="hl"><td class="nm">T<sub>ag</sub></td><td>AG time (s)</td><td class="vl"></td><td class="vl sc ap">4.81 × 10<sup>−1</sup></td><td class="vl si ap">481<span class="d"></span><span class="u"> ms</span></td><td class="fx">2 · <b>Λ</b> / <b>β<sub>node</sub></b> <i>(BF16)</i></td></tr>
+    <tr class="hl"><td class="nm">T<sub>rs</sub></td><td>RS time (s)</td><td class="vl"></td><td class="vl sc ap">9.62 × 10<sup>−1</sup></td><td class="vl si ap">962<span class="d"></span><span class="u"> ms</span></td><td class="fx">4 · <b>Λ</b> / <b>β<sub>node</sub></b> <i>(FP32)</i></td></tr>
     </table></div>
 
-    <p>If we only applied ZeRO-1 (without PP or FSDP), this would be our overall
-    IB cost, pushing us squarely into the comms bound regime.  However, we'll see
+    <p>If we only applied ZeRO-1 (without PP or FSDP), this plus EP would be our overall
+    IB cost.  This would push us squarely into the comms bound regime.  However, we'll see
     that in PP (but not FSDP), the model sharding reduces the number of parameters
     the ZeRO-1 groups need to operate on.</p>
 
     <div class="cellsheet"><table>
     <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
-    <tr><td class="nm">V<sub>sync</sub></td><td>ZeRO-1 bytes/GPU per step</td><td class="vl">72,176,285,839.5</td><td class="vl sc ap">7.22 × 10<sup>10</sup></td><td class="vl si ap">72<span class="d">.2</span><span class="u"> GB</span></td><td class="fx"><b>V<sub>ag</sub></b> + <b>V<sub>rs</sub></b></td></tr>
-    <tr class="hl"><td class="nm">T<sub>sync</sub></td><td>ZeRO-1 time per step (s)</td><td class="vl"></td><td class="vl sc ap">1.44 × 10<sup>0</sup></td><td class="vl si ap">1<span class="d">.44</span><span class="u"> s</span></td><td class="fx"><b>V<sub>sync</sub></b> / <b>β<sub>IB</sub></b></td></tr>
+    <tr class="hl"><td class="nm">T<sub>sync</sub></td><td>ZeRO-1 time per step (s)</td><td class="vl"></td><td class="vl sc ap">1.44 × 10<sup>0</sup></td><td class="vl si ap">1<span class="d">.44</span><span class="u"> s</span></td><td class="fx"><b>T<sub>ag</sub></b> + <b>T<sub>rs</sub></b></td></tr>
     </table></div>
 
     <h2>ZeRO-3/FSDP</h2>
@@ -856,8 +890,7 @@
 
     <div class="cellsheet"><table>
     <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
-    <tr><td class="nm">V<sub>mb</sub></td><td>ZeRO-3 bytes/GPU per mb</td><td class="vl">96,235,047,786</td><td class="vl sc ap">9.62 × 10<sup>10</sup></td><td class="vl si ap">96<span class="d">.2</span><span class="u"> GB</span></td><td class="fx">2 · <b>V<sub>ag</sub></b> + <b>V<sub>rs</sub></b></td></tr>
-    <tr class="hl"><td class="nm">T<sub>mb</sub></td><td>ZeRO-3 time per mb (s)</td><td class="vl"></td><td class="vl sc ap">1.92 × 10<sup>0</sup></td><td class="vl si ap">1<span class="d">.92</span><span class="u"> s</span></td><td class="fx"><b>V<sub>mb</sub></b> / <b>β<sub>IB</sub></b></td></tr>
+    <tr class="hl"><td class="nm">T<sub>mb</sub></td><td>ZeRO-3 time per mb (s)</td><td class="vl"></td><td class="vl sc ap">1.92 × 10<sup>0</sup></td><td class="vl si ap">1<span class="d">.92</span><span class="u"> s</span></td><td class="fx">2 · <b>T<sub>ag</sub></b> + <b>T<sub>rs</sub></b> <i>(two BF16 AGs, one FP32 RS)</i></td></tr>
     <tr class="hl"><td class="nm">T<sub>2mb</sub></td><td>ZeRO-3 time, 2 mbs (s)</td><td class="vl"></td><td class="vl sc ap">3.85 × 10<sup>0</sup></td><td class="vl si ap">3<span class="d">.85</span><span class="u"> s</span></td><td class="fx">2 · <b>T<sub>mb</sub></b></td></tr>
     <tr class="hl"><td class="nm">T<sub>4mb</sub></td><td>ZeRO-3 time, 4 mbs (s)</td><td class="vl"></td><td class="vl sc ap">7.70 × 10<sup>0</sup></td><td class="vl si ap">7<span class="d">.70</span><span class="u"> s</span></td><td class="fx">4 · <b>T<sub>mb</sub></b></td></tr>
     <tr class="hl"><td class="nm">T<sub>8mb</sub></td><td>ZeRO-3 time, 8 mbs (s)</td><td class="vl"></td><td class="vl sc ap">1.54 × 10<sup>1</sup></td><td class="vl si ap">15<span class="d">.4</span><span class="u"> s</span></td><td class="fx">8 · <b>T<sub>mb</sub></b></td></tr>
@@ -1097,14 +1130,17 @@
 
     <p>One final note!  If you do PP, you still need to do your ZeRO-1 collectives, but
     you only need to do them for the parameters on your pipeline stage,
-    reducing the comms by a factor of PP.</p>
+    reducing the parameters each node must collect by a factor of PP.  (Conveniently, you
+    don't need to adjust the subtractive N / Nodes term: each stage's ZeRO-1 group spans only
+    Nodes / PP nodes, so a node still owns (N / PP) / (Nodes / PP) = N / Nodes.  Intuitively,
+    when you add PP but keep the world size fixed, you have to "steal" this mesh from other
+    axes, so the shard each GPU owns stays fixed at 1/2048 of the model.)</p>
 
     <div class="cellsheet"><table>
     <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
-    <tr><td class="nm">V<sup>PP</sup><sub>ne</sub></td><td>IB non-expert params/GPU per move</td><td class="vl">259,105,029.25</td><td class="vl sc ap">2.59 × 10<sup>8</sup></td><td class="vl si ap">259<span class="d"></span><span class="u"> M</span></td><td class="fx"><b>Ψ<sub>ne</sub></b> / <b>PP</b> · (1 − <b>PP</b> / <b>IBDP</b>) <i>(32 nodes hold our rank's chunks)</i></td></tr>
-    <tr><td class="nm">V<sup>PP</sup><sub>exp</sub></td><td>IB expert params/GPU per move</td><td class="vl">957,874,176</td><td class="vl sc ap">9.58 × 10<sup>8</sup></td><td class="vl si ap">958<span class="d"></span><span class="u"> M</span></td><td class="fx"><b>Ψ<sub>exp</sub></b> / <b>PP</b> · (1 − <b>PP</b> / <b>EDP</b>) <i>(4 replicas of our slice)</i></td></tr>
-    <tr><td class="nm">V<sup>PP</sup><sub>sync</sub></td><td>ZeRO-1 bytes/GPU per step</td><td class="vl">7,301,875,231.5</td><td class="vl sc ap">7.30 × 10<sup>9</sup></td><td class="vl si ap">7<span class="d">.30</span><span class="u"> GB</span></td><td class="fx">(<b>V<sup>PP</sup><sub>ne</sub></b> + <b>V<sup>PP</sup><sub>exp</sub></b>) · (2 + 4) <i>(BF16 AG + FP32 RS; average rank, the one with the embedding and head moves more)</i></td></tr>
-    <tr class="hl"><td class="nm">T<sup>PP</sup><sub>sync</sub></td><td>ZeRO-1 time per step (s)</td><td class="vl"></td><td class="vl sc ap">1.46 × 10<sup>−1</sup></td><td class="vl si ap">146<span class="d"></span><span class="u"> ms</span></td><td class="fx"><b>V<sup>PP</sup><sub>sync</sub></b> / <b>β<sub>IB</sub></b></td></tr>
+    <tr><td class="nm">Λ<sup>PP</sup><sub>ne</sub></td><td>non-expert params a node receives</td><td class="vl">2,072,840,234</td><td class="vl sc ap">2.07 × 10<sup>9</sup></td><td class="vl si ap">2<span class="d">.07</span><span class="u"> G</span></td><td class="fx"><b>N<sub>ne</sub></b> / <b>PP</b> − <b>N<sub>ne</sub></b> / <b>Nodes</b> <i>(the node's copy of one stage, minus the 1/256 it owns)</i></td></tr>
+    <tr><td class="nm">Λ<sup>PP</sup><sub>exp</sub></td><td>expert params a node receives</td><td class="vl">7,662,993,408</td><td class="vl sc ap">7.66 × 10<sup>9</sup></td><td class="vl si ap">7<span class="d">.66</span><span class="u"> G</span></td><td class="fx"><b>N<sub>exp</sub></b> · <b>NVL</b> / (<b>EP</b> · <b>PP</b>) − <b>N<sub>exp</sub></b> / <b>Nodes</b> <i>(one stage of its eight slices, minus the 1/256 it owns)</i></td></tr>
+    <tr class="hl"><td class="nm">T<sup>PP</sup><sub>sync</sub></td><td>ZeRO-1 time per step (s)</td><td class="vl"></td><td class="vl sc ap">1.46 × 10<sup>−1</sup></td><td class="vl si ap">146<span class="d"></span><span class="u"> ms</span></td><td class="fx">6 · (<b>Λ<sup>PP</sup><sub>ne</sub></b> + <b>Λ<sup>PP</sup><sub>exp</sub></b>) / <b>β<sub>node</sub></b> <i>(BF16 AG + FP32 RS; average rank, the one with the embedding and head moves more)</i></td></tr>
     </table></div>
 
     <p>We can plot our idle time and see that our bubble decreases as we increase
@@ -1127,7 +1163,7 @@
     <tr class="hl"><td class="nm">T<sup>+</sup><sub>c</sub></td><td>step time, all corrections (s)</td><td class="vl"></td><td class="vl sc ap">6.39 × 10<sup>0</sup></td><td class="vl si ap">6<span class="d">.39</span><span class="u"> s</span></td><td class="fx"><b>T<sub>fp8</sub></b> + <b>T<sub>bf16</sub></b> + <b>T<sub>attn</sub></b> + <b>T<sub>rc</sub></b></td></tr>
     <tr class="hl"><td class="nm">T<sup>+</sup><sub>EP</sub></td><td>EP time per step (s)</td><td class="vl"></td><td class="vl sc ap">5.42 × 10<sup>0</sup></td><td class="vl si ap">5<span class="d">.42</span><span class="u"> s</span></td><td class="fx"><b>V<sup>+</sup><sub>EP</sub></b> / <b>β<sub>IB</sub></b></td></tr>
     <tr><td class="nm">T<sub>PP</sub></td><td>PP time per step (s)</td><td class="vl"></td><td class="vl sc ap">2.82 × 10<sup>−1</sup></td><td class="vl si ap">282<span class="d"></span><span class="u"> ms</span></td><td class="fx"><b>V<sub>PP</sub></b> / <b>β<sub>IB</sub></b></td></tr>
-    <tr><td class="nm">T<sup>PP</sup><sub>sync</sub></td><td>ZeRO-1 time per step (s)</td><td class="vl"></td><td class="vl sc ap">1.46 × 10<sup>−1</sup></td><td class="vl si ap">146<span class="d"></span><span class="u"> ms</span></td><td class="fx"><b>V<sup>PP</sup><sub>sync</sub></b> / <b>β<sub>IB</sub></b></td></tr>
+    <tr><td class="nm">T<sup>PP</sup><sub>sync</sub></td><td>ZeRO-1 time per step (s)</td><td class="vl"></td><td class="vl sc ap">1.46 × 10<sup>−1</sup></td><td class="vl si ap">146<span class="d"></span><span class="u"> ms</span></td><td class="fx">6 · (<b>Λ<sup>PP</sup><sub>ne</sub></b> + <b>Λ<sup>PP</sup><sub>exp</sub></b>) / <b>β<sub>node</sub></b></td></tr>
     <tr class="hl"><td class="nm">T<sub>IB</sub></td><td>IB time per step, PP layout (s)</td><td class="vl"></td><td class="vl sc ap">5.85 × 10<sup>0</sup></td><td class="vl si ap">5<span class="d">.85</span><span class="u"> s</span></td><td class="fx"><b>T<sup>+</sup><sub>EP</sub></b> + <b>T<sub>PP</sub></b> + <b>T<sup>PP</sup><sub>sync</sub></b> <i>(under <b>T<sup>+</sup><sub>c</sub></b>: compute bound, comms overlapped)</i></td></tr>
     <tr><td class="nm">T<sub>Dual</sub></td><td>DualPipeV bubble time per step (s)</td><td class="vl"></td><td class="vl sc ap">2.48 × 10<sup>−1</sup></td><td class="vl si ap">248<span class="d"></span><span class="u"> ms</span></td><td class="fx"><b>T<sup>+</sup><sub>c</sub></b> · <b>b<sub>Dual</sub></b></td></tr>
     <tr class="hl"><td class="nm">T<sub>step</sub></td><td>step time at speed of light (s)</td><td class="vl"></td><td class="vl sc ap">6.64 × 10<sup>0</sup></td><td class="vl si ap">6<span class="d">.64</span><span class="u"> s</span></td><td class="fx"><b>T<sup>+</sup><sub>c</sub></b> + <b>T<sub>Dual</sub></b> <i>(compute plus the bubble)</i></td></tr>
@@ -1242,7 +1278,7 @@
         <tr><td>dispatch (FP8, with scales)</td><td class="n"><span data-cellref="t<sub>disp</sub>">2,120<span class="d"></span><span class="u"> µs</span></span></td><td class="n" data-us="4345.75">4,346<span class="d"></span></td><td class="n">2<span class="d">.05</span></td><td class="n"><span data-cellref="t<sub>disp</sub>">2,120<span class="d"></span><span class="u"> µs</span></span></td><td class="n" data-us="3405.25">3,405<span class="d"></span></td><td class="n">1<span class="d">.61</span></td></tr>
         <tr><td>combine (BF16)</td><td class="n"><span data-cellref="t<sub>comb</sub>">4,110<span class="d"></span><span class="u"> µs</span></span></td><td class="n" data-us="5993.75">5,994<span class="d"></span></td><td class="n">1<span class="d">.46</span></td><td class="n"><span data-cellref="t<sub>comb</sub>">4,110<span class="d"></span><span class="u"> µs</span></span></td><td class="n" data-us="6368.25">6,368<span class="d"></span></td><td class="n">1<span class="d">.55</span></td></tr>
         </tbody><tbody>
-        <tr><td>notify (the handshake before each transfer)</td><td class="n">0<span class="d"></span></td><td class="n" data-us="4932.25">4,932<span class="d"></span></td><td class="n"></td><td class="n">0<span class="d"></span></td><td class="n" data-us="3212.25">3,212<span class="d"></span></td><td class="n"></td></tr>
+        <tr><td>notify (waiting for the slowest rank)</td><td class="n">0<span class="d"></span></td><td class="n" data-us="4932.25">4,932<span class="d"></span></td><td class="n"></td><td class="n">0<span class="d"></span></td><td class="n" data-us="3212.25">3,212<span class="d"></span></td><td class="n"></td></tr>
         <tr><td>dispatch layout and FP8 casts</td><td class="n">0<span class="d"></span></td><td class="n" data-us="102.5">103<span class="d"></span></td><td class="n"></td><td class="n">0<span class="d"></span></td><td class="n" data-us="270.25">270<span class="d"></span></td><td class="n"></td></tr>
         <tr><td>idle (not waiting on compute)</td><td class="n">0<span class="d"></span></td><td class="n" data-us="76">76<span class="d">.0</span></td><td class="n"></td><td class="n">0<span class="d"></span></td><td class="n" data-us="178.75">179<span class="d"></span></td><td class="n"></td></tr>
         <tr class="hl"><td>total</td><td class="n"><span data-cellref="t<sup>Σ</sup><sub>EP</sub>">6,230<span class="d"></span><span class="u"> µs</span></span></td><td class="n" data-us="15450.25">15,450<span class="d"></span></td><td class="n">2<span class="d">.48</span></td><td class="n"><span data-cellref="t<sup>Σ</sup><sub>EP</sub>">6,230<span class="d"></span><span class="u"> µs</span></span></td><td class="n" data-us="13434.75">13,435<span class="d"></span></td><td class="n">2<span class="d">.16</span></td></tr>
@@ -1250,8 +1286,12 @@
     </table></div>
 
     <p>Same conventions as the kernel table, though averaging is somewhat misleading
-    here, as the DeepEP notify handshake is quite variable, since it blocks on remote ranks.  You can also see that SOL
-    systematically overestimated our network performance, but that the proportions are correct: for example, dispatch to combine stays near 1:2 in both columns.
+    here, as the DeepEP notify handshake is quite variable, since it blocks on remote ranks.
+    This shows the importance of modeling straggling across ranks: most of the time is spent
+    waiting for remote peers to finish (NB: this isn't routing imbalance either, as this
+    profile was taken with forced balanced routing).
+    You can also see that SOL
+    systematically overestimated our network performance, but that the proportions are correct: for example, dispatch to combine stays near 1:2 in both columns.  <span class="mn-ref"></span><span class="mn">A historical note: the profile we are analyzing was captured with the DeepEP of early 2025, and DeepEP's kernels have been substantially improved since, so the transfer rows would likely sit closer to SOL if the run were profiled today.</span>
     In fact, the DeepSeek trace reveals that their compute and comms are
     balanced on a knife's edge: in this single-rank capture, compute and communication occupy
     the GPU almost equally (about 31 ms against 29 ms per layer, and one of the four layers tips
@@ -1293,14 +1333,14 @@
       "../src/dsv41model.js": "../src/dsv41model.js?v=db63a9e2",
       "../src/epsim.js": "../src/epsim.js?v=74a088d1",
       "../src/fsdp.js": "../src/fsdp.js?v=d80bd2c9",
-      "../src/fsdpsched.js": "../src/fsdpsched.js?v=da30ddec",
+      "../src/fsdpsched.js": "../src/fsdpsched.js?v=c223a8d4",
       "../src/kerndata.js": "../src/kerndata.js?v=b9fca158",
       "../src/kernels.js": "../src/kernels.js?v=22c86b41",
       "../src/kerntrace.js": "../src/kerntrace.js?v=d2c08531",
       "../src/ladder.js": "../src/ladder.js?v=fa11c551",
       "../src/localmodel.js": "../src/localmodel.js?v=4e66c392",
       "../src/memory.js": "../src/memory.js?v=c087e656",
-      "../src/mesh.js": "../src/mesh.js?v=88101f2e",
+      "../src/mesh.js": "../src/mesh.js?v=b364b0a4",
       "../src/mmfig.js": "../src/mmfig.js?v=6a25c447",
       "../src/model.js": "../src/model.js?v=94fa90eb",
       "../src/params.js": "../src/params.js?v=13936278",

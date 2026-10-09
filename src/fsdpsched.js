@@ -33,7 +33,7 @@ const PEAK = 1456.6e12, PEAK16 = 757.7e12, IB = 50e9;   // best measured FP8 and
 const GPUS = 2048, EP = 64, NODE = 8, SEQ = 4096;
 export const LOCAL = 8;                             // the busiest GPU's sequences: ⌈15,360 ÷ 2,048⌉
 export const MS = [1, 2, 4, 8];                     // microbatches per step
-// one move of a MoE layer's parameters over IB, per GPU (the page's Vne/Vexp per layer)
+// one move of a MoE layer's parameters over IB, per GPU (the page's Λne/8 and Λexp/8, per layer)
 const NX = PARAMS.moeBlock - A.routedExperts * PARAMS.expert;   // attention, shared expert, router, norms
 const XS = A.routedExperts / EP * PARAMS.expert;                // our expert slice
 export const MOVE_B = NX / NODE * (GPUS / NODE - 1) / (GPUS / NODE) * 2 + XS * (GPUS / EP - 1) / (GPUS / EP) * 2;
