@@ -46,10 +46,16 @@ generality.
   exact-asserted against the published checkpoint.
 - `node scripts/diagramlint.mjs` — geometric grammar (arrowheads/text/wires)
   plus placeholder-height drift across a widget matrix.
-- `node scripts/stamp.mjs` — content-hash cache stamps (import maps + css
-  `?v=`) in the public pages, so a GitHub Pages deploy (10-min cache) never
-  pairs fresh HTML with stale JS. Rerun after editing any src/ or studies/
-  module; the battery's `stamp` job fails while stale.
+- `node scripts/stamp.mjs` — regenerates the theme blocks from
+  src/theme.js (rerun after adding a color; the battery's `stamp` job fails
+  while they're stale). The content-hash cache stamps (import maps + css
+  `?v=` in the public pages, so a GitHub Pages deploy's 10-min cache never
+  pairs fresh HTML with stale JS) are written ONLY by `--publish`: let them
+  go stale while iterating and don't commit hash churn ("stamps follow")
+  with ordinary changes, since concurrent sessions stomp on it. Publishing =
+  `node scripts/stamp.mjs --publish`, commit "Restamp for publish", push;
+  .githooks/pre-push refuses a push to main with stale hashes (enable per
+  clone: `git config core.hooksPath .githooks`).
 - `node scripts/goldens.mjs` — numeric goldens (tests/goldens.json): stash
   rates, FLOP counts, the kernel and sweep tables, story-config cell
   totals. Changing a number is fine; changing one invisibly is not — on

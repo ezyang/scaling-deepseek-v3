@@ -6,11 +6,18 @@
 // Import maps remap nested `import` specifiers too (static and dynamic), so
 // one map in the always-revalidated HTML busts the whole module graph, and
 // unchanged files keep their hash and stay cached. Like the min-height
-// placeholders, the stamps are generated values pasted into the HTML; the
-// battery's `stamp` job pins their freshness.
+// placeholders, the stamps are generated values pasted into the HTML.
 //
-//   node scripts/stamp.mjs           # restamp index.html + the published SERIES posts
-//   node scripts/stamp.mjs --check   # exit 1 if any stamp is stale
+// Hashes are stamped only at publish time: every src/ edit would otherwise
+// touch every live page, and concurrent sessions committing those one-line
+// hash diffs stomp on each other. Stale hashes are harmless until a deploy,
+// so the battery checks only the theme blocks (which every page, draft or
+// live, needs current); .githooks/pre-push refuses a push to main while the
+// hashes are stale.
+//
+//   node scripts/stamp.mjs                     # theme blocks only (battery: --check)
+//   node scripts/stamp.mjs --publish           # + cache hashes in index.html + the SERIES posts
+//   node scripts/stamp.mjs --publish --check   # exit 1 if anything is stale (pre-push)
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync, readdirSync } from 'node:fs';
 import { join, relative, dirname } from 'node:path';
@@ -19,6 +26,7 @@ import { themeCss, FLASH_SNIPPET } from '../src/theme.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const check = process.argv.includes('--check');
+const publish = process.argv.includes('--publish');
 const hash = (path) => createHash('sha1').update(readFileSync(join(root, path))).digest('hex').slice(0, 8);
 
 const modules = ['src', 'studies'].flatMap((dir) =>
@@ -58,13 +66,15 @@ for (const page of pages) {
   html = html.includes('<script data-theme>')
     ? html.replace(/<script data-theme>[\s\S]*?<\/script>/, flash)
     : html.replace(/(<meta name="viewport"[^>]*>)/, `$1\n  ${flash}`);
-  html = html.replace(/href="([^"?]+\.css)(?:\?v=[0-9a-f]+)?"/g, (_, href) =>
-    `href="${href}?v=${hash(join(dir, href))}"`);
-  if (html.includes('<script type="importmap">')) {
-    html = html.replace(/<script type="importmap">[\s\S]*?<\/script>/, map);
-  } else {
-    html = html.replace(/\n(\s*)<script type="module">/,
-      `\n$1<!-- cache stamps: regenerate with \`node scripts/stamp.mjs\` -->\n$1${map}\n$1<script type="module">`);
+  if (publish) {
+    html = html.replace(/href="([^"?]+\.css)(?:\?v=[0-9a-f]+)?"/g, (_, href) =>
+      `href="${href}?v=${hash(join(dir, href))}"`);
+    if (html.includes('<script type="importmap">')) {
+      html = html.replace(/<script type="importmap">[\s\S]*?<\/script>/, map);
+    } else {
+      html = html.replace(/\n(\s*)<script type="module">/,
+        `\n$1<!-- cache stamps: regenerate with \`node scripts/stamp.mjs --publish\` -->\n$1${map}\n$1<script type="module">`);
+    }
   }
   if (html !== orig) {
     stale.push(page);
@@ -72,7 +82,7 @@ for (const page of pages) {
   }
 }
 if (check && stale.length) {
-  console.error(`stamp: STALE — run \`node scripts/stamp.mjs\` (${stale.join(', ')})`);
+  console.error(`stamp: STALE — run \`node scripts/stamp.mjs${publish ? ' --publish' : ''}\` (${stale.join(', ')})`);
   process.exit(1);
 }
-console.log(`stamp: ${stale.length ? (check ? 'stale: ' : 'updated ') + stale.join(', ') : `fresh (${pages.length} pages)`}`);
+console.log(`stamp: ${stale.length ? (check ? 'stale: ' : 'updated ') + stale.join(', ') : `fresh (${publish ? `hashes + theme, ${pages.length} pages` : 'theme; hashes unchecked until --publish'})`}`);
