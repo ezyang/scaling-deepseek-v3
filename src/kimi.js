@@ -185,6 +185,34 @@ export function k3Stash(marks) {
   return K3_KINDS.reduce((t, [a, f, n]) => t + n * analyze(kimiGraph(a, f), marks).savedBytes, 0);
 }
 
+// ---- AttnRes across a pipeline ---------------------------------------------
+// Block AttnRes (arXiv 2603.15031 §4.1, K3 §5): every mix reads the block
+// store b₀ … bₙ₋₁ (b₀ = the embedding, then one sum per finished 12-layer
+// block) plus the running partial sum. A stage transition carries the blocks
+// the receiving rank doesn't hold yet, plus the partial sum; a rank keeps
+// every block it has seen for the microbatch (cross-stage caching), so only a
+// SECOND visit — interleaved or V-shaped schedules — sends less. Backward
+// returns the same widths as gradients. Chunks split the 93 layers evenly
+// (rounded); sched = 'chain' (1F1B), 'ilv' (V chunks round-robin), 'v' (two
+// chunks per rank, out and back).
+export function attnresPipe(P, sched = 'v', V = 2) {
+  const S = A.attnResBlock, L = A.layers;
+  const nc = P * (sched === 'chain' ? 1 : sched === 'v' ? 2 : V);
+  const cuts = Array.from({ length: nc + 1 }, (_, c) => Math.round(c * L / nc));
+  const rank = (c) => sched === 'v' && c >= P ? nc - 1 - c : c % P;
+  const reps = (l) => Math.ceil(l / S);        // blocks in the store after l layers (b₀ joins at layer 1)
+  const held = new Array(P).fill(0), send = new Array(P).fill(0), tr = [];
+  for (let c = 0; c < nc - 1; c++) {
+    const l = cuts[c + 1], from = rank(c), to = rank(c + 1);
+    held[from] = reps(l);
+    const w = from === to ? 0 : reps(l) - held[to] + 1;   // new blocks + the partial sum
+    tr.push({ l, from, to, w, naive: from === to ? 0 : reps(l) + 1 });
+    send[from] += w; send[to] += w;                          // forward by the sender, gradients back by the receiver
+  }
+  held[rank(nc - 1)] = reps(L);
+  return { cuts, ranks: Array.from({ length: nc }, (_, c) => rank(c)), tr, send, held, rres: Math.max(0, ...send) };
+}
+
 // totals cross the fmtP=B ceiling; the tally speaks T there
 const fmtPT = (n) => n >= 1e12 ? (n / 1e12).toFixed(2) + 'T' : fmtP(n);
 // stash bytes per token (binary units)
@@ -388,13 +416,23 @@ export class KimiLayer extends HTMLElement {
       `orient="auto-start-reverse"><path d="M 0 0 L 8 4 L 0 8 z" fill="${C('#898781')}"/></marker></defs>`);
 
     // ---- head: residual stream in, fork to the rail ------------------------
-    S.push(`<text class="oplabel" x="${SX1 + 14}" y="${yTop - 4}">x — residual stream (${A.hidden})</text>`);
+    S.push(`<text class="oplabel" x="${SX1 + 14}" y="${yTop - 4}">x — this block’s partial sum (${A.hidden})</text>`);
     wv(SX1, yTop, yRes0);
     dot(SX1, yTop + 6);
-    // the rail carries x to the block's residual add; the module INPUT is the
-    // attn-res mix (K3's twist: module input ≠ residual stream)
+    // the rail carries x to the residual add; the module INPUT is the attn-res
+    // mix (K3's twist: module input ≠ residual stream). Under Block AttnRes
+    // the rail is the partial sum of the current 12-layer block, and the mix's
+    // other input is the block store b₀ … bₙ₋₁ (symbolic: n grows with depth)
     poly([[SX1, yTop + 6], [RAIL1, yTop + 6], [RAIL1, yAdd1 + 10], [SX1 - 9, yAdd1 + 10]], true);
     pill('attnres1', C1, yRes0, W1, `attn-res mix — α over block reps${pk(K.attnRes / 2)}`);
+    // the block store: b₀ = the embedding, one sum per finished block
+    const store = (x0, wid, into) => {
+      S.push(`<rect class="res" x="${x0}" y="${yRes0}" width="${wid}" height="20" rx="6"/>` +
+        `<text class="oplabel" x="${x0 + 9}" y="${yRes0 + 14}">block store b₀ … bₙ₋₁ <tspan class="dims">· n×${A.hidden}</tspan></text>`);
+      S.push(`<line class="wire" x1="${x0}" y1="${yRes0 + 10}" x2="${into + 3}" y2="${yRes0 + 10}" marker-end="url(#karr)"/>`);
+    };
+    store(C1 + W1 + 22, 186, C1 + W1);
+    if (this.detail) micro(C1 + W1 + 22, yN1 + 2, 186, `n = 1 + ⌊(layer − 1) / ${A.attnResBlock}⌋ = 1 … ${Math.ceil(A.layers / A.attnResBlock)}`);
     wv(SX1, yRes0 + 20, yN1);
     pill('norm1', C1, yN1, W1, `RMSNorm${pk(A.hidden)}`);
     wv(SX1, yN1 + 20, yA);
@@ -491,13 +529,14 @@ export class KimiLayer extends HTMLElement {
     chip(SX1 + 14, yO + 46, 'attn proj out', '', 'o_proj');
     res('res1', SX1, yAdd1, 150, 'residual add');
     wv(SX1, yAdd1 + 17, yX1, false);
-    chip(SX1 + 14, yX1 + 14, 'x1 (residual)', A.hidden, 'res1');
+    chip(SX1 + 14, yX1 + 14, 'x1 (partial sum)', A.hidden, 'res1');
     // x1 → FFN column top (up and over), plus its rail to the final add
     dot(SX1, yX1);
     poly([[SX1, yX1], [RAIL2, yX1], [RAIL2, yAdd2 + 10], [SX2 - 9, yAdd2 + 10]], true);
     dot(UPX, yX1);
     poly([[UPX, yX1], [UPX, 32], [SX2, 32], [SX2, yRes0]], true);
     pill('attnres2', C2, yRes0, W2, `attn-res mix — α over block reps${pk(K.attnRes / 2)}`);
+    store(C2 + W2 + 16, 182, C2 + W2);
     wv(SX2, yRes0 + 20, yN1);
     pill('norm2', C2, yN1, W2, `RMSNorm${pk(A.hidden)}`);
     wv(SX2, yN1 + 20, this.kindF === 'moe' ? yRout : yGU);   // dense: one run into the FFN
@@ -1043,3 +1082,110 @@ export class KimiAnatomy extends HTMLElement {
   }
 }
 customElements.define('kimi-anatomy', KimiAnatomy);
+
+// ---- <kimi-attnres-pipe> -------------------------------------------------
+// The whole stack across a pipeline, concretely: the 93 layers grouped into
+// AttnRes blocks, the chunks each rank runs, every transition's width (block
+// representations + the partial sum, in units of d = one BF16 hidden vector,
+// 14 KiB per token), then per rank what it sends (forward + backward) and
+// how many blocks it holds per microbatch. PP and schedule are knobs; the
+// figure's height never depends on them (per-rank rows are fixed-height
+// column charts).
+const PIPE_CSS = `
+kimi-attnres-pipe { display: block; margin: 14px 0 26px; }
+.kpp { font: 12px system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--c-0b0b0b); max-width: 940px;
+  border: 1px solid var(--c-e1e0d9); border-radius: 6px; background: var(--c-fcfcfb); padding: 10px 12px; box-sizing: border-box; }
+.kpp-head { display: flex; align-items: center; gap: 4px; padding-bottom: 6px; color: var(--c-52514e); flex-wrap: wrap; }
+.kpp-head .lab { margin: 0 4px 0 14px; } .kpp-head .lab:first-child { margin-left: 0; }
+.kpp-head button { font: 11px ui-monospace, monospace; padding: 2px 7px; border: 1px solid var(--c-c3c2b7);
+  border-radius: 4px; background: var(--c-ffffff); color: var(--c-0b0b0b); cursor: pointer; }
+.kpp-head button.on { background: var(--c-eeede7); font-weight: 600; cursor: default; }
+.kpp svg { display: block; }
+.kpp svg text { font: 10px system-ui; }
+.kpp-led { font-size: 11.5px; color: var(--c-52514e); line-height: 1.55; padding-top: 4px; min-height: calc(2 * 1.55em); }
+.kpp-led b { color: var(--c-0b0b0b); }
+`;
+const PIPE_PPS = [3, 4, 6, 8, 12, 24];
+const PIPE_SCHEDS = [['chain', '1F1B'], ['ilv', 'interleaved, V = 2'], ['v', 'V shape']];
+export class KimiAttnresPipe extends HTMLElement {
+  connectedCallback() {
+    const st = readState('k3p:' + (this.id || 'pipe'));
+    const pp = +(st?.pp ?? this.getAttribute('pp') ?? 6);
+    this.pp = PIPE_PPS.includes(pp) ? pp : 6;
+    const s = st?.s ?? this.getAttribute('sched') ?? 'v';
+    this.sched = PIPE_SCHEDS.some(([k]) => k === s) ? s : 'v';
+    const style = document.createElement('style'); style.textContent = PIPE_CSS;
+    this._card = document.createElement('div'); this._card.className = 'kpp';
+    this.append(style, this._card);
+    this.render();
+    addEventListener('dsv3-theme', () => this.render());
+  }
+  render() {
+    const P = this.pp, R = attnresPipe(P, this.sched), S = A.attnResBlock, L = A.layers;
+    const W = 914, X0 = 58, CW = (W - X0 - 8) / L, x = (l) => X0 + l * CW;   // x(l) = the left edge of 1-indexed layer l + 1
+    const out = [];
+    const t = (tx, ty, s, o = '') => out.push(`<text x="${tx}" y="${ty}"${o}>${s}</text>`);
+    const ink = C('#52514e'), grey = C('#898781');
+    // row 1: AttnRes blocks (b₀ = the embedding, then one per 12 layers)
+    const yB = 14, yL = 22, yC = 46, yT = 72, yS = 104, yH = 166;
+    t(4, yL + 12, 'layers', ` fill="${grey}"`);
+    out.push(`<rect x="${X0 - 26}" y="${yL}" width="20" height="16" rx="3" fill="${C('#fff8ea')}" stroke="${C('#eda100')}"/>`);
+    t(X0 - 16, yB + 2, 'b₀', ` text-anchor="middle" fill="${ink}"`);
+    for (let j = 1; j * S - S < L; j++) {
+      const a = x((j - 1) * S), b = x(Math.min(j * S, L));
+      out.push(`<path d="M ${a + 1} ${yB + 6} V ${yB + 3} H ${b - 1} V ${yB + 6}" fill="none" stroke="${C('#c3c2b7')}"/>`);
+      t((a + b) / 2, yB, `b${'₀₁₂₃₄₅₆₇₈₉'[j]}`, ` text-anchor="middle" fill="${ink}"`);
+    }
+    for (let l = 0; l < L; l++) {   // MLA every 4th layer and the last; the rest KDA
+      const mla = (l + 1) % 4 === 0 || l === L - 1;
+      out.push(`<rect x="${x(l) + 0.5}" y="${yL}" width="${CW - 1}" height="16" fill="${C(mla ? '#d9e4f0' : '#f7f6f1')}" stroke="${C(mla ? '#4a6a8e' : '#d8d6cb')}" stroke-width="0.6"/>`);
+    }
+    // row 2: chunks, labeled with the rank that runs them
+    t(4, yC + 12, 'ranks', ` fill="${grey}"`);
+    R.ranks.forEach((r, c) => {
+      const a = x(R.cuts[c]), b = x(R.cuts[c + 1]);
+      out.push(`<rect x="${a + 0.5}" y="${yC}" width="${b - a - 1}" height="16" rx="2" fill="${C(r % 2 ? '#e1e0d9' : '#f0efe9')}"/>`);
+      if (b - a > 12) t((a + b) / 2, yC + 11.5, r, ` text-anchor="middle" fill="${ink}"`);
+    });
+    // row 3: each transition's width (in d); a turn on the same rank sends nothing
+    t(4, yT + 4, 'widths (d)', ` fill="${grey}"`);
+    R.tr.forEach((tr) => {
+      const xx = x(tr.l);
+      out.push(`<line x1="${xx}" y1="${yC + 17}" x2="${xx}" y2="${yT - 8}" stroke="${C(tr.w ? '#52514e' : '#c3c2b7')}"/>`);
+      t(xx, yT + 4, tr.w || '·', ` text-anchor="middle" fill="${tr.w ? C('#0b0b0b') : grey}"`);
+    });
+    // rows 4–5: per rank, fixed-height columns — sends (fwd + bwd, d) and blocks held
+    const cols = (y0, h, vals, max, label, unit, hot) => {
+      t(4, y0 + h - 2, label, ` fill="${grey}"`);
+      const cw = (W - X0 - 8) / P;
+      vals.forEach((v, r) => {
+        const bh = max ? Math.max(1, h * v / max) : 0, bx = X0 + r * cw + cw * 0.15;
+        out.push(`<rect x="${bx}" y="${y0 + h - bh}" width="${cw * 0.7}" height="${bh}" fill="${C(r === hot ? '#eda100' : '#c3c2b7')}"/>`);
+        if (cw > 22 || r === hot) t(bx + cw * 0.35, y0 + h - bh - 3, `${v}${r === hot ? unit : ''}`, ` text-anchor="middle" fill="${C(r === hot ? '#8a5f00' : '#52514e')}"`);
+      });
+    };
+    const hot = R.send.indexOf(R.rres);
+    cols(yS, 44, R.send, Math.max(...R.send), 'sent / tok', ' d', hot);
+    cols(yH, 30, R.held, Math.ceil(L / S), 'blocks held', '', R.held.indexOf(Math.max(...R.held)));
+    const cw = (W - X0 - 8) / P;   // rank axis under the columns
+    for (let r = 0; r < P; r++) if (cw > 14 || r % 2 === 0) t(X0 + (r + 0.5) * cw, yH + 44, r, ` text-anchor="middle" fill="${grey}"`);
+    t(4, yH + 44, 'rank', ` fill="${grey}"`);
+    const H = yH + 48;
+    const naiveSend = new Array(P).fill(0);
+    for (const tr of R.tr) { naiveSend[tr.from] += tr.naive; naiveSend[tr.to] += tr.naive; }
+    const d2 = A.hidden * 2;
+    const head = `<span class="lab">PP</span>` + PIPE_PPS.map((p) => `<button type="button" data-pp="${p}"${p === P ? ' class="on"' : ''}>${p}</button>`).join('') +
+      `<span class="lab">schedule</span>` + PIPE_SCHEDS.map(([k, lb]) => `<button type="button" data-s="${k}"${k === this.sched ? ' class="on"' : ''}>${lb}</button>`).join('');
+    const held = Math.max(...R.held);
+    this._card.innerHTML = `<div class="kpp-head">${head}</div>` +
+      `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">${out.join('')}</svg>` +
+      `<div class="kpp-led"><b>busiest rank (${hot}): ${R.rres} d per token</b>, forward and backward = ${fmtB(R.rres * d2)}` +
+      (this.sched === 'chain' ? '' : ` (without the cross-stage cache: ${Math.max(...naiveSend)} d)`) +
+      ` · widths in d = one BF16 hidden vector (${fmtB(d2)} per token): the blocks the receiver lacks + the partial sum. ` +
+      `<b>Block store: up to ${held} blocks = ${fmtB(held * d2)} per token</b> per microbatch in flight.</div>`;
+    for (const bb of this._card.querySelectorAll('[data-pp]')) bb.onclick = () => { if (+bb.dataset.pp !== this.pp) { this.pp = +bb.dataset.pp; this.render(); this.changed(); } };
+    for (const bb of this._card.querySelectorAll('[data-s]')) bb.onclick = () => { if (bb.dataset.s !== this.sched) { this.sched = bb.dataset.s; this.render(); this.changed(); } };
+  }
+  changed() { writeState('k3p:' + (this.id || 'pipe'), { pp: this.pp, s: this.sched }); }
+}
+customElements.define('kimi-attnres-pipe', KimiAttnresPipe);

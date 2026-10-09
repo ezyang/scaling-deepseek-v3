@@ -56,7 +56,7 @@ T.check('GPUs 300 refused: PP · EP must divide it', /PP · EP must divide/.test
 inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
 // doubling the cluster: a second replica appears, ZeRO-1 traffic with it, memory eases
 type('GPUs', '864');
-T.check('GPUs 864: DP 2, ZeRO-1 bytes > 0, A well under', val('DP') === '2' && val('Vsync') !== '0' && pct('fAmem') < 90, `${val('DP')} ${val('Vsync')} ${si('fAmem')}`);
+T.check('GPUs 864: DP 2, ZeRO-1 bytes > 0, A fits', val('DP') === '2' && val('Vsync') !== '0' && pct('fAmem') < 95, `${val('DP')} ${val('Vsync')} ${si('fAmem')}`);
 T.check('… ρ^A re-rendered amber', pct('ρA') > 0 && rowsOf('ρA')[0].classList.contains('off'), si('ρA'));
 T.check('… hash carries the departure', decodeURIComponent(location.hash) === '#c:cells={"GPUs":864}', decodeURIComponent(location.hash));
 type('GPUs', '432');
@@ -74,7 +74,7 @@ T.check('typed back: hash clean', location.hash === '', location.hash);
 const fr = [...document.querySelectorAll('.frontier tbody tr')];
 T.check('frontier table has rows', fr.length >= 8, fr.length);
 const row432 = fr.find((tr) => tr.cells[0].textContent === '432');
-T.check('432 GPUs: policy A PP 6 × EP 72 × DP 1 · V-Min (the default), policy B V-ZB; EP pegged to the domain', row432 && row432.cells[2].textContent === 'PP 6 × EP 72 × DP 1 · V-Min' && /EP 72 × DP 1 · V-ZB/.test(row432.cells[5].textContent), row432?.textContent);
+T.check('432 GPUs: policy A PP 6 × EP 72 × DP 1 · V-Min (the default), policy B interleaved ZB (V-ZB overflows with the block store); EP pegged to the domain', row432 && row432.cells[2].textContent === 'PP 6 × EP 72 × DP 1 · V-Min' && /EP 72 × DP 1 · interleaved ZB/.test(row432.cells[5].textContent), row432?.textContent);
 T.check('every frontier layout uses EP 72', [...document.querySelectorAll('.frontier td.lay')].every((td) => /EP 72/.test(td.textContent)), '');
 const row288 = fr.find((tr) => tr.cells[0].textContent === '288');
 T.check('288 GPUs: neither fits without offload at the 10 % reserve', /does not fit/.test(row288.cells[2].textContent) && /does not fit/.test(row288.cells[3].textContent), row288.textContent);

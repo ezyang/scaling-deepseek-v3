@@ -40,6 +40,9 @@
   <div data-widget="kimi-kda-dense-terse"><kimi-layer id="k4" kind-f="dense"></kimi-layer></div>
   <div data-widget="kimi-params"><kimi-layer id="k5" detail lens="params"></kimi-layer></div>
   <div data-widget="kimi-marks-kda-moe"><kimi-layer id="k7" detail marks></kimi-layer></div>
+  <div data-widget="kimi-pipe-v6"><kimi-attnres-pipe id="kpa"></kimi-attnres-pipe></div>
+  <div data-widget="kimi-pipe-chain24"><kimi-attnres-pipe id="kpb" pp="24" sched="chain"></kimi-attnres-pipe></div>
+  <div data-widget="kimi-pipe-ilv3"><kimi-attnres-pipe id="kpc" pp="3" sched="ilv"></kimi-attnres-pipe></div>
   <div data-widget="kimi-marks-mla-dense-full"><kimi-layer id="k8" detail marks recompute="full" kind-a="mla" kind-f="dense"></kimi-layer></div>
   <div data-widget="kimi-anatomy-wrapper"><kimi-anatomy layer="k6" detail></kimi-anatomy></div>
   <div data-widget="kimi-anatomy-plan"><kimi-anatomy-plan id="kp"></kimi-anatomy-plan></div>
@@ -231,7 +234,7 @@ async function lintPlaceholders() {
   const PAGES = ['/index.html', '/studies/01-deepseek-diagram.html', '/studies/02-hopper-memory.html',
     '/studies/blackwell-memory.html', '/studies/dsv41-flash.html', '/studies/fsdp.html', '/studies/03-roofline.html',
     '/studies/kimi-k3.html'];
-  const WTAGS = 'dsv3-anatomy, dsv3-layer, dsv3-param-tally, dsv3-pp-schedule, dsv3-pp-fold, dsv3-beat-deck, dsv3-sheet, dsv41-anatomy, dsv41-layer, kimi-anatomy, kimi-layer, dsv3-fsdp, dsv3-ladder, dsv3-mmfig, dsv3-epsim, dsv3-epscale, dsv3-mesh, dsv3-fsdpsched, dsv3-fsdpcurve, dsv3-ppcurve';
+  const WTAGS = 'dsv3-anatomy, dsv3-layer, dsv3-param-tally, dsv3-pp-schedule, dsv3-pp-fold, dsv3-beat-deck, dsv3-sheet, dsv41-anatomy, dsv41-layer, kimi-anatomy, kimi-layer, kimi-attnres-pipe, dsv3-fsdp, dsv3-ladder, dsv3-mmfig, dsv3-epsim, dsv3-epscale, dsv3-mesh, dsv3-fsdpsched, dsv3-fsdpcurve, dsv3-ppcurve';
   // two widths: 1366 is the SUPPORTED MINIMUM viewport (the anatomy grid
   // saturates its 1330px cap at ~1362; every container is width-capped, so
   // layout must be IDENTICAL at any width ≥ 1366 — checking a wide viewport

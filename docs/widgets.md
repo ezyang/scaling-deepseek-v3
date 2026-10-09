@@ -378,6 +378,21 @@ parameter model lives in the module itself (`KIMI`, `KPARAMS`); the exact
 Excluded from the tally: the 401M MoonViT-V2 vision tower and the MTP layer
 (absent from the released checkpoint).
 
+`<kimi-attnres-pipe [pp=3|4|6|8|12|24] [sched=chain|ilv|v]>` — Block AttnRes
+across a pipeline (studies/kimi-k3.html, Pipeline parallelism). Rows: the 93
+layers under their AttnRes blocks (b₀ = the embedding, MLA layers tinted), the
+chunks labeled by the rank that runs them, each transition's width in d (one
+BF16 hidden vector per token: the blocks the receiving rank lacks + the partial
+sum; a V turn sends nothing), then fixed-height per-rank columns: sent per
+token (forward + backward; the busiest rank amber) and blocks held per
+microbatch. Ledger: the busiest rank in d and KiB, the no-cache figure, the
+block store. Pure model `attnresPipe(P, sched, V)` (exported) follows the
+AttnRes paper §4.1 (a rank keeps every block it has seen for the microbatch);
+the roofline sheet's `r_res` default and its sweeps call it. State
+`#k3p:<id>={pp,s}`. The block diagram draws the store symbolically: a dashed
+"block store b₀ … bₙ₋₁ · n×7168" input into both mixes (`detail` adds
+n = 1 + ⌊(layer − 1)/12⌋), and the rail is labeled as the block's partial sum.
+
 ## `<dsv3-fsdp gpus=… gbs=… zero=… model=… hw=…>` — the FSDP sharding-degree sweep (src/fsdp.js, unlisted study)
 
 The pre-parallelism question (studies/fsdp.html): shard-and-gather the

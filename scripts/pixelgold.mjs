@@ -53,6 +53,7 @@ const SHOTS = [
   // Kimi K3 (unpublished draft): the KDA/MLA-tabbed block diagram
   { name: 'k3-diagram', page: PAGEK3, sel: 'kimi-anatomy[layer="diagram"]' },
   { name: 'k3-recompute', page: PAGEK3, sel: 'kimi-anatomy[layer="ac-layer"]' },
+  { name: 'k3-pipe', page: PAGEK3, sel: 'kimi-attnres-pipe' },
   // the FSDP sweep (unpublished standalone study)
   { name: 'fsdp-sweep', page: PAGEF, sel: 'dsv3-fsdp' },
 ];

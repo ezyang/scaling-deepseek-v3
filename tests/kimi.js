@@ -2,7 +2,9 @@
 // Kimi K3 architecture diagram: tab and plan kind flips, sizes toggle (the
 // exact 2.78T / 104.2B anchors are pinned by tests/kimisheet.js); the
 // recompute-marks instance: the K3 preset reproduces the sheet's policy-A
-// stash exactly, presets recognize themselves, clicks flip save ↔ ↻.
+// stash exactly, presets recognize themselves, clicks flip save ↔ ↻; the
+// AttnRes pipeline figure: transition widths (arXiv 2603.15031 §4.1), knobs,
+// and the sheet's r_res default = the figure's busiest rank.
 await T.tick(400);
 
 T.check('diagram mounted', !!T.el('#diagram svg'));
@@ -70,5 +72,27 @@ await T.tick(100);
 T.check('none preset: nothing replays', ac.policy() === 'none' && ac._ana.replayed.size === 0);
 T.click('#ac-layer [data-pol="k3"]');
 await T.tick(100);
+
+// ---- AttnRes across the pipeline (#pipe) -----------------------------------
+const chain6 = m.attnresPipe(6, 'chain');
+T.check('1F1B PP 6: widths 3 4 5 7 8 (blocks + the partial sum)', chain6.tr.map((t) => t.w).join(' ') === '3 4 5 7 8', chain6.tr.map((t) => t.w).join(' '));
+const v6 = m.attnresPipe(6, 'v');
+T.check('V PP 6: the turn sends nothing, the cache trims the return', v6.tr[5].w === 0 && v6.tr[6].w === 2 && v6.tr[6].naive === 6, JSON.stringify(v6.tr[6]));
+T.check('V PP 6: busiest rank 19 d, every rank holds ≤ 8 blocks', v6.rres === 19 && Math.max(...v6.held) === 8 && v6.held[0] === 8);
+T.check('no pipeline, no traffic', m.attnresPipe(1, 'v').rres === 0 && m.attnresPipe(1, 'chain').tr.length === 0);
+const rresCell = [...document.querySelectorAll('.cellsheet tr')].find((tr) => tr.querySelector('td.nm')?.innerHTML === 'r<sub>res</sub>');
+T.check('sheet r_res default = the figure (V, PP 6)', rresCell?.cells[2].textContent.trim() === String(v6.rres), rresCell?.cells[2].textContent);
+const pipe = T.el('#pipe');
+T.check('figure: busiest rank in the ledger', T.text('#pipe .kpp-led b').startsWith('busiest rank (1): 19 d'), T.text('#pipe .kpp-led b'));
+const h0 = pipe.getBoundingClientRect().height;
+T.click('#pipe [data-s="chain"]');
+await T.tick(80);
+T.click('#pipe [data-pp="24"]');
+await T.tick(80);
+T.check('knobs: 1F1B PP 24 = 18 d, height unchanged', pipe.sched === 'chain' && pipe.pp === 24 && T.text('#pipe .kpp-led b').includes('18 d')
+  && Math.abs(pipe.getBoundingClientRect().height - h0) < 1, `${T.text('#pipe .kpp-led b')} ${h0} ${pipe.getBoundingClientRect().height}`);
+T.click('#pipe [data-s="v"]');
+T.click('#pipe [data-pp="6"]');
+await T.tick(80);
 
 T.done();
