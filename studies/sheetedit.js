@@ -85,9 +85,9 @@ const PAGES = {
     },
   },
   k3: {
-    knobs: { B: 'B', S: 'S', GPUs: 'GPUs', 'π<sup>sol</sup><sub>bf16</sub>': 'sol', 'π<sup>sol</sup><sub>fp8</sub>': 'sol8', 'β<sub>NV</sub>': 'NV', 'β<sub>IB</sub>': 'IB', NVL: 'NVL', PP: 'PP', EP: 'EP', 'V<sub>pp</sub>': 'Vpp', ovl: 'ovl', 'μ': 'mu', 'g<sub>B</sub>': 'gB', 'o<sub>B</sub>': 'oB', 'β<sub>host</sub>': 'host', 'S<sub>x</sub>': 'Sx', 'CP<sub>x</sub>': 'CPx', CP: 'CP' },
-    counts: ['B', 'S', 'GPUs', 'NVL', 'PP', 'EP', 'Vpp', 'ovl', 'gB', 'oB', 'Sx', 'CPx', 'CP'],
-    zero: ['ovl', 'mu'],   // knobs that may be 0 (a 0/1 switch, a share)
+    knobs: { B: 'B', S: 'S', GPUs: 'GPUs', 'π<sup>sol</sup><sub>bf16</sub>': 'sol', 'π<sup>sol</sup><sub>fp8</sub>': 'sol8', 'β<sub>NV</sub>': 'NV', 'β<sub>IB</sub>': 'IB', NVL: 'NVL', PP: 'PP', EP: 'EP', 'V<sub>pp</sub>': 'Vpp', ovl: 'ovl', 'μ': 'mu', 'g<sub>B</sub>': 'gB', 'o<sub>B</sub>': 'oB', 'β<sub>host</sub>': 'host', 'S<sub>x</sub>': 'Sx', 'CP<sub>x</sub>': 'CPx', CP: 'CP', 'h<sub>8</sub>': 'h8' },
+    counts: ['B', 'S', 'GPUs', 'NVL', 'PP', 'EP', 'Vpp', 'ovl', 'gB', 'oB', 'Sx', 'CPx', 'CP', 'h8'],
+    zero: ['ovl', 'mu', 'h8'],   // knobs that may be 0 (a 0/1 switch, a share)
     xlsx: ['kimi-k3-sheet.xlsx', 'Kimi K3 roofline'],
     rules(v, edits, pub) {
       const [G, P, E, N] = ['GPUs', 'PP', 'EP', 'NVL'].map((k) => v(k)[0]);
@@ -95,6 +95,7 @@ const PAGES = {
       if (G % (P * E)) return `PP · EP must divide GPUs (${G.toLocaleString('en-US')})`;
       const L = pub.get('L')?.[0];
       if (P > L) return `the model has ${L} layers`;
+      if (v('h8')[0] > 1n) return 'h₈ is a switch: 1 = MXFP8 LM head, 0 = BF16';
       if (v('CPx')[0] < 2n) return 'CP_x must be at least 2';
       const C = v('CP')[0], H = pub.get('n<sub>h</sub>')?.[0];
       if (N % C || H % C) return `CP must divide NVL (${N}) and the ${H} heads: Ulysses, inside one NVLink domain`;
@@ -222,17 +223,22 @@ const PUB = evalAll({});
 export { PUB as published, evalAll, set as setKnob };
 
 // cross-row rules a knob edit must keep (else a leaf like M = 4 goes false)
-function invalid(edits) {
-  const v = (k) => edits[k] ?? PUB.get(Object.keys(KNOBS).find((n) => KNOBS[n] === k));
+const pubOf = (k) => PUB.get(Object.keys(KNOBS).find((n) => KNOBS[n] === k));
+function basic(edits) {
   for (const k of Object.keys(edits)) {
     if (edits[k][0] < 0n || (edits[k][0] === 0n && !PAGE.zero?.includes(k))) return `${k} must be positive`;
     if (COUNTS.has(k) && edits[k][1] !== 1n) return `${k} must be a whole number`;
   }
-  return PAGE.rules(v, edits, PUB);
+  return null;
 }
+const invalid = (edits) => basic(edits) ?? PAGE.rules((k) => edits[k] ?? pubOf(k), edits, PUB);
 
 // ---- state ------------------------------------------------------------------
-let edits = {};
+// held: knob edits that broke a rule and were held anyway (Enter twice), shown
+// red but not computed until later edits make the whole set consistent, when
+// they all apply at once (NVL 72 → 64 needs EP, CP and GPUs to move with it).
+// Not in the hash
+let edits = {}, held = {}, heldAt = null;
 try {
   const raw = JSON.parse(new URLSearchParams(location.hash.slice(1)).get(KEY) ?? '{}');
   for (const [k, s] of Object.entries(raw)) if (Object.values(KNOBS).includes(k)) edits[k] = dec(String(s));
@@ -250,10 +256,12 @@ function render() {
   const now = current();
   for (const [name, r] of rows) {
     const v = now.get(name), off = !eq(v, PUB.get(name));
+    const h = held[KNOBS[name]];
     for (const tr of r.trs) {
       const [, , vl, sc, si] = tr.cells;
       if (vl.querySelector('input')) continue;
-      vl.textContent = KNOBS[name] ? fmtKnob(v) : fmtExact(v);
+      vl.textContent = h ? fmtKnob(h) : KNOBS[name] ? fmtKnob(v) : fmtExact(v);
+      vl.style.color = h ? 'var(--c-d03b3b)' : '';
       if (tr._sci) sc.innerHTML = fmtSci(num(v));
       if (tr._unit) si.innerHTML = fmtSI(num(v), tr._unit);
       tr.classList.toggle('off', off);
@@ -264,6 +272,13 @@ function render() {
     const name = q.dataset.cellref, v = now.get(name), off = !eq(v, PUB.get(name));
     q.innerHTML = fmtSI(num(v), rows.get(name).trs[0]._unit);
     q.classList.toggle('off', off);
+  }
+  note.style.display = heldAt ? 'block' : 'none';
+  if (heldAt) {
+    note.innerHTML = `red values held until consistent: ${invalid({ ...edits, ...held })} · <u style="cursor: pointer">drop them</u>`;
+    note.querySelector('u').onclick = () => { held = {}; heldAt = null; render(); };
+    const r = heldAt.getBoundingClientRect();
+    note.style.left = r.left + scrollX + 'px'; note.style.top = r.bottom + scrollY + 3 + 'px';
   }
   document.dispatchEvent(new CustomEvent('dsv3-cells', { detail: now }));
 }
@@ -277,9 +292,10 @@ export function setLinked(vals) {
   }
   if (changed) render();
 }
-function set(k, q) {
-  if (q && !eq(q, PUB.get(Object.keys(KNOBS).find((n) => KNOBS[n] === k)))) edits[k] = q; else delete edits[k];
-  save(); render();
+function set(k, q) { setAll({ [k]: q }); }
+function setAll(o) {
+  for (const [k, q] of Object.entries(o)) if (q && !eq(q, pubOf(k))) edits[k] = q; else delete edits[k];
+  held = {}; heldAt = null; save(); render();
 }
 
 // ---- editing: click an editable value, type, Enter (Esc cancels) ------------
@@ -295,7 +311,8 @@ const parse = (s, unit) => {
   return OPS['·'](q, e >= 0 ? Q(10n ** BigInt(e)) : Q(1n, 10n ** BigInt(-e)));
 };
 const err = Object.assign(document.createElement('div'), { className: 'cs-err' });
-document.body.append(err);
+const note = Object.assign(document.createElement('div'), { className: 'cs-err cs-held' });
+document.body.append(err, note);
 function open(td, name) {
   if (td.querySelector('input')) return;
   const k = KNOBS[name], inp = document.createElement('input'), u = rows.get(name).trs[0]._unit;
@@ -305,8 +322,17 @@ function open(td, name) {
   const close = () => { done = true; err.style.display = 'none'; td.replaceChildren(); render(); };
   const commit = (soft) => {
     const q = parse(inp.value, u?.slice(1));   // TFLOP/s → FLOP/s, GB/s → B/s
-    const why = typeof q === 'string' ? q : invalid({ ...edits, [k]: q });
-    if (!why) { close(); set(k, q); if (!soft) td.focus(); return; }
+    let why = typeof q === 'string' ? q : basic({ [k]: q });
+    if (!why) {
+      const next = { ...held, [k]: q };
+      if (eq(q, edits[k] ?? pubOf(k))) delete next[k];   // back to its applied value: un-held
+      why = invalid({ ...edits, ...next });
+      if (!why) { close(); setAll(next); if (!soft) td.focus(); return; }
+      if (!(k in next) || (!soft && inp.dataset.hold === inp.value)) {   // Enter again on a rule break: hold it
+        held = next; heldAt = k in next ? td : heldAt; close(); if (!soft) td.focus(); return;
+      }
+      if (!soft) { inp.dataset.hold = inp.value; why += ' · Enter again to hold it until the other knobs match'; }
+    }
     if (soft) { close(); return; }   // blur with a bad value: drop it
     inp.classList.add('bad');
     const r = td.getBoundingClientRect();

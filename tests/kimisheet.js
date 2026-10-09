@@ -29,7 +29,7 @@ T.check('activated params = 104,189,612,640', val('N') === '104,189,612,640', va
 // Muon: 5 quintic Newton–Schulz iterations per matrix per step (Per-Head for q/k/v), each matrix once; ≈ 1 % of compute
 T.check('Newton–Schulz FLOPs per step = 244,757,732,159,324,160; T_NS 1.07 % of policy A compute', val('CNS') === '244,757,732,159,324,160' && Math.abs(parseFloat(si('TNS')) / parseFloat(si('TAc')) / 1000 - 0.0107) < 0.0005, `${val('CNS')} ${si('TNS')} ${si('TAc')}`);
 const edv = [...document.querySelectorAll('.cellsheet td.vl.edv')].map((td) => td.parentElement.cells[0].textContent);
-T.check('editable: exactly this page\'s knobs', edv.join(' ') === 'πsolbf16 πsolfp8 βNV βIB NVL B S GPUs PP EP CP Vpp ovl μ gB oB βhost Sx CPx', edv.join(' '));
+T.check('editable: exactly this page\'s knobs', edv.join(' ') === 'πsolbf16 πsolfp8 βNV βIB NVL B S GPUs h8 PP EP CP Vpp ovl μ gB oB βhost Sx CPx', edv.join(' '));
 T.check('untouched: no hash, nothing amber', location.hash === '' && !document.querySelector('.cellsheet tr.off'), location.hash);
 // the default: 288 GPUs, PP 4 × EP 72 × CP 3, one replica, 10 % reserve — 1F1B fits both, A on the line; ZB-V-Min gives A room; no ZeRO-1 traffic
 T.check('default layout: DP 1, ZeRO-1 bytes 0', val('DP') === '1' && val('Vsync') === '0', `${val('DP')} ${val('Vsync')}`);
@@ -61,6 +61,51 @@ inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })
 inp = type('GPUs', '300');
 T.check('GPUs 300 refused: PP · EP must divide it', /PP · EP must divide/.test(T.el('.cs-err').textContent), T.el('.cs-err').textContent);
 inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+// NVL 72 → 64 (the page's 64-of-72 variant): no single edit is consistent, so a
+// refused edit can be held (Enter again) until the rest make the set consistent
+const note = T.el('.cs-held'), dp0 = val('DP'), rho0 = si('ρA');
+const twice = (txt, s) => { const inp = type(txt, s); inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); return inp; };
+inp = type('EP', '64');
+T.check('EP 64 refused, offered a hold', inp.isConnected && /divide NVL.*Enter again/.test(T.el('.cs-err').textContent), T.el('.cs-err').textContent);
+inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+T.check('Enter again: EP 64 held in red, nothing recomputed', !inp.isConnected && val('EP') === '64' && rowsOf('EP')[0].cells[2].style.color.includes('d03b3b') && si('ρA') === rho0 && !location.hash, `${val('EP')} ${si('ρA')} ${location.hash}`);
+T.check('… the note says what it waits on', note.style.display === 'block' && /held until consistent: EP must divide NVL/.test(note.textContent), note.textContent);
+twice('NVL', '64');
+T.check('NVL 64 held: now waits on GPUs', /PP · EP must divide GPUs \(288\)/.test(note.textContent), note.textContent);
+twice('GPUs', '256');
+T.check('GPUs 256 held: now waits on CP', /CP must divide NVL \(64\)/.test(note.textContent), note.textContent);
+type('CP', '4');
+T.check('CP 4: all four apply at once', val('EP') === '64' && val('NVL') === '64' && val('CP') === '4' && val('DP') === dp0 && si('ρA') !== rho0 && note.style.display === 'none' && !rowsOf('EP')[0].cells[2].style.color,
+  `${val('EP')} ${val('NVL')} ${val('CP')} ${val('DP')} ${si('ρA')}`);
+T.check('… hash carries them', decodeURIComponent(location.hash) === '#c:cells={"EP":64,"NVL":64,"GPUs":256,"CP":4}', decodeURIComponent(location.hash));
+twice('GPUs', '288'); twice('EP', '72');
+type('NVL', '72');   // consistent with CP 4 still edited
+T.check('and back: GPUs, EP held, NVL 72 applies them', decodeURIComponent(location.hash) === '#c:cells={"CP":4}', decodeURIComponent(location.hash));
+type('CP', '3');
+twice('EP', '64');
+note.querySelector('u').click();
+T.check('"drop them" discards held edits', val('EP') === '72' && note.style.display === 'none' && !location.hash, `${val('EP')} ${location.hash}`);
+// the LM head's dtype: h₈ 0 moves its GEMMs from the MXFP8 term to the BF16 one
+const { current } = await import('/studies/sheetedit.js');
+const cur = (k) => { const [n, d] = current().get(k); return Number(n) / Number(d); };
+const [tbf0, tf80, lam0, rhoV0] = ['T<sub>bf16</sub>', 'T<sub>fp8</sub>', 'λ<sub>V</sub>', 'ρ<sup>A</sup><sub>Vmin</sub>'].map(cur);
+inp = type('h8', '2');
+T.check('h₈ 2 refused: a switch', /h₈ is a switch/.test(T.el('.cs-err').textContent), T.el('.cs-err').textContent);
+inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+type('h8', '0');
+const emb6 = 6 * cur('N<sub>emb</sub>') * cur('D');
+T.check('h₈ 0: 6 · N_emb · D moves from C_fp8 to C_bf16, C unchanged', current().get('C<sub>bf16</sub>')[0] + current().get('C<sub>fp8</sub>')[0] === current().get('C')[0]
+  && Math.abs(cur('T<sub>bf16</sub>') - tbf0 - emb6 / (cur('GPUs') * cur('π<sup>sol</sup><sub>bf16</sub>'))) < 1e-9 && Math.abs(tf80 - cur('T<sub>fp8</sub>') - emb6 / (cur('GPUs') * cur('π<sup>sol</sup><sub>fp8</sub>'))) < 1e-9,
+  `${tbf0} → ${cur('T<sub>bf16</sub>')}, ${tf80} → ${cur('T<sub>fp8</sub>')}`);
+T.check('… the pipeline split reprices the head (λ_V moves), ρ^A falls', cur('λ<sub>V</sub>') !== lam0 && cur('ρ<sup>A</sup><sub>Vmin</sub>') < rhoV0, `${lam0} → ${cur('λ<sub>V</sub>')}, ${rhoV0} → ${cur('ρ<sup>A</sup><sub>Vmin</sub>')}`);
+T.check('… hash carries it', decodeURIComponent(location.hash) === '#c:cells={"h8":0}', decodeURIComponent(location.hash));
+type('PP', '2');
+const wgap = (t) => (2 * cur('b<sub>8</sub>') + cur('g<sub>B</sub>')) * (cur(`X<sup>e</sup><sub>${t}</sub>`) / cur('EP') + cur(`X<sup>n</sup><sub>${t}</sub>`)) - cur(`W<sub>${t}</sub>`);
+T.check('… where the head sits on the fullest rank, its weight is BF16: 2 B per param, not 2 · b₈', ['ILV', 'V'].some((t) => cur(`X<sup>h</sup><sub>${t}</sub>`) > 0)
+  && ['ILV', 'V'].every((t) => Math.abs(wgap(t) - (2 * cur('b<sub>8</sub>') - 2) * cur(`X<sup>h</sup><sub>${t}</sub>`)) < 1),
+  ['ILV', 'V'].map((t) => `${cur(`X<sup>h</sup><sub>${t}</sub>`)} ${wgap(t)}`).join(' | '));
+type('PP', '4'); type('h8', '1');
+T.check('h₈ back: hash clean', location.hash === '', location.hash);
 // doubling the cluster: a second replica appears, ZeRO-1 traffic with it, memory eases
 type('GPUs', '576');
 T.check('GPUs 576: DP 2, ZeRO-1 bytes > 0, A fits', val('DP') === '2' && val('Vsync') !== '0' && pct('fAmem') < 95, `${val('DP')} ${val('Vsync')} ${si('fAmem')}`);

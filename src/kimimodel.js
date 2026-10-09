@@ -192,8 +192,9 @@ export function k3Stash(marks) {
 // embedding lookup free. Integer layers leave a residual imbalance λ = the
 // slowest rank / the mean: the sheet multiplies each schedule's compute (and
 // its bubble) by it. Times are in FP8-FLOP units: fp8 + ratio · bf16, ratio =
-// the FP8 rate over the BF16 rate (2 at the sheet's defaults).
-export function k3LayerCost(S = 8192) {
+// the FP8 rate over the BF16 rate (2 at the sheet's defaults). h8 = 0 runs the
+// head's GEMM in BF16 (the sheet's h₈ knob).
+export function k3LayerCost(S = 8192, h8 = 1) {
   const nh = A.heads, dh = A.headDim, dR = A.qkRope;
   const sdpa = nh * S * (4 * (dh + dR) + 3 * dh);            // per token, fwd + bwd: 4 QKᵀ-shaped + 3 PV-shaped passes, causal
   const kda = 3 * nh * (6 * dh * dh + 10 * 64 * dh);          // fwd + 2× bwd
@@ -202,12 +203,12 @@ export function k3LayerCost(S = 8192) {
     const att = mla ? K.mlaAttn : K.kdaAttn, ffn = dense ? K.denseFfn : K.activeMoeFfn - K.routerWeight;
     return { f8: 6 * (att + ffn + K.misc + (dense ? 0 : K.routerBias)), bf: (dense ? 0 : 6 * K.routerWeight) + (mla ? sdpa : kda) };
   });
-  return { layers, head: { f8: 6 * K.embed + 6 * K.finalNorms, bf: 0 } };
+  return { layers, head: { f8: 6 * h8 * K.embed + 6 * K.finalNorms, bf: 6 * (1 - h8) * K.embed } };
 }
-export function k3Split(P, sched = 'v', V = 2, S = 8192, ratio = 2) {
+export function k3Split(P, sched = 'v', V = 2, S = 8192, ratio = 2, h8 = 1) {
   const nc = P * (sched === 'chain' ? 1 : sched === 'v' ? 2 : V);
   const rank = (c) => sched === 'v' && c >= P ? nc - 1 - c : c % P;
-  const { layers, head } = k3LayerCost(S);
+  const { layers, head } = k3LayerCost(S, h8);
   const t = layers.map((x) => x.f8 + ratio * x.bf), th = head.f8 + ratio * head.bf, L = t.length;
   const cum = [0]; for (let l = 0; l < L; l++) cum.push(cum[l] + t[l]);
   const total = cum[L] + th;
@@ -246,8 +247,8 @@ export function k3Split(P, sched = 'v', V = 2, S = 8192, ratio = 2) {
 }
 // the sheet's pipeline inputs at one layout: λ per schedule family (1F1B,
 // interleaved with V chunks, the V shapes) and r_res, the widest of the three
-export function k3PipeInputs(P, V = 2, S = 8192, ratio = 2) {
-  const fam = { chain: k3Split(P, 'chain', V, S, ratio), ilv: k3Split(P, 'ilv', V, S, ratio), v: k3Split(P, 'v', V, S, ratio) };
+export function k3PipeInputs(P, V = 2, S = 8192, ratio = 2, h8 = 1) {
+  const fam = Object.fromEntries(['chain', 'ilv', 'v'].map((s) => [s, k3Split(P, s, V, S, ratio, h8)]));
   return {
     fam, lam1: fam.chain.lam, lamI: fam.ilv.lam, lamV: fam.v.lam,
     rres: Math.max(...Object.entries(fam).map(([s, sp]) => attnresPipe(P, s, V, sp.cuts).rres)),
@@ -325,10 +326,10 @@ export const PIPE_NAMES = { rres: 'r<sub>res</sub>',
   f8I: 'c<sup>max</sup><sub>8,ILV</sub>', bfI: 'c<sup>max</sup><sub>bf,ILV</sub>',
   f8V: 'c<sup>max</sup><sub>8,V</sub>', bfV: 'c<sup>max</sup><sub>bf,V</sub>' };
 const pipeMemo = new Map();
-export function k3PipeLinked(P, V = 2, S = 8192, ratio = 2) {
-  const key = `${P},${V},${S},${ratio}`;
+export function k3PipeLinked(P, V = 2, S = 8192, ratio = 2, h8 = 1) {
+  const key = `${P},${V},${S},${ratio},${h8}`;
   if (pipeMemo.has(key)) return pipeMemo.get(key);
-  const x = k3PipeInputs(P, V, S, ratio), N = PIPE_NAMES;
+  const x = k3PipeInputs(P, V, S, ratio, h8), N = PIPE_NAMES;
   const out = { [N.rres]: x.rres, [N.f81]: x.fam.chain.f8max, [N.bf1]: x.fam.chain.bfmax,
     [N.f8I]: x.fam.ilv.f8max, [N.bfI]: x.fam.ilv.bfmax, [N.f8V]: x.fam.v.f8max, [N.bfV]: x.fam.v.bfmax };
   pipeMemo.set(key, out);
@@ -381,40 +382,43 @@ export function k3Linked(marks) {
 // interleaved: (2(PP − r − 1) + (V − 1)PP + 1)/V; V shapes: every rank alike,
 // so the count is per microbatch and the sheet multiplies by n). w = the byte
 // weights {e: per expert param, n: per non-expert param, s: per store
-// block·microbatch}; the worst rank maximizes e·Xe + n·Xn + s·H.
-export function k3RankMemory(P, sched, V = 2, w = { e: 1, n: 1, s: 0 }, S = 8192, ratio = 2) {
-  const sp = k3Split(P, sched, V, S, ratio), pipe = attnresPipe(P, sched, V, sp.cuts);
+// block·microbatch, h: the head's params over n (a BF16 head's weight is
+// smaller)}; the worst rank maximizes e·Xe + n·Xn + h·Xh + s·H, Xh (the head)
+// ⊂ Xn.
+export function k3RankMemory(P, sched, V = 2, w = { e: 1, n: 1, s: 0 }, S = 8192, ratio = 2, h8 = 1) {
+  const sp = k3Split(P, sched, V, S, ratio, h8), pipe = attnresPipe(P, sched, V, sp.cuts);
   const exp = A.routedExperts * K.expert;
   const ne = (l) => (l + 1) % 4 === 0 || l === A.layers - 1 ? K.mlaAttn : K.kdaAttn;
   const nf = (l) => l < A.denseLayers ? K.denseFfn : K.routerWeight + K.routerBias + K.latents + K.shared;
-  const rk = Array.from({ length: P }, () => ({ xe: 0, xn: 0 }));
+  const rk = Array.from({ length: P }, () => ({ xe: 0, xn: 0, xh: 0 }));
   sp.ranks.forEach((r, c) => {
     for (let l = sp.cuts[c]; l < sp.cuts[c + 1]; l++) { rk[r].xn += ne(l) + nf(l) + K.misc; if (l >= A.denseLayers) rk[r].xe += exp; }
   });
   rk[sp.ranks[0]].xn += K.embed;
   rk[sp.ranks[sp.ranks.length - 1]].xn += K.embed + K.finalNorms;
+  rk[sp.ranks[sp.ranks.length - 1]].xh = K.embed;
   // store: [numerator, denominator] block·microbatches (exact; interleaved counts chunks of 1/V)
   const flight = (r) => sched === 'chain' ? [P - r, 1] : sched === 'ilv' ? [2 * (P - r - 1) + (V - 1) * P + 1, V] : [1, 1];
   const ranks = rk.map((x, r) => { const [fn, fd] = flight(r); return { ...x, h: [pipe.held[r] * fn, fd] }; });
-  const cost = (x) => w.e * x.xe + w.n * x.xn + w.s * x.h[0] / x.h[1];
+  const cost = (x) => w.e * x.xe + w.n * x.xn + (w.h ?? 0) * x.xh + w.s * x.h[0] / x.h[1];
   const worst = ranks.reduce((bi, x, r) => cost(x) > cost(ranks[bi]) ? r : bi, 0);
   return { ranks, worst, ...ranks[worst] };
 }
 export const MEM_NAMES = {
-  xe1: 'X<sup>e</sup><sub>1F1B</sub>', xn1: 'X<sup>n</sup><sub>1F1B</sub>', h1: 'H<sub>1F1B</sub>',
-  xeI: 'X<sup>e</sup><sub>ILV</sub>', xnI: 'X<sup>n</sup><sub>ILV</sub>', hI: 'H<sub>ILV</sub>',
-  xeV: 'X<sup>e</sup><sub>V</sub>', xnV: 'X<sup>n</sup><sub>V</sub>', hV: 'H<sub>V</sub>' };
+  xe1: 'X<sup>e</sup><sub>1F1B</sub>', xn1: 'X<sup>n</sup><sub>1F1B</sub>', xh1: 'X<sup>h</sup><sub>1F1B</sub>', h1: 'H<sub>1F1B</sub>',
+  xeI: 'X<sup>e</sup><sub>ILV</sub>', xnI: 'X<sup>n</sup><sub>ILV</sub>', xhI: 'X<sup>h</sup><sub>ILV</sub>', hI: 'H<sub>ILV</sub>',
+  xeV: 'X<sup>e</sup><sub>V</sub>', xnV: 'X<sup>n</sup><sub>V</sub>', xhV: 'X<sup>h</sup><sub>V</sub>', hV: 'H<sub>V</sub>' };
 const memMemo = new Map();
 // nV: microbatches in flight under the V schedules (every rank alike), to weigh
 // the store when picking the V family's worst rank (the sheet multiplies by
 // each V schedule's own n)
-export function k3MemLinked(P, V, w, S = 8192, ratio = 2, nV = 1) {
-  const key = JSON.stringify([P, V, w, S, ratio, nV]);
+export function k3MemLinked(P, V, w, S = 8192, ratio = 2, nV = 1, h8 = 1) {
+  const key = JSON.stringify([P, V, w, S, ratio, nV, h8]);
   if (memMemo.has(key)) return memMemo.get(key);
   const out = {};
   for (const [t, s] of [['1', 'chain'], ['I', 'ilv'], ['V', 'v']]) {
-    const m = k3RankMemory(P, s, V, s === 'v' ? { ...w, s: w.s * nV } : w, S, ratio);
-    out[MEM_NAMES['xe' + t]] = m.xe; out[MEM_NAMES['xn' + t]] = m.xn; out[MEM_NAMES['h' + t]] = m.h;
+    const m = k3RankMemory(P, s, V, s === 'v' ? { ...w, s: w.s * nV } : w, S, ratio, h8);
+    out[MEM_NAMES['xe' + t]] = m.xe; out[MEM_NAMES['xn' + t]] = m.xn; out[MEM_NAMES['xh' + t]] = m.xh; out[MEM_NAMES['h' + t]] = m.h;
   }
   memMemo.set(key, out);
   return out;
