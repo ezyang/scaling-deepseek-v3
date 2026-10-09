@@ -30,7 +30,7 @@ const check = (label) => {
   return doc;
 };
 const doc = check('published');
-T.check('sections carry the h2s', [...doc.querySelectorAll('row')].some((r) => r.textContent === 'Expert parallelism over NVLink'), '');
+T.check('sections carry the h2s', [...doc.querySelectorAll('row')].some((r) => r.textContent === 'NVLink traffic'), '');
 setKnob('GPUs', [4096n, 1n]);
 check('GPUs 4096');
 T.check('… knob edits export as the leaf value', /<v>4096<\/v>/.test(sheetXml()), '');
