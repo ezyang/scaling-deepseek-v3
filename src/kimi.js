@@ -14,7 +14,7 @@ import { fmtP, tokensCss, applyHighlight } from './viewer.js';
 import { C } from './theme.js';
 import { attachTip } from './tip.js';
 import { analyze } from './blockgraph.js';
-import { KIMI, KPARAMS, kimiGraph, MARKABLE_K3, K3_RECOMPUTE, K3_POLICIES, K3_KINDS, k3Stash, attnresPipe } from './kimimodel.js';
+import { KIMI, KPARAMS, kimiGraph, MARKABLE_K3, K3_RECOMPUTE, K3_POLICIES, K3_KINDS, k3Stash, attnresPipe, k3Split } from './kimimodel.js';
 export { KIMI, KPARAMS, kimiGraph, K3_RECOMPUTE, K3_POLICIES, K3_KINDS, k3Stash, attnresPipe };
 const A = KIMI, K = KPARAMS;
 const PJ = A.heads * A.headDim;
@@ -917,7 +917,7 @@ kimi-attnres-pipe { display: block; margin: 14px 0 26px; }
 .kpp-head button.on { background: var(--c-eeede7); font-weight: 600; cursor: default; }
 .kpp svg { display: block; }
 .kpp svg text { font: 10px system-ui; }
-.kpp-led { font-size: 11.5px; color: var(--c-52514e); line-height: 1.55; padding-top: 4px; min-height: calc(2 * 1.55em); }
+.kpp-led { font-size: 11.5px; color: var(--c-52514e); line-height: 1.55; padding-top: 4px; min-height: calc(3 * 1.55em); }
 .kpp-led b { color: var(--c-0b0b0b); }
 `;
 const PIPE_PPS = [3, 4, 6, 8, 12, 24];
@@ -936,8 +936,8 @@ export class KimiAttnresPipe extends HTMLElement {
     addEventListener('dsv3-theme', () => this.render());
   }
   render() {
-    const P = this.pp, R = attnresPipe(P, this.sched), S = A.attnResBlock, L = A.layers;
-    const W = 914, X0 = 58, CW = (W - X0 - 8) / L, x = (l) => X0 + l * CW;   // x(l) = the left edge of 1-indexed layer l + 1
+    const P = this.pp, SP = k3Split(P, this.sched), R = attnresPipe(P, this.sched, 2, SP.cuts), S = A.attnResBlock, L = A.layers;
+    const W = 914, X0 = 58, HW = 18, CW = (W - X0 - 8 - HW - 4) / L, x = (l) => X0 + l * CW;   // x(l) = the left edge of 1-indexed layer l + 1
     const out = [];
     const t = (tx, ty, s, o = '') => out.push(`<text x="${tx}" y="${ty}"${o}>${s}</text>`);
     const ink = C('#52514e'), grey = C('#898781');
@@ -955,10 +955,13 @@ export class KimiAttnresPipe extends HTMLElement {
       const mla = (l + 1) % 4 === 0 || l === L - 1;
       out.push(`<rect x="${x(l) + 0.5}" y="${yL}" width="${CW - 1}" height="16" fill="${C(mla ? '#d9e4f0' : '#f7f6f1')}" stroke="${C(mla ? '#4a6a8e' : '#d8d6cb')}" stroke-width="0.6"/>`);
     }
+    // the LM head rides the last chunk (a whole layer's worth of GEMM)
+    out.push(`<rect x="${x(L) + 4}" y="${yL}" width="${HW}" height="16" rx="3" fill="${C('#f7f6f1')}" stroke="${C('#898781')}"/>`);
+    t(x(L) + 4 + HW / 2, yB, 'head', ` text-anchor="middle" fill="${ink}"`);
     // row 2: chunks, labeled with the rank that runs them
     t(4, yC + 12, 'ranks', ` fill="${grey}"`);
     R.ranks.forEach((r, c) => {
-      const a = x(R.cuts[c]), b = x(R.cuts[c + 1]);
+      const a = x(R.cuts[c]), b = c === R.ranks.length - 1 ? x(L) + 4 + HW : x(R.cuts[c + 1]);
       out.push(`<rect x="${a + 0.5}" y="${yC}" width="${b - a - 1}" height="16" rx="2" fill="${C(r % 2 ? '#e1e0d9' : '#f0efe9')}"/>`);
       if (b - a > 12) t((a + b) / 2, yC + 11.5, r, ` text-anchor="middle" fill="${ink}"`);
     });
@@ -982,10 +985,15 @@ export class KimiAttnresPipe extends HTMLElement {
     const hot = R.send.indexOf(R.rres);
     cols(yS, 44, R.send, Math.max(...R.send), 'sent / tok', ' d', hot);
     cols(yH, 30, R.held, Math.ceil(L / S), 'blocks held', '', R.held.indexOf(Math.max(...R.held)));
-    const cw = (W - X0 - 8) / P;   // rank axis under the columns
-    for (let r = 0; r < P; r++) if (cw > 14 || r % 2 === 0) t(X0 + (r + 0.5) * cw, yH + 44, r, ` text-anchor="middle" fill="${grey}"`);
-    t(4, yH + 44, 'rank', ` fill="${grey}"`);
-    const H = yH + 48;
+    // per-rank roofline time over the mean, as numbers (a 2 % spread would vanish on a bar from zero)
+    const mean = SP.load.reduce((a, b) => a + b, 0) / P;
+    const yR = yH + 50, cw = (W - X0 - 8) / P;
+    t(4, yR, 'time / mean', ` fill="${grey}"`);
+    SP.load.forEach((v, r) => { if (cw > 30 || r === SP.slow) t(X0 + (r + 0.5) * cw, yR, (v / mean).toFixed(3), ` text-anchor="middle" fill="${C(r === SP.slow ? '#8a5f00' : '#52514e')}"${r === SP.slow ? ' font-weight="600"' : ''}`); });
+    // rank axis under the columns
+    for (let r = 0; r < P; r++) if (cw > 14 || r % 2 === 0) t(X0 + (r + 0.5) * cw, yR + 16, r, ` text-anchor="middle" fill="${grey}"`);
+    t(4, yR + 16, 'rank', ` fill="${grey}"`);
+    const H = yR + 20;
     const naiveSend = new Array(P).fill(0);
     for (const tr of R.tr) { naiveSend[tr.from] += tr.naive; naiveSend[tr.to] += tr.naive; }
     const d2 = A.hidden * 2;
@@ -997,7 +1005,8 @@ export class KimiAttnresPipe extends HTMLElement {
       `<div class="kpp-led"><b>busiest rank (${hot}): ${R.rres} d per token</b>, forward and backward = ${fmtB(R.rres * d2)}` +
       (this.sched === 'chain' ? '' : ` (without the cross-stage cache: ${Math.max(...naiveSend)} d)`) +
       ` · widths in d = one BF16 hidden vector (${fmtB(d2)} per token): the blocks the receiver lacks + the partial sum. ` +
-      `<b>Block store: up to ${held} blocks = ${fmtB(held * d2)} per token</b> per microbatch in flight.</div>`;
+      `<b>Block store: up to ${held} blocks = ${fmtB(held * d2)} per token</b> per microbatch in flight. ` +
+      `<b>Stage balance: the slowest rank (${SP.slow}) runs ${SP.lam.toFixed(3)}× the mean</b> — chunks cut to balance roofline time, the head on the last chunk (K3 publishes no split).</div>`;
     for (const bb of this._card.querySelectorAll('[data-pp]')) bb.onclick = () => { if (+bb.dataset.pp !== this.pp) { this.pp = +bb.dataset.pp; this.render(); this.changed(); } };
     for (const bb of this._card.querySelectorAll('[data-s]')) bb.onclick = () => { if (bb.dataset.s !== this.sched) { this.sched = bb.dataset.s; this.render(); this.changed(); } };
   }

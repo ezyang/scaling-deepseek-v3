@@ -27,7 +27,7 @@ T.check('every formula name resolves to a defining row', names.every((b) => b.cl
 T.check('total params = 2,779,484,476,000', val('Ntot') === '2,779,484,476,000', val('Ntot'));
 T.check('activated params = 104,189,612,640', val('N') === '104,189,612,640', val('N'));
 const edv = [...document.querySelectorAll('.cellsheet td.vl.edv')].map((td) => td.parentElement.cells[0].textContent);
-T.check('editable: exactly this page\'s knobs', edv.join(' ') === 'πsolbf16 πsolfp8 βNV βIB NVL B S GPUs PP EP Vpp ovl rres μ gB oB βhost', edv.join(' '));
+T.check('editable: exactly this page\'s knobs', edv.join(' ') === 'πsolbf16 πsolfp8 βNV βIB NVL B S GPUs PP EP Vpp ovl μ gB oB βhost', edv.join(' '));
 T.check('untouched: no hash, nothing amber', location.hash === '' && !document.querySelector('.cellsheet tr.off'), location.hash);
 // the default: 432 GPUs, PP 6 × EP 72, one replica, 10 % reserve — 1F1B fits both on the line; ZB-V-Min gives A room; no ZeRO-1 traffic
 T.check('default layout: DP 1, ZeRO-1 bytes 0', val('DP') === '1' && val('Vsync') === '0', `${val('DP')} ${val('Vsync')}`);
@@ -81,7 +81,8 @@ T.check('288 GPUs: neither fits without offload at the 10 % reserve', /does not 
 const rhoB = (tr) => parseFloat(tr.cells[tr.cells.length - 1].textContent.replace(/,/g, ''));
 const fitsB = fr.filter((tr) => !/does not fit/.test(tr.cells[tr.cells.length - 1].textContent));
 const zb = fitsB.findIndex((tr) => /V-ZB/.test(tr.cells[tr.cells.length - 3].textContent));
-T.check('policy B: once V-ZB fits the rate is flat at the ceiling and above every smaller cluster\'s', zb >= 0 && fitsB.slice(zb).every((tr) => rhoB(tr) === rhoB(fitsB[zb])) && fitsB.slice(0, zb).every((tr) => rhoB(tr) < rhoB(fitsB[zb])), fitsB.map(rhoB).join(' '));
+const zbR = fitsB.slice(zb).map(rhoB);
+T.check('policy B: once V-ZB fits the rate varies only with the stage imbalance (within 1 %) and beats every smaller cluster\'s', zb >= 0 && Math.max(...zbR) / Math.min(...zbR) < 1.01 && fitsB.slice(0, zb).every((tr) => rhoB(tr) < Math.min(...zbR)), fitsB.map(rhoB).join(' '));
 const mins = [...document.querySelectorAll('.mins tbody tr')];
 T.check('min-GPUs table: four gradient × optimizer combinations × offload no/yes, each with a fit', mins.length === 8 && mins.every((tr) => /PP \d+ × EP \d+/.test(tr.cells[3].textContent) && /PP \d+ × EP \d+/.test(tr.cells[5].textContent)), mins.map((tr) => tr.textContent).join(' | '));
 T.check('… FP32/FP32, no offload: 432 · PP 6 × EP 72 · V-Min for policy A (the default), 432 for B', mins[6].cells[3].textContent === '432 · PP 6 × EP 72 × DP 1 · V-Min' && /^432 ·/.test(mins[6].cells[5].textContent), `${mins[6].cells[3].textContent} / ${mins[6].cells[5].textContent}`);

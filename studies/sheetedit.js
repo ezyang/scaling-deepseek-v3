@@ -65,8 +65,8 @@ const PAGES = {
     },
   },
   k3: {
-    knobs: { B: 'B', S: 'S', GPUs: 'GPUs', 'π<sup>sol</sup><sub>bf16</sub>': 'sol', 'π<sup>sol</sup><sub>fp8</sub>': 'sol8', 'β<sub>NV</sub>': 'NV', 'β<sub>IB</sub>': 'IB', NVL: 'NVL', PP: 'PP', EP: 'EP', 'V<sub>pp</sub>': 'Vpp', 'r<sub>res</sub>': 'rres', ovl: 'ovl', 'μ': 'mu', 'g<sub>B</sub>': 'gB', 'o<sub>B</sub>': 'oB', 'β<sub>host</sub>': 'host' },
-    counts: ['B', 'S', 'GPUs', 'NVL', 'PP', 'EP', 'Vpp', 'rres', 'ovl', 'gB', 'oB'],
+    knobs: { B: 'B', S: 'S', GPUs: 'GPUs', 'π<sup>sol</sup><sub>bf16</sub>': 'sol', 'π<sup>sol</sup><sub>fp8</sub>': 'sol8', 'β<sub>NV</sub>': 'NV', 'β<sub>IB</sub>': 'IB', NVL: 'NVL', PP: 'PP', EP: 'EP', 'V<sub>pp</sub>': 'Vpp', ovl: 'ovl', 'μ': 'mu', 'g<sub>B</sub>': 'gB', 'o<sub>B</sub>': 'oB', 'β<sub>host</sub>': 'host' },
+    counts: ['B', 'S', 'GPUs', 'NVL', 'PP', 'EP', 'Vpp', 'ovl', 'gB', 'oB'],
     zero: ['ovl', 'mu'],   // knobs that may be 0 (a 0/1 switch, a share)
     xlsx: ['kimi-k3-sheet.xlsx', 'Kimi K3 roofline'],
     rules(v, edits, pub) {
@@ -182,13 +182,13 @@ for (const tr of document.querySelectorAll('.cellsheet tr')) {
 // and FLOPs) — leaf rows, not editable, kept out of the URL (the widget's own
 // state is there); published values are the widget's default state
 const linked = new Map();
-const evalAll = (edits) => {
+const evalAll = (edits, lover = {}) => {   // lover: linked rows at other values (page sweeps), by row name
   const memo = new Map();
   const get = (name) => {
     if (memo.has(name)) return memo.get(name);
     const r = rows.get(name);
     if (!r) throw new Error(`sheetedit: no row named ${name}`);
-    const v = r.leaf ? edits[KNOBS[name]] ?? linked.get(name) ?? r.lit : r.f(get);
+    const v = r.leaf ? edits[KNOBS[name]] ?? lover[name] ?? linked.get(name) ?? r.lit : r.f(get);
     memo.set(name, v);
     return v;
   };
@@ -222,7 +222,7 @@ function save() {
   history.replaceState(null, '', p.size ? '#' + p : location.pathname + location.search);
 }
 export const current = () => evalAll(edits);
-export const withKnobs = (over) => evalAll({ ...edits, ...over });   // the sheet at other knob values (page sweeps), on top of the user's edits
+export const withKnobs = (over, lover) => evalAll({ ...edits, ...over }, lover);   // the sheet at other knob values (page sweeps), on top of the user's edits
 function render() {
   const now = current();
   for (const [name, r] of rows) {

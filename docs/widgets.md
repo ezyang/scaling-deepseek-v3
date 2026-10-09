@@ -389,7 +389,15 @@ token (forward + backward; the busiest rank amber) and blocks held per
 microbatch. Ledger: the busiest rank in d and KiB, the no-cache figure, the
 block store. Pure model `attnresPipe(P, sched, V)` (exported) follows the
 AttnRes paper §4.1 (a rank keeps every block it has seen for the microbatch);
-the roofline sheet's `r_res` default and its sweeps call it. State
+the roofline sheet's `r_res` and its sweeps call it. Chunks come from
+`k3Split(P, sched, V, S, ratio)`: contiguous cuts balancing roofline time per
+rank (MXFP8 GEMMs at the FP8 rate, the BF16 router and attention kernels at
+the BF16 rate, the LM head on the last chunk; K3 publishes no split); the
+figure draws the head cell, a per-rank time / mean row (numbers — a 2 %
+spread vanishes on a bar from zero) and the ledger's stage balance λ. The
+sheet takes `k3PipeLinked` (r_res + the slowest rank's FP8/BF16 FLOPs per
+schedule family, linked rows the page refreshes on every `dsv3-cells`) and
+rebuilds λ exactly from its own totals. State
 `#k3p:<id>={pp,s}`. The block diagram draws the store symbolically: a dashed
 "block store b₀ … bₙ₋₁ · n×7168" input into both mixes (`detail` adds the
 plain-text note n = 1 + ⌊(layer − 1)/12⌋), a write arrow from the incoming x

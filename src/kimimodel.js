@@ -71,6 +71,7 @@ export const KPARAMS = (() => {
     nKdaMoe, nMla, total, active,
   };
 })();
+const K = KPARAMS;
 
 // ---- the block as an op graph, for recompute planning ----------------------
 // Same node format and semantics as src/blockgraph.js (whose analyze() does
@@ -177,6 +178,78 @@ export function k3Stash(marks) {
   return K3_KINDS.reduce((t, [a, f, n]) => t + n * analyze(kimiGraph(a, f), marks).savedBytes, 0);
 }
 
+// ---- the pipeline split ------------------------------------------------------
+// K3's report publishes no PP degree, VP count or layer split, so the split is
+// ours: contiguous chunks cut to balance ROOFLINE TIME per rank, priced as the
+// sheet prices compute — MXFP8 GEMMs (6 × the layer's active params bar the
+// router) at the FP8 rate, the BF16 router and attention kernels (MLA's
+// softmax attention at sequence length S, KDA's chunked scan) at the BF16 rate
+// — with the LM head (one more layer's worth of GEMM) on the last chunk and the
+// embedding lookup free. Integer layers leave a residual imbalance λ = the
+// slowest rank / the mean: the sheet multiplies each schedule's compute (and
+// its bubble) by it. Times are in FP8-FLOP units: fp8 + ratio · bf16, ratio =
+// the FP8 rate over the BF16 rate (2 at the sheet's defaults).
+export function k3LayerCost(S = 8192) {
+  const nh = A.heads, dh = A.headDim, dR = A.qkRope;
+  const sdpa = nh * S * (4 * (dh + dR) + 3 * dh);            // per token, fwd + bwd: 4 QKᵀ-shaped + 3 PV-shaped passes, causal
+  const kda = 3 * nh * (6 * dh * dh + 10 * 64 * dh);          // fwd + 2× bwd
+  const layers = Array.from({ length: A.layers }, (_, l) => {
+    const mla = (l + 1) % 4 === 0 || l === A.layers - 1, dense = l < A.denseLayers;
+    const att = mla ? K.mlaAttn : K.kdaAttn, ffn = dense ? K.denseFfn : K.activeMoeFfn - K.routerWeight;
+    return { f8: 6 * (att + ffn + K.misc + (dense ? 0 : K.routerBias)), bf: (dense ? 0 : 6 * K.routerWeight) + (mla ? sdpa : kda) };
+  });
+  return { layers, head: { f8: 6 * K.embed + 6 * K.finalNorms, bf: 0 } };
+}
+export function k3Split(P, sched = 'v', V = 2, S = 8192, ratio = 2) {
+  const nc = P * (sched === 'chain' ? 1 : sched === 'v' ? 2 : V);
+  const rank = (c) => sched === 'v' && c >= P ? nc - 1 - c : c % P;
+  const { layers, head } = k3LayerCost(S);
+  const t = layers.map((x) => x.f8 + ratio * x.bf), th = head.f8 + ratio * head.bf, L = t.length;
+  const cum = [0]; for (let l = 0; l < L; l++) cum.push(cum[l] + t[l]);
+  const total = cum[L] + th;
+  const loads = (cuts) => {
+    const r = new Array(P).fill(0);
+    for (let c = 0; c < nc; c++) r[rank(c)] += cum[cuts[c + 1]] - cum[cuts[c]];
+    r[rank(nc - 1)] += th;
+    return r;
+  };
+  // start at the time quantiles, then nudge single cuts while the slowest rank improves
+  const cuts = Array.from({ length: nc + 1 }, (_, c) => {
+    if (c === 0 || c === nc) return c ? L : 0;
+    let l = 0; const want = total * c / nc;
+    while (l < L && cum[l + 1] < want) l++;
+    return want - cum[l] < cum[l + 1] - want ? l : l + 1;
+  });
+  // accept a one-layer move when the rank loads, sorted worst first, improve lexicographically
+  const key = (cs) => loads(cs).sort((a, b) => b - a);
+  const better = (a, b) => { for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return a[i] < b[i]; return false; };
+  for (let improved = true; improved;) {
+    improved = false;
+    for (let c = 1; c < nc; c++) for (const dl of [-1, 1]) {
+      const nx = cuts[c] + dl;
+      if (nx <= cuts[c - 1] || nx >= cuts[c + 1]) continue;
+      const k0 = key(cuts), old = cuts[c];
+      cuts[c] = nx;
+      if (better(key(cuts), k0)) improved = true; else cuts[c] = old;
+    }
+  }
+  const load = loads(cuts), slow = load.indexOf(Math.max(...load));
+  // the slowest rank's FLOPs per token by rate class (integers: the sheet rebuilds λ from them exactly)
+  let f8max = 0, bfmax = 0;
+  for (let c = 0; c < nc; c++) if (rank(c) === slow) for (let l = cuts[c]; l < cuts[c + 1]; l++) { f8max += layers[l].f8; bfmax += layers[l].bf; }
+  if (rank(nc - 1) === slow) { f8max += head.f8; bfmax += head.bf; }
+  return { cuts, ranks: Array.from({ length: nc }, (_, c) => rank(c)), load, slow, f8max, bfmax, lam: Math.max(...load) * P / total };
+}
+// the sheet's pipeline inputs at one layout: λ per schedule family (1F1B,
+// interleaved with V chunks, the V shapes) and r_res, the widest of the three
+export function k3PipeInputs(P, V = 2, S = 8192, ratio = 2) {
+  const fam = { chain: k3Split(P, 'chain', V, S, ratio), ilv: k3Split(P, 'ilv', V, S, ratio), v: k3Split(P, 'v', V, S, ratio) };
+  return {
+    fam, lam1: fam.chain.lam, lamI: fam.ilv.lam, lamV: fam.v.lam,
+    rres: Math.max(...Object.entries(fam).map(([s, sp]) => attnresPipe(P, s, V, sp.cuts).rres)),
+  };
+}
+
 // ---- AttnRes across a pipeline ---------------------------------------------
 // Block AttnRes (arXiv 2603.15031 §4.1, K3 §5): every mix reads the block
 // store b₀ … bₙ₋₁ (b₀ = the embedding, then one sum per finished 12-layer
@@ -184,13 +257,12 @@ export function k3Stash(marks) {
 // the receiving rank doesn't hold yet, plus the partial sum; a rank keeps
 // every block it has seen for the microbatch (cross-stage caching), so only a
 // SECOND visit — interleaved or V-shaped schedules — sends less. Backward
-// returns the same widths as gradients. Chunks split the 93 layers evenly
-// (rounded); sched = 'chain' (1F1B), 'ilv' (V chunks round-robin), 'v' (two
-// chunks per rank, out and back).
-export function attnresPipe(P, sched = 'v', V = 2) {
+// returns the same widths as gradients. Chunks are k3Split's (balanced
+// roofline time) unless cuts are given; sched = 'chain' (1F1B), 'ilv' (V
+// chunks round-robin), 'v' (two chunks per rank, out and back).
+export function attnresPipe(P, sched = 'v', V = 2, cuts = k3Split(P, sched, V).cuts) {
   const S = A.attnResBlock, L = A.layers;
-  const nc = P * (sched === 'chain' ? 1 : sched === 'v' ? 2 : V);
-  const cuts = Array.from({ length: nc + 1 }, (_, c) => Math.round(c * L / nc));
+  const nc = cuts.length - 1;
   const rank = (c) => sched === 'v' && c >= P ? nc - 1 - c : c % P;
   const reps = (l) => Math.ceil(l / S);        // blocks in the store after l layers (b₀ joins at layer 1)
   const held = new Array(P).fill(0), send = new Array(P).fill(0), tr = [];
@@ -243,6 +315,21 @@ export const K3_SHEET = [
     ['ffn_gate_up_d', 'fc1d', '2 · {Id} · {b8}'], ['situ_d', 'actd', '{Id} · {b8}'], ['ffn_down_d', 'fc2d', '{d} · 2']] },
 ];
 export const kappaName = (short) => `κ<sub>${short}</sub>`;
+// the pipeline split's sheet inputs: r_res and the slowest rank's FLOPs per schedule family
+export const PIPE_NAMES = { rres: 'r<sub>res</sub>',
+  f81: 'c<sup>max</sup><sub>8,1F1B</sub>', bf1: 'c<sup>max</sup><sub>bf,1F1B</sub>',
+  f8I: 'c<sup>max</sup><sub>8,ILV</sub>', bfI: 'c<sup>max</sup><sub>bf,ILV</sub>',
+  f8V: 'c<sup>max</sup><sub>8,V</sub>', bfV: 'c<sup>max</sup><sub>bf,V</sub>' };
+const pipeMemo = new Map();
+export function k3PipeLinked(P, V = 2, S = 8192, ratio = 2) {
+  const key = `${P},${V},${S},${ratio}`;
+  if (pipeMemo.has(key)) return pipeMemo.get(key);
+  const x = k3PipeInputs(P, V, S, ratio), N = PIPE_NAMES;
+  const out = { [N.rres]: x.rres, [N.f81]: x.fam.chain.f8max, [N.bf1]: x.fam.chain.bfmax,
+    [N.f8I]: x.fam.ilv.f8max, [N.bfI]: x.fam.ilv.bfmax, [N.f8V]: x.fam.v.f8max, [N.bfV]: x.fam.v.bfmax };
+  pipeMemo.set(key, out);
+  return out;
+}
 export const LINK_NAMES = { rhod: 'δ<sub>disp</sub>', rhoc: 'δ<sub>comb</sub>', r8A: 'c<sup>A</sup><sub>rp8</sub>', rbfA: 'c<sup>A</sup><sub>rpbf</sub>' };
 // marks → the sheet's figure-driven inputs: every κ, whether the dispatch /
 // combine replay (EP traffic), and the GEMM / kernel FLOPs the marks replay per
