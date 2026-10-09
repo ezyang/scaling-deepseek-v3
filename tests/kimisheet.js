@@ -29,7 +29,7 @@ T.check('activated params = 104,189,612,640', val('N') === '104,189,612,640', va
 // Muon: 5 quintic Newton–Schulz iterations per matrix per step (Per-Head for q/k/v), each matrix once; ≈ 1 % of compute
 T.check('Newton–Schulz FLOPs per step = 244,757,732,159,324,160; T_NS 1.07 % of policy A compute', val('CNS') === '244,757,732,159,324,160' && Math.abs(parseFloat(si('TNS')) / parseFloat(si('TAc')) / 1000 - 0.0107) < 0.0005, `${val('CNS')} ${si('TNS')} ${si('TAc')}`);
 const edv = [...document.querySelectorAll('.cellsheet td.vl.edv')].map((td) => td.parentElement.cells[0].textContent);
-T.check('editable: exactly this page\'s knobs', edv.join(' ') === 'πsolbf16 πsolfp8 βNV βIB NVL B S GPUs PP EP Vpp ovl μ gB oB βhost', edv.join(' '));
+T.check('editable: exactly this page\'s knobs', edv.join(' ') === 'πsolbf16 πsolfp8 βNV βIB NVL B S GPUs PP EP Vpp ovl μ gB oB βhost Sx CPx', edv.join(' '));
 T.check('untouched: no hash, nothing amber', location.hash === '' && !document.querySelector('.cellsheet tr.off'), location.hash);
 // the default: 432 GPUs, PP 6 × EP 72, one replica, 10 % reserve — 1F1B fits both on the line; ZB-V-Min gives A room; no ZeRO-1 traffic
 T.check('default layout: DP 1, ZeRO-1 bytes 0', val('DP') === '1' && val('Vsync') === '0', `${val('DP')} ${val('Vsync')}`);
@@ -97,4 +97,22 @@ type('oB', '6'); type('gB', '2');
 const r288 = [...document.querySelectorAll('.frontier tbody tr')].find((tr) => tr.cells[0].textContent === '288');
 T.check('g_B 2, o_B 6: the frontier re-builds, policy A now fits at 288', /PP \d+ × EP \d+/.test(r288.cells[2].textContent), r288.textContent);
 type('oB', '8'); type('gB', '4');
+
+// context parallelism (the long-context phases, a side analysis): 64k on CP 8 at the default cluster
+const cpRows = () => [...document.querySelectorAll('.cp tbody tr')];
+T.check('CP at 64k, CP 8: Ulysses 0.89 s of NVLink, latent 0.10 s + 0.73 s replay, tie at CP 8.59, bytes cross at 71.1',
+  si('Tuly') === '891 ms' && si('Tlat') === '100 ms' && si('Tlatrp') === '730 ms' && si('CPtie').startsWith('8.59') && si('CPby').startsWith('71.1'),
+  `${si('Tuly')} ${si('Tlat')} ${si('Tlatrp')} ${si('CPtie')} ${si('CPby')}`);
+T.check('CP table: the CPs dividing a 72-GPU stage, CP 8 highlighted, no Ulysses where CP does not divide 96 heads',
+  cpRows().map((tr) => tr.cells[0].textContent).join(' ') === '2 4 8 12 24 36 72' && cpRows()[2].classList.contains('hl')
+  && cpRows()[5].cells[2].textContent === '—' && /^\+/.test(cpRows()[1].cells[7].textContent) && /^−/.test(cpRows()[4].cells[7].textContent),
+  cpRows().map((tr) => tr.textContent).join(' | '));
+inp = type('CPx', '1');
+T.check('CP_x 1 refused', /at least 2/.test(T.el('.cs-err').textContent), T.el('.cs-err').textContent);
+inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+type('Sx', '1048576'); type('CPx', '24');
+T.check('S_x 1M, CP 24: the table re-highlights; MLA seconds unchanged by S, KCP shrinks with longer slices', cpRows()[4].classList.contains('hl')
+  && cpRows()[4].cells[2].textContent === '0.98 s' && cpRows()[4].cells[6].textContent === '0.16 s', cpRows()[4].textContent);
+type('Sx', '65536'); type('CPx', '8');
+T.check('CP knobs back: hash clean', location.hash === '', location.hash);
 T.done();

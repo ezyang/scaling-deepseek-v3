@@ -64,9 +64,15 @@ const PAGES = {
       return null;
     },
   },
+  mu: {
+    knobs: { 'π<sup>sol</sup><sub>bf16</sub>': 'sol', 'π<sup>sol</sup><sub>fp8</sub>': 'sol8', 'β<sub>IB</sub>': 'IB', 'β<sub>HBM</sub>': 'HBM', 'n<sub>NS</sub>': 'nNS' },
+    counts: ['nNS'],
+    xlsx: ['dsv3-muon-sheet.xlsx', 'DSv3 with Muon'],
+    rules: () => null,
+  },
   k3: {
-    knobs: { B: 'B', S: 'S', GPUs: 'GPUs', 'π<sup>sol</sup><sub>bf16</sub>': 'sol', 'π<sup>sol</sup><sub>fp8</sub>': 'sol8', 'β<sub>NV</sub>': 'NV', 'β<sub>IB</sub>': 'IB', NVL: 'NVL', PP: 'PP', EP: 'EP', 'V<sub>pp</sub>': 'Vpp', ovl: 'ovl', 'μ': 'mu', 'g<sub>B</sub>': 'gB', 'o<sub>B</sub>': 'oB', 'β<sub>host</sub>': 'host' },
-    counts: ['B', 'S', 'GPUs', 'NVL', 'PP', 'EP', 'Vpp', 'ovl', 'gB', 'oB'],
+    knobs: { B: 'B', S: 'S', GPUs: 'GPUs', 'π<sup>sol</sup><sub>bf16</sub>': 'sol', 'π<sup>sol</sup><sub>fp8</sub>': 'sol8', 'β<sub>NV</sub>': 'NV', 'β<sub>IB</sub>': 'IB', NVL: 'NVL', PP: 'PP', EP: 'EP', 'V<sub>pp</sub>': 'Vpp', ovl: 'ovl', 'μ': 'mu', 'g<sub>B</sub>': 'gB', 'o<sub>B</sub>': 'oB', 'β<sub>host</sub>': 'host', 'S<sub>x</sub>': 'Sx', 'CP<sub>x</sub>': 'CPx' },
+    counts: ['B', 'S', 'GPUs', 'NVL', 'PP', 'EP', 'Vpp', 'ovl', 'gB', 'oB', 'Sx', 'CPx'],
     zero: ['ovl', 'mu'],   // knobs that may be 0 (a 0/1 switch, a share)
     xlsx: ['kimi-k3-sheet.xlsx', 'Kimi K3 roofline'],
     rules(v, edits, pub) {
@@ -75,6 +81,7 @@ const PAGES = {
       if (G % (P * E)) return `PP · EP must divide GPUs (${G.toLocaleString('en-US')})`;
       const L = pub.get('L')?.[0];
       if (P > L) return `the model has ${L} layers`;
+      if (v('CPx')[0] < 2n) return 'CP_x must be at least 2';
       return null;
     },
   },
