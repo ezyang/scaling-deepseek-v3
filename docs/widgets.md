@@ -390,8 +390,10 @@ block store. Pure model `attnresPipe(P, sched, V)` (exported) follows the
 AttnRes paper §4.1 (a rank keeps every block it has seen for the microbatch);
 the roofline sheet's `r_res` default and its sweeps call it. State
 `#k3p:<id>={pp,s}`. The block diagram draws the store symbolically: a dashed
-"block store b₀ … bₙ₋₁ · n×7168" input into both mixes (`detail` adds
-n = 1 + ⌊(layer − 1)/12⌋), and the rail is labeled as the block's partial sum.
+"block store b₀ … bₙ₋₁ · n×7168" input into both mixes (`detail` adds the
+plain-text note n = 1 + ⌊(layer − 1)/12⌋), a write arrow from the incoming x
+into the store ("a block's first layer: x → bₙ, the sum restarts"), and the
+rail is labeled as the block's partial sum.
 
 ## `<dsv3-fsdp gpus=… gbs=… zero=… model=… hw=…>` — the FSDP sharding-degree sweep (src/fsdp.js, unlisted study)
 

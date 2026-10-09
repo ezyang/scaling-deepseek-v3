@@ -432,7 +432,15 @@ export class KimiLayer extends HTMLElement {
       S.push(`<line class="wire" x1="${x0}" y1="${yRes0 + 10}" x2="${into + 3}" y2="${yRes0 + 10}" marker-end="url(#karr)"/>`);
     };
     store(C1 + W1 + 22, 186, C1 + W1);
-    if (this.detail) micro(C1 + W1 + 22, yN1 + 2, 186, `n = 1 + ⌊(layer − 1) / ${A.attnResBlock}⌋ = 1 … ${Math.ceil(A.layers / A.attnResBlock)}`);
+    // the write: on a block's first layer the incoming partial sum (the
+    // finished block, or the embedding at layer 1) joins the store as bₙ and
+    // the sum restarts from this layer's own output
+    const wx = C1 + W1 + 22 + 93;
+    dot(SX1, yTop + 16);
+    poly([[SX1, yTop + 16], [wx, yTop + 16], [wx, yRes0]], true);
+    S.push(`<text class="tensor tidle" text-anchor="end" x="${wx - 6}" y="${yTop + 12}">a block’s first layer: x → bₙ, the sum restarts</text>`);
+    // n is an annotation on the store, not an op: plain text, no box
+    if (this.detail) S.push(`<text class="tensor tidle" x="${C1 + W1 + 31}" y="${yRes0 + 34}">n = 1 + ⌊(layer − 1) / ${A.attnResBlock}⌋ = 1 … ${Math.ceil(A.layers / A.attnResBlock)}</text>`);
     wv(SX1, yRes0 + 20, yN1);
     pill('norm1', C1, yN1, W1, `RMSNorm${pk(A.hidden)}`);
     wv(SX1, yN1 + 20, yA);
