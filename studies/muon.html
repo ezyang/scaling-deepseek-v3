@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script data-theme>document.documentElement.classList.toggle('dark', (localStorage.getItem('dsv3-theme') ?? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')) === 'dark');</script>
+  <title>DeepSeek-V3 with Muon: the optimizer on the roofline (draft)</title>
+  <meta name="robots" content="noindex">
+  <link rel="stylesheet" href="./study.css">
+  <style>
+    /* 03's static formula sheets (studies/sheetedit.js makes them live) */
+    /* 03's static formula sheets (studies/sheetedit.js makes them live) */
+    .cellsheet { max-width: 760px; box-sizing: border-box; margin: 14px 0; font: 12px system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--c-0b0b0b);
+      border: 1px solid var(--c-e1e0d9); border-radius: 6px; background: var(--c-fcfcfb); padding: 8px 12px; }
+    .cellsheet table { border-collapse: collapse; width: 100%; table-layout: fixed; }
+    .cellsheet th:nth-child(1) { width: 38px; } .cellsheet th:nth-child(2) { width: 170px; } .cellsheet th:nth-child(3) { width: 181px; }
+    .cellsheet th:nth-child(4) { width: 83px; } .cellsheet th:nth-child(5) { width: 105px; }
+    .cellsheet th { box-sizing: border-box; text-align: left; font-size: 10.5px; color: var(--c-898781); font-weight: 600; padding: 1px 10px 3px 2px; }
+    .cellsheet td { padding: 1.5px 10px 1.5px 2px; border-top: 1px solid var(--c-f0efe9); font-size: 11.5px; vertical-align: baseline; white-space: nowrap; }
+    .cellsheet th.vl, .cellsheet td.vl { text-align: right; font-variant-numeric: tabular-nums; }
+    .cellsheet td.si .d { display: inline-block; width: 1.7em; text-align: left; }
+    .cellsheet td.si .u { display: inline-block; width: 4.3em; text-align: left; white-space: pre; }
+    .cellsheet th.si .u { display: inline-block; width: calc(4.3 * 11.5px); text-align: left; white-space: pre; }
+    .cellsheet td.sc sup { display: inline-block; width: 1.35em; text-align: left; }
+    .cellsheet td:nth-child(2) { white-space: normal; }
+    .cellsheet td.nm { font: 600 11px ui-monospace, monospace; color: var(--c-2a78d6); }
+    .cellsheet td.fx { font: 11px ui-monospace, monospace; color: var(--c-52514e); white-space: normal; }
+    .cellsheet td.fx b { color: var(--c-2a78d6); font-weight: 600; }
+    .cellsheet td.fx i { font: 11.5px system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--c-898781); font-style: normal; }
+    .cellsheet td.ap { color: var(--c-898781); }
+    .cellsheet sup, .cellsheet sub { line-height: 0; font-size: 0.8em; }
+    .cellsheet tr.hl td { background: var(--c-fff8ea); font-weight: 600; }
+    .cellsheet td.fx b.ref { cursor: pointer; }
+    .cellsheet tr.sel td { background: var(--c-fff3d1); }
+    .cellsheet .cs-dl { float: right; font: inherit; color: var(--c-2a78d6); background: none; border: 0; padding: 0; cursor: pointer; }
+    .cellsheet td.vl.edv { background: var(--c-eef4fc); cursor: text; }
+    @media (hover: hover) { .cellsheet td.vl.edv:hover { background: var(--c-dcebfa); } }
+    .cellsheet tr.off td.vl, .cellsheet tr.off td.ap { color: var(--c-b05f00); }
+    [data-cellref] { cursor: pointer; border-bottom: 1px dotted var(--c-898781); }
+    [data-cellref].off { color: var(--c-b05f00); }
+    .cellsheet .cs-in { box-sizing: border-box; width: 100%; margin: -2px 0; padding: 1px 3px; text-align: right;
+      font: inherit; font-variant-numeric: tabular-nums; color: var(--c-0b0b0b); background: var(--c-ffffff);
+      border: 1px solid var(--c-2a78d6); border-radius: 3px; outline: none; }
+    .cellsheet .cs-in.bad { border-color: var(--c-d03b3b); }
+    .cs-err { position: absolute; display: none; z-index: 7; max-width: 300px; padding: 4px 8px; border-radius: 4px;
+      background: var(--c-fdf1f1); border: 1px solid var(--c-d03b3b); color: var(--c-1c1c1a);
+      font: 11.5px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+    .cs-tip b { color: var(--c-2a78d6); font-weight: 600; }
+    .cs-tip i { color: var(--c-898781); font-style: normal; }
+    .cs-tip sup, .cs-tip sub { line-height: 0; font-size: 0.8em; }
+    .cellsheet sup:has(+ sub), .cs-tip sup:has(+ sub) { display: inline-block; width: 0; vertical-align: 0.7em; }
+    /* the frontier table: one row per cluster size, the best fitting layout per policy (page script, from the sheet's formulas) */
+    .tally { width: fit-content; box-sizing: border-box; margin: 14px 0; font: 12px system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--c-0b0b0b);
+      border: 1px solid var(--c-e1e0d9); border-radius: 6px; background: var(--c-fcfcfb); padding: 8px 12px; }
+    .tally table { border-collapse: collapse; }
+    .tally th { text-align: left; font-size: 10.5px; color: var(--c-898781); font-weight: 600; padding: 1px 16px 3px 2px; }
+    .tally th.g { text-align: center; padding-right: 16px; border-bottom: 1px solid var(--c-e1e0d9); }
+    .tally td { padding: 2.5px 16px 2.5px 2px; border-top: 1px solid var(--c-f0efe9); vertical-align: baseline; }
+    .tally th.n, .tally td.n { text-align: right; font-variant-numeric: tabular-nums; }
+    .tally th:last-child, .tally td:last-child { padding-right: 2px; }
+    .tally tr.hl td { background: var(--c-fff8ea); font-weight: 600; }
+    .tally td.no { color: var(--c-898781); }
+    .tally td.cb { color: var(--c-d03b3b); }
+    .tally .lay { font: 11px ui-monospace, monospace; color: var(--c-52514e); }
+    .sheet-dl { font: inherit; color: var(--c-2a78d6); background: none; border: 0; padding: 0; cursor: pointer; }
+  </style>
+</head>
+
+<body data-sheet="mu">
+  <main>
+    <h1>DeepSeek-V3 with Muon: the optimizer on the roofline</h1>
+
+    <p class="note">DRAFT (unlisted study, an appendix to part 3). Generated from
+    ~/Dev/scaling-dsv3-refs/muon/roofline-gen.mjs — edit the generator, not this file.
+    All prose on this page is AI-drafted (marked red) and awaits a human edit pass.</p>
+
+    <p class="ai">[[AI: Part 3’s roofline never prices the optimizer step. For AdamW that is defensible: the step is a handful of elementwise operations per parameter, once per step, bound by HBM bandwidth, and at DeepSeek’s batch of <span data-cellref="D">62<span class="d">.9</span><span class="u"> M</span></span> tokens it comes to <span data-cellref="T<sup>Ad</sup><sub>el</sub>">2<span class="d">.15</span><span class="u"> ms</span></span>, <span data-cellref="δ<sub>Ad</sub>">0<span class="d">.0324</span><span class="u"> %</span></span> of the <span data-cellref="T<sub>step</sub>">6<span class="d">.64</span><span class="u"> s</span></span> step. This appendix asks what changes in a hypothetical DeepSeek-V3 trained with Muon instead, keeping everything else in part 3 fixed: the H800 cluster, the PP 8 × EP 64 DualPipeV layout, the FP8 recipe, the batch.]]</p>
+
+    <p class="ai">[[AI: Muon orthogonalizes each weight matrix’s momentum with a few Newton–Schulz iterations, and those are matrix multiplies on the tensor cores, the same kind of work part 3’s T<sup>+</sup><sub>c</sub> counts. So they belong on the roofline. The findings:]]</p>
+
+    <ol class="ai">
+      <li>[[AI: <b>Newton–Schulz is <span data-cellref="φ">0<span class="d">.234</span><span class="u"> %</span></span> of 6ND.</b> <span data-cellref="C<sub>NS</sub>">32<span class="d">.3</span><span class="u"> PFLOP</span></span> per step, almost all of it in the routed experts, whose matrices see only D · k / E tokens a step. Done once per matrix, it takes <span data-cellref="T<sup>own</sup><sub>NS</sub>">29<span class="d">.9</span><span class="u"> ms</span></span>, set by the single largest matrix rather than the average: <span data-cellref="δ<sub>own</sub>">0<span class="d">.482</span><span class="u"> %</span></span> of the step, optimizer elementwise work included.]]</li>
+      <li>[[AI: <b>Who runs it matters more than how much there is.</b> Moonlight’s Distributed Muon has every data-parallel rank orthogonalize every full matrix it holds a shard of. The non-expert matrices then run 2,048 / 8 = 256 times over, and Newton–Schulz takes <span data-cellref="T<sup>rep</sup><sub>NS</sub>">357<span class="d"></span><span class="u"> ms</span></span>, <span data-cellref="r<sub>rep</sub>">12<span class="d">.0</span><span class="u"> ×</span></span> as long: <span data-cellref="δ<sub>rep</sub>">5<span class="d">.41</span><span class="u"> %</span></span> of the step. Its extra traffic hides under compute either way.]]</li>
+      <li>[[AI: <b>Small batches make it worse.</b> Newton–Schulz runs once a step whatever the batch. At the start of DeepSeek’s batch ramp (3,072 sequences) the replicated scheme costs <span data-cellref="s<sup>rep</sup><sub>0</sub>">27<span class="d">.9</span><span class="u"> %</span></span> of compute.]]</li>
+    </ol>
+
+    <h2>What Muon updates</h2>
+
+    <p class="ai">[[AI: Muon is defined for matrices. Following Moonlight, a DeepSeek-V3-style MoE trained with Muon, every hidden-layer matrix gets Muon: the five MLA projections, the dense FFNs, the shared and routed experts, and the routers. The embedding, the output head and the RMSNorm gains stay on AdamW. The router biases of DeepSeek’s auxiliary-loss-free balancing are set by a load rule, not by gradients, so neither optimizer touches them. The matrix tally reproduces part 3’s checkpoint counts exactly: <span data-cellref="N<sub>Mu</sub>">669<span class="d"></span><span class="u"> G</span></span> of the 671B parameters go to Muon.]]</p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">d</td><td>hidden dim</td><td class="vl">7,168</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(architecture)</i></td></tr>
+    <tr><td class="nm">r<sub>q</sub></td><td>q latent dim</td><td class="vl">1,536</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(architecture)</i></td></tr>
+    <tr><td class="nm">r<sub>kv</sub></td><td>kv latent dim</td><td class="vl">512</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(architecture)</i></td></tr>
+    <tr><td class="nm">n<sub>h</sub></td><td>attention heads</td><td class="vl">128</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(architecture)</i></td></tr>
+    <tr><td class="nm">d<sub>h</sub></td><td>head dim · qk nope, v</td><td class="vl">128</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(architecture)</i></td></tr>
+    <tr><td class="nm">d<sup>R</sup><sub>h</sub></td><td>head dim · qk rope</td><td class="vl">64</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(architecture)</i></td></tr>
+    <tr><td class="nm">d<sub>ff</sub></td><td>dense FFN intermediate dim</td><td class="vl">18,432</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(architecture)</i></td></tr>
+    <tr><td class="nm">d<sub>e</sub></td><td>expert intermediate dim (routed and shared)</td><td class="vl">2,048</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(architecture)</i></td></tr>
+    <tr><td class="nm">E</td><td>routed experts per layer</td><td class="vl">256</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(architecture)</i></td></tr>
+    <tr><td class="nm">k</td><td>routed experts per token</td><td class="vl">8</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(architecture)</i></td></tr>
+    <tr><td class="nm">L<sub>moe</sub></td><td>MoE layers</td><td class="vl">58</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(architecture)</i></td></tr>
+    <tr><td class="nm">L<sub>dns</sub></td><td>dense layers</td><td class="vl">3</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(architecture)</i></td></tr>
+    <tr><td class="nm">L</td><td>layers</td><td class="vl">61</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><b>L<sub>moe</sub></b> + <b>L<sub>dns</sub></b></td></tr>
+    <tr><td class="nm">N<sub>attn</sub></td><td>attention matrix params, per layer</td><td class="vl">187,105,280</td><td class="vl sc ap">1.87 × 10<sup>8</sup></td><td class="vl si ap">187<span class="d"></span><span class="u"> M</span></td><td class="fx"><b>d</b> · <b>r<sub>q</sub></b> + <b>r<sub>q</sub></b> · <b>n<sub>h</sub></b> · (<b>d<sub>h</sub></b> + <b>d<sup>R</sup><sub>h</sub></b>) + <b>d</b> · (<b>r<sub>kv</sub></b> + <b>d<sup>R</sup><sub>h</sub></b>) + <b>r<sub>kv</sub></b> · <b>n<sub>h</sub></b> · 2 · <b>d<sub>h</sub></b> + <b>n<sub>h</sub></b> · <b>d<sub>h</sub></b> · <b>d</b> <i>(q down, q up, kv down (with the shared rope key), kv up (K and V), output)</i></td></tr>
+    <tr><td class="nm">N<sub>ne</sub></td><td>non-expert params</td><td class="vl">17,117,648,384</td><td class="vl sc ap">1.71 × 10<sup>10</sup></td><td class="vl si ap">17<span class="d">.1</span><span class="u"> G</span></td><td class="fx"><i>(part 3’s sheet: checkpoint tally, MTP module out)</i></td></tr>
+    <tr><td class="nm">N<sup>Mu</sup><sub>ne</sub></td><td>non-expert params Muon updates</td><td class="vl">15,263,268,864</td><td class="vl sc ap">1.53 × 10<sup>10</sup></td><td class="vl si ap">15<span class="d">.3</span><span class="u"> G</span></td><td class="fx"><b>L</b> · <b>N<sub>attn</sub></b> + <b>L<sub>dns</sub></b> · 3 · <b>d</b> · <b>d<sub>ff</sub></b> + <b>L<sub>moe</sub></b> · (3 · <b>d</b> · <b>d<sub>e</sub></b> + <b>d</b> · <b>E</b>) <i>(attention, dense FFNs, shared experts, routers: every hidden matrix)</i></td></tr>
+    <tr><td class="nm">N<sub>Ad</sub></td><td>params left to AdamW</td><td class="vl">1,854,379,520</td><td class="vl sc ap">1.85 × 10<sup>9</sup></td><td class="vl si ap">1<span class="d">.85</span><span class="u"> G</span></td><td class="fx"><b>N<sub>ne</sub></b> − <b>N<sup>Mu</sup><sub>ne</sub></b> <i>(embedding, output head, RMSNorm gains, as in Moonlight; plus 58 × 256 router biases, which load balancing sets without gradients)</i></td></tr>
+    <tr><td class="nm">N<sub>exp</sub></td><td>routed-expert params</td><td class="vl">653,908,770,816</td><td class="vl sc ap">6.54 × 10<sup>11</sup></td><td class="vl si ap">654<span class="d"></span><span class="u"> G</span></td><td class="fx">3 · <b>L<sub>moe</sub></b> · <b>E</b> · <b>d</b> · <b>d<sub>e</sub></b> <i>(= part 3’s sheet’s N<sub>exp</sub>)</i></td></tr>
+    <tr class="hl"><td class="nm">N<sub>Mu</sub></td><td>params Muon updates</td><td class="vl">669,172,039,680</td><td class="vl sc ap">6.69 × 10<sup>11</sup></td><td class="vl si ap">669<span class="d"></span><span class="u"> G</span></td><td class="fx"><b>N<sup>Mu</sup><sub>ne</sub></b> + <b>N<sub>exp</sub></b></td></tr>
+    </table></div>
+
+    <h2>Newton–Schulz is matmul work</h2>
+
+    <p class="ai">[[AI: Each iteration on an m × n momentum matrix (m ≤ n) forms A = X·Xᵀ (2m²n FLOPs), B = bA + cA² (2m³) and B·X (2m²n). Five iterations cost 5 · (4m²n + 2m³) per matrix per step. Training costs that matrix 6mnT, where T is the number of tokens through it, so the ratio is about (10/3) · (m / T) · (1 + m / 2n). The optimizer step is spread over the batch, as for AdamW, but against tokens per matrix rather than tokens per step. A routed expert sees D · k / E = 1/32 of the batch, so its ratio, <span data-cellref="φ<sub>e</sub>">0<span class="d">.397</span><span class="u"> %</span></span>, is about twelve times that of the attention matrices. Making experts finer at a fixed parameter count (E up, d<sub>e</sub> down) leaves m / T unchanged; only higher sparsity (E / k up at a fixed expert width) raises it.]]</p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">n<sub>NS</sub></td><td>Newton–Schulz iterations</td><td class="vl">5</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(Moonlight report, arXiv 2502.16982 §2.2, following Keller Jordan’s Muon)</i></td></tr>
+    <tr><td class="nm">F<sup>dn</sup><sub>q</sub></td><td>one q down-projection (FLOP)</td><td class="vl">374,467,461,120</td><td class="vl sc ap">3.74 × 10<sup>11</sup></td><td class="vl si ap">374<span class="d"></span><span class="u"> GFLOP</span></td><td class="fx"><b>n<sub>NS</sub></b> · (4 · <b>r<sub>q</sub></b> · <b>r<sub>q</sub></b> · <b>d</b> + 2 · <b>r<sub>q</sub></b> · <b>r<sub>q</sub></b> · <b>r<sub>q</sub></b>) <i>(m × n = 1,536 × 7,168; per iteration X·Xᵀ is 2m²n, bA + cA² is 2m³, B·X is 2m²n)</i></td></tr>
+    <tr><td class="nm">F<sup>up</sup><sub>q</sub></td><td>one q up-projection (FLOP)</td><td class="vl">1,195,879,956,480</td><td class="vl sc ap">1.20 × 10<sup>12</sup></td><td class="vl si ap">1<span class="d">.20</span><span class="u"> TFLOP</span></td><td class="fx"><b>n<sub>NS</sub></b> · (4 · <b>r<sub>q</sub></b> · <b>r<sub>q</sub></b> · <b>n<sub>h</sub></b> · (<b>d<sub>h</sub></b> + <b>d<sup>R</sup><sub>h</sub></b>) + 2 · <b>r<sub>q</sub></b> · <b>r<sub>q</sub></b> · <b>r<sub>q</sub></b>)</td></tr>
+    <tr><td class="nm">F<sup>dn</sup><sub>kv</sub></td><td>one kv down-projection (FLOP)</td><td class="vl">49,474,437,120</td><td class="vl sc ap">4.95 × 10<sup>10</sup></td><td class="vl si ap">49<span class="d">.5</span><span class="u"> GFLOP</span></td><td class="fx"><b>n<sub>NS</sub></b> · (4 · (<b>r<sub>kv</sub></b> + <b>d<sup>R</sup><sub>h</sub></b>) · (<b>r<sub>kv</sub></b> + <b>d<sup>R</sup><sub>h</sub></b>) · <b>d</b> + 2 · (<b>r<sub>kv</sub></b> + <b>d<sup>R</sup><sub>h</sub></b>) · (<b>r<sub>kv</sub></b> + <b>d<sup>R</sup><sub>h</sub></b>) · (<b>r<sub>kv</sub></b> + <b>d<sup>R</sup><sub>h</sub></b>))</td></tr>
+    <tr><td class="nm">F<sup>up</sup><sub>kv</sub></td><td>one kv up-projection (FLOP)</td><td class="vl">173,140,869,120</td><td class="vl sc ap">1.73 × 10<sup>11</sup></td><td class="vl si ap">173<span class="d"></span><span class="u"> GFLOP</span></td><td class="fx"><b>n<sub>NS</sub></b> · (4 · <b>r<sub>kv</sub></b> · <b>r<sub>kv</sub></b> · 2 · <b>n<sub>h</sub></b> · <b>d<sub>h</sub></b> + 2 · <b>r<sub>kv</sub></b> · <b>r<sub>kv</sub></b> · <b>r<sub>kv</sub></b>)</td></tr>
+    <tr><td class="nm">F<sub>o</sub></td><td>one output projection (FLOP)</td><td class="vl">20,519,206,256,640</td><td class="vl sc ap">2.05 × 10<sup>13</sup></td><td class="vl si ap">20<span class="d">.5</span><span class="u"> TFLOP</span></td><td class="fx"><b>n<sub>NS</sub></b> · (4 · <b>d</b> · <b>d</b> · <b>n<sub>h</sub></b> · <b>d<sub>h</sub></b> + 2 · <b>d</b> · <b>d</b> · <b>d</b>)</td></tr>
+    <tr><td class="nm">F<sub>ff</sub></td><td>one dense FFN matrix (FLOP)</td><td class="vl">22,623,740,231,680</td><td class="vl sc ap">2.26 × 10<sup>13</sup></td><td class="vl si ap">22<span class="d">.6</span><span class="u"> TFLOP</span></td><td class="fx"><b>n<sub>NS</sub></b> · (4 · <b>d</b> · <b>d</b> · <b>d<sub>ff</sub></b> + 2 · <b>d</b> · <b>d</b> · <b>d</b>) <i>(the largest matrix in the model)</i></td></tr>
+    <tr><td class="nm">F<sub>e</sub></td><td>one expert matrix (FLOP)</td><td class="vl">687,194,767,360</td><td class="vl sc ap">6.87 × 10<sup>11</sup></td><td class="vl si ap">687<span class="d"></span><span class="u"> GFLOP</span></td><td class="fx"><b>n<sub>NS</sub></b> · (4 · <b>d<sub>e</sub></b> · <b>d<sub>e</sub></b> · <b>d</b> + 2 · <b>d<sub>e</sub></b> · <b>d<sub>e</sub></b> · <b>d<sub>e</sub></b>)</td></tr>
+    <tr><td class="nm">F<sub>r</sub></td><td>one router (FLOP)</td><td class="vl">9,563,013,120</td><td class="vl sc ap">9.56 × 10<sup>9</sup></td><td class="vl si ap">9<span class="d">.56</span><span class="u"> GFLOP</span></td><td class="fx"><b>n<sub>NS</sub></b> · (4 · <b>E</b> · <b>E</b> · <b>d</b> + 2 · <b>E</b> · <b>E</b> · <b>E</b>)</td></tr>
+    <tr><td class="nm">C<sup>NS</sup><sub>ne</sub></td><td>Newton–Schulz FLOPs per step, non-expert</td><td class="vl">1,684,782,514,176,000</td><td class="vl sc ap">1.68 × 10<sup>15</sup></td><td class="vl si ap">1<span class="d">.68</span><span class="u"> PFLOP</span></td><td class="fx"><b>L</b> · (<b>F<sup>dn</sup><sub>q</sub></b> + <b>F<sup>up</sup><sub>q</sub></b> + <b>F<sup>dn</sup><sub>kv</sub></b> + <b>F<sup>up</sup><sub>kv</sub></b> + <b>F<sub>o</sub></b>) + <b>L<sub>dns</sub></b> · 3 · <b>F<sub>ff</sub></b> + <b>L<sub>moe</sub></b> · (3 · <b>F<sub>e</sub></b> + <b>F<sub>r</sub></b>)</td></tr>
+    <tr><td class="nm">C<sup>NS</sup><sub>exp</sub></td><td>Newton–Schulz FLOPs per step, routed experts</td><td class="vl">30,610,403,717,283,840</td><td class="vl sc ap">3.06 × 10<sup>16</sup></td><td class="vl si ap">30<span class="d">.6</span><span class="u"> PFLOP</span></td><td class="fx">3 · <b>L<sub>moe</sub></b> · <b>E</b> · <b>F<sub>e</sub></b> <i>(each expert’s three matrices separately)</i></td></tr>
+    <tr class="hl"><td class="nm">C<sub>NS</sub></td><td>Newton–Schulz FLOPs per step</td><td class="vl">32,295,186,231,459,840</td><td class="vl sc ap">3.23 × 10<sup>16</sup></td><td class="vl si ap">32<span class="d">.3</span><span class="u"> PFLOP</span></td><td class="fx"><b>C<sup>NS</sup><sub>ne</sub></b> + <b>C<sup>NS</sup><sub>exp</sub></b></td></tr>
+    <tr><td class="nm">B</td><td>sequences per step</td><td class="vl">15,360</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(part 3’s sheet)</i></td></tr>
+    <tr><td class="nm">S</td><td>tokens per sequence</td><td class="vl">4,096</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(part 3’s sheet)</i></td></tr>
+    <tr><td class="nm">D</td><td>tokens per step</td><td class="vl">62,914,560</td><td class="vl sc ap">6.29 × 10<sup>7</sup></td><td class="vl si ap">62<span class="d">.9</span><span class="u"> M</span></td><td class="fx"><b>B</b> · <b>S</b></td></tr>
+    <tr><td class="nm">C</td><td>FLOPs per step, 6ND</td><td class="vl">13,825,708,010,263,019,520</td><td class="vl sc ap">1.38 × 10<sup>19</sup></td><td class="vl si ap">13<span class="d">.8</span><span class="u"> EFLOP</span></td><td class="fx"><i>(part 3’s sheet: 6 · N · D)</i></td></tr>
+    <tr class="hl"><td class="nm">φ</td><td>Newton–Schulz over 6ND</td><td class="vl"></td><td class="vl sc ap">2.34 × 10<sup>−3</sup></td><td class="vl si ap">0<span class="d">.234</span><span class="u"> %</span></td><td class="fx"><b>C<sub>NS</sub></b> / <b>C</b></td></tr>
+    <tr><td class="nm">φ<sub>e</sub></td><td>Newton–Schulz over training, one routed-expert matrix</td><td class="vl"></td><td class="vl sc ap">3.97 × 10<sup>−3</sup></td><td class="vl si ap">0<span class="d">.397</span><span class="u"> %</span></td><td class="fx"><b>F<sub>e</sub></b> / (6 · <b>d</b> · <b>d<sub>e</sub></b> · <b>D</b> · <b>k</b> / <b>E</b>) <i>(the matrix sees D · k / E tokens a step: ≈ (10/3) · (m / T) · (1 + m / 2n))</i></td></tr>
+    </table></div>
+
+    <h2>Who runs Newton–Schulz</h2>
+
+    <p class="ai">[[AI: ZeRO-1 shards the optimizer state as one flat buffer, so a matrix’s momentum is spread over its data-parallel group: the 256 GPUs of a pipeline stage for a non-expert matrix, the 2,048 / (64 · 8) = 4 replicas of an expert slice for a routed one. Newton–Schulz needs the whole matrix. Two published schemes put it together differently.]]</p>
+
+    <ul class="ai">
+      <li>[[AI: <b>Replicated</b> (Moonlight’s Distributed Muon, Algorithm 1): every rank all-gathers the momentum of every matrix it holds a shard of, runs Newton–Schulz on the full matrix, and keeps its own slice of the result. Simple, but each non-expert matrix is orthogonalized 256 times and each expert matrix 4 times.]]</li>
+      <li>[[AI: <b>Each matrix once</b> (Kimi K3’s P2P scheme, K3 report §5.2.2): each matrix has an owner, which fetches the other shards, orthogonalizes, and sends the slices back. The FLOPs are <span data-cellref="C<sub>NS</sub>">32<span class="d">.3</span><span class="u"> PFLOP</span></span> spread over the cluster, except that a matrix can’t be split: the dense FFN matrices (<span data-cellref="F<sub>ff</sub>">22<span class="d">.6</span><span class="u"> TFLOP</span></span> each) take longer than the per-GPU average, so they set the time.]]</li>
+    </ul>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">π<sup>sol</sup><sub>bf16</sub></td><td>BF16 GEMM, measured (FLOP/s)</td><td class="vl">757,700,000,000,000</td><td class="vl sc ap">7.58 × 10<sup>14</sup></td><td class="vl si ap">758<span class="d"></span><span class="u"> TFLOP/s</span></td><td class="fx"><i>(part 3’s sheet: Smol, H100, torch.matmul, best of 5; Newton–Schulz runs in BF16 (Moonlight report, arXiv 2502.16982 §2.3))</i></td></tr>
+    <tr><td class="nm">GPUs</td><td>GPUs in the cluster</td><td class="vl">2,048</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(part 3’s sheet)</i></td></tr>
+    <tr><td class="nm">PP</td><td>pipeline ranks</td><td class="vl">8</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(part 3’s sheet: the DualPipeV layout)</i></td></tr>
+    <tr><td class="nm">EP</td><td>expert parallelism</td><td class="vl">64</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(part 3’s sheet)</i></td></tr>
+    <tr class="hl"><td class="nm">T<sup>own</sup><sub>NS</sub></td><td>Newton–Schulz time, each matrix once (s)</td><td class="vl"></td><td class="vl sc ap">2.99 × 10<sup>−2</sup></td><td class="vl si ap">29<span class="d">.9</span><span class="u"> ms</span></td><td class="fx">max(<b>C<sub>NS</sub></b> / <b>GPUs</b>, max(<b>F<sub>o</sub></b>, <b>F<sub>ff</sub></b>)) / <b>π<sup>sol</sup><sub>bf16</sub></b> <i>(spread evenly over every GPU, but a matrix can’t be split: no GPU finishes before the largest one does)</i></td></tr>
+    <tr><td class="nm">T<sup>rep</sup><sub>ne</sub></td><td>of which non-expert, replicated (s)</td><td class="vl"></td><td class="vl sc ap">2.78 × 10<sup>−1</sup></td><td class="vl si ap">278<span class="d"></span><span class="u"> ms</span></td><td class="fx"><b>C<sup>NS</sup><sub>ne</sub></b> / <b>PP</b> / <b>π<sup>sol</sup><sub>bf16</sub></b> <i>(every GPU of a stage orthogonalizes all of the stage’s non-expert matrices)</i></td></tr>
+    <tr class="hl"><td class="nm">T<sup>rep</sup><sub>NS</sub></td><td>Newton–Schulz time, replicated over DP (s)</td><td class="vl"></td><td class="vl sc ap">3.57 × 10<sup>−1</sup></td><td class="vl si ap">357<span class="d"></span><span class="u"> ms</span></td><td class="fx"><b>T<sup>rep</sup><sub>ne</sub></b> + <b>C<sup>NS</sup><sub>exp</sub></b> / (<b>EP</b> · <b>PP</b>) / <b>π<sup>sol</sup><sub>bf16</sub></b> <i>(Moonlight’s Distributed Muon: each GPU gathers and orthogonalizes every full matrix it holds a shard of)</i></td></tr>
+    <tr><td class="nm">r<sub>rep</sub></td><td>replicated over each-matrix-once</td><td class="vl"></td><td class="vl sc ap">1.20 × 10<sup>1</sup></td><td class="vl si ap">12<span class="d">.0</span><span class="u"> ×</span></td><td class="fx"><b>T<sup>rep</sup><sub>NS</sub></b> / <b>T<sup>own</sup><sub>NS</sub></b></td></tr>
+    </table></div>
+
+    <p class="ai">[[AI: The replicated scheme’s cost is <span data-cellref="T<sup>rep</sup><sub>ne</sub>">278<span class="d"></span><span class="u"> ms</span></span> of non-expert matrices on every GPU. That part is the attention output projections and the dense FFNs, whose m is the full hidden dimension: under replication the expensive matrices are the dense ones, not the experts.]]</p>
+
+    <h2>The extra traffic hides</h2>
+
+    <p class="ai">[[AI: Both schemes add traffic to part 3’s ZeRO-1 collectives. The replicated scheme’s gather repeats the all-gather’s volume at BF16 for Muon’s matrices; Moonlight puts Distributed Muon’s communication at 1 to 1.25 times AdamW’s. The each-matrix-once scheme moves a node’s owned matrices in and their updates back out. Either way InfiniBand stays under compute, so at speed of light none of it reaches the step time.]]</p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">NVL</td><td>GPUs per node</td><td class="vl">8</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(part 3’s sheet)</i></td></tr>
+    <tr><td class="nm">Nodes</td><td>nodes in the cluster</td><td class="vl">256</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><b>GPUs</b> / <b>NVL</b></td></tr>
+    <tr><td class="nm">β<sub>IB</sub></td><td>IB bandwidth into a GPU (B/s)</td><td class="vl">50,000,000,000</td><td class="vl sc ap">5.00 × 10<sup>10</sup></td><td class="vl si ap">50<span class="d"></span><span class="u"> GB/s</span></td><td class="fx"><i>(part 3’s sheet)</i></td></tr>
+    <tr><td class="nm">β<sub>node</sub></td><td>IB bandwidth into a node (B/s)</td><td class="vl">400,000,000,000</td><td class="vl sc ap">4.00 × 10<sup>11</sup></td><td class="vl si ap">400<span class="d"></span><span class="u"> GB/s</span></td><td class="fx"><b>NVL</b> · <b>β<sub>IB</sub></b></td></tr>
+    <tr><td class="nm">Λ<sup>PP</sup><sub>ne</sub></td><td>non-expert params a node receives</td><td class="vl">2,072,840,234</td><td class="vl sc ap">2.07 × 10<sup>9</sup></td><td class="vl si ap">2<span class="d">.07</span><span class="u"> G</span></td><td class="fx"><b>N<sub>ne</sub></b> / <b>PP</b> − <b>N<sub>ne</sub></b> / <b>Nodes</b> <i>(part 3’s sheet)</i></td></tr>
+    <tr><td class="nm">Λ<sup>PP</sup><sub>exp</sub></td><td>expert params a node receives</td><td class="vl">7,662,993,408</td><td class="vl sc ap">7.66 × 10<sup>9</sup></td><td class="vl si ap">7<span class="d">.66</span><span class="u"> G</span></td><td class="fx"><b>N<sub>exp</sub></b> · <b>NVL</b> / (<b>EP</b> · <b>PP</b>) − <b>N<sub>exp</sub></b> / <b>Nodes</b> <i>(part 3’s sheet)</i></td></tr>
+    <tr><td class="nm">T<sup>PP</sup><sub>sync</sub></td><td>ZeRO-1 time per step (s)</td><td class="vl"></td><td class="vl sc ap">1.46 × 10<sup>−1</sup></td><td class="vl si ap">146<span class="d"></span><span class="u"> ms</span></td><td class="fx">6 · (<b>Λ<sup>PP</sup><sub>ne</sub></b> + <b>Λ<sup>PP</sup><sub>exp</sub></b>) / <b>β<sub>node</sub></b> <i>(part 3’s sheet: BF16 all-gather + FP32 reduce-scatter)</i></td></tr>
+    <tr><td class="nm">T<sup>rep</sup><sub>gat</sub></td><td>replicated: DP gather of the momentum, BF16 (s)</td><td class="vl"></td><td class="vl sc ap">4.76 × 10<sup>−2</sup></td><td class="vl si ap">47<span class="d">.6</span><span class="u"> ms</span></td><td class="fx">2 · (<b>Λ<sup>PP</sup><sub>ne</sub></b> · <b>N<sup>Mu</sup><sub>ne</sub></b> / <b>N<sub>ne</sub></b> + <b>Λ<sup>PP</sup><sub>exp</sub></b>) / <b>β<sub>node</sub></b> <i>(Moonlight report, arXiv 2502.16982 Algorithm 1, line 6: the all-gather’s volume again, Muon’s matrices only, at 2 B)</i></td></tr>
+    <tr><td class="nm">T<sup>own</sup><sub>p2p</sub></td><td>each matrix once: fetch shards, return updates (s)</td><td class="vl"></td><td class="vl sc ap">1.97 × 10<sup>−2</sup></td><td class="vl si ap">19<span class="d">.7</span><span class="u"> ms</span></td><td class="fx">2 · 2 · (<b>N<sup>Mu</sup><sub>ne</sub></b> / <b>Nodes</b> · (1 − <b>PP</b> / <b>Nodes</b>) + <b>N<sub>exp</sub></b> / <b>Nodes</b> · (1 − <b>EP</b> · <b>PP</b> / <b>GPUs</b>)) / <b>β<sub>node</sub></b> <i>(K3 report §5.2.2’s P2P scheme: a node owns 1 / Nodes of the matrices, holds 1/32 of a non-expert one and 1/4 of an expert one already, fetches the rest in BF16 and sends the orthogonalized shards back)</i></td></tr>
+    <tr><td class="nm">V<sup>+</sup><sub>EP</sub></td><td>EP IB bytes per GPU·step</td><td class="vl">270,998,568,960</td><td class="vl sc ap">2.71 × 10<sup>11</sup></td><td class="vl si ap">271<span class="d"></span><span class="u"> GB</span></td><td class="fx"><i>(part 3’s sheet)</i></td></tr>
+    <tr><td class="nm">V<sub>PP</sub></td><td>PP IB bytes per GPU·step</td><td class="vl">14,092,861,440</td><td class="vl sc ap">1.41 × 10<sup>10</sup></td><td class="vl si ap">14<span class="d">.1</span><span class="u"> GB</span></td><td class="fx"><i>(part 3’s sheet)</i></td></tr>
+    <tr><td class="nm">T<sup>+</sup><sub>EP</sub></td><td>EP time per step (s)</td><td class="vl"></td><td class="vl sc ap">5.42 × 10<sup>0</sup></td><td class="vl si ap">5<span class="d">.42</span><span class="u"> s</span></td><td class="fx"><b>V<sup>+</sup><sub>EP</sub></b> / <b>β<sub>IB</sub></b></td></tr>
+    <tr><td class="nm">T<sub>PP</sub></td><td>PP time per step (s)</td><td class="vl"></td><td class="vl sc ap">2.82 × 10<sup>−1</sup></td><td class="vl si ap">282<span class="d"></span><span class="u"> ms</span></td><td class="fx"><b>V<sub>PP</sub></b> / <b>β<sub>IB</sub></b></td></tr>
+    <tr><td class="nm">T<sub>IB</sub></td><td>IB time per step, AdamW (s)</td><td class="vl"></td><td class="vl sc ap">5.85 × 10<sup>0</sup></td><td class="vl si ap">5<span class="d">.85</span><span class="u"> s</span></td><td class="fx"><b>T<sup>+</sup><sub>EP</sub></b> + <b>T<sub>PP</sub></b> + <b>T<sup>PP</sup><sub>sync</sub></b> <i>(part 3’s sheet)</i></td></tr>
+    <tr class="hl"><td class="nm">T<sup>rep</sup><sub>IB</sub></td><td>IB time per step, replicated Muon (s)</td><td class="vl"></td><td class="vl sc ap">5.90 × 10<sup>0</sup></td><td class="vl si ap">5<span class="d">.90</span><span class="u"> s</span></td><td class="fx"><b>T<sub>IB</sub></b> + <b>T<sup>rep</sup><sub>gat</sub></b> <i>(under T<sup>+</sup><sub>c</sub>: still hidden)</i></td></tr>
+    <tr class="hl"><td class="nm">T<sup>own</sup><sub>IB</sub></td><td>IB time per step, each matrix once (s)</td><td class="vl"></td><td class="vl sc ap">5.87 × 10<sup>0</sup></td><td class="vl si ap">5<span class="d">.87</span><span class="u"> s</span></td><td class="fx"><b>T<sub>IB</sub></b> + <b>T<sup>own</sup><sub>p2p</sub></b></td></tr>
+    </table></div>
+
+    <h2>The elementwise part</h2>
+
+    <p class="ai">[[AI: Outside Newton–Schulz, Muon’s step is elementwise like AdamW’s: momentum update, Nesterov input, weight decay and the master update. Counted in HBM bytes per parameter under DeepSeek’s dtypes, the two come out equal, and part 3’s omission is <span data-cellref="T<sup>Ad</sup><sub>el</sub>">2<span class="d">.15</span><span class="u"> ms</span></span> per step either way.]]</p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">β<sub>HBM</sub></td><td>HBM bandwidth (B/s)</td><td class="vl">3,350,000,000,000</td><td class="vl sc ap">3.35 × 10<sup>12</sup></td><td class="vl si ap">3<span class="d">.35</span><span class="u"> TB/s</span></td><td class="fx"><i>(hardware spec: H800, as H100 SXM)</i></td></tr>
+    <tr><td class="nm">b<sub>Ad</sub></td><td>AdamW HBM bytes per param</td><td class="vl">22</td><td class="vl sc ap">2.20 × 10<sup>1</sup></td><td class="vl si ap">22<span class="d"></span><span class="u"> B</span></td><td class="fx"><i>(read the FP32 gradient 4; read and write the FP32 master 8 and the BF16 moments 4 + 4; write the BF16 weight 2)</i></td></tr>
+    <tr><td class="nm">b<sub>Mu</sub></td><td>Muon HBM bytes per param, outside Newton–Schulz</td><td class="vl">22</td><td class="vl sc ap">2.20 × 10<sup>1</sup></td><td class="vl si ap">22<span class="d"></span><span class="u"> B</span></td><td class="fx"><i>(read the FP32 gradient 4; read and write the BF16 momentum 4; write the BF16 Nesterov input 2; read the BF16 update 2; read and write the FP32 master 8; write the BF16 weight 2)</i></td></tr>
+    <tr class="hl"><td class="nm">T<sup>Ad</sup><sub>el</sub></td><td>elementwise optimizer time, AdamW (s)</td><td class="vl"></td><td class="vl sc ap">2.15 × 10<sup>−3</sup></td><td class="vl si ap">2<span class="d">.15</span><span class="u"> ms</span></td><td class="fx"><b>b<sub>Ad</sub></b> · (<b>N<sub>ne</sub></b> + <b>N<sub>exp</sub></b>) / (<b>GPUs</b> · <b>β<sub>HBM</sub></b>) <i>(ZeRO-1: each GPU updates 1 / GPUs of every parameter)</i></td></tr>
+    <tr><td class="nm">T<sup>Mu</sup><sub>el</sub></td><td>elementwise optimizer time, Muon (s)</td><td class="vl"></td><td class="vl sc ap">2.15 × 10<sup>−3</sup></td><td class="vl si ap">2<span class="d">.15</span><span class="u"> ms</span></td><td class="fx">(<b>b<sub>Ad</sub></b> · <b>N<sub>Ad</sub></b> + <b>b<sub>Mu</sub></b> · <b>N<sub>Mu</sub></b>) / (<b>GPUs</b> · <b>β<sub>HBM</sub></b>)</td></tr>
+    </table></div>
+
+    <h2>Putting it together</h2>
+
+    <p class="ai">[[AI: The optimizer step runs after the pipeline drains, so it adds to part 3’s step time without being scaled by the bubble. The optimizer as a whole costs <span data-cellref="δ<sub>Ad</sub>">0<span class="d">.0324</span><span class="u"> %</span></span> of the step with AdamW, <span data-cellref="δ<sub>own</sub>">0<span class="d">.482</span><span class="u"> %</span></span> with Muon run once per matrix, and <span data-cellref="δ<sub>rep</sub>">5<span class="d">.41</span><span class="u"> %</span></span> with Muon replicated.]]</p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">π<sup>sol</sup><sub>fp8</sub></td><td>FP8 GEMM, measured (FLOP/s)</td><td class="vl">1,456,600,000,000,000</td><td class="vl sc ap">1.46 × 10<sup>15</sup></td><td class="vl si ap">1<span class="d">.46</span><span class="u"> PFLOP/s</span></td><td class="fx"><i>(part 3’s sheet)</i></td></tr>
+    <tr><td class="nm">C<sub>bf16</sub></td><td>BF16 GEMM FLOPs inside 6ND</td><td class="vl">389,985,779,255,869,440</td><td class="vl sc ap">3.90 × 10<sup>17</sup></td><td class="vl si ap">390<span class="d"></span><span class="u"> PFLOP</span></td><td class="fx"><i>(part 3’s sheet)</i></td></tr>
+    <tr><td class="nm">C<sub>fp8</sub></td><td>FP8 GEMM FLOPs inside 6ND</td><td class="vl">13,435,722,231,007,150,080</td><td class="vl sc ap">1.34 × 10<sup>19</sup></td><td class="vl si ap">13<span class="d">.4</span><span class="u"> EFLOP</span></td><td class="fx"><b>C</b> − <b>C<sub>bf16</sub></b></td></tr>
+    <tr><td class="nm">C<sub>attn</sub></td><td>attention FLOPs per step</td><td class="vl">2,317,946,433,212,252,160</td><td class="vl sc ap">2.32 × 10<sup>18</sup></td><td class="vl si ap">2<span class="d">.32</span><span class="u"> EFLOP</span></td><td class="fx"><i>(part 3’s sheet)</i></td></tr>
+    <tr><td class="nm">C<sub>rc</sub></td><td>recompute FLOPs per step</td><td class="vl">418,518,105,996,656,640</td><td class="vl sc ap">4.19 × 10<sup>17</sup></td><td class="vl si ap">419<span class="d"></span><span class="u"> PFLOP</span></td><td class="fx"><i>(part 3’s sheet)</i></td></tr>
+    <tr><td class="nm">T<sub>fp8</sub></td><td>FP8 GEMM time (s)</td><td class="vl"></td><td class="vl sc ap">4.50 × 10<sup>0</sup></td><td class="vl si ap">4<span class="d">.50</span><span class="u"> s</span></td><td class="fx"><b>C<sub>fp8</sub></b> / (<b>GPUs</b> · <b>π<sup>sol</sup><sub>fp8</sub></b>)</td></tr>
+    <tr><td class="nm">T<sub>bf16</sub></td><td>BF16 GEMM time, head + routers (s)</td><td class="vl"></td><td class="vl sc ap">2.51 × 10<sup>−1</sup></td><td class="vl si ap">251<span class="d"></span><span class="u"> ms</span></td><td class="fx"><b>C<sub>bf16</sub></b> / (<b>GPUs</b> · <b>π<sup>sol</sup><sub>bf16</sub></b>)</td></tr>
+    <tr><td class="nm">T<sub>attn</sub></td><td>attention core time, BF16 (s)</td><td class="vl"></td><td class="vl sc ap">1.49 × 10<sup>0</sup></td><td class="vl si ap">1<span class="d">.49</span><span class="u"> s</span></td><td class="fx"><b>C<sub>attn</sub></b> / (<b>GPUs</b> · <b>π<sup>sol</sup><sub>bf16</sub></b>)</td></tr>
+    <tr><td class="nm">T<sub>rc</sub></td><td>recompute time, FP8 (s)</td><td class="vl"></td><td class="vl sc ap">1.40 × 10<sup>−1</sup></td><td class="vl si ap">140<span class="d"></span><span class="u"> ms</span></td><td class="fx"><b>C<sub>rc</sub></b> / (<b>GPUs</b> · <b>π<sup>sol</sup><sub>fp8</sub></b>)</td></tr>
+    <tr><td class="nm">T<sup>+</sup><sub>c</sub></td><td>step time, all corrections (s)</td><td class="vl"></td><td class="vl sc ap">6.39 × 10<sup>0</sup></td><td class="vl si ap">6<span class="d">.39</span><span class="u"> s</span></td><td class="fx"><b>T<sub>fp8</sub></b> + <b>T<sub>bf16</sub></b> + <b>T<sub>attn</sub></b> + <b>T<sub>rc</sub></b> <i>(part 3’s sheet)</i></td></tr>
+    <tr><td class="nm">s<sub>GPU</sub></td><td>chunks per GPU</td><td class="vl">2</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(part 3’s sheet: DualPipeV)</i></td></tr>
+    <tr><td class="nm">m</td><td>microbatches per replica·step</td><td class="vl">60</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(part 3’s sheet)</i></td></tr>
+    <tr><td class="nm">b<sub>Dual</sub></td><td>DualPipeV bubble, share of compute</td><td class="vl"></td><td class="vl sc ap">3.89 × 10<sup>−2</sup></td><td class="vl si ap">3<span class="d">.89</span><span class="u"> %</span></td><td class="fx">(<b>PP</b> − 1) · 2 / (<b>s<sub>GPU</sub></b> · <b>m</b> · 3) <i>(part 3’s sheet’s b<sub>Dual</sub> with B = 2F, W = F)</i></td></tr>
+    <tr><td class="nm">T<sub>Dual</sub></td><td>DualPipeV bubble time per step (s)</td><td class="vl"></td><td class="vl sc ap">2.48 × 10<sup>−1</sup></td><td class="vl si ap">248<span class="d"></span><span class="u"> ms</span></td><td class="fx"><b>T<sup>+</sup><sub>c</sub></b> · <b>b<sub>Dual</sub></b></td></tr>
+    <tr><td class="nm">T<sub>step</sub></td><td>step time at speed of light (s)</td><td class="vl"></td><td class="vl sc ap">6.64 × 10<sup>0</sup></td><td class="vl si ap">6<span class="d">.64</span><span class="u"> s</span></td><td class="fx"><b>T<sup>+</sup><sub>c</sub></b> + <b>T<sub>Dual</sub></b> <i>(part 3’s sheet: compute plus the bubble, no optimizer)</i></td></tr>
+    <tr><td class="nm">T<sup>Ad</sup><sub>step</sub></td><td>step time, AdamW’s elementwise step priced (s)</td><td class="vl"></td><td class="vl sc ap">6.64 × 10<sup>0</sup></td><td class="vl si ap">6<span class="d">.64</span><span class="u"> s</span></td><td class="fx"><b>T<sub>step</sub></b> + <b>T<sup>Ad</sup><sub>el</sub></b> <i>(the optimizer runs after the pipeline drains, outside the bubble)</i></td></tr>
+    <tr><td class="nm">T<sup>own</sup><sub>step</sub></td><td>step time, Muon, each matrix once (s)</td><td class="vl"></td><td class="vl sc ap">6.67 × 10<sup>0</sup></td><td class="vl si ap">6<span class="d">.67</span><span class="u"> s</span></td><td class="fx"><b>T<sub>step</sub></b> + <b>T<sup>Mu</sup><sub>el</sub></b> + <b>T<sup>own</sup><sub>NS</sub></b></td></tr>
+    <tr><td class="nm">T<sup>rep</sup><sub>step</sub></td><td>step time, Muon replicated over DP (s)</td><td class="vl"></td><td class="vl sc ap">7.00 × 10<sup>0</sup></td><td class="vl si ap">7<span class="d">.00</span><span class="u"> s</span></td><td class="fx"><b>T<sub>step</sub></b> + <b>T<sup>Mu</sup><sub>el</sub></b> + <b>T<sup>rep</sup><sub>NS</sub></b></td></tr>
+    <tr class="hl"><td class="nm">δ<sub>Ad</sub></td><td>AdamW’s optimizer, share of the step</td><td class="vl"></td><td class="vl sc ap">3.24 × 10<sup>−4</sup></td><td class="vl si ap">0<span class="d">.0324</span><span class="u"> %</span></td><td class="fx">(<b>T<sup>Ad</sup><sub>step</sub></b> − <b>T<sub>step</sub></b>) / <b>T<sub>step</sub></b></td></tr>
+    <tr class="hl"><td class="nm">δ<sub>own</sub></td><td>Muon’s optimizer, each matrix once, share of the step</td><td class="vl"></td><td class="vl sc ap">4.82 × 10<sup>−3</sup></td><td class="vl si ap">0<span class="d">.482</span><span class="u"> %</span></td><td class="fx">(<b>T<sup>own</sup><sub>step</sub></b> − <b>T<sub>step</sub></b>) / <b>T<sub>step</sub></b></td></tr>
+    <tr class="hl"><td class="nm">δ<sub>rep</sub></td><td>Muon’s optimizer, replicated, share of the step</td><td class="vl"></td><td class="vl sc ap">5.41 × 10<sup>−2</sup></td><td class="vl si ap">5<span class="d">.41</span><span class="u"> %</span></td><td class="fx">(<b>T<sup>rep</sup><sub>step</sub></b> − <b>T<sub>step</sub></b>) / <b>T<sub>step</sub></b></td></tr>
+    </table></div>
+
+    <h2>Where it bites: small batches</h2>
+
+    <p class="ai">[[AI: Everything else in part 3 scales with D; the optimizer doesn’t. DeepSeek ramped its batch from 3,072 to 15,360 sequences over the first 469B tokens, and at the low end Newton–Schulz costs <span data-cellref="s<sup>own</sup><sub>0</sub>">2<span class="d">.34</span><span class="u"> %</span></span> of compute once per matrix, <span data-cellref="s<sup>rep</sup><sub>0</sub>">27<span class="d">.9</span><span class="u"> %</span></span> replicated. The same holds for any smaller-batch run, such as the proxy models of a scaling ladder.]]</p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">B<sub>0</sub></td><td>sequences per step at the start of the batch ramp</td><td class="vl">3,072</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(DeepSeek-V3 report §4.2: 3,072 → 15,360 over the first 469B tokens)</i></td></tr>
+    <tr><td class="nm">T<sup>+</sup><sub>c,0</sub></td><td>step compute at B<sub>0</sub> (s)</td><td class="vl"></td><td class="vl sc ap">1.28 × 10<sup>0</sup></td><td class="vl si ap">1<span class="d">.28</span><span class="u"> s</span></td><td class="fx"><b>T<sup>+</sup><sub>c</sub></b> · <b>B<sub>0</sub></b> / <b>B</b> <i>(every term of T<sup>+</sup><sub>c</sub> scales with D)</i></td></tr>
+    <tr class="hl"><td class="nm">s<sup>own</sup><sub>0</sub></td><td>Newton–Schulz at B<sub>0</sub>, each matrix once, share of compute</td><td class="vl"></td><td class="vl sc ap">2.34 × 10<sup>−2</sup></td><td class="vl si ap">2<span class="d">.34</span><span class="u"> %</span></td><td class="fx"><b>T<sup>own</sup><sub>NS</sub></b> / <b>T<sup>+</sup><sub>c,0</sub></b> <i>(Newton–Schulz runs once a step, whatever the batch)</i></td></tr>
+    <tr class="hl"><td class="nm">s<sup>rep</sup><sub>0</sub></td><td>Newton–Schulz at B<sub>0</sub>, replicated, share of compute</td><td class="vl"></td><td class="vl sc ap">2.79 × 10<sup>−1</sup></td><td class="vl si ap">27<span class="d">.9</span><span class="u"> %</span></td><td class="fx"><b>T<sup>rep</sup><sub>NS</sub></b> / <b>T<sup>+</sup><sub>c,0</sub></b></td></tr>
+    </table></div>
+
+    <h2>Memory</h2>
+
+    <p class="ai">[[AI: One momentum buffer instead of two saves 2 B per Muon parameter of sharded state, 0.61 GiB per GPU. The replicated scheme gives that back and more if it gathers all at once: a GPU would hold every full matrix it has a shard of, 5.93 GiB in BF16, against 18.26 GiB free at part 2’s endpoint. Gathering one matrix at a time bounds it by the largest, 0.25 GiB.]]</p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">o<sub>Ad</sub></td><td>AdamW optimizer bytes per param</td><td class="vl">8</td><td class="vl sc ap">8.00 × 10<sup>0</sup></td><td class="vl si ap">8<span class="d"></span><span class="u"> B</span></td><td class="fx"><i>(DeepSeek’s recipe: FP32 master 4, BF16 moments 2 + 2)</i></td></tr>
+    <tr><td class="nm">o<sub>Mu</sub></td><td>Muon optimizer bytes per param</td><td class="vl">6</td><td class="vl sc ap">6.00 × 10<sup>0</sup></td><td class="vl si ap">6<span class="d"></span><span class="u"> B</span></td><td class="fx"><i>(FP32 master 4, one momentum, kept in BF16 like DeepSeek’s moments)</i></td></tr>
+    <tr class="hl"><td class="nm">ΔM<sub>opt</sub></td><td>optimizer bytes Muon saves per GPU (B)</td><td class="vl">653,488,320</td><td class="vl sc ap">6.53 × 10<sup>8</sup></td><td class="vl si ap">653<span class="d"></span><span class="u"> MB</span></td><td class="fx">(<b>o<sub>Ad</sub></b> − <b>o<sub>Mu</sub></b>) · <b>N<sub>Mu</sub></b> / <b>GPUs</b> <i>(ZeRO-1 shards every optimizer state 1 / GPUs per GPU)</i></td></tr>
+    <tr><td class="nm">M<sup>rep</sup><sub>buf</sub></td><td>replicated: gathered matrices, all at once (B)</td><td class="vl">6,370,148,352</td><td class="vl sc ap">6.37 × 10<sup>9</sup></td><td class="vl si ap">6<span class="d">.37</span><span class="u"> GB</span></td><td class="fx">2 · (<b>N<sup>Mu</sup><sub>ne</sub></b> / <b>PP</b> + <b>N<sub>exp</sub></b> / (<b>EP</b> · <b>PP</b>)) <i>(every full matrix a GPU holds a shard of, in BF16; the footprint K3 §5.2.2 calls substantial)</i></td></tr>
+    <tr><td class="nm">M<sup>max</sup><sub>buf</sub></td><td>gathered one matrix at a time, the largest (B)</td><td class="vl">264,241,152</td><td class="vl sc ap">2.64 × 10<sup>8</sup></td><td class="vl si ap">264<span class="d"></span><span class="u"> MB</span></td><td class="fx">2 · <b>d</b> · <b>d<sub>ff</sub></b> <i>(plus Newton–Schulz’s A and B workspaces)</i></td></tr>
+    <tr><td class="nm">M<sub>HBM</sub></td><td>HBM per GPU (B)</td><td class="vl">85,899,345,920</td><td class="vl sc ap">8.59 × 10<sup>10</sup></td><td class="vl si ap">85<span class="d">.9</span><span class="u"> GB</span></td><td class="fx"><i>(80 GiB, part 2’s yardstick)</i></td></tr>
+    <tr><td class="nm">R<sub>end</sub></td><td>resident bytes at part 2’s endpoint (B)</td><td class="vl">66,296,545,344</td><td class="vl sc ap">6.63 × 10<sup>10</sup></td><td class="vl si ap">66<span class="d">.3</span><span class="u"> GB</span></td><td class="fx"><i>(part 2’s sheet, T1: PP 8 DualPipeV, EP 64, ZeRO-1, DeepSeek’s FP8 recipe and recompute)</i></td></tr>
+    <tr><td class="nm">M<sub>free</sub></td><td>free HBM at part 2’s endpoint (B)</td><td class="vl">19,602,800,576</td><td class="vl sc ap">1.96 × 10<sup>10</sup></td><td class="vl si ap">19<span class="d">.6</span><span class="u"> GB</span></td><td class="fx"><b>M<sub>HBM</sub></b> − <b>R<sub>end</sub></b></td></tr>
+    </table></div>
+
+    <h2>What this does not model</h2>
+
+    <ul class="ai">
+      <li>[[AI: Overlap. The owners of early-finishing chunks could start Newton–Schulz inside the pipeline’s drain, and K3 pipelines its gathers with Newton–Schulz chunk by chunk. Both would hide part of the cost; this page charges all of it after the drain.]]</li>
+      <li>[[AI: Splitting a large matrix’s Newton–Schulz over several GPUs, which would bring the each-matrix-once time down to the per-GPU average; using the symmetry of X·Xᵀ and A² (a SYRK) to halve those products.]]</li>
+      <li>[[AI: Per-head orthogonalization (K3 §2.5), which splits the q and kv up-projections into per-head blocks and makes them cheaper; their Newton–Schulz is a small part of the total here.]]</li>
+      <li>[[AI: Load imbalance between pipeline stages (the embedding and head stay on AdamW) and between owners; the rate of small BF16 GEMMs at Newton–Schulz’s shapes, priced here at part 3’s measured large-GEMM rate.]]</li>
+      <li>[[AI: Muon’s training-efficiency claims (Moonlight reports matching AdamW at about 52 % of the FLOPs): this page prices a step, not a run.]]</li>
+      <li>[[AI: The MTP module, out of scope as in parts 2 and 3.]]</li>
+    </ul>
+
+    <p><button class="sheet-dl" title="every sheet on this page as one .xlsx with live formulas (cell names become cell references), at the current knob values">⤓ Download all the sheets as one .xlsx</button></p>
+
+  </main>
+  <script type="module">
+    import '../src/viewer.js';
+    import './reset.js';
+    import './sheetedit.js';
+  </script>
+  <script type="module">
+    // 03's sheet interactions (cell cards, jump-to-row, row select)
+    import { attachTip } from '../src/tip.js';
+    const def = new Map();
+    for (const tr of document.querySelectorAll('.cellsheet tr')) {
+      const nm = tr.querySelector('td.nm')?.innerHTML;
+      if (nm && !def.has(nm)) def.set(nm, tr);
+    }
+    const rowOf = (b) => def.get(b?.dataset.cellref ?? b?.innerHTML);
+    for (const b of document.querySelectorAll('.cellsheet td.fx b')) if (rowOf(b)) b.classList.add('ref');
+    const card = (tr) => {
+      const [nm, lb, vl, , si, fx] = tr.cells;
+      const leaf = !fx.querySelector('b') && fx.children.length === 1 && fx.firstElementChild.tagName === 'I';
+      const approx = si.textContent.trim();
+      const d = document.createElement('div');
+      const terms = [leaf ? '' : `= ${fx.innerHTML}`, vl.textContent && `= ${vl.textContent}`, approx && `≈ ${approx.replace(/\s+/g, ' ')}`];
+      d.innerHTML = `<b>${nm.innerHTML}</b> · ${lb.innerHTML}<br>` + terms.filter(Boolean).join(' ');
+      return d;
+    };
+    let sel = null, fuse;
+    const select = (tr) => { sel?.classList.remove('sel'); sel = tr; tr?.classList.add('sel'); };
+    const jump = (tr) => { select(tr); tr.scrollIntoView({ block: 'center' }); };
+    for (const sheet of document.querySelectorAll('.cellsheet')) {
+      attachTip(sheet, (ev) => { const tr = rowOf(ev.target.closest?.('b.ref')); return tr ? card(tr) : null; },
+        { parent: document.body, cls: 'cs-tip', pinnable: (ev) => !ev.target.closest('b.ref') });
+      sheet.addEventListener('click', (ev) => {
+        const tr = rowOf(ev.target.closest?.('b.ref'));
+        if (tr) { jump(tr); return; }
+        const row = ev.target.closest?.('tr');
+        if (!row?.querySelector('td')) return;
+        clearTimeout(fuse);
+        if (ev.detail > 1 || !getSelection().isCollapsed) return;
+        fuse = setTimeout(() => select(sel === row ? null : row), 250);
+      });
+    }
+    for (const q of document.querySelectorAll('main [data-cellref]')) {
+      attachTip(q, () => card(rowOf(q)), { parent: document.body, cls: 'cs-tip', pinnable: () => false });
+      q.addEventListener('click', () => jump(rowOf(q)));
+    }
+  </script>
+</body>
+
+</html>
