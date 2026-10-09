@@ -29,14 +29,16 @@ T.check('activated params = 104,189,612,640', val('N') === '104,189,612,640', va
 // Muon: 5 quintic Newton–Schulz iterations per matrix per step (Per-Head for q/k/v), each matrix once; ≈ 1 % of compute
 T.check('Newton–Schulz FLOPs per step = 244,757,732,159,324,160; T_NS 1.07 % of policy A compute', val('CNS') === '244,757,732,159,324,160' && Math.abs(parseFloat(si('TNS')) / parseFloat(si('TAc')) / 1000 - 0.0107) < 0.0005, `${val('CNS')} ${si('TNS')} ${si('TAc')}`);
 const edv = [...document.querySelectorAll('.cellsheet td.vl.edv')].map((td) => td.parentElement.cells[0].textContent);
-T.check('editable: exactly this page\'s knobs', edv.join(' ') === 'πsolbf16 πsolfp8 βNV βIB NVL B S GPUs PP EP Vpp ovl μ gB oB βhost Sx CPx', edv.join(' '));
+T.check('editable: exactly this page\'s knobs', edv.join(' ') === 'πsolbf16 πsolfp8 βNV βIB NVL B S GPUs PP EP CP Vpp ovl μ gB oB βhost Sx CPx', edv.join(' '));
 T.check('untouched: no hash, nothing amber', location.hash === '' && !document.querySelector('.cellsheet tr.off'), location.hash);
-// the default: 432 GPUs, PP 6 × EP 72, one replica, 10 % reserve — 1F1B fits both on the line; ZB-V-Min gives A room; no ZeRO-1 traffic
+// the default: 288 GPUs, PP 4 × EP 72 × CP 3, one replica, 10 % reserve — 1F1B fits both, A on the line; ZB-V-Min gives A room; no ZeRO-1 traffic
 T.check('default layout: DP 1, ZeRO-1 bytes 0', val('DP') === '1' && val('Vsync') === '0', `${val('DP')} ${val('Vsync')}`);
 const pct = (txt) => parseFloat(si(txt));
-T.check('1F1B: on the fullest rank A just overflows (by under 2 %), B fits', pct('fAmem') > 100 && pct('fAmem') < 102 && pct('fBmem') <= 100, `${si('fAmem')} ${si('fBmem')}`);
+const exact = (txt) => { const [n, d] = published.get(rowsOf(txt)[0].cells[0].innerHTML); return Number(n) / Number(d); };
+T.check('1F1B: on the fullest rank A fits by under 0.1 %, B fits', exact('fAmem') < 1 && exact('fAmem') > 0.999 && pct('fBmem') <= 100, `${exact('fAmem')} ${si('fBmem')}`);
+T.check('CP 3: Ulysses + KCP 1.35 s per step, exposed under self-overlap', val('CP') === '3' && si('TxCP') === '1.35 s' && si('TCP') === '1.35 s', `${si('TCP')} ${si('TxCP')}`);
 const bytes = (txt) => { const t = si(txt); return parseFloat(t) * (t.endsWith('GB') ? 1e9 : 1); };
-T.check('ZB-V-Min: 3 microbatches in flight, not 3.5; policy A under usable memory', val('nVminflt') === '3' && bytes('MAVmin') <= bytes('Muse'), `${val('nVminflt')} ${si('MAVmin')} ${si('Muse')}`);
+T.check('ZB-V-Min: 2 microbatches in flight, not 2.5; policy A under usable memory', val('nVminflt') === '2' && bytes('MAVmin') <= bytes('Muse'), `${val('nVminflt')} ${si('MAVmin')} ${si('Muse')}`);
 T.check('usable memory = device memory less the reserve', val('μ') === '0.1' && bytes('Muse') < bytes('MGPU'), `${si('Muse')} ${si('MGPU')}`);
 T.check('self-overlap default: EP traffic under the expert GEMMs, nothing exposed', val('ovl') === '1' && pct('fselfEP') < 100 && val('TxEP') === '0', `${si('fselfEP')} ${val('TxEP')}`);
 T.check('offload: policy B\'s stash fits the host link inside compute, A\'s does not; the optimizer prefetch spans several microbatches', pct('φB') > 100 && pct('φA') < 100 && +val('mpf') > 1, `${si('φA')} ${si('φB')} ${val('mpf')}`);
@@ -53,21 +55,24 @@ const type = (txt, s, key = 'Enter') => {
 let inp = type('EP', '16');
 T.check('EP 16 refused: must divide NVL', inp.isConnected && /divide NVL/.test(T.el('.cs-err').textContent), T.el('.cs-err').textContent);
 inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+inp = type('CP', '5');
+T.check('CP 5 refused: must divide NVL and the heads', /CP must divide/.test(T.el('.cs-err').textContent), T.el('.cs-err').textContent);
+inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
 inp = type('GPUs', '300');
 T.check('GPUs 300 refused: PP · EP must divide it', /PP · EP must divide/.test(T.el('.cs-err').textContent), T.el('.cs-err').textContent);
 inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
 // doubling the cluster: a second replica appears, ZeRO-1 traffic with it, memory eases
-type('GPUs', '864');
-T.check('GPUs 864: DP 2, ZeRO-1 bytes > 0, A fits', val('DP') === '2' && val('Vsync') !== '0' && pct('fAmem') < 95, `${val('DP')} ${val('Vsync')} ${si('fAmem')}`);
+type('GPUs', '576');
+T.check('GPUs 576: DP 2, ZeRO-1 bytes > 0, A fits', val('DP') === '2' && val('Vsync') !== '0' && pct('fAmem') < 95, `${val('DP')} ${val('Vsync')} ${si('fAmem')}`);
 T.check('… ρ^A re-rendered amber', pct('ρA') > 0 && rowsOf('ρA')[0].classList.contains('off'), si('ρA'));
-T.check('… hash carries the departure', decodeURIComponent(location.hash) === '#c:cells={"GPUs":864}', decodeURIComponent(location.hash));
-type('GPUs', '432');
+T.check('… hash carries the departure', decodeURIComponent(location.hash) === '#c:cells={"GPUs":576}', decodeURIComponent(location.hash));
+type('GPUs', '288');
 // the overlap knob: starve NVLink so EP traffic exceeds the expert GEMMs; self-overlap exposes the excess, fwd-bwd overlap hides it
 const rhoA0 = pct('ρA');
 type('βNV', '300 GB/s');
 T.check('β_NV 300 GB/s: EP traffic over 100 % of the expert GEMMs, exposed time > 0, ρ^A falls', pct('fselfEP') > 100 && val('TxEP') !== '0' && pct('ρA') < rhoA0, `${si('fselfEP')} ${si('TxEP')} ${si('ρA')}`);
 type('ovl', '0');
-T.check('ovl 0: nothing exposed (max(0, ·) via the sheet language), ρ^A back', val('TxEP') === '0' && pct('ρA') === rhoA0, `${val('TxEP')} ${si('ρA')}`);
+T.check('ovl 0: nothing exposed (max(0, ·) via the sheet language), CP traffic hidden too, ρ^A above the default', val('TxEP') === '0' && val('TxCP') === '0' && pct('ρA') > rhoA0, `${val('TxEP')} ${val('TxCP')} ${si('ρA')}`);
 type('ovl', '1'); type('βNV', '900 GB/s');
 T.check('restored: hash clean', location.hash === '', location.hash);
 T.check('typed back: hash clean', location.hash === '', location.hash);
@@ -75,44 +80,44 @@ T.check('typed back: hash clean', location.hash === '', location.hash);
 // the frontier table: one row per cluster size, best fitting layout per policy, from the sheet's formulas
 const fr = [...document.querySelectorAll('.frontier tbody tr')];
 T.check('frontier table has rows', fr.length >= 8, fr.length);
-const row432 = fr.find((tr) => tr.cells[0].textContent === '432');
-T.check('432 GPUs: policy A PP 6 × EP 72 × DP 1 · V-Min (the default), policy B interleaved ZB (V-ZB overflows with the block store); EP pegged to the domain', row432 && row432.cells[2].textContent === 'PP 6 × EP 72 × DP 1 · V-Min' && /EP 72 × DP 1 · interleaved ZB/.test(row432.cells[5].textContent), row432?.textContent);
-T.check('every frontier layout uses EP 72', [...document.querySelectorAll('.frontier td.lay')].every((td) => /EP 72/.test(td.textContent)), '');
 const row288 = fr.find((tr) => tr.cells[0].textContent === '288');
-T.check('288 GPUs: neither fits without offload at the 10 % reserve', /does not fit/.test(row288.cells[2].textContent) && /does not fit/.test(row288.cells[3].textContent), row288.textContent);
+T.check('288 GPUs: policy A PP 4 × EP 72 × DP 1 · CP 3 · V-Min (the default), policy B CP 3 · V-ZB; EP pegged to the domain', row288 && row288.cells[2].textContent === 'PP 4 × EP 72 × DP 1 · CP 3 · V-Min' && /EP 72 × DP 1 · CP 3 · V-ZB/.test(row288.cells[5].textContent), row288?.textContent);
+T.check('every frontier layout uses EP 72', [...document.querySelectorAll('.frontier td.lay')].every((td) => /EP 72/.test(td.textContent)), '');
+const row216 = fr.find((tr) => tr.cells[0].textContent === '216');
+T.check('216 GPUs: neither fits without offload at the 10 % reserve, even with CP', /does not fit/.test(row216.cells[2].textContent) && /does not fit/.test(row216.cells[3].textContent), row216.textContent);
 const rhoB = (tr) => parseFloat(tr.cells[tr.cells.length - 1].textContent.replace(/,/g, ''));
 const fitsB = fr.filter((tr) => !/does not fit/.test(tr.cells[tr.cells.length - 1].textContent));
 const zb = fitsB.findIndex((tr) => /V-ZB/.test(tr.cells[tr.cells.length - 3].textContent));
 const zbR = fitsB.slice(zb).map(rhoB);
-T.check('policy B: once V-ZB fits the rate varies only with the stage imbalance (within 1 %) and beats every smaller cluster\'s', zb >= 0 && Math.max(...zbR) / Math.min(...zbR) < 1.01 && fitsB.slice(0, zb).every((tr) => rhoB(tr) < Math.min(...zbR)), fitsB.map(rhoB).join(' '));
+T.check('policy B: once it fits the rate varies only with CP traffic, bubble and stage imbalance (within 2.5 %)', zb >= 0 && Math.max(...fitsB.map(rhoB)) / Math.min(...fitsB.map(rhoB)) < 1.025, fitsB.map(rhoB).join(' '));
 const mins = [...document.querySelectorAll('.mins tbody tr')];
 T.check('min-GPUs table: four gradient × optimizer combinations × offload no/yes, each with a fit', mins.length === 8 && mins.every((tr) => /PP \d+ × EP \d+/.test(tr.cells[3].textContent) && /PP \d+ × EP \d+/.test(tr.cells[5].textContent)), mins.map((tr) => tr.textContent).join(' | '));
-T.check('… FP32/FP32, no offload: 432 · PP 6 × EP 72 · V-Min for policy A (the default), 432 for B', mins[6].cells[3].textContent === '432 · PP 6 × EP 72 × DP 1 · V-Min' && /^432 ·/.test(mins[6].cells[5].textContent), `${mins[6].cells[3].textContent} / ${mins[6].cells[5].textContent}`);
+T.check('… FP32/FP32, no offload: 288 · PP 4 × EP 72 · CP 3 · V-Min for policy A (the default), 288 for B', mins[6].cells[3].textContent === '288 · PP 4 × EP 72 × DP 1 · CP 3 · V-Min' && /^288 ·/.test(mins[6].cells[5].textContent), `${mins[6].cells[3].textContent} / ${mins[6].cells[5].textContent}`);
 T.check('… with offload: 288 for both, flagged ‡ (prefetch spans microbatches)', /^288 ·/.test(mins[7].cells[3].textContent) && /‡/.test(mins[7].cells[4].textContent) && /^288 ·/.test(mins[7].cells[5].textContent), mins[7].textContent);
-T.check('… BF16 grads + states, no offload: 288', /^288 ·/.test(mins[0].cells[3].textContent), mins[0].cells[3].textContent);
+T.check('… BF16 grads + states, no offload: 216 with CP', /^216 · .* CP \d+ ·/.test(mins[0].cells[3].textContent), mins[0].cells[3].textContent);
 const mgs = [...document.querySelectorAll('.margins tbody tr')];
-T.check('margin table: 0 % to 30 %, the minimum grows with the reserve', mgs.length === 7 && /^432 ·/.test(mgs[0].cells[1].textContent) && /^288 ·/.test(mgs[0].cells[4].textContent) && /^864 ·/.test(mgs[6].cells[1].textContent), mgs.map((tr) => tr.textContent).join(' | '));
-// the frontier follows the knobs: with BF16 gradients and states policy A fits at 288 GPUs
+T.check('margin table: 0 % to 30 %, the minimum grows with the reserve', mgs.length === 7 && /^288 ·/.test(mgs[0].cells[1].textContent) && /^288 ·/.test(mgs[0].cells[4].textContent) && /^288 ·/.test(mgs[4].cells[1].textContent) && /^432 ·/.test(mgs[5].cells[1].textContent), mgs.map((tr) => tr.textContent).join(' | '));
+// the frontier follows the knobs: with BF16 gradients and states policy A fits at 216 GPUs
 type('oB', '6'); type('gB', '2');
-const r288 = [...document.querySelectorAll('.frontier tbody tr')].find((tr) => tr.cells[0].textContent === '288');
-T.check('g_B 2, o_B 6: the frontier re-builds, policy A now fits at 288', /PP \d+ × EP \d+/.test(r288.cells[2].textContent), r288.textContent);
+const r216 = [...document.querySelectorAll('.frontier tbody tr')].find((tr) => tr.cells[0].textContent === '216');
+T.check('g_B 2, o_B 6: the frontier re-builds, policy A now fits at 216', /PP \d+ × EP \d+/.test(r216.cells[2].textContent), r216.textContent);
 type('oB', '8'); type('gB', '4');
 
-// context parallelism (the long-context phases, a side analysis): 64k on CP 8 at the default cluster
+// context parallelism in the long-context phases (side analysis): 64k on CP 24 = the default's 2,731 tokens per GPU
 const cpRows = () => [...document.querySelectorAll('.cp tbody tr')];
-T.check('CP at 64k, CP 8: Ulysses 0.89 s of NVLink, latent 0.10 s + 0.73 s replay, tie at CP 8.59, bytes cross at 71.1',
-  si('Tuly') === '891 ms' && si('Tlat') === '100 ms' && si('Tlatrp') === '730 ms' && si('CPtie').startsWith('8.59') && si('CPby').startsWith('71.1'),
-  `${si('Tuly')} ${si('Tlat')} ${si('Tlatrp')} ${si('CPtie')} ${si('CPby')}`);
-T.check('CP table: the CPs dividing a 72-GPU stage, CP 8 highlighted, no Ulysses where CP does not divide 96 heads',
-  cpRows().map((tr) => tr.cells[0].textContent).join(' ') === '2 4 8 12 24 36 72' && cpRows()[2].classList.contains('hl')
+T.check('CP at 64k, CP 24: Ulysses 1.46 s of NVLink, latent 0.49 s + 3.60 s replay, tie at CP 8.59, bytes cross at 71.1, same slice as the layout',
+  si('Tuly') === '1.46 s' && si('Tlat') === '494 ms' && si('Tlatrp') === '3.60 s' && si('CPtie').startsWith('8.59') && si('CPby').startsWith('71.1') && val('ax') === '1',
+  `${si('Tuly')} ${si('Tlat')} ${si('Tlatrp')} ${si('CPtie')} ${si('CPby')} ${val('ax')}`);
+T.check('CP table: the CPs dividing a 72-GPU stage, CP 24 highlighted, no Ulysses where CP does not divide 96 heads',
+  cpRows().map((tr) => tr.cells[0].textContent).join(' ') === '2 4 8 12 24 36 72' && cpRows()[4].classList.contains('hl')
   && cpRows()[5].cells[2].textContent === '—' && /^\+/.test(cpRows()[1].cells[7].textContent) && /^−/.test(cpRows()[4].cells[7].textContent),
   cpRows().map((tr) => tr.textContent).join(' | '));
 inp = type('CPx', '1');
 T.check('CP_x 1 refused', /at least 2/.test(T.el('.cs-err').textContent), T.el('.cs-err').textContent);
 inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-type('Sx', '1048576'); type('CPx', '24');
-T.check('S_x 1M, CP 24: the table re-highlights; MLA seconds unchanged by S, KCP shrinks with longer slices', cpRows()[4].classList.contains('hl')
-  && cpRows()[4].cells[2].textContent === '0.98 s' && cpRows()[4].cells[6].textContent === '0.16 s', cpRows()[4].textContent);
-type('Sx', '65536'); type('CPx', '8');
+type('Sx', '1048576');
+T.check('S_x 1M: MLA seconds unchanged by S, KCP shrinks with longer slices', cpRows()[4].classList.contains('hl')
+  && cpRows()[4].cells[2].textContent === '1.46 s' && cpRows()[4].cells[6].textContent === '0.24 s', cpRows()[4].textContent);
+type('Sx', '65536');
 T.check('CP knobs back: hash clean', location.hash === '', location.hash);
 T.done();

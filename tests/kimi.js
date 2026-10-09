@@ -97,9 +97,10 @@ T.check('V PP 6: the turn sends nothing, the cache trims the return', v6.tr[5].w
 T.check('V PP 6: busiest rank 19 d, every rank holds ≤ 8 blocks', v6.rres === 19 && Math.max(...v6.held) === 8 && v6.held[0] === 8);
 T.check('no pipeline, no traffic', m.attnresPipe(1, 'v').rres === 0 && m.attnresPipe(1, 'chain').tr.length === 0);
 const rresCell = [...document.querySelectorAll('.cellsheet tr')].find((tr) => tr.querySelector('td.nm')?.innerHTML === 'r<sub>res</sub>');
-T.check('sheet r_res default = the figure (V, PP 6)', rresCell?.cells[2].textContent.trim() === String(v6.rres), rresCell?.cells[2].textContent);
+const v4 = m.attnresPipe(4, 'v');
+T.check('sheet r_res default = the figure (V, PP 4, the default layout)', rresCell?.cells[2].textContent.trim() === String(v4.rres), rresCell?.cells[2].textContent);
 const pipe = T.el('#pipe');
-T.check('figure: busiest rank in the ledger', T.text('#pipe .kpp-led b').startsWith('busiest rank (1): 19 d'), T.text('#pipe .kpp-led b'));
+T.check('figure: busiest rank in the ledger', new RegExp(`^busiest rank \\(\\d+\\): ${v4.rres} d`).test(T.text('#pipe .kpp-led b')), T.text('#pipe .kpp-led b'));
 const h0 = pipe.getBoundingClientRect().height;
 T.click('#pipe [data-s="chain"]');
 await T.tick(80);
@@ -108,7 +109,7 @@ await T.tick(80);
 T.check('knobs: 1F1B PP 24 = 18 d, height unchanged', pipe.sched === 'chain' && pipe.pp === 24 && T.text('#pipe .kpp-led b').includes('18 d')
   && Math.abs(pipe.getBoundingClientRect().height - h0) < 1, `${T.text('#pipe .kpp-led b')} ${h0} ${pipe.getBoundingClientRect().height}`);
 T.click('#pipe [data-s="v"]');
-T.click('#pipe [data-pp="6"]');
+T.click('#pipe [data-pp="4"]');
 await T.tick(80);
 
 T.done();
