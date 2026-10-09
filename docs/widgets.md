@@ -356,6 +356,26 @@ decode / prefill token, 890 B of global KV per token).
 Excluded from the tally (footnoted on the page): the 485M vision tower +
 aligner and the 14.2B DSpark drafter (`mtp.*`).
 
+## `<kimi-anatomy>` family — the Kimi K3 architecture (src/kimi.js, unlisted draft)
+
+Self-contained sibling of `<dsv3-anatomy>` for studies/kimi-k3.html (the
+architecture diagrams sit in the roofline page's model section), built on the
+same skeleton as the `<dsv41-anatomy>` family. The parameter model lives in
+the module itself (`KIMI`, `KPARAMS`); tests/kimi.js pins the text-model
+total 2,779,484,476,000 and the active 104,189,612,640.
+
+| element / attribute | meaning |
+|---|---|
+| `<kimi-layer>` | one K3 block, two tabbed columns: attention (`kda` ×69 · gated `mla` ×24, NoPE) and FFN (`moe` = Stable LatentMoE ×92 · `dense` ×1), each module behind an attn-res mix pill |
+| `kind-a` / `kind-f` | initial tabs (`kda` / `moe` default); `flat` = multiplied-out sizes; `detail` = micro pills; `lens="params"` drops tensor chips and shows counts |
+| state | `#k3:<id>={a,f,flat}` in the URL hash; `recipe` event on change; `activeView` is set by the tally (active / token accounting) |
+| `<kimi-anatomy-plan layer=…>` | the model stack: embedding → [KDA ×3 → gated MLA] ×23 → final gated MLA → attn-res α → final norm → head. Blocks carry `data-kind`; clicking flips the attention tab |
+| `<kimi-param-tally layer=… [compact] [mode=total\|active]>` | rows per block kind; hover/pin highlight `data-op` cells and plan blocks; counts carry exact values (src/tip.js) |
+| `<kimi-anatomy layer=… [tally] [lens] [detail] [nocaption]>` | the grid wrapper; forwards `detail lens nocaption` to the layer |
+
+Excluded from the tally: the 401M MoonViT-V2 vision tower and the MTP layer
+(absent from the released checkpoint).
+
 ## `<dsv3-fsdp gpus=… gbs=… zero=… model=… hw=…>` — the FSDP sharding-degree sweep (src/fsdp.js, unlisted study)
 
 The pre-parallelism question (studies/fsdp.html): shard-and-gather the

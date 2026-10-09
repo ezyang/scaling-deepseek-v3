@@ -34,12 +34,20 @@
   <div data-widget="v41-params"><dsv41-layer id="v6" detail lens="params"></dsv41-layer></div>
   <div data-widget="v41-anatomy-wrapper"><dsv41-anatomy layer="v7" detail></dsv41-anatomy></div>
   <div data-widget="v41-anatomy-plan"><dsv41-anatomy-plan id="vp"></dsv41-anatomy-plan></div>
+  <div data-widget="kimi-kda-moe"><kimi-layer id="k1" detail></kimi-layer></div>
+  <div data-widget="kimi-mla-dense"><kimi-layer id="k2" detail kind-a="mla" kind-f="dense"></kimi-layer></div>
+  <div data-widget="kimi-mla-moe-flat"><kimi-layer id="k3" detail kind-a="mla" flat></kimi-layer></div>
+  <div data-widget="kimi-kda-dense-terse"><kimi-layer id="k4" kind-f="dense"></kimi-layer></div>
+  <div data-widget="kimi-params"><kimi-layer id="k5" detail lens="params"></kimi-layer></div>
+  <div data-widget="kimi-anatomy-wrapper"><kimi-anatomy layer="k6" detail></kimi-anatomy></div>
+  <div data-widget="kimi-anatomy-plan"><kimi-anatomy-plan id="kp"></kimi-anatomy-plan></div>
   <pre id="lint-out"></pre>
 </main>
 <script type="module">
 import '../src/viewer.js';
 import '../src/anatomy.js';
 import '../src/dsv41.js';
+import '../src/kimi.js';
 
 const out = [];
 const push = (v) => { if (out.length < 400) out.push(v); };
@@ -219,8 +227,9 @@ function lintWidget(name, host) {
 // — reserved, non-reflowing space applies to the page too)
 async function lintPlaceholders() {
   const PAGES = ['/index.html', '/studies/01-deepseek-diagram.html', '/studies/02-hopper-memory.html',
-    '/studies/blackwell-memory.html', '/studies/dsv41-flash.html', '/studies/fsdp.html', '/studies/03-roofline.html'];
-  const WTAGS = 'dsv3-anatomy, dsv3-layer, dsv3-param-tally, dsv3-pp-schedule, dsv3-pp-fold, dsv3-beat-deck, dsv3-sheet, dsv41-anatomy, dsv41-layer, dsv3-fsdp, dsv3-ladder, dsv3-mmfig, dsv3-epsim, dsv3-epscale, dsv3-mesh, dsv3-fsdpsched, dsv3-fsdpcurve, dsv3-ppcurve';
+    '/studies/blackwell-memory.html', '/studies/dsv41-flash.html', '/studies/fsdp.html', '/studies/03-roofline.html',
+    '/studies/kimi-k3.html'];
+  const WTAGS = 'dsv3-anatomy, dsv3-layer, dsv3-param-tally, dsv3-pp-schedule, dsv3-pp-fold, dsv3-beat-deck, dsv3-sheet, dsv41-anatomy, dsv41-layer, kimi-anatomy, kimi-layer, dsv3-fsdp, dsv3-ladder, dsv3-mmfig, dsv3-epsim, dsv3-epscale, dsv3-mesh, dsv3-fsdpsched, dsv3-fsdpcurve, dsv3-ppcurve';
   // two widths: 1366 is the SUPPORTED MINIMUM viewport (the anatomy grid
   // saturates its 1330px cap at ~1362; every container is width-capped, so
   // layout must be IDENTICAL at any width ≥ 1366 — checking a wide viewport
@@ -232,7 +241,7 @@ async function lintPlaceholders() {
     await new Promise(r => { f.onload = r; f.src = p; });
     await new Promise(r => setTimeout(r, 400));
     for (const el of f.contentDocument.querySelectorAll(WTAGS)) {
-      if (!['DSV3-ANATOMY', 'DSV3-BEAT-DECK', 'DSV41-ANATOMY', 'DSV3-FSDPSCHED'].includes(el.tagName) && el.closest('dsv3-anatomy, dsv3-beat-deck, dsv41-anatomy, dsv3-fsdpsched')) continue;  // the wrapper's min-height covers its children
+      if (!['DSV3-ANATOMY', 'DSV3-BEAT-DECK', 'DSV41-ANATOMY', 'KIMI-ANATOMY', 'DSV3-FSDPSCHED'].includes(el.tagName) && el.closest('dsv3-anatomy, dsv3-beat-deck, dsv41-anatomy, kimi-anatomy, dsv3-fsdpsched')) continue;  // the wrapper's min-height covers its children
       // measure the CONTENT height: min-height inflates the element itself,
       // which would hide too-large declarations
       const decl = parseFloat(el.style.minHeight) || 0;

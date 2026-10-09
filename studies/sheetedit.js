@@ -52,7 +52,7 @@ const PAGES = {
     knobs: { B: 'B', S: 'S', GPUs: 'GPUs', 'π<sup>sol</sup><sub>bf16</sub>': 'sol', 'π<sup>sol</sup><sub>fp8</sub>': 'sol8', 'β<sub>NV</sub>': 'NV', 'β<sub>IB</sub>': 'IB', NVL: 'NVL', PP: 'PP', EP: 'EP', 'V<sub>pp</sub>': 'Vpp', 'r<sub>res</sub>': 'rres', ovl: 'ovl', 'μ': 'mu', 'g<sub>B</sub>': 'gB', 'o<sub>B</sub>': 'oB', 'β<sub>host</sub>': 'host' },
     counts: ['B', 'S', 'GPUs', 'NVL', 'PP', 'EP', 'Vpp', 'rres', 'ovl', 'gB', 'oB'],
     zero: ['ovl', 'mu'],   // knobs that may be 0 (a 0/1 switch, a share)
-    xlsx: ['kimi-k3-roofline-sheet.xlsx', 'Kimi K3 roofline'],
+    xlsx: ['kimi-k3-sheet.xlsx', 'Kimi K3 roofline'],
     rules(v, edits, pub) {
       const [G, P, E, N] = ['GPUs', 'PP', 'EP', 'NVL'].map((k) => v(k)[0]);
       if (N % E) return `EP must divide NVL (${N}): EP lives inside one NVLink domain`;

@@ -1,4 +1,4 @@
-// @page studies/kimi-k3-roofline.html
+// @page studies/kimi-k3.html
 // The Kimi K3 page's .xlsx download (studies/sheetedit.js sheetXml): every row once, its
 // formula translated to C-addresses, and the workbook RECOMPUTES to the
 // page's values — each <f> is evaluated here as Excel would and checked

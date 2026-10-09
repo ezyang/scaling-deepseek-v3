@@ -16,7 +16,7 @@
 const MQ = matchMedia('(max-width: 860px)');
 // (static sheets — .cellsheet, .tally — are not previewed: they scroll
 // sideways in place at natural width, study.css)
-const W = 'dsv3-anatomy, dsv3-layer, dsv3-pp-schedule, dsv3-pp-fold, dsv3-beat-deck, dsv3-sheet, dsv41-anatomy, dsv41-layer, '
+const W = 'dsv3-anatomy, dsv3-layer, dsv3-pp-schedule, dsv3-pp-fold, dsv3-beat-deck, dsv3-sheet, dsv41-anatomy, dsv41-layer, kimi-anatomy, kimi-layer, '
   + 'dsv3-mmfig, dsv3-ladder, dsv3-epsim, dsv3-mesh, dsv3-fsdpsched, dsv3-fsdpcurve, dsv3-ppcurve';
 
 // footnote hops follow the toc convention: scroll, NEVER touch the hash —

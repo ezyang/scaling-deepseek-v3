@@ -1,4 +1,4 @@
-// @page studies/kimi-k3-roofline.html
+// @page studies/kimi-k3.html
 // The Kimi K3 roofline page (sheets only) rides studies/sheetedit.js like 03:
 // every formula reproduces its published value, the HTML's numbers are what
 // the formulas render, the parameter tally hits the advertised anchors to the
