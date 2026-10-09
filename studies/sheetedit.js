@@ -49,10 +49,20 @@ const PAGES = {
     },
   },
   cx: {
-    knobs: { 'π<sup>sol</sup><sub>bf16</sub>': 'sol', 'π<sup>sol</sup><sub>fp8</sub>': 'sol8', 'β<sub>IB</sub>': 'IB', 'β<sup>sol</sup><sub>NV</sub>': 'NV' },
-    counts: [],
+    knobs: { 'π<sup>sol</sup><sub>bf16</sub>': 'sol', 'π<sup>sol</sup><sub>fp8</sub>': 'sol8', 'f<sub>rc</sub>': 'frc', 'CP<sub>1</sub>': 'CP1', 'CP<sub>2</sub>': 'CP2', 'β<sup>sol</sup><sub>NV</sub>': 'NV', 'β<sub>IB</sub>': 'IB' },
+    counts: ['frc', 'CP1', 'CP2'],
+    zero: ['frc'],
     xlsx: ['dsv3-context-extension-sheet.xlsx', 'DSv3 context extension'],
-    rules: () => null,
+    rules(v, edits, pub) {
+      if (v('frc')[0] > 1n) return 'f_rc is a switch: 1 = full recompute, 0 = DeepSeek’s policy';
+      const [D, PP, G] = ['D', 'PP', 'GPUs'].map((k) => pub.get(k)[0]);
+      for (const j of [1, 2]) {
+        const cp = v(`CP${j}`)[0], S = pub.get(`S<sub>${j}</sub>`)[0];
+        if ((G / PP) % cp) return `CP${j} must divide the ${(G / PP).toLocaleString('en-US')} GPUs of a pipeline stage`;
+        if ((D * PP * cp) % (G * S) || ((D * PP * cp) / (G * S)) % 2n) return `CP${j} must give DualPipe an even number of microbatches`;
+      }
+      return null;
+    },
   },
   k3: {
     knobs: { B: 'B', S: 'S', GPUs: 'GPUs', 'π<sup>sol</sup><sub>bf16</sub>': 'sol', 'π<sup>sol</sup><sub>fp8</sub>': 'sol8', 'β<sub>NV</sub>': 'NV', 'β<sub>IB</sub>': 'IB', NVL: 'NVL', PP: 'PP', EP: 'EP', 'V<sub>pp</sub>': 'Vpp', 'r<sub>res</sub>': 'rres', ovl: 'ovl', 'μ': 'mu', 'g<sub>B</sub>': 'gB', 'o<sub>B</sub>': 'oB', 'β<sub>host</sub>': 'host' },
