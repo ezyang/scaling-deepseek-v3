@@ -70,6 +70,20 @@ const PAGES = {
     xlsx: ['dsv3-muon-sheet.xlsx', 'DSv3 with Muon'],
     rules: () => null,
   },
+  h16: {
+    knobs: { 'π<sup>sol</sup><sub>bf16</sub>': 'sol', 'β<sub>NV</sub>': 'NV', 'β<sub>IB</sub>': 'IB', B: 'B', S: 'S', GPUs: 'GPUs', 'r<sub>a2a</sub>': 'ra', 'f<sub>doc</sub>': 'doc' },
+    counts: ['B', 'S', 'GPUs', 'ra'],
+    zero: ['ra', 'doc'],
+    xlsx: ['dsv3-16b-h100-sheet.xlsx', 'DSv3 16B on H100'],
+    rules(v) {
+      const G = v('GPUs')[0];
+      if (G % 8n) return 'GPUs must fill whole 8-GPU nodes (EP 8 is one node)';
+      if (v('ra')[0] > 1n) return 'r_a2a is a switch: 1 = the recompute re-sends the all-to-alls, 0 = saved';
+      const [fn, fd] = v('doc');
+      if (fn > fd) return 'f_doc is a share of the causal pairs: at most 1';
+      return null;
+    },
+  },
   k3: {
     knobs: { B: 'B', S: 'S', GPUs: 'GPUs', 'π<sup>sol</sup><sub>bf16</sub>': 'sol', 'π<sup>sol</sup><sub>fp8</sub>': 'sol8', 'β<sub>NV</sub>': 'NV', 'β<sub>IB</sub>': 'IB', NVL: 'NVL', PP: 'PP', EP: 'EP', 'V<sub>pp</sub>': 'Vpp', ovl: 'ovl', 'μ': 'mu', 'g<sub>B</sub>': 'gB', 'o<sub>B</sub>': 'oB', 'β<sub>host</sub>': 'host', 'S<sub>x</sub>': 'Sx', 'CP<sub>x</sub>': 'CPx', CP: 'CP' },
     counts: ['B', 'S', 'GPUs', 'NVL', 'PP', 'EP', 'Vpp', 'ovl', 'gB', 'oB', 'Sx', 'CPx', 'CP'],

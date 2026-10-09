@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script data-theme>document.documentElement.classList.toggle('dark', (localStorage.getItem('dsv3-theme') ?? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')) === 'dark');</script>
+  <title>DeepSeek-V3 16B on 256 H100s: does it fit, and what does the roofline say? (draft)</title>
+  <meta name="robots" content="noindex">
+  <link rel="stylesheet" href="./study.css">
+  <style>
+    /* 03's static formula sheets (studies/sheetedit.js makes them live) */
+    /* 03's static formula sheets (studies/sheetedit.js makes them live) */
+    .cellsheet { max-width: 760px; box-sizing: border-box; margin: 14px 0; font: 12px system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--c-0b0b0b);
+      border: 1px solid var(--c-e1e0d9); border-radius: 6px; background: var(--c-fcfcfb); padding: 8px 12px; }
+    .cellsheet table { border-collapse: collapse; width: 100%; table-layout: fixed; }
+    .cellsheet th:nth-child(1) { width: 38px; } .cellsheet th:nth-child(2) { width: 170px; } .cellsheet th:nth-child(3) { width: 181px; }
+    .cellsheet th:nth-child(4) { width: 83px; } .cellsheet th:nth-child(5) { width: 105px; }
+    .cellsheet th { box-sizing: border-box; text-align: left; font-size: 10.5px; color: var(--c-898781); font-weight: 600; padding: 1px 10px 3px 2px; }
+    .cellsheet td { padding: 1.5px 10px 1.5px 2px; border-top: 1px solid var(--c-f0efe9); font-size: 11.5px; vertical-align: baseline; white-space: nowrap; }
+    .cellsheet th.vl, .cellsheet td.vl { text-align: right; font-variant-numeric: tabular-nums; }
+    .cellsheet td.si .d { display: inline-block; width: 1.7em; text-align: left; }
+    .cellsheet td.si .u { display: inline-block; width: 4.3em; text-align: left; white-space: pre; }
+    .cellsheet th.si .u { display: inline-block; width: calc(4.3 * 11.5px); text-align: left; white-space: pre; }
+    .cellsheet td.sc sup { display: inline-block; width: 1.35em; text-align: left; }
+    .cellsheet td:nth-child(2) { white-space: normal; }
+    .cellsheet td.nm { font: 600 11px ui-monospace, monospace; color: var(--c-2a78d6); }
+    .cellsheet td.fx { font: 11px ui-monospace, monospace; color: var(--c-52514e); white-space: normal; }
+    .cellsheet td.fx b { color: var(--c-2a78d6); font-weight: 600; }
+    .cellsheet td.fx i { font: 11.5px system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--c-898781); font-style: normal; }
+    .cellsheet td.ap { color: var(--c-898781); }
+    .cellsheet sup, .cellsheet sub { line-height: 0; font-size: 0.8em; }
+    .cellsheet tr.hl td { background: var(--c-fff8ea); font-weight: 600; }
+    .cellsheet td.fx b.ref { cursor: pointer; }
+    .cellsheet tr.sel td { background: var(--c-fff3d1); }
+    .cellsheet .cs-dl { float: right; font: inherit; color: var(--c-2a78d6); background: none; border: 0; padding: 0; cursor: pointer; }
+    .cellsheet td.vl.edv { background: var(--c-eef4fc); cursor: text; }
+    @media (hover: hover) { .cellsheet td.vl.edv:hover { background: var(--c-dcebfa); } }
+    .cellsheet tr.off td.vl, .cellsheet tr.off td.ap { color: var(--c-b05f00); }
+    [data-cellref] { cursor: pointer; border-bottom: 1px dotted var(--c-898781); }
+    [data-cellref].off { color: var(--c-b05f00); }
+    .cellsheet .cs-in { box-sizing: border-box; width: 100%; margin: -2px 0; padding: 1px 3px; text-align: right;
+      font: inherit; font-variant-numeric: tabular-nums; color: var(--c-0b0b0b); background: var(--c-ffffff);
+      border: 1px solid var(--c-2a78d6); border-radius: 3px; outline: none; }
+    .cellsheet .cs-in.bad { border-color: var(--c-d03b3b); }
+    .cs-err { position: absolute; display: none; z-index: 7; max-width: 300px; padding: 4px 8px; border-radius: 4px;
+      background: var(--c-fdf1f1); border: 1px solid var(--c-d03b3b); color: var(--c-1c1c1a);
+      font: 11.5px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+    .cs-tip b { color: var(--c-2a78d6); font-weight: 600; }
+    .cs-tip i { color: var(--c-898781); font-style: normal; }
+    .cs-tip sup, .cs-tip sub { line-height: 0; font-size: 0.8em; }
+    .cellsheet sup:has(+ sub), .cs-tip sup:has(+ sub) { display: inline-block; width: 0; vertical-align: 0.7em; }
+    /* the frontier table: one row per cluster size, the best fitting layout per policy (page script, from the sheet's formulas) */
+    .tally { width: fit-content; box-sizing: border-box; margin: 14px 0; font: 12px system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--c-0b0b0b);
+      border: 1px solid var(--c-e1e0d9); border-radius: 6px; background: var(--c-fcfcfb); padding: 8px 12px; }
+    .tally table { border-collapse: collapse; }
+    .tally th { text-align: left; font-size: 10.5px; color: var(--c-898781); font-weight: 600; padding: 1px 16px 3px 2px; }
+    .tally th.g { text-align: center; padding-right: 16px; border-bottom: 1px solid var(--c-e1e0d9); }
+    .tally td { padding: 2.5px 16px 2.5px 2px; border-top: 1px solid var(--c-f0efe9); vertical-align: baseline; }
+    .tally th.n, .tally td.n { text-align: right; font-variant-numeric: tabular-nums; }
+    .tally th:last-child, .tally td:last-child { padding-right: 2px; }
+    .tally tr.hl td { background: var(--c-fff8ea); font-weight: 600; }
+    .tally td.no { color: var(--c-898781); }
+    .tally td.cb { color: var(--c-d03b3b); }
+    .tally .lay { font: 11px ui-monospace, monospace; color: var(--c-52514e); }
+  </style>
+</head>
+
+<body data-sheet="h16">
+  <main>
+    <h1>DeepSeek-V3 16B on 256 H100s: does it fit, and what does the roofline say?</h1>
+
+    <p class="note">DRAFT (unlisted study), written by an AI. The sheets, the model and all of the prose were
+    generated by Fable (Claude) from the author’s brief and have not had a human edit pass — see the
+    footnote.<sup><a id="fnref1" href="#fn1">1</a></sup> Generated from
+    ~/Dev/scaling-dsv3-refs/dsv3-16b-h100/roofline-gen.mjs — edit the generator, not this file.</p>
+
+    <p class="ai">[[AI: The run: TorchTitan’s DeepSeek-V3 “16B” flavor — DeepSeek-V3’s architecture (MLA, fine-grained MoE with shared experts, aux-loss-free balancing) at DeepSeek-MoE 16B’s size — trained with FlexShard, an experimental eager FSDP, on 256 H100s: dp_shard 256, EP 8, no TP, CP or PP, 4 × 4,096 tokens per GPU per step in one microbatch, op-level selective activation checkpointing, AdamW. It measured 4,194.6 tokens/s per GPU. Two questions, in the order of parts 2 and 3: does it fit, easily? And what does the roofline say it should run at? Part 3’s method again: count the bytes each GPU holds, count the FLOPs, count the bytes each parallelism moves per link, divide by the link’s rate. The sheets are live as in part 3: the formula column is the program and blue values are knobs.]]</p>
+
+    <h2>Speed of light on an H100</h2>
+
+    <p class="ai">[[AI: Part 3’s H100 numbers: 989 TFLOP/s BF16 on the spec sheet, 758 TFLOP/s for a large torch.matmul as measured. Nothing in this run computes in FP8. An H100 has NVLink 4 at 450 GB/s per direction inside its node, where part 3’s H800 had 200; across nodes, Grand Teton gives each GPU its own 400 Gb/s RoCE NIC, the same 50 GB/s part 3 used for InfiniBand.]]</p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">π<sub>bf16</sub></td><td>H100 BF16 dense peak, spec (FLOP/s)</td><td class="vl">989,000,000,000,000</td><td class="vl sc ap">9.89 × 10<sup>14</sup></td><td class="vl si ap">989<span class="d"></span><span class="u"> TFLOP/s</span></td><td class="fx"><i>(hardware spec; TorchTitan’s MFU denominator)</i></td></tr>
+    <tr class="hl"><td class="nm">π<sup>sol</sup><sub>bf16</sub></td><td>BF16 GEMM, measured (FLOP/s)</td><td class="vl">757,700,000,000,000</td><td class="vl sc ap">7.58 × 10<sup>14</sup></td><td class="vl si ap">758<span class="d"></span><span class="u"> TFLOP/s</span></td><td class="fx"><i>(part 3’s figure: Smol Training Playbook, H100, torch.matmul, best of 5)</i></td></tr>
+    <tr><td class="nm">η<sub>bf16</sub></td><td>share of the spec peak</td><td class="vl"></td><td class="vl sc ap">7.66 × 10<sup>−1</sup></td><td class="vl si ap">76<span class="d">.6</span><span class="u"> %</span></td><td class="fx"><b>π<sup>sol</sup><sub>bf16</sub></b> / <b>π<sub>bf16</sub></b></td></tr>
+    <tr><td class="nm">β<sub>NV</sub></td><td>NVLink per GPU, per direction (B/s)</td><td class="vl">450,000,000,000</td><td class="vl sc ap">4.50 × 10<sup>11</sup></td><td class="vl si ap">450<span class="d"></span><span class="u"> GB/s</span></td><td class="fx"><i>(hardware spec: H100 SXM, NVLink 4)</i></td></tr>
+    <tr><td class="nm">β<sub>IB</sub></td><td>scale-out per GPU (B/s)</td><td class="vl">50,000,000,000</td><td class="vl sc ap">5.00 × 10<sup>10</sup></td><td class="vl si ap">50<span class="d"></span><span class="u"> GB/s</span></td><td class="fx"><i>(hardware spec: Grand Teton, one 400 Gb/s RoCE NIC per GPU)</i></td></tr>
+    <tr><td class="nm">NVL</td><td>GPUs per node (one NVLink domain)</td><td class="vl">8</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(hardware)</i></td></tr>
+    <tr><td class="nm">M<sub>HBM</sub></td><td>HBM per GPU, as PyTorch reports it (GiB)</td><td class="vl">79.18</td><td class="vl sc ap">7.92 × 10<sup>1</sup></td><td class="vl si ap">79<span class="d">.2</span><span class="u"> </span></td><td class="fx"><i>(the job log: “CUDA capacity: NVIDIA H100 80GB HBM3 with 79.18GiB memory”)</i></td></tr>
+    </table></div>
+
+    <h2>The model</h2>
+
+    <p class="ai">[[AI: Part 3’s DeepSeek-V3 with every dimension cut: width 2,048 instead of 7,168, 27 layers instead of 61, 64 routed experts with 6 active instead of 256 with 8, 16 heads, no query latent, the DeepSeek-MoE 16B vocabulary. The parameter count is built from the architecture and reproduces the job log’s two numbers exactly: 15,706,484,224 in total and 2,451,435,008 activated (TorchTitan leaves the embedding out of the activated count, and so does this sheet). As in DeepSeek-V3, almost everything lives in the routed experts: <span data-cellref="N<sub>exp</sub>">14<span class="d">.4</span><span class="u"> G</span></span> of <span data-cellref="N">15<span class="d">.7</span><span class="u"> G</span></span>.]]</p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">d</td><td>hidden dim</td><td class="vl">2,048</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(TorchTitan deepseek_v3 “16B” flavor)</i></td></tr>
+    <tr><td class="nm">L<sub>moe</sub></td><td>MoE layers</td><td class="vl">26</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(flavor)</i></td></tr>
+    <tr><td class="nm">L<sub>dns</sub></td><td>dense layers</td><td class="vl">1</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(flavor: the first layer)</i></td></tr>
+    <tr><td class="nm">L</td><td>layers</td><td class="vl">27</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><b>L<sub>moe</sub></b> + <b>L<sub>dns</sub></b></td></tr>
+    <tr><td class="nm">n<sub>h</sub></td><td>attention heads</td><td class="vl">16</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(flavor)</i></td></tr>
+    <tr><td class="nm">d<sub>h</sub></td><td>head dim · qk nope, v</td><td class="vl">128</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(flavor)</i></td></tr>
+    <tr><td class="nm">d<sup>R</sup><sub>h</sub></td><td>head dim · qk rope</td><td class="vl">64</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(flavor)</i></td></tr>
+    <tr><td class="nm">d<sub>c</sub></td><td>KV latent dim</td><td class="vl">512</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(flavor: kv_lora_rank; no query latent (q_lora_rank 0))</i></td></tr>
+    <tr><td class="nm">E</td><td>routed experts per MoE layer</td><td class="vl">64</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(flavor: sigmoid scores, no group limit, no capacity limit)</i></td></tr>
+    <tr><td class="nm">k</td><td>routed experts per token</td><td class="vl">6</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(flavor)</i></td></tr>
+    <tr><td class="nm">I</td><td>expert hidden dim</td><td class="vl">1,408</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(flavor: moe_inter_dim)</i></td></tr>
+    <tr><td class="nm">I<sub>sh</sub></td><td>shared-expert hidden dim</td><td class="vl">2,816</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(flavor: two shared experts, built as one SwiGLU FFN of 2 × 1,408)</i></td></tr>
+    <tr><td class="nm">I<sub>dns</sub></td><td>dense FFN hidden dim</td><td class="vl">10,944</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(flavor: inter_dim)</i></td></tr>
+    <tr><td class="nm">V</td><td>vocabulary</td><td class="vl">102,400</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(flavor: DeepSeek-MoE 16B’s tokenizer)</i></td></tr>
+    <tr><td class="nm">N<sub>attn</sub></td><td>attention params, per layer</td><td class="vl">13,763,072</td><td class="vl sc ap">1.38 × 10<sup>7</sup></td><td class="vl si ap">13<span class="d">.8</span><span class="u"> M</span></td><td class="fx"><b>d</b> · <b>n<sub>h</sub></b> · (<b>d<sub>h</sub></b> + <b>d<sup>R</sup><sub>h</sub></b>) + <b>d</b> · (<b>d<sub>c</sub></b> + <b>d<sup>R</sup><sub>h</sub></b>) + <b>d<sub>c</sub></b> + <b>d<sub>c</sub></b> · <b>n<sub>h</sub></b> · 2 · <b>d<sub>h</sub></b> + <b>n<sub>h</sub></b> · <b>d<sub>h</sub></b> · <b>d</b> <i>(W<sup>Q</sup>, W<sup>DKV</sup> with the rope key, the latent’s norm, W<sup>UK</sup> and W<sup>UV</sup>, W<sup>O</sup>)</i></td></tr>
+    <tr><td class="nm">N<sub>x</sub></td><td>params of one routed expert</td><td class="vl">8,650,752</td><td class="vl sc ap">8.65 × 10<sup>6</sup></td><td class="vl si ap">8<span class="d">.65</span><span class="u"> M</span></td><td class="fx">3 · <b>d</b> · <b>I</b></td></tr>
+    <tr><td class="nm">N<sub>moe</sub></td><td>MoE FFN params, per layer</td><td class="vl">571,080,704</td><td class="vl sc ap">5.71 × 10<sup>8</sup></td><td class="vl si ap">571<span class="d"></span><span class="u"> M</span></td><td class="fx"><b>E</b> · <b>N<sub>x</sub></b> + 3 · <b>d</b> · <b>I<sub>sh</sub></b> + <b>d</b> · <b>E</b> <i>(routed experts, shared experts, router)</i></td></tr>
+    <tr><td class="nm">N<sub>dns</sub></td><td>dense FFN params</td><td class="vl">67,239,936</td><td class="vl sc ap">6.72 × 10<sup>7</sup></td><td class="vl si ap">67<span class="d">.2</span><span class="u"> M</span></td><td class="fx">3 · <b>d</b> · <b>I<sub>dns</sub></b></td></tr>
+    <tr><td class="nm">N<sub>emb</sub></td><td>embedding params (the head has as many)</td><td class="vl">209,715,200</td><td class="vl sc ap">2.10 × 10<sup>8</sup></td><td class="vl si ap">210<span class="d"></span><span class="u"> M</span></td><td class="fx"><b>V</b> · <b>d</b></td></tr>
+    <tr class="hl"><td class="nm">N</td><td>total params</td><td class="vl">15,706,484,224</td><td class="vl sc ap">1.57 × 10<sup>10</sup></td><td class="vl si ap">15<span class="d">.7</span><span class="u"> G</span></td><td class="fx">2 · <b>N<sub>emb</sub></b> + <b>d</b> + <b>L</b> · (<b>N<sub>attn</sub></b> + 2 · <b>d</b>) + <b>L<sub>dns</sub></b> · <b>N<sub>dns</sub></b> + <b>L<sub>moe</sub></b> · <b>N<sub>moe</sub></b> <i>(embedding, head, final norm; per layer attention and two norms; the FFNs)</i></td></tr>
+    <tr><td class="nm">N<sub>exp</sub></td><td>routed-expert params</td><td class="vl">14,394,851,328</td><td class="vl sc ap">1.44 × 10<sup>10</sup></td><td class="vl si ap">14<span class="d">.4</span><span class="u"> G</span></td><td class="fx"><b>L<sub>moe</sub></b> · <b>E</b> · <b>N<sub>x</sub></b></td></tr>
+    <tr><td class="nm">N<sub>ne</sub></td><td>non-expert params</td><td class="vl">1,311,632,896</td><td class="vl sc ap">1.31 × 10<sup>9</sup></td><td class="vl si ap">1<span class="d">.31</span><span class="u"> G</span></td><td class="fx"><b>N</b> − <b>N<sub>exp</sub></b></td></tr>
+    <tr class="hl"><td class="nm">N<sub>act</sub></td><td>activated params, embedding excluded</td><td class="vl">2,451,435,008</td><td class="vl sc ap">2.45 × 10<sup>9</sup></td><td class="vl si ap">2<span class="d">.45</span><span class="u"> G</span></td><td class="fx"><b>N</b> − <b>N<sub>emb</sub></b> − <b>L<sub>moe</sub></b> · (<b>E</b> − <b>k</b>) · <b>N<sub>x</sub></b> <i>(TorchTitan’s own count; the embedding is a lookup, not a GEMM)</i></td></tr>
+    </table></div>
+
+    <h2>The batch and the cluster</h2>
+
+    <p class="ai">[[AI: Each GPU trains <span data-cellref="D<sub>GPU</sub>">16<span class="d">.4</span><span class="u"> K</span></span> tokens per step, a quarter of part 3’s per-GPU share, and the cluster <span data-cellref="D">4<span class="d">.19</span><span class="u"> M</span></span>.]]</p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">B</td><td>sequences per GPU per step</td><td class="vl">4</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(the run: local batch 4, one microbatch, no gradient accumulation)</i></td></tr>
+    <tr><td class="nm">S</td><td>tokens per sequence</td><td class="vl">4,096</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(the run)</i></td></tr>
+    <tr><td class="nm">D<sub>GPU</sub></td><td>tokens per GPU per step</td><td class="vl">16,384</td><td class="vl sc ap">1.64 × 10<sup>4</sup></td><td class="vl si ap">16<span class="d">.4</span><span class="u"> K</span></td><td class="fx"><b>B</b> · <b>S</b></td></tr>
+    <tr><td class="nm">GPUs</td><td>GPUs in the cluster</td><td class="vl">256</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(the run: 32 Grand Teton nodes)</i></td></tr>
+    <tr><td class="nm">D</td><td>tokens per step</td><td class="vl">4,194,304</td><td class="vl sc ap">4.19 × 10<sup>6</sup></td><td class="vl si ap">4<span class="d">.19</span><span class="u"> M</span></td><td class="fx"><b>D<sub>GPU</sub></b> · <b>GPUs</b></td></tr>
+    </table></div>
+
+    <h2>The layout</h2>
+
+    <p class="ai">[[AI: EP 8 fills a node; FSDP shards the rest. TorchTitan’s mesh calls the expert-sharding axis edp_shard: each EP slice of the experts is sharded over the 32 GPUs that hold the same slice, one per node. The non-expert parameters are sharded over all 256.]]</p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">EP</td><td>expert parallelism</td><td class="vl">8</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(the run: EP 8, one node’s eight GPUs)</i></td></tr>
+    <tr><td class="nm">EDP</td><td>shards of an expert slice</td><td class="vl">32</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><b>GPUs</b> / <b>EP</b> <i>(edp_shard: one GPU per node)</i></td></tr>
+    <tr><td class="nm">nodes</td><td>nodes</td><td class="vl">32</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><b>GPUs</b> / <b>NVL</b></td></tr>
+    </table></div>
+
+    <h2>Does it fit?</h2>
+
+    <p class="ai">[[AI: Yes, with room to spare. Everything is sharded over all 256 GPUs, so parameters, gradients and optimizer state together come to under a gibibyte per GPU. What remains is what is in flight: two gathered layers (the one at work and the one prefetched), the head, which FlexShard keeps gathered until backward ends, and the activations. SelectiveAC saves the outputs of compute-heavy ops and replays the rest. In this model that saves the block input, Q, the up-projected K and V, the attention output and the shared experts’ gate/up output, and saves nothing from the routed experts: their grouped GEMM is not on its save list and the eager all-to-all cannot be saved at all. A MoE layer keeps <span data-cellref="s<sub>moe</sub>">33<span class="d">.9</span><span class="u"> KB</span></span> per token. The peak sits at the start of backward, when every layer’s stash is still held and the last layer replays its experts and builds their gradients.]]</p>
+
+    <p class="ai">[[AI: The tally is <span data-cellref="M<sub>tot</sub>">22<span class="d">.3</span><span class="u"> </span></span> GiB, <span data-cellref="f<sub>mem</sub>">28<span class="d">.2</span><span class="u"> %</span></span> of an H100, against the <span data-cellref="M<sub>meas</sub>">24<span class="d">.8</span><span class="u"> </span></span> GiB peak PyTorch reserved on rank 0. Rank 0 should sit above an even split: FlexShard assigns whole matrices to ranks, largest first, so the low ranks own each layer’s biggest matrices, and the allocator adds fragmentation on top of the live bytes. At 32 GPUs the state per GPU grows eightfold, and the tally follows the measured peak there too (the table below). Recomputing less would be the natural use of the spare memory: all of the replay is in the routed experts.]]</p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">o<sub>st</sub></td><td>state bytes per param</td><td class="vl">16</td><td class="vl sc ap">1.60 × 10<sup>1</sup></td><td class="vl si ap">16<span class="d"></span><span class="u"> B</span></td><td class="fx"><i>(FP32 master weight, FP32 gradient, AdamW’s two FP32 moments)</i></td></tr>
+    <tr><td class="nm">M<sub>st</sub></td><td>sharded state per GPU (GiB)</td><td class="vl"></td><td class="vl sc ap">9.14 × 10<sup>−1</sup></td><td class="vl si ap">0<span class="d">.914</span><span class="u"> </span></td><td class="fx"><b>o<sub>st</sub></b> · <b>N</b> / <b>GPUs</b> / 1,073,741,824 <i>(everything sharded over all the GPUs: non-expert params over dp_shard, each EP slice over edp_shard)</i></td></tr>
+    <tr><td class="nm">N<sub>bk</sub></td><td>params in one MoE layer’s two buckets, gathered</td><td class="vl">100,405,760</td><td class="vl sc ap">1.00 × 10<sup>8</sup></td><td class="vl si ap">100<span class="d"></span><span class="u"> M</span></td><td class="fx"><b>N<sub>attn</sub></b> + 2 · <b>d</b> + 3 · <b>d</b> · <b>I<sub>sh</sub></b> + <b>d</b> · <b>E</b> + <b>E</b> / <b>EP</b> · <b>N<sub>x</sub></b> <i>(the common bucket (attention, norms, shared experts, router) and the GPU’s eight experts)</i></td></tr>
+    <tr><td class="nm">M<sub>bk</sub></td><td>gathered layers in flight (GiB)</td><td class="vl"></td><td class="vl sc ap">1.12 × 10<sup>0</sup></td><td class="vl si ap">1<span class="d">.12</span><span class="u"> </span></td><td class="fx">2 · (2 + 4) · <b>N<sub>bk</sub></b> / 1,073,741,824 <i>(the layer at work and the one prefetched: BF16 weights plus FP32 unsharded gradients)</i></td></tr>
+    <tr><td class="nm">M<sub>head</sub></td><td>head and loss buffers (GiB)</td><td class="vl">0.515625</td><td class="vl sc ap">5.16 × 10<sup>−1</sup></td><td class="vl si ap">0<span class="d">.516</span><span class="u"> </span></td><td class="fx">(2 · <b>N<sub>emb</sub></b> + 4 · <b>d</b> · <b>D<sub>GPU</sub></b>) / 1,073,741,824 <i>(the head stays gathered (BF16) until backward ends; the chunked loss accumulates its input gradient in FP32)</i></td></tr>
+    <tr><td class="nm">s<sub>moe</sub></td><td>saved bytes per token, one MoE layer</td><td class="vl">33,928</td><td class="vl sc ap">3.39 × 10<sup>4</sup></td><td class="vl si ap">33<span class="d">.9</span><span class="u"> KB</span></td><td class="fx">2 · (<b>d</b> + <b>n<sub>h</sub></b> · (<b>d<sub>h</sub></b> + <b>d<sup>R</sup><sub>h</sub></b>) + 2 · <b>n<sub>h</sub></b> · <b>d<sub>h</sub></b> + <b>n<sub>h</sub></b> · <b>d<sub>h</sub></b> + 2 · <b>I<sub>sh</sub></b>) + 4 · <b>n<sub>h</sub></b> + 12 · <b>k</b> <i>(BF16: the block input, Q, the up-projected K and V, the attention output, the shared experts’ fused gate/up output; FP32 log-sum-exp; top-k scores (FP32) and indices (int64). The routed experts and both all-to-alls keep nothing)</i></td></tr>
+    <tr><td class="nm">s<sub>dns</sub></td><td>saved bytes per token, the dense layer</td><td class="vl">66,368</td><td class="vl sc ap">6.64 × 10<sup>4</sup></td><td class="vl si ap">66<span class="d">.4</span><span class="u"> KB</span></td><td class="fx">2 · (<b>d</b> + <b>n<sub>h</sub></b> · (<b>d<sub>h</sub></b> + <b>d<sup>R</sup><sub>h</sub></b>) + 2 · <b>n<sub>h</sub></b> · <b>d<sub>h</sub></b> + <b>n<sub>h</sub></b> · <b>d<sub>h</sub></b> + 2 · <b>I<sub>dns</sub></b>) + 4 · <b>n<sub>h</sub></b></td></tr>
+    <tr class="hl"><td class="nm">M<sub>act</sub></td><td>saved activations, all layers (GiB)</td><td class="vl"></td><td class="vl sc ap">1.45 × 10<sup>1</sup></td><td class="vl si ap">14<span class="d">.5</span><span class="u"> </span></td><td class="fx"><b>D<sub>GPU</sub></b> · (<b>L<sub>moe</sub></b> · <b>s<sub>moe</sub></b> + <b>L<sub>dns</sub></b> · <b>s<sub>dns</sub></b>) / 1,073,741,824</td></tr>
+    <tr><td class="nm">s<sub>rp</sub></td><td>one MoE layer’s replay, bytes per token</td><td class="vl">173,568</td><td class="vl sc ap">1.74 × 10<sup>5</sup></td><td class="vl si ap">174<span class="d"></span><span class="u"> KB</span></td><td class="fx"><b>k</b> · (10 · <b>d</b> + 6 · <b>I</b>) <i>(per pick: dispatched input, gate/up output, SwiGLU output, expert output, combined output (BF16), the score-weighted copy (FP32))</i></td></tr>
+    <tr><td class="nm">M<sub>rp</sub></td><td>the replay at work, with its gradients (GiB)</td><td class="vl">5.296875</td><td class="vl sc ap">5.30 × 10<sup>0</sup></td><td class="vl si ap">5<span class="d">.30</span><span class="u"> </span></td><td class="fx">2 · <b>D<sub>GPU</sub></b> · <b>s<sub>rp</sub></b> / 1,073,741,824 <i>(×2: backward makes a gradient of about each size; the peak sits at the start of backward, every layer’s stash still held)</i></td></tr>
+    <tr class="hl"><td class="nm">M<sub>tot</sub></td><td>peak memory per GPU (GiB)</td><td class="vl"></td><td class="vl sc ap">2.23 × 10<sup>1</sup></td><td class="vl si ap">22<span class="d">.3</span><span class="u"> </span></td><td class="fx"><b>M<sub>st</sub></b> + <b>M<sub>bk</sub></b> + <b>M<sub>head</sub></b> + <b>M<sub>act</sub></b> + <b>M<sub>rp</sub></b></td></tr>
+    <tr class="hl"><td class="nm">f<sub>mem</sub></td><td>share of HBM</td><td class="vl"></td><td class="vl sc ap">2.82 × 10<sup>−1</sup></td><td class="vl si ap">28<span class="d">.2</span><span class="u"> %</span></td><td class="fx"><b>M<sub>tot</sub></b> / <b>M<sub>HBM</sub></b></td></tr>
+    <tr><td class="nm">M<sub>meas</sub></td><td>peak reserved, measured (GiB)</td><td class="vl">24.84</td><td class="vl sc ap">2.48 × 10<sup>1</sup></td><td class="vl si ap">24<span class="d">.8</span><span class="u"> </span></td><td class="fx"><i>(the job log, rank 0, steps 50–100: “memory: 24.84GiB(31.37%)”, PyTorch’s peak reserved bytes)</i></td></tr>
+    </table></div>
+
+    <h2>How many FLOPs do we need to do?</h2>
+
+    <p class="ai">[[AI: 6N for the GEMMs, the attention core on top, and the replay. SelectiveAC replays every second matmul of a block, the router, and all three grouped GEMMs of the routed experts: <span data-cellref="c<sub>rc</sub>">3<span class="d">.34</span><span class="u"> GFLOP</span></span> per token, 17 % of the work. The attention row is an upper bound: the run packs C4 documents into a 16,384-token row and FlexAttention masks across document boundaries, so every document shorter than 4,096 tokens skips pairs. Set f<sub>doc</sub> to the share that survives; at 1, attention is 10 % of the FLOPs.]]</p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">c<sub>6N</sub></td><td>GEMM FLOPs per token, 6N</td><td class="vl">14,708,610,048</td><td class="vl sc ap">1.47 × 10<sup>10</sup></td><td class="vl si ap">14<span class="d">.7</span><span class="u"> GFLOP</span></td><td class="fx">6 · <b>N<sub>act</sub></b> <i>(forward 2, backward 4 per activated parameter; all BF16)</i></td></tr>
+    <tr><td class="nm">c<sub>qk</sub></td><td>QKᵀ-shaped FLOPs · one layer, one token</td><td class="vl">12,582,912</td><td class="vl sc ap">1.26 × 10<sup>7</sup></td><td class="vl si ap">12<span class="d">.6</span><span class="u"> MFLOP</span></td><td class="fx">2 · <b>n<sub>h</sub></b> · (<b>d<sub>h</sub></b> + <b>d<sup>R</sup><sub>h</sub></b>) · <b>S</b> / 2 <i>(causal: a token sees S/2 keys on average)</i></td></tr>
+    <tr><td class="nm">c<sub>pv</sub></td><td>PV-shaped FLOPs · one layer, one token</td><td class="vl">8,388,608</td><td class="vl sc ap">8.39 × 10<sup>6</sup></td><td class="vl si ap">8<span class="d">.39</span><span class="u"> MFLOP</span></td><td class="fx">2 · <b>n<sub>h</sub></b> · <b>d<sub>h</sub></b> · <b>S</b> / 2</td></tr>
+    <tr><td class="nm">f<sub>doc</sub></td><td>share of those pairs the document mask keeps</td><td class="vl">1</td><td class="vl sc ap">1.00 × 10<sup>0</sup></td><td class="vl si ap">100<span class="d"></span><span class="u"> %</span></td><td class="fx"><i>(model input: 1 is an upper bound. FlexAttention runs a document-causal mask over the packed 16,384-token row, documents cut at 4,096, so every document shorter than 4,096 tokens drops pairs; C4’s document lengths are not measured here)</i></td></tr>
+    <tr><td class="nm">c<sub>attn</sub></td><td>attention FLOPs per token</td><td class="vl">2,038,431,744</td><td class="vl sc ap">2.04 × 10<sup>9</sup></td><td class="vl si ap">2<span class="d">.04</span><span class="u"> GFLOP</span></td><td class="fx"><b>f<sub>doc</sub></b> · <b>L</b> · (4 · <b>c<sub>qk</sub></b> + 3 · <b>c<sub>pv</sub></b>) <i>(QKᵀ-shaped ×4 (fwd, bwd replay, dQ, dK), PV-shaped ×3 (fwd, dV, dP))</i></td></tr>
+    <tr><td class="nm">c<sub>rc</sub></td><td>recomputed GEMM FLOPs per token</td><td class="vl">3,340,763,136</td><td class="vl sc ap">3.34 × 10<sup>9</sup></td><td class="vl si ap">3<span class="d">.34</span><span class="u"> GFLOP</span></td><td class="fx">2 · (<b>L</b> · (<b>d</b> · (<b>d<sub>c</sub></b> + <b>d<sup>R</sup><sub>h</sub></b>) + <b>n<sub>h</sub></b> · <b>d<sub>h</sub></b> · <b>d</b>) + <b>L<sub>moe</sub></b> · (<b>d</b> · <b>I<sub>sh</sub></b> + <b>d</b> · <b>E</b> + <b>k</b> · <b>N<sub>x</sub></b>) + <b>L<sub>dns</sub></b> · <b>d</b> · <b>I<sub>dns</sub></b>) <i>(SelectiveAC replays every second matmul of a block (W<sup>DKV</sup>, W<sup>O</sup>, the shared or dense FFN’s down projection W<sub>2</sub>), the router, which it always replays, and all three of the routed experts’ grouped GEMMs, an op it never saves)</i></td></tr>
+    <tr><td class="nm">φ</td><td>FLOPs per token, executed</td><td class="vl">20,087,804,928</td><td class="vl sc ap">2.01 × 10<sup>10</sup></td><td class="vl si ap">20<span class="d">.1</span><span class="u"> GFLOP</span></td><td class="fx"><b>c<sub>6N</sub></b> + <b>c<sub>attn</sub></b> + <b>c<sub>rc</sub></b></td></tr>
+    <tr class="hl"><td class="nm">T<sub>c</sub></td><td>compute time per step (s)</td><td class="vl"></td><td class="vl sc ap">4.34 × 10<sup>−1</sup></td><td class="vl si ap">434<span class="d"></span><span class="u"> ms</span></td><td class="fx"><b>D<sub>GPU</sub></b> · <b>φ</b> / <b>π<sup>sol</sup><sub>bf16</sub></b></td></tr>
+    </table></div>
+
+    <h2>Expert parallelism over NVLink</h2>
+
+    <p class="ai">[[AI: EP 8 stays inside a node. TorchTitan sends one copy of a token per pick (no deduplication by destination GPU), in BF16 both ways. The eager all-to-all is a raw c10d call that SelectiveAC cannot save, so the recompute sends dispatch and combine a second time: six transfers per MoE layer per step instead of four. Even so it is <span data-cellref="T<sub>EP</sub>">122<span class="d"></span><span class="u"> ms</span></span> per step, well under compute.]]</p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">r<sub>a2a</sub></td><td>all-to-alls replayed in the recompute</td><td class="vl">1</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(model input: 1 = the run. Its eager all-to-all is a raw c10d call, which SelectiveAC cannot save, so every MoE block’s recompute re-sends dispatch and combine; 0 = saved)</i></td></tr>
+    <tr><td class="nm">V<sub>tok</sub></td><td>EP bytes per token·MoE layer, one direction</td><td class="vl">21,504</td><td class="vl sc ap">2.15 × 10<sup>4</sup></td><td class="vl si ap">21<span class="d">.5</span><span class="u"> KB</span></td><td class="fx"><b>k</b> · <b>d</b> · 2 · (1 − 1 / <b>EP</b>) <i>(k BF16 copies, one per pick, no deduplication by destination; the share bound for another GPU leaves)</i></td></tr>
+    <tr><td class="nm">V<sub>EP</sub></td><td>EP NVLink bytes per GPU·step</td><td class="vl">54,962,159,616</td><td class="vl sc ap">5.50 × 10<sup>10</sup></td><td class="vl si ap">55<span class="d">.0</span><span class="u"> GB</span></td><td class="fx"><b>D<sub>GPU</sub></b> · <b>L<sub>moe</sub></b> · (4 + 2 · <b>r<sub>a2a</sub></b>) · <b>V<sub>tok</sub></b> <i>(dispatch and combine forward, again in the replay, and both directions in backward)</i></td></tr>
+    <tr><td class="nm">T<sub>EP</sub></td><td>EP time per step (s)</td><td class="vl"></td><td class="vl sc ap">1.22 × 10<sup>−1</sup></td><td class="vl si ap">122<span class="d"></span><span class="u"> ms</span></td><td class="fx"><b>V<sub>EP</sub></b> / <b>β<sub>NV</sub></b></td></tr>
+    </table></div>
+
+    <h2>FSDP over 256 GPUs</h2>
+
+    <p class="ai">[[AI: FlexShard gathers BF16 weights layer by layer, gathers them again for backward (the recompute reuses that gather), and reduce-scatters FP32 gradients. The experts dominate. An EP slice is sharded over one GPU per node, so every byte of its collectives crosses that GPU’s NIC; the non-expert part goes over NVLink first and splits across the node’s eight NICs. Per step that is <span data-cellref="T<sub>IB</sub>">304<span class="d"></span><span class="u"> ms</span></span> on the NICs, under the <span data-cellref="T<sub>c</sub>">434<span class="d"></span><span class="u"> ms</span></span> of compute; FlexShard prefetches one layer ahead to hide it.]]</p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">w<sub>ag</sub></td><td>all-gather bytes per param</td><td class="vl">2</td><td class="vl sc ap">2.00 × 10<sup>0</sup></td><td class="vl si ap">2<span class="d"></span><span class="u"> B</span></td><td class="fx"><i>(the dense_all_gather run: parameters cast to BF16, then gathered)</i></td></tr>
+    <tr><td class="nm">n<sub>ag</sub></td><td>all-gathers per step</td><td class="vl">2</td><td class="vl sc ap"></td><td class="vl si ap"></td><td class="fx"><i>(FlexShard reshards after forward: gather for forward, again for backward (the recompute reuses the backward gather))</i></td></tr>
+    <tr><td class="nm">w<sub>rs</sub></td><td>reduce-scatter bytes per param</td><td class="vl">4</td><td class="vl sc ap">4.00 × 10<sup>0</sup></td><td class="vl si ap">4<span class="d"></span><span class="u"> B</span></td><td class="fx"><i>(FP32: gradients accumulate and reduce-scatter in FP32)</i></td></tr>
+    <tr><td class="nm">Λ<sub>exp</sub></td><td>expert params a GPU moves per collective, scale-out</td><td class="vl">1,743,126,528</td><td class="vl sc ap">1.74 × 10<sup>9</sup></td><td class="vl si ap">1<span class="d">.74</span><span class="u"> G</span></td><td class="fx"><b>N<sub>exp</sub></b> / <b>EP</b> · (1 − 1 / <b>EDP</b>) <i>(its EP slice, sharded over edp_shard, one GPU per node: every byte crosses its own NIC; even shards assumed)</i></td></tr>
+    <tr><td class="nm">Λ<sub>ne</sub></td><td>non-expert params a GPU moves per collective, scale-out</td><td class="vl">158,830,546</td><td class="vl sc ap">1.59 × 10<sup>8</sup></td><td class="vl si ap">159<span class="d"></span><span class="u"> M</span></td><td class="fx"><b>N<sub>ne</sub></b> / <b>NVL</b> · (1 − 1 / <b>nodes</b>) <i>(hierarchical: NVLink inside the node first, then each GPU’s NIC carries an eighth)</i></td></tr>
+    <tr class="hl"><td class="nm">T<sub>IB</sub></td><td>FSDP scale-out time per step (s)</td><td class="vl"></td><td class="vl sc ap">3.04 × 10<sup>−1</sup></td><td class="vl si ap">304<span class="d"></span><span class="u"> ms</span></td><td class="fx">(<b>n<sub>ag</sub></b> · <b>w<sub>ag</sub></b> + <b>w<sub>rs</sub></b>) · (<b>Λ<sub>exp</sub></b> + <b>Λ<sub>ne</sub></b>) / <b>β<sub>IB</sub></b></td></tr>
+    <tr><td class="nm">T<sub>NV,fsdp</sub></td><td>FSDP in-node phase (s)</td><td class="vl"></td><td class="vl sc ap">2.04 × 10<sup>−2</sup></td><td class="vl si ap">20<span class="d">.4</span><span class="u"> ms</span></td><td class="fx">(<b>n<sub>ag</sub></b> · <b>w<sub>ag</sub></b> + <b>w<sub>rs</sub></b>) · <b>N<sub>ne</sub></b> · (1 − 1 / <b>NVL</b>) / <b>β<sub>NV</sub></b></td></tr>
+    </table></div>
+
+    <h2>Putting it together</h2>
+
+    <p class="ai">[[AI: Compute bound: scale-out is <span data-cellref="f<sub>IB</sub>">70<span class="d">.1</span><span class="u"> %</span></span> of compute, NVLink <span data-cellref="f<sub>NV</sub>">32<span class="d">.8</span><span class="u"> %</span></span>, and there is no pipeline bubble. Speed of light is <span data-cellref="ρ<sup>sol</sup>">37<span class="d">.7</span><span class="u"> K</span></span> tokens/s per GPU against the <span data-cellref="ρ">4<span class="d">.19</span><span class="u"> K</span></span> measured, a factor of <span data-cellref="f<sup>sol</sup>">8<span class="d">.99</span><span class="u"> </span></span>. Part 3 found DeepSeek’s own run 4.3× under its speed of light; here the measured step takes <span data-cellref="T<sub>meas</sub>">3<span class="d">.91</span><span class="u"> s</span></span> against <span data-cellref="T<sub>step</sub>">434<span class="d"></span><span class="u"> ms</span></span>.]]</p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">T<sub>NV</sub></td><td>NVLink time per step (s)</td><td class="vl"></td><td class="vl sc ap">1.43 × 10<sup>−1</sup></td><td class="vl si ap">143<span class="d"></span><span class="u"> ms</span></td><td class="fx"><b>T<sub>EP</sub></b> + <b>T<sub>NV,fsdp</sub></b></td></tr>
+    <tr class="hl"><td class="nm">f<sub>NV</sub></td><td>NVLink time, share of compute</td><td class="vl"></td><td class="vl sc ap">3.28 × 10<sup>−1</sup></td><td class="vl si ap">32<span class="d">.8</span><span class="u"> %</span></td><td class="fx"><b>T<sub>NV</sub></b> / <b>T<sub>c</sub></b></td></tr>
+    <tr class="hl"><td class="nm">f<sub>IB</sub></td><td>scale-out time, share of compute</td><td class="vl"></td><td class="vl sc ap">7.01 × 10<sup>−1</sup></td><td class="vl si ap">70<span class="d">.1</span><span class="u"> %</span></td><td class="fx"><b>T<sub>IB</sub></b> / <b>T<sub>c</sub></b> <i>(under 100 %: FSDP’s prefetch can hide every gather and reduce-scatter behind another layer’s compute)</i></td></tr>
+    <tr class="hl"><td class="nm">T<sub>step</sub></td><td>step time at speed of light (s)</td><td class="vl"></td><td class="vl sc ap">4.34 × 10<sup>−1</sup></td><td class="vl si ap">434<span class="d"></span><span class="u"> ms</span></td><td class="fx"><b>T<sub>c</sub></b> <i>(compute bound: no pipeline, so no bubble)</i></td></tr>
+    <tr class="hl"><td class="nm">ρ<sup>sol</sup></td><td>tokens/s per GPU at speed of light</td><td class="vl"></td><td class="vl sc ap">3.77 × 10<sup>4</sup></td><td class="vl si ap">37<span class="d">.7</span><span class="u"> K</span></td><td class="fx"><b>D<sub>GPU</sub></b> / <b>T<sub>step</sub></b></td></tr>
+    <tr><td class="nm">ρ</td><td>tokens/s per GPU, measured</td><td class="vl">4,194.6</td><td class="vl sc ap">4.19 × 10<sup>3</sup></td><td class="vl si ap">4<span class="d">.19</span><span class="u"> K</span></td><td class="fx"><i>(the dense_all_gather run: mean of TorchTitan’s ten logged windows, steps 10–100)</i></td></tr>
+    <tr><td class="nm">T<sub>meas</sub></td><td>step time, measured (s)</td><td class="vl"></td><td class="vl sc ap">3.91 × 10<sup>0</sup></td><td class="vl si ap">3<span class="d">.91</span><span class="u"> s</span></td><td class="fx"><b>D<sub>GPU</sub></b> / <b>ρ</b></td></tr>
+    <tr class="hl"><td class="nm">f<sup>sol</sup></td><td>speed of light over reality</td><td class="vl"></td><td class="vl sc ap">8.99 × 10<sup>0</sup></td><td class="vl si ap">8<span class="d">.99</span><span class="u"> </span></td><td class="fx"><b>ρ<sup>sol</sup></b> / <b>ρ</b></td></tr>
+    </table></div>
+
+    <div class="tally configs"><table>
+    <thead>
+    <tr><th>GPUs</th><th class="n">memory, tally</th><th class="n">measured</th><th class="n">T<sub>step</sub> at SOL</th><th class="n">scale-out / compute</th><th class="n">tok/s/GPU at SOL</th><th class="n">measured</th><th class="n">step, measured</th><th class="n">SOL / measured</th></tr>
+    </thead>
+    <tbody></tbody>
+    </table></div>
+
+    <h2>Comparing against TorchTitan’s numbers</h2>
+
+    <p class="ai">[[AI: TorchTitan logs 7.7 % MFU for this run. Its numerator counts 6N plus attention as full and non-causal, with no backward replay and no recompute, over the 989 TFLOP/s spec peak. On that scale the speed of light here would be <span data-cellref="MFU<sup>sol</sup>">69<span class="d">.1</span><span class="u"> %</span></span>.]]</p>
+
+    <p class="ai">[[AI: Two measurements say the gap is not the roofline’s communication. First, the 32-GPU runs: the same model, the same 16,384 tokens per GPU, EP 8, dp_shard 32. Per GPU the roofline barely changes, since a ring moves (n − 1)/n of a shard set whatever n is: the expert collectives go from 3/4 to 31/32 of the slice. Measured, the step goes from 2.29 s to 3.91 s. Second, the FP8 all-gather: <span data-cellref="ρ<sub>fp8</sub>">4<span class="d">.33</span><span class="u"> K</span></span> tokens/s per GPU, +3.2 %. In the source tree that recipe converts only the attention projections and the shared and dense FFNs to blockwise FP8 (the run’s own recipe is not in source control), so the routed experts, which carry most of the gathered bytes, still move in BF16. The roofline, compute bound with scale-out at <span data-cellref="f<sub>IB</sub>">70<span class="d">.1</span><span class="u"> %</span></span>, predicts almost nothing from either change. Both moved the measured step, so something scale-dependent is exposed that bandwidth does not explain: per-collective latency across 32 nodes, waits on the slowest rank, the uneven ownership of whole matrices.]]</p>
+
+    <p class="ai">[[AI: Suspects the source shows and the trace can settle (the job kept profiler traces at step 100): a blocking device-to-host sync in every MoE layer’s dispatch (split sizes, before the all-to-all), a blocking all-reduce for the expert-bias update every step, prefetch one layer deep, no CUDA graphs, eager everywhere except attention, SwiGLU and the loss, and, if FlexShard’s end-of-backward hook fires per loss chunk as the source suggests, eight gathers and reduce-scatters of the head per step instead of one.]]</p>
+
+    <div class="cellsheet"><table>
+    <tr><th>cell</th><th>quantity</th><th class="vl">value (exact)</th><th class="vl">scientific</th><th class="vl si"><span class="u"> SI</span></th><th>formula</th></tr>
+    <tr><td class="nm">φ<sup>tt</sup></td><td>TorchTitan’s FLOPs per token</td><td class="vl">18,105,996,288</td><td class="vl sc ap">1.81 × 10<sup>10</sup></td><td class="vl si ap">18<span class="d">.1</span><span class="u"> GFLOP</span></td><td class="fx">6 · <b>N<sub>act</sub></b> + 6 · <b>L</b> · <b>n<sub>h</sub></b> · (2 · <b>d<sub>h</sub></b> + <b>d<sup>R</sup><sub>h</sub></b>) · <b>S</b> <i>(its MFU numerator: 6N plus 12 · L · n<sub>h</sub> · ((d<sub>h</sub> + d<sup>R</sup><sub>h</sub> + d<sub>h</sub>) / 2) · S, attention counted without the causal half and without the backward replay; no recompute)</i></td></tr>
+    <tr><td class="nm">MFU<sup>tt</sup></td><td>TorchTitan’s MFU, measured</td><td class="vl"></td><td class="vl sc ap">7.68 × 10<sup>−2</sup></td><td class="vl si ap">7<span class="d">.68</span><span class="u"> %</span></td><td class="fx"><b>ρ</b> · <b>φ<sup>tt</sup></b> / <b>π<sub>bf16</sub></b></td></tr>
+    <tr><td class="nm">MFU<sup>sol</sup></td><td>the same MFU at speed of light</td><td class="vl"></td><td class="vl sc ap">6.91 × 10<sup>−1</sup></td><td class="vl si ap">69<span class="d">.1</span><span class="u"> %</span></td><td class="fx"><b>ρ<sup>sol</sup></b> · <b>φ<sup>tt</sup></b> / <b>π<sub>bf16</sub></b></td></tr>
+    <tr><td class="nm">ρ<sub>fp8</sub></td><td>tokens/s per GPU, fp8_all_gather run</td><td class="vl">4,328.9</td><td class="vl sc ap">4.33 × 10<sup>3</sup></td><td class="vl si ap">4<span class="d">.33</span><span class="u"> K</span></td><td class="fx"><i>(the treatment: same model, layout and package; mean of ten windows)</i></td></tr>
+    <tr><td class="nm">ρ<sub>32</sub></td><td>tokens/s per GPU, 32 GPUs, dense all-gather</td><td class="vl">7,154.975</td><td class="vl sc ap">7.15 × 10<sup>3</sup></td><td class="vl si ap">7<span class="d">.15</span><span class="u"> K</span></td><td class="fx"><i>(the four repeats at dp_shard 32, EP 8, the same 16,384 tokens per GPU: mean of 40 windows (repeat means 6,938–7,243))</i></td></tr>
+    <tr><td class="nm">ρ<sub>8,32</sub></td><td>tokens/s per GPU, 32 GPUs, fp8 all-gather</td><td class="vl">7,339.175</td><td class="vl sc ap">7.34 × 10<sup>3</sup></td><td class="vl si ap">7<span class="d">.34</span><span class="u"> K</span></td><td class="fx"><i>(the four repeats’ treatments: mean of 40 windows (7,041–7,452))</i></td></tr>
+    <tr><td class="nm">M<sub>32</sub></td><td>peak reserved, 32 GPUs, measured (GiB)</td><td class="vl">28.95</td><td class="vl sc ap">2.89 × 10<sup>1</sup></td><td class="vl si ap">28<span class="d">.9</span><span class="u"> </span></td><td class="fx"><i>(repeat 1’s dense job log, rank 0, steps 60–100)</i></td></tr>
+    </table></div>
+
+    <p class="note" id="fn1"><sup>1</sup> Disclosure: this draft study — prose, sheet structure and model — was generated by Fable (Claude) from the run’s job logs, TorchTitan and FlexShard source at the run’s date, and part 3’s roofline sheets, and has not yet had a human edit pass. It is not part of the published series. <a href="#fnref1">↩</a></p>
+
+    <p><button class="sheet-dl" title="every sheet on this page as one .xlsx with live formulas (cell names become cell references), at the current knob values">⤓ Download all the sheets as one .xlsx</button></p>
+
+  </main>
+  <script type="module">
+    import '../src/viewer.js';
+    import './reset.js';
+    import './sheetedit.js';
+  </script>
+  <script type="module">
+    // 03's sheet interactions (cell cards, jump-to-row, row select) + the cluster-size table
+    import { attachTip } from '../src/tip.js';
+    import { withKnobs } from './sheetedit.js';
+    const def = new Map();
+    for (const tr of document.querySelectorAll('.cellsheet tr')) {
+      const nm = tr.querySelector('td.nm')?.innerHTML;
+      if (nm && !def.has(nm)) def.set(nm, tr);
+    }
+    const rowOf = (b) => def.get(b?.dataset.cellref ?? b?.innerHTML);
+    for (const b of document.querySelectorAll('.cellsheet td.fx b')) if (rowOf(b)) b.classList.add('ref');
+    const card = (tr) => {
+      const [nm, lb, vl, , si, fx] = tr.cells;
+      const leaf = !fx.querySelector('b') && fx.children.length === 1 && fx.firstElementChild.tagName === 'I';
+      const approx = si.textContent.trim();
+      const d = document.createElement('div');
+      const terms = [leaf ? '' : `= ${fx.innerHTML}`, vl.textContent && `= ${vl.textContent}`, approx && `≈ ${approx.replace(/\s+/g, ' ')}`];
+      d.innerHTML = `<b>${nm.innerHTML}</b> · ${lb.innerHTML}<br>` + terms.filter(Boolean).join(' ');
+      return d;
+    };
+    let sel = null, fuse;
+    const select = (tr) => { sel?.classList.remove('sel'); sel = tr; tr?.classList.add('sel'); };
+    const jump = (tr) => { select(tr); tr.scrollIntoView({ block: 'center' }); };
+    for (const sheet of document.querySelectorAll('.cellsheet')) {
+      attachTip(sheet, (ev) => { const tr = rowOf(ev.target.closest?.('b.ref')); return tr ? card(tr) : null; },
+        { parent: document.body, cls: 'cs-tip', pinnable: (ev) => !ev.target.closest('b.ref') });
+      sheet.addEventListener('click', (ev) => {
+        const tr = rowOf(ev.target.closest?.('b.ref'));
+        if (tr) { jump(tr); return; }
+        const row = ev.target.closest?.('tr');
+        if (!row?.querySelector('td')) return;
+        clearTimeout(fuse);
+        if (ev.detail > 1 || !getSelection().isCollapsed) return;
+        fuse = setTimeout(() => select(sel === row ? null : row), 250);
+      });
+    }
+    for (const q of document.querySelectorAll('main [data-cellref]')) {
+      attachTip(q, () => card(rowOf(q)), { parent: document.body, cls: 'cs-tip', pinnable: () => false });
+      q.addEventListener('click', () => jump(rowOf(q)));
+    }
+    // the two measured cluster sizes through the sheet's own formulas (withKnobs), at the
+    // current knobs: the 256-GPU run and the 32-GPU repeats (same tokens per GPU)
+    const num = ([a, b]) => Number(a) / Number(b);
+    const Q = (x) => [BigInt(x), 1n];
+    const CONFIGS = [
+      [256, (v) => num(v.get('ρ')), (v) => num(v.get('M<sub>meas</sub>'))],
+      [32, (v) => num(v.get('ρ<sub>32</sub>')), (v) => num(v.get('M<sub>32</sub>'))],
+    ];
+    const pct = (x) => (100 * x).toFixed(0) + ' %';
+    const tbody = document.querySelector('.configs tbody');
+    const build = () => {
+      tbody.innerHTML = CONFIGS.map(([G, meas, mem]) => {
+        const v = withKnobs({ GPUs: Q(G) }), g = (k) => num(v.get(k));
+        const sol = g('ρ<sup>sol</sup>'), m = meas(v);
+        return `<tr><td>${G}</td><td class="n">${g('M<sub>tot</sub>').toFixed(1)} GiB</td><td class="n">${mem(v).toFixed(2)} GiB</td>` +
+          `<td class="n">${g('T<sub>step</sub>').toFixed(3)} s</td><td class="n">${pct(g('f<sub>IB</sub>'))}</td>` +
+          `<td class="n">${Math.round(sol).toLocaleString('en-US')}</td><td class="n">${Math.round(m).toLocaleString('en-US')}</td>` +
+          `<td class="n">${(g('D<sub>GPU</sub>') / m).toFixed(2)} s</td><td class="n">${(sol / m).toFixed(1)}×</td></tr>`;
+      }).join('');
+    };
+    build();
+    document.addEventListener('dsv3-cells', build);
+  </script>
+</body>
+
+</html>
