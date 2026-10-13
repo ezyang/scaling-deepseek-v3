@@ -29,13 +29,17 @@ T.check('activated params = 104,189,612,640', val('N') === '104,189,612,640', va
 // Muon: 5 quintic Newton–Schulz iterations per matrix per step (Per-Head for q/k/v), each matrix once; ≈ 1 % of compute
 T.check('Newton–Schulz FLOPs per step = 244,757,732,159,324,160; T_NS 1.07 % of policy A compute', val('CNS') === '244,757,732,159,324,160' && Math.abs(parseFloat(si('TNS')) / parseFloat(si('TAc')) / 1000 - 0.0107) < 0.0005, `${val('CNS')} ${si('TNS')} ${si('TAc')}`);
 const edv = [...document.querySelectorAll('.cellsheet td.vl.edv')].map((td) => td.parentElement.cells[0].textContent);
-T.check('editable: exactly this page\'s knobs', edv.join(' ') === 'πsolbf16 πsolfp8 βNV βIB NVL B S GPUs h8 PP EP CP Vpp ovl μ gB oB βhost Sx CPx', edv.join(' '));
+T.check('editable: exactly this page\'s knobs', edv.join(' ') === 'πsolbf16 πsolfp8 βNV βIB NVL B S GPUs h8 PP EP CP Vpp ured ovl μ gB oB βhost Sx CPx', edv.join(' '));
 T.check('untouched: no hash, nothing amber', location.hash === '' && !document.querySelector('.cellsheet tr.off'), location.hash);
-// the default: 288 GPUs, PP 4 × EP 72 × CP 3, one replica, 10 % reserve — 1F1B fits both, A on the line; ZB-V-Min gives A room; no ZeRO-1 traffic
+// the default: 288 GPUs, PP 4 × EP 72 × CP 3, one replica, 10 % reserve — 1F1B fits B, A just over the line; ZB-V-Min gives A room; no ZeRO-1 traffic
 T.check('default layout: DP 1, ZeRO-1 bytes 0', val('DP') === '1' && val('Vsync') === '0', `${val('DP')} ${val('Vsync')}`);
 const pct = (txt) => parseFloat(si(txt));
 const exact = (txt) => { const [n, d] = published.get(rowsOf(txt)[0].cells[0].innerHTML); return Number(n) / Number(d); };
-T.check('1F1B: on the fullest rank A fits by under 0.1 %, B fits', exact('fAmem') < 1 && exact('fAmem') > 0.999 && pct('fBmem') <= 100, `${exact('fAmem')} ${si('fBmem')}`);
+T.check('1F1B: on the fullest rank A misses by under 1 % (MoonEP’s slots tip it), B fits', exact('fAmem') > 1 && exact('fAmem') < 1.01 && pct('fBmem') <= 100, `${exact('fAmem')} ${si('fBmem')}`);
+// MoonEP: ⌈E/EP⌉ redundant-expert slots reserved in memory always; their traffic scales with u_red (0 by default)
+T.check('MoonEP: 13 slots at EP 72, M_red = 13 · N_e · (b₈ + g_B) exact, no traffic at u_red 0, 22.7 s at the bound',
+  val('nmaxred') === '13' && exact('Mred') === 13 * 3 * 3584 * 3072 * (1 + 1 / 32 + 4) && val('ured') === '0' && val('Tred') === '0' && si('Tmaxred') === '22.7 s',
+  `${val('nmaxred')} ${val('Mred')} ${val('Tred')} ${si('Tmaxred')}`);
 T.check('CP 3: Ulysses + KCP 1.35 s per step, exposed under self-overlap', val('CP') === '3' && si('TxCP') === '1.35 s' && si('TCP') === '1.35 s', `${si('TCP')} ${si('TxCP')}`);
 const bytes = (txt) => { const t = si(txt); return parseFloat(t) * (t.endsWith('GB') ? 1e9 : 1); };
 T.check('ZB-V-Min: 2 microbatches in flight, not 2.5; policy A under usable memory', val('nVminflt') === '2' && bytes('MAVmin') <= bytes('Muse'), `${val('nVminflt')} ${si('MAVmin')} ${si('Muse')}`);
@@ -120,13 +124,26 @@ type('ovl', '0');
 T.check('ovl 0: nothing exposed (max(0, ·) via the sheet language), CP traffic hidden too, ρ^A above the default', val('TxEP') === '0' && val('TxCP') === '0' && pct('ρA') > rhoA0, `${val('TxEP')} ${val('TxCP')} ${si('ρA')}`);
 type('ovl', '1'); type('βNV', '900 GB/s');
 T.check('restored: hash clean', location.hash === '', location.hash);
+// u_red: MoonEP's copies at the bound join the EP window; under self-overlap the excess over the expert GEMMs is exposed
+inp = type('ured', '2');
+T.check('u_red 2 refused: a share of the bound', /at most 1/.test(T.el('.cs-err').textContent), T.el('.cs-err').textContent);
+inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+const rhoV = () => cur('ρ<sup>A</sup><sub>Vmin</sub>'), rhoV1 = rhoV(), memV1 = cur('M<sup>A</sup><sub>Vmin</sub>');
+type('ured', '1');
+const xep = cur('T<sub>EP</sub>') + cur('T<sup>max</sup><sub>red</sub>') - cur('T<sub>exp</sub>');
+T.check('u_red 1: T_red = T^max, exposed = T_EP + T_red − T_exp (13.4 s), V-Min rate ≈ 3,850 as the conclusion says', cur('T<sub>red</sub>') === cur('T<sup>max</sup><sub>red</sub>')
+  && Math.abs(cur('T<sup>x</sup><sub>EP</sub>') - xep) < 1e-9 && si('TxEP') === '13.4 s' && Math.round(rhoV() / 10) * 10 === 3850 && rhoV() < rhoV1,
+  `${si('TxEP')} ${rhoV1} → ${rhoV()}`);
+T.check('… memory unchanged (the slots are reserved either way), hash carries it', cur('M<sup>A</sup><sub>Vmin</sub>') === memV1 && decodeURIComponent(location.hash) === '#c:cells={"ured":1}', decodeURIComponent(location.hash));
+type('ured', '0');
+T.check('u_red back: hash clean', location.hash === '', location.hash);
 T.check('typed back: hash clean', location.hash === '', location.hash);
 
 // the frontier table: one row per cluster size, best fitting layout per policy, from the sheet's formulas
 const fr = [...document.querySelectorAll('.frontier tbody tr')];
 T.check('frontier table has rows', fr.length >= 8, fr.length);
 const row288 = fr.find((tr) => tr.cells[0].textContent === '288');
-T.check('288 GPUs: policy A PP 4 × EP 72 × DP 1 · CP 3 · V-Min (the default), policy B CP 3 · V-ZB; EP pegged to the domain', row288 && row288.cells[2].textContent === 'PP 4 × EP 72 × DP 1 · CP 3 · V-Min' && /EP 72 × DP 1 · CP 3 · V-ZB/.test(row288.cells[5].textContent), row288?.textContent);
+T.check('288 GPUs: policy A PP 4 × EP 72 × DP 1 · CP 3 · V-Min (the default), policy B CP 3 · interleaved ZB; EP pegged to the domain', row288 && row288.cells[2].textContent === 'PP 4 × EP 72 × DP 1 · CP 3 · V-Min' && /EP 72 × DP 1 · CP 3 · interleaved ZB/.test(row288.cells[5].textContent), row288?.textContent);
 T.check('every frontier layout uses EP 72', [...document.querySelectorAll('.frontier td.lay')].every((td) => /EP 72/.test(td.textContent)), '');
 const row216 = fr.find((tr) => tr.cells[0].textContent === '216');
 T.check('216 GPUs: neither fits without offload at the 10 % reserve, even with CP', /does not fit/.test(row216.cells[2].textContent) && /does not fit/.test(row216.cells[3].textContent), row216.textContent);

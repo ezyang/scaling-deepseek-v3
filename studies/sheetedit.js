@@ -85,9 +85,9 @@ const PAGES = {
     },
   },
   k3: {
-    knobs: { B: 'B', S: 'S', GPUs: 'GPUs', 'π<sup>sol</sup><sub>bf16</sub>': 'sol', 'π<sup>sol</sup><sub>fp8</sub>': 'sol8', 'β<sub>NV</sub>': 'NV', 'β<sub>IB</sub>': 'IB', NVL: 'NVL', PP: 'PP', EP: 'EP', 'V<sub>pp</sub>': 'Vpp', ovl: 'ovl', 'μ': 'mu', 'g<sub>B</sub>': 'gB', 'o<sub>B</sub>': 'oB', 'β<sub>host</sub>': 'host', 'S<sub>x</sub>': 'Sx', 'CP<sub>x</sub>': 'CPx', CP: 'CP', 'h<sub>8</sub>': 'h8' },
+    knobs: { B: 'B', S: 'S', GPUs: 'GPUs', 'π<sup>sol</sup><sub>bf16</sub>': 'sol', 'π<sup>sol</sup><sub>fp8</sub>': 'sol8', 'β<sub>NV</sub>': 'NV', 'β<sub>IB</sub>': 'IB', NVL: 'NVL', PP: 'PP', EP: 'EP', 'V<sub>pp</sub>': 'Vpp', ovl: 'ovl', 'μ': 'mu', 'g<sub>B</sub>': 'gB', 'o<sub>B</sub>': 'oB', 'β<sub>host</sub>': 'host', 'S<sub>x</sub>': 'Sx', 'CP<sub>x</sub>': 'CPx', CP: 'CP', 'h<sub>8</sub>': 'h8', 'u<sub>red</sub>': 'ured' },
     counts: ['B', 'S', 'GPUs', 'NVL', 'PP', 'EP', 'Vpp', 'ovl', 'gB', 'oB', 'Sx', 'CPx', 'CP', 'h8'],
-    zero: ['ovl', 'mu', 'h8'],   // knobs that may be 0 (a 0/1 switch, a share)
+    zero: ['ovl', 'mu', 'h8', 'ured'],   // knobs that may be 0 (a 0/1 switch, a share)
     xlsx: ['kimi-k3-sheet.xlsx', 'Kimi K3 roofline'],
     rules(v, edits, pub) {
       const [G, P, E, N] = ['GPUs', 'PP', 'EP', 'NVL'].map((k) => v(k)[0]);
@@ -96,6 +96,8 @@ const PAGES = {
       const L = pub.get('L')?.[0];
       if (P > L) return `the model has ${L} layers`;
       if (v('h8')[0] > 1n) return 'h₈ is a switch: 1 = MXFP8 LM head, 0 = BF16';
+      const [un, ud] = v('ured');
+      if (un > ud) return 'u_red is a share of MoonEP’s bound: at most 1';
       if (v('CPx')[0] < 2n) return 'CP_x must be at least 2';
       const C = v('CP')[0], H = pub.get('n<sub>h</sub>')?.[0];
       if (N % C || H % C) return `CP must divide NVL (${N}) and the ${H} heads: Ulysses, inside one NVLink domain`;
